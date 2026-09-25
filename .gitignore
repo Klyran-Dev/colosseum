@@ -1,0 +1,98 @@
+# Rust
+/target/
+**/target/
+Cargo.lock
+!/**/Cargo.lock
+*.rs.bk
+
+# Node.js / React / Vite
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+build/
+**/build/
+.vite/
+**/.vite/
+.turbo/
+.cache/
+*.tsbuildinfo
+pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test, coverage, and profiling output
+coverage/
+**/coverage/
+lcov.info
+*.profraw
+*.profdata
+flamegraph.svg
+criterion/
+**/criterion/
+test-results/
+playwright-report/
+blob-report/
+
+# Docker and local runtime state
+.docker/
+docker-data/
+data/
+tmp/
+*.pid
+*.sock
+*.log
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+secrets/
+.secrets/
+**/secrets/
+
+# Local tool state
+.direnv/
+.mise.local.toml
+.tool-versions.local
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Editors and IDEs
+.idea/
+*.iml
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.example.json
+*.swp
+*.swo
+*~
+
+# Generated Solana / Anchor artifacts
+.anchor/
+anchor-test-ledger/
+programs/*/keypairs/
+deployments/
+*.so
+*.dylib
+
+# Generated API and build metadata
+openapi.generated.*
+idl.generated.*
+schema.generated.*
+sbom.*
+*.sarif
+
+# Local database backups and exports
+*.dump
+*.sql.gz
+*.bak
+
