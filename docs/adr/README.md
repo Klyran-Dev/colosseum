@@ -1,0 +1,27 @@
+# Architecture decision records
+
+ADRs are short, immutable decisions. Superseding a decision creates a new ADR; it does not rewrite the old record.
+
+- [ADR-0001: Solana-native settlement core](0001-solana-native-settlement-core.md)
+- [ADR-0002: Solidity is an optional EVM adapter](0002-solidity-evm-adapter.md)
+- [ADR-0003: React SPA with Vite and NGINX](0003-react-spa-nginx.md)
+- [ADR-0004: Signed policy attestations](0004-signed-policy-attestations.md)
+- [ADR-0005: Stablecoin-only settlement hot path](0005-stablecoin-hot-path.md)
+- [ADR-0006: Atomic bounded settlement transaction](0006-atomic-bounded-settlement.md)
+- [ADR-0007: On-chain authority and off-chain projections](0007-onchain-authority-offchain-projections.md)
+- [ADR-0008: Governance, upgrades, and emergency controls](0008-governance-upgrades-emergency-controls.md)
+- [ADR-0009: Immutable evidence and reconciliation](0009-immutable-evidence-reconciliation.md)
+- [ADR-0010: Versioned toolchain and dependency policy](0010-versioned-toolchain-policy.md)
+- [ADR-0011: Tier-1 tax engine bounded context](0011-tier-1-tax-engine.md)
+- [ADR-0012: Canonical tax-rule DSL and compiled rule graphs](0012-tax-rule-dsl.md)
+- [ADR-0013: Deterministic tax arithmetic and evaluation order](0013-tax-arithmetic-semantics.md)
+- [ADR-0014: Off-chain calculation with on-chain attestation](0014-tax-calculation-attestation.md)
+- [ADR-0015: Tax rule provenance and governance](0015-tax-rule-governance.md)
+- [ADR-0016: Explainable, accessible tax UI/UX](0016-tax-ui-ux.md)
+- [ADR-0017: Docker Compose development environment](0017-docker-development-environment.md)
+- [ADR-0018: Design-first TDD delivery](0018-design-first-tdd-delivery.md)
+- [ADR-0019: Public repository documentation contract](0019-public-repository-contract.md)
+- [ADR-0020: Versioned API and schema compatibility](0020-api-schema-compatibility.md)
+- [ADR-0021: SLOs, error budgets, and operational readiness](0021-slo-error-budget-readiness.md)
+- [ADR-0022: Jurisdiction coverage release governance](0022-jurisdiction-coverage-governance.md)
+- [ADR-0023: PostgreSQL 18 and UUIDv7 identifiers](0023-postgresql-18-uuidv7-identifiers.md)
