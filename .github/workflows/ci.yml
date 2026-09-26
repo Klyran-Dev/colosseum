@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust format, lint, and tests
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Verify formatting
+        run: cargo fmt --all -- --check
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace --all-targets
+
+  web:
+    name: Web typecheck and build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.21.0
+      - name: Activate pinned pnpm
+        run: corepack enable && corepack prepare pnpm@12.3.4 --activate
+      - name: Install locked dependencies
+        run: pnpm --dir apps/web install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm --dir apps/web typecheck
+      - name: Build
+        run: pnpm --dir apps/web build
+
+  compose:
+    name: Compose contract
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Validate Compose configuration
+        run: docker compose config --quiet
+
+  integration:
+    name: Docker quote and idempotency integration
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Run isolated Docker integration checks
+        run: ./scripts/verify_local_stack.sh
