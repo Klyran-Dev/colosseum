@@ -14,6 +14,7 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [Low-latency and reliability architecture](architecture/low-latency.md)
 - [Security and threat model](architecture/security-threat-model.md)
 - [Operations, observability, and SRE](architecture/operations.md)
+- [API contract baseline](api-contract.md)
 - [Implementation plan](plans/implementation-plan.md)
 - [Tier-1 product standard](plans/tier-1-product-standard.md)
 - [Tax coverage matrix](product/tax-coverage-matrix.md)
@@ -22,7 +23,19 @@ This directory is the architecture and delivery baseline for a production-grade,
 
 ## Status and scope
 
-This is an architecture and implementation plan for an empty repository. It does not claim that tax treatment is legally correct for every jurisdiction, that an oracle is a tax authority, or that escrow funds can be withdrawn without the configured governance and release controls. Legal, tax, custody, and licensing review are release gates.
+This is the architecture and implementation baseline for a system still in its foundation phase. It does not claim that tax treatment is legally correct for every jurisdiction, that an oracle is a tax authority, or that escrow funds can be withdrawn without the configured governance and release controls. Legal, tax, custody, and licensing review are release gates. The current executable foundation is deliberately limited to the deterministic tax engine, authenticated persisted published-rule quote path with an atomic outbox event, bounded NATS JetStream dispatcher, finalized-indexer/reconciliation domain and coordinator plus PostgreSQL persistence slice, isolated preview API, authenticated quote UI, PostgreSQL migration, product shell, and a governed token-interface settlement contract with cached policy-attestation binding. It is not yet a production settlement deployment.
+
+The local Agave validator is available through the resource-heavy `solana`
+Compose profile: `make solana-up`. It uses a pinned Agave 4.3.0 release
+installer and synthetic local state; it is not a testnet or mainnet node. The
+profile requires a Linux runtime exposing the `io_uring` capabilities required
+by Agave 4.3.0; image build success alone does not prove validator start-up.
+
+Run `make integration-check` for the authenticated Docker quote and delivery
+path. The harness generates an ephemeral Ed25519 signing key and removes its
+isolated Compose volume on exit; no development private key is stored in the
+repository. The check also proves that the outbox worker publishes the single
+transactional event and only then marks it published in PostgreSQL.
 
 The first production scope is stablecoin checkout on Solana. Non-stable assets, swaps, fiat off-ramp execution, and jurisdiction-specific legal determinations are separate adapters and are not implicit parts of the settlement hot path.
 

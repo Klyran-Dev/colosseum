@@ -12,7 +12,7 @@
 8. Indexer observes the signature, verifies the receipt and logs at the configured commitment, and updates projections.
 9. Reconciliation confirms chain balances and transitions the external status to `finalized`.
 
-## Hot-path instruction shape
+## Target hot-path instruction shape
 
 ```text
 ComputeBudget::set_compute_unit_limit
@@ -32,7 +32,12 @@ settlement_program::settle(
   -> emit SettlementExecuted event
 ```
 
-The program recomputes all amounts from canonical inputs and rejects caller-supplied values that do not match. Caller-supplied expected values are useful for slippage/quote UX but are not trusted accounting inputs.
+In the target policy-attested production path, the program recomputes all
+amounts from canonical inputs and rejects caller-supplied values that do not
+match. Caller-supplied expected values are useful for slippage/quote UX but
+are not trusted accounting inputs. The current first vertical slice accepts
+bounded tax/net values only to prove token movement and conservation; it is
+explicitly not the policy-attested production path.
 
 ## Policy attestation
 
@@ -58,6 +63,18 @@ The on-chain program validates the digest and bounds. A fresh attestation path i
 
 The protocol never accepts an unsigned “rate” sent by the browser or API.
 
+The first executable vertical slice uses Anchor's token interface and requires
+a cached `PolicyAttestation` PDA. It accepts legacy SPL Token and extension-free
+Token-2022 accounts, and validates policy
+merchant/mint/sequence/digest/amount binding, expiry and revocation, amount
+conservation, account ownership, mint identity, token-program consistency,
+extension-free account layouts, vault PDA authority, distinct token accounts,
+and deterministic receipt creation. ADR-0034 adds the merchant/mint-scoped
+governed issuer registry used to authorize registration and revocation. Fresh
+Ed25519 verification, extension-by-extension Token-2022 support, and
+production multisig/timelock integration are still required before a deployed
+settlement path can claim production readiness.
+
 ## State machine
 
 ```text
@@ -77,4 +94,3 @@ External states are projections. On-chain success is defined by a verified `Sett
 - A second settlement with the same merchant and nonce fails with `AlreadySettled`.
 - The API stores an idempotency record before returning a transaction and never maps one idempotency key to two different intents.
 - Transaction signature, slot, blockhash, policy digest, and receipt address are persisted for audit.
-

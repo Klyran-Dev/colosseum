@@ -1,13 +1,19 @@
 # Production-readiness plan
 
+Current evidence is intentionally partial: the repository now has authenticated
+merchant-scoped quote persistence, database-enforced published-rule
+immutability, a transactional quote outbox, bounded NATS JetStream delivery,
+and a cached on-chain policy attestation binding. These are foundation gates,
+not completed production readiness. Unchecked items remain release blockers.
+
 ## Correctness
 
 - [ ] Canonical serialization has test vectors in Rust and TypeScript.
 - [ ] Amount conservation is checked on-chain and in property tests.
 - [ ] `u64` overflow, zero amount, cap, rate, and rounding boundaries are covered.
-- [ ] Legacy SPL Token and Token-2022 account ownership is checked.
-- [ ] Unsupported Token-2022 extensions are rejected or explicitly tested.
-- [ ] Policy issuer, sequence, expiry, revocation, and merchant binding are enforced.
+- [ ] Legacy SPL Token and extension-free Token-2022 account ownership is checked in localnet transactions.
+- [ ] Unsupported Token-2022 extensions are rejected or explicitly tested in localnet transactions.
+- [ ] Policy issuer, sequence, expiry, revocation, merchant binding, and governed issuer-registry scope are enforced.
 - [ ] Replay, duplicate nonce, stale blockhash, and duplicate submission are covered.
 - [ ] All failed paths prove no partial token movement.
 - [ ] Tax-engine golden vectors cover simple, progressive, tax-on-tax, cascading, inclusive/exclusive, min/max, threshold, exemption, credit, truncation, and rounding cases.
@@ -40,8 +46,25 @@
 
 ## Operations
 
+Current evidence: the isolated Docker integration check exercises the worker's
+PostgreSQL lease claim, NATS JetStream publish acknowledgement, and published
+state transition. It does not yet constitute production observability,
+multi-replica failure testing, dead-letter alerting, or an operational SLO.
+
+The indexer domain, finalized provider-page coordinator, bounded Rustls JSON-RPC
+transport, deadline-bounded three-provider failover wrapper, and PostgreSQL
+adapter now prove bounded finalized checkpoint advancement, exact
+range/completeness validation, transport response limits, transactionally
+persisted receipt pages, duplicate delivery idempotency, conflicting evidence
+rejection, exact atomic-unit reconciliation, and pinned Anchor
+`SettlementExecuted` decoding with bounded raw event evidence. They do not yet
+prove adaptive provider health scoring, raw full-transaction capture, signature
+pagination, replay, or rebuild-from-chain integration.
+
 - [ ] Structured logs, traces, metrics, and alert routing are live.
 - [ ] Indexer backfill and replay are automated.
+- [ ] Raw event evidence and normalized receipts can rebuild projections from a
+  clean database with byte-identical results.
 - [ ] Vault balance reconciliation is scheduled and alerting.
 - [ ] Runbooks cover policy compromise, upgrade rollback, vault release incident, RPC outage, and indexer gap.
 - [ ] Mainnet configuration is separate from staging and requires approval.

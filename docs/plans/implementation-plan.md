@@ -40,6 +40,11 @@ Deliverables:
 
 Exit criteria: clean build from a fresh machine/CI image; schema changes require compatibility review; no floating dependency ranges in production manifests.
 
+Current evidence: the repository now has a pinned Rust workspace, Anchor 1.2.0
+settlement program boundary, PostgreSQL 18.6 migration baseline with UUIDv7,
+React/Vite/NGINX containers, and a strict GitHub CI workflow. The program slice
+is intentionally legacy-SPL-only and is not a mainnet deployment claim.
+
 ## Phase 2 - on-chain vertical slice
 
 Implement in this order:
@@ -52,6 +57,17 @@ Implement in this order:
 6. Atomic tax + net split CPI flow.
 7. Structured events and explicit error codes.
 8. Pause, revoke, and upgrade authority controls.
+
+The implemented first slice is the bounded token-interface `settle` instruction
+with a cached `PolicyAttestation` PDA: conserving tax/net transfers,
+merchant/mint/sequence/digest/amount binding, expiry/revocation checks,
+payer/source and vault-PDA authority checks, distinct token-account checks,
+deterministic payer/merchant/nonce receipt PDA, and a structured event. ADR-0034
+adds the merchant/mint-scoped governed issuer registry used to authorize
+attestation registration and revocation. ADR-0035 accepts extension-free
+Token-2022 through the same interface and rejects unsupported extensions.
+Pause controls and localnet transaction tests remain mandatory follow-on
+slices.
 
 Exit criteria: localnet property tests demonstrate amount conservation, recipient correctness, policy freshness, replay resistance, and atomic rollback.
 
@@ -82,9 +98,62 @@ Deliverables:
 - calculation attestation publisher bound to merchant, rule version, jurisdiction, asset, facts digest, and expiry;
 - simulation endpoint and preview fixture set for the UI.
 
+Current evidence: the `policy` crate implements canonical payload encoding,
+Ed25519 signing/verification, digest validation, validity windows, amount
+conservation, and calculation binding. The API exposes a verification endpoint
+whose status is explicitly `verified_unsettled`. The settlement program now
+requires a cached, non-revoked, unexpired `PolicyAttestation` PDA whose exact
+merchant, mint, sequence, digest, and gross/tax/net tuple matches the
+instruction. The governed issuer registry now authorizes registration and
+revocation through a merchant/mint-scoped PDA with separate governance and
+issuer roles; fresh on-chain Ed25519 verification and multisig-backed
+deployment remain open gates.
+
+ADR-0037 adds explicit JWT scope authorization at the service boundary. ADR-0028 defines the bounded PostgreSQL adapter and transactional production
+quote endpoint backed only by published immutable rule releases. ADR-0029 adds
+merchant authentication and ADR-0032 adds the transactional outbox. These are
+implemented foundation slices, not a claim that the simulation endpoint is a
+production substitute.
+
+Current evidence: `crates/storage` now provides that adapter, `/v1/tax/quote`
+selects an effective published release, revalidates its canonical digest, and
+commits the calculation plus idempotency response transactionally. The API
+also verifies a bounded OIDC-compatible EdDSA JWT against a configured JWKS
+set and derives the merchant scope from the authenticated principal. The quote
+operation additionally requires the exact `tax:quote` scope; missing
+authorization is a fail-closed 403. Docker
+smoke tests prove first-write, exact replay, NGINX forwarding, authenticated
+scope, one transactional outbox event, immutable published-rule rejection,
+and `409` conflict behavior. ADR-0033 now provides the first bounded delivery
+slice: PostgreSQL lease claims, stale-claim fencing, retry/dead-letter bounds,
+and a Rust worker that waits for NATS JetStream acknowledgement before marking
+an event published. Live JWKS refresh/revocation policy, production
+observability, and operational outbox alerting remain separate gates; policy
+attestation and settlement authority are covered by the chain slice below.
+
+ADR-0029 is the security gate for this slice. A caller-supplied merchant UUID
+is not accepted by the persisted quote contract. Local Compose uses a
+synthetic public key only; no private key is committed, and the integration
+harness creates an ephemeral signing key solely for its test process.
+
 Exit criteria: the same rule version and normalized facts produce byte-identical results across repeated runs; every tax total is explainable; unsupported or ambiguous rules fail closed; a published calculation can be independently replayed from its evidence bundle.
 
 ## Phase 4 - indexer and reconciliation
+
+ADR-0036 and ADR-0040 define and `crates/indexer` implements the bounded domain
+and coordinator slice:
+finalized checkpoint planning, bounded gap/backfill semantics,
+duplicate/conflict handling, exact atomic-unit reconciliation, finalized
+provider-page validation, a bounded Rustls HTTP JSON-RPC adapter for finalized
+`getSlot`, `getBlocks`, and `getBlock` calls, and a three-provider
+deadline-bounded failover wrapper. The storage adapter now
+persists finalized pages, checkpoints, normalized receipt evidence, bounded raw
+Anchor event bytes, and append-only reconciliation runs atomically. ADR-0041
+defines the pinned `SettlementExecuted` decoder, domain-separated evidence
+digest, conservation checks, and one-event-per-signature compatibility boundary.
+Provider health scoring, signature pagination, gap queues, replay/rebuild
+operator tooling, raw full-transaction retention, and localnet transaction
+tests remain follow-on implementation work.
 
 Deliverables:
 
