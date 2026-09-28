@@ -2243,6 +2243,7 @@ version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
  "serde",
+ "serde_json",
  "sha2 0.11.0",
  "thiserror 2.0.21",
 ]
@@ -2572,6 +2573,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
  "bitflags",
+]
+
+[[package]]
+name = "refund-workflow"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "settlement-client",
+ "sha2 0.11.0",
+ "solana-pubkey 4.4.0",
+ "thiserror 2.0.21",
+ "uuid",
 ]
 
 [[package]]
@@ -3001,6 +3015,7 @@ version = "0.1.0"
 dependencies = [
  "anchor-lang",
  "base64 0.23.1",
+ "policy",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -4218,6 +4233,7 @@ dependencies = [
  "settlement-adjustments",
  "settlement-coordinator",
  "sha2 0.11.0",
+ "solana-pubkey 4.4.0",
  "split-plan",
  "tax-engine",
  "thiserror 2.0.21",

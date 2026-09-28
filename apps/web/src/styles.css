@@ -199,6 +199,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .adjustment-record-card dd { max-width: 68%; overflow-wrap: anywhere; }
 .adjustment-transition-form { display: grid; gap: 1rem; margin-top: 1.25rem; padding-top: 1.25rem; border-top: 1px solid rgba(167, 201, 239, .12); }
 .adjustment-transition-form h3 { margin: 0; font-size: 1rem; }
+.adjustment-chain-card { display: grid; gap: .8rem; margin-top: 1.25rem; padding: 1rem; border: 1px solid rgba(138, 181, 255, .28); border-radius: .8rem; background: rgba(38, 72, 122, .16); }
+.adjustment-chain-card h3 { margin: 0; font-size: 1rem; color: #e8f1ff; }
+.adjustment-chain-card .summary-list { margin: 0; }
+.adjustment-chain-card .summary-list div { font-size: .74rem; }
+.adjustment-chain-card dd { max-width: 72%; overflow-wrap: anywhere; }
 .adjustment-authority-note { margin-top: 1rem; padding: .8rem; border: 1px solid rgba(255, 208, 131, .2); border-radius: .7rem; color: #ffdba3; background: rgba(255, 198, 102, .08); font-size: .74rem; line-height: 1.5; }
 .adjustment-authority-note strong { color: #ffe5b6; }
 @media (max-width: 620px) { .vault-run-row { grid-template-columns: 1fr; } .vault-target-topline { align-items: flex-start; flex-direction: column; } }

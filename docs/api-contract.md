@@ -802,6 +802,47 @@ simulation; simulation does not manufacture chain authority evidence. It never
 signs, submits, marks an adjustment posted, or claims that tokens moved. Those
 are separate finalized chain-evidence and movement contracts.
 
+### Wallet-bound adjustment submission and finalized recording
+
+The compiler response also includes `chain_intent_id`. The approver wallet
+submits the exact returned instruction through
+`POST /v1/settlement/adjustment-chain-intents/submit` with that chain intent,
+the unchanged compiled instruction, and canonical base64 signed transaction
+bytes. The API re-computes the instruction digest, verifies the signed message
+contains exactly one `record_adjustment` instruction with the expected program,
+data, account order, signer/writable flags, and bounded packet shape, then
+fences submission in PostgreSQL before RPC I/O. It never trusts a
+client-supplied digest or transaction status.
+
+`GET /v1/settlement/adjustment-chain-intents/{intent_id}` exposes only the
+tenant-scoped durable transport state. `POST
+/v1/settlement/adjustment-chain-intents/{intent_id}/reconcile` observes the
+signature at finalized commitment and first advances at most to `confirmed`.
+It advances to `finalized` only after the finalized indexer projection and raw
+event evidence exactly match the adjustment PDA, receipt, merchant, mint,
+nonce, approver, signed deltas, adjustment digest, and on-chain evidence
+digest. RPC acknowledgement, signature status, indexer lag, timeout, or
+provider disagreement cannot imply recording, payment, filing, or legal
+compliance.
+
+The React adjustment workspace consumes the same contract. After an approved
+adjustment is loaded, `Prepare wallet record` calls
+`POST /v1/settlement/adjustments/{adjustment_id}/compile` with
+`{"confirm":true}` and displays the finalized registry snapshot, exact account
+count, instruction digest, and chain-intent ID. `Sign and submit evidence`
+connects the injected wallet, requires its public key to equal the compiled
+approver signer, sends one record-only instruction without browser-side tax or
+amount arithmetic, and posts the unchanged signed bytes. Wallet rejection,
+timeouts, unknown provider outcomes, and indexer lag remain explicit states;
+the browser never synthesizes a signature or a `finalized` result.
+
+Protocol `u64` values crossing this wallet boundary are canonical decimal
+strings, including `adjustment_nonce` in the compiled instruction and
+`registry_slot` in the registry proof. Rust retains the bounded `u64` domain
+type; the browser must not parse these fields as JavaScript numbers. This
+prevents precision loss for valid values above `2^53 - 1` and applies to the
+future refund `claim_nonce` artifact as well.
+
 ### Governed Refund movement boundary
 
 ADR-0154 adds the first explicitly bounded movement contract for a negative
@@ -857,6 +898,51 @@ exact event/signature binding, and durable reconciliation evidence; claim
 account topology remains independently validated.
 See [ADR-0157](adr/0157-transaction-bound-refund-balance-proof.md) for the
 transaction-bound proof contract.
+
+ADR-0173 is the design gate for the future claim/execute HTTP and browser
+workflow. Until its funding-configuration, claim-intent, execute-intent,
+finalized-event, and transaction-bound-proof requirements are implemented,
+there are intentionally no refund movement endpoints. Existing adjustment
+approval, adjustment evidence recording, and indexed refund evidence must not
+be presented as a paid or refunded outcome.
+
+The first ADR-0173 control-plane slice now exposes the non-movement funding
+configuration boundary:
+
+- `POST /v1/settlement/refund-funding-configurations` requires
+  `tax:refund:configure` and `refund_funding_proposer`. It creates an
+  idempotent `proposed` UUIDv7 configuration after canonical Solana public-key,
+  account-alias, explicit `refund_funder_subject`, and effective-window
+  validation. The subject must later be bound to the configured funder key
+  through the single-use wallet authority proof boundary; it is not a caller
+  selectable signer during claim compilation.
+- `GET /v1/settlement/refund-funding-configurations` and
+  `GET /v1/settlement/refund-funding-configurations/{configuration_id}` require
+  the same scope and a governed funding/audit role. Tenant scope is derived
+  from the authenticated principal.
+- `POST /v1/settlement/refund-funding-configurations/{configuration_id}/transition`
+  permits only four-eyes approval, suspension, or retirement. It cannot
+  activate a configuration or attach verification evidence. Activation remains
+  a server-owned finalized Solana verification operation.
+
+ADR-0174 defines that operation: the verifier derives the vault-authority PDA,
+reads the merchant, mint, tax-vault, refund-funder, and net-source accounts in
+one finalized legacy-SPL snapshot, requires provider agreement, and persists
+immutable slot/commitment/evidence before activation. Browser-supplied status
+or evidence cannot satisfy this boundary.
+
+These endpoints configure evidence only; they cannot compile a claim, submit
+a wallet transaction, move tokens, or imply a refund outcome.
+
+ADR-0175 adds the next contract boundary but does not enable these endpoints
+yet: claim and execute intent creation will accept only idempotency and
+workflow inputs, while finalized receipt, adjustment amounts, funding
+topology, payer-bound destination, claim nonce, and wallet artifact bytes are
+server-owned. Signed submission will accept the canonical wallet transaction
+only after exact program, instruction, account, signer, and artifact-digest
+verification. A timeout is `unknown`, not success; only finalized
+transaction-bound event and balance proof can produce a successful movement
+state.
 
 ## Compatibility rules
 

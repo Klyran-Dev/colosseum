@@ -560,15 +560,24 @@ and operational gates are intentionally not marked complete by unit tests.
   evidence are enforced. The authenticated Docker endpoint integration is
   proven by `make integration-check`; validator-backed conformance, wallet
   submission, and finalized reconciliation remain release gates.
-- [ ] ADR-0170 wallet-bound submission and finalized recording gate: canonical
-  signed `record_adjustment` bytes, bounded retry lifecycle, typed finalized
-  event projection, exact intent/event matching, indexer-lag handling, and
-  operator-visible unknown/conflict states must pass before production enablement.
+- [ ] ADR-0170/0171 wallet-bound submission and finalized recording gate:
+  canonical signed `record_adjustment` bytes, bounded retry lifecycle, typed
+  finalized event projection, exact intent/event matching, indexer-lag
+  handling, wallet-workspace accessibility, and operator-visible
+  unknown/conflict states must pass before production enablement.
 - [ ] ADR-0154 governed refund movement is implemented and proven against the
   pinned Linux validator for the published Refund scope; tax-vault and
   merchant-funder sources, payer-bound destination, claim cancellation,
   finalized reconciliation, and unknown-transaction handling must pass before
   any paid-state API is introduced.
+- [ ] ADR-0173 server-owned refund-claim wallet orchestration is not enabled.
+  The tenant-scoped funding configuration control plane and ADR-0174 finalized
+  legacy-SPL topology verifier are implemented, but claim/execute intent
+  fencing, wallet submission, finalized claim/event matching, transaction-
+  bound proof, and validator evidence remain required before any refund
+  movement status is exposed. ADR-0175 now records the durable claim/execute
+  schema and exact signed-refund verifier, but the API/storage lifecycle and
+  finalized proof orchestration are still release gates.
 - [x] ADR-0155 adds a typed, finalized-only `AdjustmentRefundExecuted`
   projection, raw-event binding, idempotent replay merge, and PostgreSQL
   migration `0032`. It is evidence only and does not close the ADR-0154

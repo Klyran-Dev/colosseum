@@ -12,7 +12,7 @@
     "tax_vault": "111A4R8Vf7xP4Rz7ZkYd8H7f4Q5J4h4Y4V4w4U4T4S",
     "net_source": "111B4R8Vf7xP4Rz7ZkYd8H7f4Q5J4h4Y4V4w4U4T4S",
     "refund_destination": "111C4R8Vf7xP4Rz7ZkYd8H7f4Q5J4h4Y4V4w4U4T4S",
-    "claim_nonce": 3,
+    "claim_nonce": "3",
     "execute_after_unix": 1800000000,
     "expires_at_unix": 1800000600,
     "reference_digest": [9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9]
@@ -42,6 +42,6 @@
     "adjustment": "Fk3Z5sqgXWRYu3dFuQqshGmgGJoSxQSnxTHSFt9CKM5T",
     "original_receipt": "111FJo4zLAGU9nzTWa6EnbV4VAmtG4FR8kcokrtZYr",
     "claim": "4DqbTd6EtCebWaXDpCRmoSRVjeHB1k6B3CFYQ89dunAK",
-    "claim_nonce": 3
+    "claim_nonce": "3"
   }
 }

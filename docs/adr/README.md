@@ -171,3 +171,8 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0168: Dockerized Solana conformance runner](0168-dockerized-solana-conformance-runner.md)
 - [ADR-0169: SBF stack-frame safety boundary](0169-sbf-stack-frame-safety.md)
 - [ADR-0170: Wallet-bound adjustment submission and finalized recording evidence](0170-adjustment-submission-and-finalized-recording.md)
+- [ADR-0171: Wallet-bound adjustment browser workflow](0171-adjustment-wallet-workspace.md)
+- [ADR-0172: Exact decimal wire encoding for Solana `u64` values](0172-exact-chain-u64-wire-encoding.md)
+- [ADR-0173: Server-owned refund-claim wallet orchestration](0173-refund-claim-wallet-orchestration.md)
+- [ADR-0174: Finalized refund-funding topology verification](0174-finalized-refund-funding-topology-verification.md)
+- [ADR-0175: Durable refund claim and execute intents](0175-durable-refund-claim-execute-intents.md)

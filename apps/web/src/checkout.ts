@@ -6,6 +6,14 @@ import {
   TransactionInstruction,
 } from "@solana/web3.js";
 import { Buffer } from "buffer";
+import type {
+  AdjustmentChainIntentResponse,
+  AdjustmentChainIntentStatus,
+  CompiledSettlementAdjustmentArtifact,
+  CompiledSettlementAdjustmentInstruction,
+} from "./settlementAdjustments";
+import { parseCanonicalU64 } from "./settlementAdjustments";
+export { parseCanonicalU64 } from "./settlementAdjustments";
 
 export const SETTLEMENT_PROGRAM_ID = "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi";
 export const SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
@@ -332,6 +340,121 @@ export function parseCompiledSettlementArtifact(value: unknown): CompiledSettlem
   return splitPlan;
 }
 
+const RECORD_ADJUSTMENT_DISCRIMINATOR_BASE64 = "UEIK4GeoFyA=";
+const RECORD_ADJUSTMENT_DATA_BYTES = 172;
+const RECORD_ADJUSTMENT_ACCOUNT_COUNT = 10;
+
+function parseCompiledAdjustmentAccounts(value: unknown): CompiledSettlementAdjustmentInstruction["accounts"] {
+  if (!Array.isArray(value) || value.length !== RECORD_ADJUSTMENT_ACCOUNT_COUNT) {
+    throw new Error("The API returned an invalid record-adjustment account list.");
+  }
+  return value.map((candidate, index) => {
+    const account = recordValue(candidate, `The API returned an invalid adjustment account at position ${index}.`);
+    if (typeof account.is_signer !== "boolean" || typeof account.is_writable !== "boolean") {
+      throw new Error(`The API returned invalid adjustment account flags at position ${index}.`);
+    }
+    return {
+      pubkey: requirePublicKey(account.pubkey as string, `adjustment account ${index}`).toBase58(),
+      is_signer: account.is_signer,
+      is_writable: account.is_writable,
+    };
+  });
+}
+
+export function validateCompiledSettlementAdjustmentInstruction(
+  instruction: CompiledSettlementAdjustmentInstruction,
+  approver: PublicKey,
+): void {
+  if (instruction.status !== "prepared_unsubmitted") {
+    throw new Error("Only a prepared, unsubmitted adjustment may be signed.");
+  }
+  if (instruction.program_id !== SETTLEMENT_PROGRAM_ID) {
+    throw new Error("Adjustment program identity does not match the configured protocol.");
+  }
+  if (instruction.accounts.length !== RECORD_ADJUSTMENT_ACCOUNT_COUNT) {
+    throw new Error("Record-adjustment account count does not match the protocol contract.");
+  }
+  const expectedFlags: Array<[boolean, boolean]> = [
+    [true, true], [false, false], [false, false], [false, false], [false, false],
+    [false, false], [false, false], [false, false], [false, true], [false, false],
+  ];
+  const accountKeys = instruction.accounts.map((account, index) => {
+    const key = requirePublicKey(account.pubkey, `adjustment account ${index}`);
+    const [isSigner, isWritable] = expectedFlags[index];
+    if (account.is_signer !== isSigner || account.is_writable !== isWritable) {
+      throw new Error(`Adjustment account flags differ at position ${index}.`);
+    }
+    return key;
+  });
+  if (!accountKeys[0].equals(approver)) {
+    throw new Error("Connected wallet must match the compiled approver signer.");
+  }
+  if (new Set(accountKeys.map((key) => key.toBase58())).size !== accountKeys.length) {
+    throw new Error("Record-adjustment accounts must be distinct.");
+  }
+  if (accountKeys[4].toBase58() !== SPL_TOKEN_PROGRAM_ID
+      && accountKeys[4].toBase58() !== TOKEN_2022_PROGRAM_ID) {
+    throw new Error("Record-adjustment token program is not supported.");
+  }
+  if (accountKeys[9].toBase58() !== SYSTEM_PROGRAM_ID) {
+    throw new Error("Record-adjustment System Program account is not canonical.");
+  }
+  const data = decodeBase64(instruction.instruction_data_base64);
+  if (data.length !== RECORD_ADJUSTMENT_DATA_BYTES
+      || Buffer.from(data.subarray(0, 8)).toString("base64") !== RECORD_ADJUSTMENT_DISCRIMINATOR_BASE64) {
+    throw new Error("Record-adjustment instruction data is not canonical.");
+  }
+  const adjustmentNonce = parseCanonicalU64(instruction.adjustment_nonce, "Record-adjustment nonce");
+  if (adjustmentNonce === "0") {
+    throw new Error("Record-adjustment nonce must be positive.");
+  }
+  requirePublicKey(instruction.adjustment, "adjustment PDA");
+  requirePublicKey(instruction.adjustment_registry, "adjustment registry PDA");
+  requirePublicKey(instruction.original_receipt, "original receipt PDA");
+}
+
+export function parseCompiledSettlementAdjustmentArtifact(value: unknown): CompiledSettlementAdjustmentArtifact {
+  const record = recordValue(value, "The API returned an invalid adjustment compile artifact.");
+  if (record.status !== "prepared_unsubmitted") throw new Error("The adjustment compile artifact is not prepared.");
+  const instructionRecord = recordValue(record.instruction, "The API returned an invalid adjustment instruction.");
+  const instruction: CompiledSettlementAdjustmentInstruction = {
+    status: "prepared_unsubmitted",
+    program_id: requirePublicKey(instructionRecord.program_id as string, "adjustment program").toBase58(),
+    instruction_data_base64: typeof instructionRecord.instruction_data_base64 === "string"
+      ? instructionRecord.instruction_data_base64 : "",
+    accounts: parseCompiledAdjustmentAccounts(instructionRecord.accounts),
+    adjustment: requirePublicKey(instructionRecord.adjustment as string, "adjustment PDA").toBase58(),
+    adjustment_registry: requirePublicKey(instructionRecord.adjustment_registry as string, "adjustment registry PDA").toBase58(),
+    original_receipt: requirePublicKey(instructionRecord.original_receipt as string, "original receipt PDA").toBase58(),
+    adjustment_nonce: parseCanonicalU64(instructionRecord.adjustment_nonce, "Record-adjustment nonce"),
+  };
+  if (record.registry_commitment !== "finalized") {
+    throw new Error("The API returned a non-finalized registry commitment.");
+  }
+  const registrySlot = parseCanonicalU64(record.registry_slot, "Finalized registry slot");
+  if (registrySlot === "0") throw new Error("The API returned an invalid finalized registry slot.");
+  const artifact: CompiledSettlementAdjustmentArtifact = {
+    status: "prepared_unsubmitted",
+    intent_id: parseUuidV7(record.intent_id, "adjustment evidence intent ID"),
+    chain_intent_id: parseUuidV7(record.chain_intent_id, "adjustment chain intent ID"),
+    request_digest: parseDigestBytes(record.request_digest, "adjustment request"),
+    instruction_digest: parseDigestBytes(record.instruction_digest, "adjustment instruction"),
+    registry: requirePublicKey(record.registry as string, "adjustment registry").toBase58(),
+    registry_slot: registrySlot,
+    registry_commitment: "finalized",
+    registry_account_digest: parseDigestBytes(record.registry_account_digest, "registry account"),
+    instruction,
+  };
+  validateCompiledSettlementAdjustmentInstruction(
+    artifact.instruction,
+    new PublicKey(artifact.instruction.accounts[0].pubkey),
+  );
+  if (artifact.registry !== artifact.instruction.adjustment_registry) {
+    throw new Error("Registry evidence does not match the compiled instruction.");
+  }
+  return artifact;
+}
+
 export type SettlementIntentStatus =
   | "prepared_unsubmitted"
   | "signed"
@@ -349,6 +472,44 @@ export type SettlementSubmitResponse = {
   signature: string | null;
   provider_index: number | null;
 };
+
+const ADJUSTMENT_CHAIN_INTENT_STATUSES: readonly AdjustmentChainIntentStatus[] = [
+  "prepared_unsubmitted", "signed", "submitting", "submitted", "processed",
+  "confirmed", "finalized", "rejected", "unknown",
+];
+
+export function parseSettlementAdjustmentChainIntentResponse(value: unknown): AdjustmentChainIntentResponse {
+  const record = recordValue(value, "The API returned an invalid adjustment chain-intent response.");
+  const chainIntentId = parseUuidV7(record.chain_intent_id, "adjustment chain intent ID");
+  if (typeof record.status !== "string"
+      || !ADJUSTMENT_CHAIN_INTENT_STATUSES.includes(record.status as AdjustmentChainIntentStatus)) {
+    throw new Error("The API returned an invalid adjustment chain-intent status.");
+  }
+  const signature = record.signature;
+  if (signature !== null
+      && (typeof signature !== "string" || signature.length === 0 || signature.length > 128)) {
+    throw new Error("The API returned an invalid adjustment chain signature.");
+  }
+  if ((record.status === "submitting" || record.status === "submitted"
+      || record.status === "processed" || record.status === "confirmed"
+      || record.status === "finalized" || record.status === "unknown")
+      && signature === null) {
+    throw new Error("The API returned a chain lifecycle state without its bound signature.");
+  }
+  const providerIndex = record.provider_index;
+  if (providerIndex !== null
+      && (typeof providerIndex !== "number"
+        || !Number.isSafeInteger(providerIndex)
+        || providerIndex < 0)) {
+    throw new Error("The API returned an invalid adjustment provider index.");
+  }
+  return {
+    chain_intent_id: chainIntentId,
+    status: record.status as AdjustmentChainIntentStatus,
+    signature: signature as string | null,
+    provider_index: providerIndex as number | null,
+  };
+}
 
 export function settlementIntentAllowsRetry(status: SettlementIntentStatus): boolean {
   return status === "prepared_unsubmitted" || status === "signed";
@@ -608,6 +769,44 @@ export async function signAndEncodeSettlement(
   if (!rpcUrl.trim()) throw new Error("A VITE_SOLANA_RPC_URL is required before wallet signing is enabled.");
   const connection = new Connection(rpcUrl, "confirmed");
   const unsigned = await buildSettlementTransaction(instruction, payer, connection);
+  const signed = await wallet.signTransaction(unsigned);
+  const serialized = signed.serialize({ requireAllSignatures: true, verifySignatures: true });
+  return btoa(String.fromCharCode(...serialized));
+}
+
+export function buildSettlementAdjustmentTransaction(
+  instruction: CompiledSettlementAdjustmentInstruction,
+  approver: PublicKey,
+  connection: Connection,
+): Promise<Transaction> {
+  validateCompiledSettlementAdjustmentInstruction(instruction, approver);
+  return connection.getLatestBlockhash("confirmed").then(({ blockhash }) => {
+    const transactionInstruction = new TransactionInstruction({
+      programId: new PublicKey(instruction.program_id),
+      data: Buffer.from(decodeBase64(instruction.instruction_data_base64)),
+      keys: instruction.accounts.map((account) => ({
+        pubkey: new PublicKey(account.pubkey),
+        isSigner: account.is_signer,
+        isWritable: account.is_writable,
+      })),
+    });
+    return new Transaction({
+      feePayer: approver,
+      recentBlockhash: blockhash,
+    }).add(transactionInstruction);
+  });
+}
+
+export async function signAndEncodeSettlementAdjustment(
+  instruction: CompiledSettlementAdjustmentInstruction,
+  approver: PublicKey,
+  rpcUrl: string,
+): Promise<string> {
+  const wallet = injectedWallet();
+  if (!wallet) throw new Error("Connect a compatible Solana wallet before signing the adjustment.");
+  if (!rpcUrl.trim()) throw new Error("A VITE_SOLANA_RPC_URL is required before adjustment signing is enabled.");
+  const connection = new Connection(rpcUrl, "confirmed");
+  const unsigned = await buildSettlementAdjustmentTransaction(instruction, approver, connection);
   const signed = await wallet.signTransaction(unsigned);
   const serialized = signed.serialize({ requireAllSignatures: true, verifySignatures: true });
   return btoa(String.fromCharCode(...serialized));

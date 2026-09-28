@@ -1,9 +1,18 @@
 import { FormEvent, useMemo, useState } from "react";
+import { PublicKey } from "@solana/web3.js";
 import { fetchWithTimeout, REQUEST_TIMEOUT_MS, responseError } from "./api";
 import { createClientUuid } from "./clientIdentity";
 import {
+  connectInjectedWallet,
+  parseCompiledSettlementAdjustmentArtifact,
+  parseSettlementAdjustmentChainIntentResponse,
+  signAndEncodeSettlementAdjustment,
+} from "./checkout";
+import {
   AdjustmentKind,
   AdjustmentStatus,
+  AdjustmentChainIntentResponse,
+  CompiledSettlementAdjustmentArtifact,
   SettlementAdjustment,
   buildSettlementAdjustmentUrl,
   nextAdjustmentStatuses,
@@ -40,7 +49,7 @@ function parseBytes(value: string, label: string): number[] {
   return validateByteArray(parsed, label, true);
 }
 
-function statusLabel(status: AdjustmentStatus): string {
+function statusLabel(status: string): string {
   return status.replaceAll("_", " ");
 }
 
@@ -63,6 +72,9 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [walletAddress, setWalletAddress] = useState<PublicKey | null>(null);
+  const [chainArtifact, setChainArtifact] = useState<CompiledSettlementAdjustmentArtifact | null>(null);
+  const [chainStatus, setChainStatus] = useState<AdjustmentChainIntentResponse | null>(null);
 
   const availableTransitions = useMemo(() => nextAdjustmentStatuses(record?.status ?? ""), [record?.status]);
 
@@ -117,6 +129,8 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
       if (!response.ok) throw new Error(responseError(response, payload, `Adjustment proposal failed (${response.status})`));
       const loaded = parseSettlementAdjustment(payload);
       setRecord(loaded);
+      setChainArtifact(null);
+      setChainStatus(null);
       setLookupId(loaded.id);
       setNotice(`Adjustment ${loaded.id} is ${statusLabel(loaded.status)}. No funds moved; this is governance evidence only.`);
     } catch (cause) {
@@ -138,6 +152,8 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok) throw new Error(responseError(response, payload, `Adjustment lookup failed (${response.status})`));
       setRecord(parseSettlementAdjustment(payload));
+      setChainArtifact(null);
+      setChainStatus(null);
       setNotice("Adjustment state loaded from the tenant-scoped API. Approval remains evidence and does not mean payment.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Adjustment lookup failed.");
@@ -169,9 +185,137 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
       if (!reload.ok) throw new Error(responseError(reload, reloadPayload, `Adjustment refresh failed (${reload.status})`));
       const refreshed = parseSettlementAdjustment(reloadPayload);
       setRecord(refreshed);
+      setChainArtifact(null);
+      setChainStatus(null);
       setNotice(`Server accepted the ${statusLabel(transitionResponse.to_status)} transition. No token movement occurred.`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Adjustment transition failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function compileChainEvidence() {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const token = requireToken();
+      if (!record || record.status !== "approved") throw new Error("Only an approved adjustment can be prepared for wallet evidence recording.");
+      const response = await fetchWithTimeout(`${buildSettlementAdjustmentUrl(apiBase, record.id)}/compile`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ confirm: true }),
+      }, REQUEST_TIMEOUT_MS.default);
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(responseError(response, payload, `Adjustment compilation failed (${response.status})`));
+      const artifact = parseCompiledSettlementAdjustmentArtifact(payload);
+      setChainArtifact(artifact);
+      setChainStatus({
+        chain_intent_id: artifact.chain_intent_id,
+        status: artifact.status,
+        signature: null,
+        provider_index: null,
+      });
+      setNotice("Ready for wallet signing: the server prepared an exact record-adjustment instruction. Review it before signing; no tokens move in this evidence instruction.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Adjustment compilation failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refreshChainStatus() {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const token = requireToken();
+      if (!chainArtifact) throw new Error("Prepare the server-owned record instruction before loading its chain intent.");
+      const response = await fetchWithTimeout(`${apiBase}/v1/settlement/adjustment-chain-intents/${chainArtifact.chain_intent_id}`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(responseError(response, payload, `Adjustment chain status failed (${response.status})`));
+      const status = parseSettlementAdjustmentChainIntentResponse(payload);
+      setChainStatus(status);
+      setNotice(`The server reports durable adjustment evidence status: ${statusLabel(status.status)}. This is not payment confirmation.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Adjustment chain status failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function signAndSubmitChainEvidence() {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    let submissionAttempted = false;
+    try {
+      const token = requireToken();
+      if (!chainArtifact) throw new Error("Prepare the server-owned record instruction before signing.");
+      const connected = await connectInjectedWallet();
+      setWalletAddress(connected);
+      const signedTransactionBase64 = await signAndEncodeSettlementAdjustment(
+        chainArtifact.instruction,
+        connected,
+        import.meta.env.VITE_SOLANA_RPC_URL ?? "",
+      );
+      submissionAttempted = true;
+      const response = await fetchWithTimeout(`${apiBase.replace(/\/$/, "")}/v1/settlement/adjustment-chain-intents/submit`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          chain_intent_id: chainArtifact.chain_intent_id,
+          signed_transaction_base64: signedTransactionBase64,
+          instruction: chainArtifact.instruction,
+        }),
+      }, REQUEST_TIMEOUT_MS.settlementSubmit);
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(responseError(response, payload, `Adjustment submission failed (${response.status})`));
+      const status = parseSettlementAdjustmentChainIntentResponse(payload);
+      setChainStatus(status);
+      setNotice(status.status === "finalized"
+        ? "The server returned finalized adjustment evidence. This record-only instruction did not move tokens or establish filing/compliance."
+        : `Wallet submission accepted into durable status ${statusLabel(status.status)}. Finalized event reconciliation is still required.`);
+    } catch (cause) {
+      if (submissionAttempted) {
+        try {
+          await refreshChainStatus();
+          setError("The submission request did not complete. The durable chain intent was refreshed; do not sign a second transaction.");
+        } catch {
+          setError("The adjustment submission outcome is unknown. Do not sign again; load or reconcile the durable chain intent before retrying.");
+        }
+      } else {
+        setError(cause instanceof Error ? cause.message : "Wallet signing or adjustment submission failed.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reconcileChainEvidence() {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const token = requireToken();
+      if (!chainArtifact) throw new Error("Prepare the server-owned record instruction before reconciliation.");
+      if (!chainStatus?.signature) throw new Error("A server-bound chain signature is required before reconciliation.");
+      const response = await fetchWithTimeout(`${apiBase}/v1/settlement/adjustment-chain-intents/${chainArtifact.chain_intent_id}/reconcile`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+      }, REQUEST_TIMEOUT_MS.settlementSubmit);
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(responseError(response, payload, `Adjustment reconciliation failed (${response.status})`));
+      const status = parseSettlementAdjustmentChainIntentResponse(payload);
+      setChainStatus(status);
+      setNotice(status.status === "finalized"
+        ? "Finalized typed event and raw evidence matched the immutable adjustment intent. No token movement is implied."
+        : `Reconciliation returned ${statusLabel(status.status)}. The indexer or provider may still be catching up.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Adjustment reconciliation failed.");
     } finally {
       setBusy(false);
     }
@@ -229,6 +373,16 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
               <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>Record {statusLabel(transitionStatus)} evidence</button>
             </> : <p className="inline-warning">This status has no available browser transition. A posted state is intentionally not represented here.</p>}
           </form>
+          {record.status === "approved" && <div className="adjustment-chain-card" aria-label="Wallet-bound adjustment evidence">
+            <h3>Record finalized adjustment evidence</h3>
+            <p className="panel-copy">This bounded Solana instruction records the approved adjustment and emits auditable evidence. It does not transfer tokens, issue a refund, file taxes, or establish legal compliance.</p>
+            {!chainArtifact ? <button type="button" onClick={compileChainEvidence} disabled={busy || !serviceOnline || !accessToken.trim()}>Prepare wallet record</button> : <>
+              <dl className="summary-list"><div><dt>Chain intent</dt><dd><code>{chainArtifact.chain_intent_id}</code></dd></div><div><dt>Registry</dt><dd><code>{chainArtifact.registry}</code></dd></div><div><dt>Registry proof</dt><dd>Finalized slot {chainArtifact.registry_slot} · {chainArtifact.instruction.accounts.length} exact account metas</dd></div><div><dt>Wallet</dt><dd>{walletAddress?.toBase58() ?? "Not connected"}</dd></div></dl>
+              <p className="inline-warning">The connected wallet must equal the compiled approver signer. The API repeats this check against the complete signed message.</p>
+              <button type="button" onClick={signAndSubmitChainEvidence} disabled={busy || !serviceOnline || !accessToken.trim()}>{busy ? "Waiting for wallet or server…" : "Sign and submit evidence"}</button>
+              {chainStatus && <div className="settlement-status" aria-live="polite"><strong>Durable evidence status: {statusLabel(chainStatus.status)}</strong><small>{chainStatus.signature ? `Signature ${chainStatus.signature}` : "No server-bound chain signature yet."}</small>{chainStatus.status === "unknown" && <small role="status">Provider outcome is ambiguous. Do not authorize another transaction; reconcile this intent.</small>}{chainStatus.status !== "finalized" && chainStatus.signature && <div className="status-actions"><button type="button" onClick={refreshChainStatus} disabled={busy}>Refresh status</button><button type="button" onClick={reconcileChainEvidence} disabled={busy}>Reconcile finalized evidence</button></div>}{chainStatus.status === "finalized" && <small role="status">Finalized event evidence matched. This is not a payment or compliance claim.</small>}</div>}
+            </>}
+          </div>}
         </> : <div className="empty-state"><span className="empty-icon">◎</span><strong>No adjustment loaded</strong><p>Propose or load a server-owned record to inspect exact evidence and governed lifecycle options.</p></div>}
         <div className="adjustment-authority-note"><strong>Authority boundary:</strong> approval is not payment, tax advice, filing, or legal compliance. Token movement requires a separate wallet-signed Solana workflow and finalized chain evidence.</div>
       </article>

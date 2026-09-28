@@ -5,7 +5,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use indexer::{AdaptiveProviderHealth, JsonRpcTransport, ProviderError};
 use serde_json::{Value, json};
 use settlement_client::{
-    COMPUTE_BUDGET_PROGRAM_ID, CompiledSettlementInstruction, ComputeBudgetPolicy,
+    COMPUTE_BUDGET_PROGRAM_ID, CompiledSettlementAdjustmentInstruction,
+    CompiledSettlementInstruction, CompiledSettlementRefundInstruction, ComputeBudgetPolicy,
     MAX_SETTLEMENT_SIGNED_BYTES, estimate_legacy_settlement_wire_bytes_with_compute_budget,
 };
 use sha2::{Digest, Sha256};
@@ -135,6 +136,289 @@ impl SignedTransaction {
         expected: &CompiledSettlementInstruction,
     ) -> Result<(), CoordinatorError> {
         self.verify_settlement_instruction_with_lookup_tables(expected, &[])
+    }
+
+    /// Proves that a wallet signed exactly the server-compiled record-only
+    /// adjustment instruction. Adjustment recording intentionally has a
+    /// different wire contract from settlement: one bounded instruction and
+    /// no caller-selected compute-budget or account additions.
+    pub fn verify_adjustment_instruction(
+        &self,
+        expected: &CompiledSettlementAdjustmentInstruction,
+    ) -> Result<(), CoordinatorError> {
+        if expected.status != "prepared_unsubmitted" {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "adjustment instruction is not prepared for submission".into(),
+            ));
+        }
+        let transaction = self.decode_verified_transaction()?;
+        if self.bytes.len() > MAX_SIGNED_TRANSACTION_BYTES {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "signed adjustment exceeds the bounded packet size".into(),
+            ));
+        }
+        let message = &transaction.message;
+        if !lookup_table_keys(message)?.is_empty() {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "adjustment recording does not permit address lookup tables".into(),
+            ));
+        }
+        let instructions = message.instructions();
+        if instructions.len() != 1 {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "adjustment transaction must contain exactly one instruction".into(),
+            ));
+        }
+        let static_accounts = message.static_account_keys();
+        let instruction = &instructions[0];
+        let program_index = usize::from(instruction.program_id_index);
+        let program_id = static_accounts.get(program_index).ok_or_else(|| {
+            CoordinatorError::InvalidSignedTransaction(
+                "adjustment program index is out of bounds".into(),
+            )
+        })?;
+        if program_id.to_string() != expected.program_id {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "signed adjustment program id does not match the compiled instruction".into(),
+            ));
+        }
+        let expected_data = BASE64
+            .decode(&expected.instruction_data_base64)
+            .map_err(|_| {
+                CoordinatorError::InvalidSignedTransaction(
+                    "compiled adjustment instruction data is not valid base64".into(),
+                )
+            })?;
+        if instruction.data != expected_data {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "signed adjustment instruction data does not match the compiled instruction".into(),
+            ));
+        }
+        if instruction.accounts.len() != expected.accounts.len() {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "signed adjustment account count does not match the compiled instruction".into(),
+            ));
+        }
+        if static_accounts.len() != expected.accounts.len() + 1
+            && static_accounts.len() != expected.accounts.len() + 2
+        {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "signed adjustment contains unexpected static account keys".into(),
+            ));
+        }
+        let expected_keys = expected
+            .accounts
+            .iter()
+            .map(|account| account.pubkey.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        if expected_keys.len() != expected.accounts.len() {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "compiled adjustment contains duplicate account keys".into(),
+            ));
+        }
+        let fee_payer_key = static_accounts.first().map(ToString::to_string);
+        if static_accounts.len() == expected.accounts.len() + 1
+            && fee_payer_key
+                .as_deref()
+                .is_some_and(|payer| !expected_keys.contains(payer))
+        {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "unexpected fee payer account was added to the adjustment message".into(),
+            ));
+        }
+        if static_accounts.len() == expected.accounts.len() + 2
+            && fee_payer_key
+                .as_deref()
+                .is_some_and(|payer| expected_keys.contains(payer))
+        {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "fee payer must not be an unexpected duplicate adjustment account".into(),
+            ));
+        }
+        let program_occurrences = static_accounts
+            .iter()
+            .filter(|account| account.to_string() == expected.program_id)
+            .count();
+        if program_occurrences != 1 {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "adjustment program id must occur exactly once in static accounts".into(),
+            ));
+        }
+        for (index, account) in static_accounts.iter().enumerate() {
+            let key = account.to_string();
+            if !expected_keys.contains(key.as_str()) && key != expected.program_id && index != 0 {
+                return Err(CoordinatorError::InvalidSignedTransaction(
+                    "signed adjustment contains an unused unexpected static account".into(),
+                ));
+            }
+        }
+        let mut unique_accounts = std::collections::BTreeSet::new();
+        for (position, (actual_index, expected_account)) in instruction
+            .accounts
+            .iter()
+            .zip(&expected.accounts)
+            .enumerate()
+        {
+            let actual_index = usize::from(*actual_index);
+            let actual_key = static_accounts.get(actual_index).ok_or_else(|| {
+                CoordinatorError::InvalidSignedTransaction(format!(
+                    "signed adjustment account index is out of bounds at position {position}"
+                ))
+            })?;
+            let actual_is_signer =
+                actual_index < static_accounts.len() && message.is_signer(actual_index);
+            let reserved_addresses =
+                std::collections::BTreeSet::<solana_transaction::Address>::new();
+            let actual_is_writable = message
+                .is_maybe_writable_with_reserved_addresses(actual_index, Some(&reserved_addresses));
+            if actual_key.to_string() != expected_account.pubkey
+                || actual_is_signer != expected_account.is_signer
+                || actual_is_writable != expected_account.is_writable
+            {
+                return Err(CoordinatorError::InvalidSignedTransaction(format!(
+                    "signed adjustment account policy does not match the compiled instruction at position {position}"
+                )));
+            }
+            if !unique_accounts.insert(actual_key) {
+                return Err(CoordinatorError::InvalidSignedTransaction(
+                    "signed adjustment contains duplicate instruction accounts".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Verifies a wallet-signed refund claim or execute instruction against
+    /// the server-owned compiler artifact. Refund movement does not permit
+    /// address lookup tables, compute-budget additions, extra instructions,
+    /// account substitution, or client-selected signer topology.
+    pub fn verify_refund_instruction(
+        &self,
+        expected: &CompiledSettlementRefundInstruction,
+    ) -> Result<(), CoordinatorError> {
+        if expected.status != "prepared_unsubmitted" {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "refund instruction is not prepared for submission".into(),
+            ));
+        }
+        let transaction = self.decode_verified_transaction()?;
+        if self.bytes.len() > MAX_SIGNED_TRANSACTION_BYTES {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "signed refund exceeds the bounded packet size".into(),
+            ));
+        }
+        let message = &transaction.message;
+        if !lookup_table_keys(message)?.is_empty() {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "refund movement does not permit address lookup tables".into(),
+            ));
+        }
+        let instructions = message.instructions();
+        if instructions.len() != 1 {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "refund transaction must contain exactly one instruction".into(),
+            ));
+        }
+        let static_accounts = message.static_account_keys();
+        let instruction = &instructions[0];
+        let program_index = usize::from(instruction.program_id_index);
+        let program_id = static_accounts.get(program_index).ok_or_else(|| {
+            CoordinatorError::InvalidSignedTransaction(
+                "refund program index is out of bounds".into(),
+            )
+        })?;
+        if program_id.to_string() != expected.program_id {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "signed refund program id does not match the compiled instruction".into(),
+            ));
+        }
+        let expected_data = BASE64
+            .decode(&expected.instruction_data_base64)
+            .map_err(|_| {
+                CoordinatorError::InvalidSignedTransaction(
+                    "compiled refund instruction data is not valid base64".into(),
+                )
+            })?;
+        if instruction.data != expected_data {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "signed refund instruction data does not match the compiled instruction".into(),
+            ));
+        }
+        if instruction.accounts.len() != expected.accounts.len()
+            || (static_accounts.len() != expected.accounts.len() + 1
+                && static_accounts.len() != expected.accounts.len() + 2)
+        {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "signed refund account shape does not match the compiled instruction".into(),
+            ));
+        }
+        let expected_keys = expected
+            .accounts
+            .iter()
+            .map(|account| account.pubkey.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        if expected_keys.len() != expected.accounts.len() {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "compiled refund contains duplicate account keys".into(),
+            ));
+        }
+        if static_accounts.len() == expected.accounts.len() + 2
+            && expected_keys.contains(static_accounts[0].to_string().as_str())
+        {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "refund fee payer must not duplicate a movement account".into(),
+            ));
+        }
+        if static_accounts
+            .iter()
+            .filter(|account| account.to_string() == expected.program_id)
+            .count()
+            != 1
+        {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "refund program id must occur exactly once in static accounts".into(),
+            ));
+        }
+        for (index, account) in static_accounts.iter().enumerate() {
+            let key = account.to_string();
+            if !expected_keys.contains(key.as_str()) && key != expected.program_id && index != 0 {
+                return Err(CoordinatorError::InvalidSignedTransaction(
+                    "signed refund contains an unused unexpected static account".into(),
+                ));
+            }
+        }
+        let reserved_addresses = std::collections::BTreeSet::<solana_transaction::Address>::new();
+        let mut unique_accounts = std::collections::BTreeSet::new();
+        for (position, (actual_index, expected_account)) in instruction
+            .accounts
+            .iter()
+            .zip(&expected.accounts)
+            .enumerate()
+        {
+            let actual_index = usize::from(*actual_index);
+            let actual_key = static_accounts.get(actual_index).ok_or_else(|| {
+                CoordinatorError::InvalidSignedTransaction(format!(
+                    "signed refund account index is out of bounds at position {position}"
+                ))
+            })?;
+            let actual_is_signer = message.is_signer(actual_index);
+            let actual_is_writable = message
+                .is_maybe_writable_with_reserved_addresses(actual_index, Some(&reserved_addresses));
+            if actual_key.to_string() != expected_account.pubkey
+                || actual_is_signer != expected_account.is_signer
+                || actual_is_writable != expected_account.is_writable
+            {
+                return Err(CoordinatorError::InvalidSignedTransaction(format!(
+                    "signed refund account policy does not match the compiled instruction at position {position}"
+                )));
+            }
+            if !unique_accounts.insert(actual_key) {
+                return Err(CoordinatorError::InvalidSignedTransaction(
+                    "signed refund contains duplicate instruction accounts".into(),
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Verifies a settlement against lookup-table contents obtained from a
@@ -1273,8 +1557,11 @@ mod tests {
     use proptest::prelude::*;
     use serde_json::json;
     use settlement_client::{
-        CompiledSettlementInstruction, SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT,
-        SettlementCompileRequest, compile_settlement_instruction,
+        CompiledSettlementAdjustmentInstruction, CompiledSettlementInstruction,
+        SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT, SettlementAdjustmentCompileRequest,
+        SettlementCompileRequest, SettlementRefundClaimCompileRequest,
+        compile_settlement_adjustment_instruction, compile_settlement_instruction,
+        compile_settlement_refund_claim_instruction,
     };
     use solana_keypair::Keypair;
     use solana_signer::Signer;
@@ -1440,6 +1727,70 @@ mod tests {
         .expect("signed transaction")
     }
 
+    fn compile_adjustment_request(approver: &Keypair) -> SettlementAdjustmentCompileRequest {
+        let unique = || solana_transaction::Address::new_unique().to_string();
+        SettlementAdjustmentCompileRequest {
+            program_id: settlement_client::SETTLEMENT_PROGRAM_ID.to_string(),
+            proposer: unique(),
+            approver: approver.pubkey().to_string(),
+            merchant: unique(),
+            mint: unique(),
+            token_program: settlement_client::SPL_TOKEN_PROGRAM_ID.to_string(),
+            original_receipt: unique(),
+            adjustment_nonce: 11,
+            kind: 1,
+            gross_sign: 1,
+            gross_magnitude: "100".into(),
+            tax_sign: 1,
+            tax_magnitude: "25".into(),
+            net_sign: 1,
+            net_magnitude: "75".into(),
+            adjustment_digest: [1; 32],
+            evidence_digest: [2; 32],
+            source_calculation_digest: [3; 32],
+            replacement_calculation_digest: [0; 32],
+        }
+    }
+
+    fn signed_adjustment(
+        expected: &CompiledSettlementAdjustmentInstruction,
+        payer: &Keypair,
+    ) -> SignedTransaction {
+        let instruction = solana_transaction::Instruction {
+            program_id: expected.program_id.parse().expect("program id"),
+            accounts: expected
+                .accounts
+                .iter()
+                .map(|account| {
+                    let pubkey = account.pubkey.parse().expect("account pubkey");
+                    if account.is_writable {
+                        solana_transaction::AccountMeta::new(pubkey, account.is_signer)
+                    } else {
+                        solana_transaction::AccountMeta::new_readonly(pubkey, account.is_signer)
+                    }
+                })
+                .collect(),
+            data: BASE64
+                .decode(&expected.instruction_data_base64)
+                .expect("instruction data"),
+        };
+        let transaction = solana_transaction::Transaction::new_signed_with_payer(
+            &[instruction],
+            Some(&payer.pubkey()),
+            &[payer],
+            solana_transaction::Hash::new_from_array([9; 32]),
+        );
+        SignedTransaction::parse(
+            &BASE64.encode(
+                wincode::serialize(&solana_transaction::versioned::VersionedTransaction::from(
+                    transaction,
+                ))
+                .expect("serialize transaction"),
+            ),
+        )
+        .expect("signed adjustment")
+    }
+
     fn signed_with_instruction_sequence(
         payer: &Keypair,
         instructions: &[solana_transaction::Instruction],
@@ -1459,6 +1810,82 @@ mod tests {
             ),
         )
         .expect("signed transaction")
+    }
+
+    fn signed_refund(
+        expected: &settlement_client::CompiledSettlementRefundInstruction,
+        proposer: &Keypair,
+        refund_funder: &Keypair,
+    ) -> SignedTransaction {
+        assert_eq!(expected.accounts[0].pubkey, proposer.pubkey().to_string());
+        assert_eq!(
+            expected.accounts[1].pubkey,
+            refund_funder.pubkey().to_string()
+        );
+        let program_id = expected.program_id.parse().expect("program id");
+        let accounts = expected
+            .accounts
+            .iter()
+            .map(|account| {
+                let pubkey = account.pubkey.parse().expect("account pubkey");
+                if account.is_writable {
+                    solana_transaction::AccountMeta::new(pubkey, account.is_signer)
+                } else {
+                    solana_transaction::AccountMeta::new_readonly(pubkey, account.is_signer)
+                }
+            })
+            .collect();
+        let instruction = solana_transaction::Instruction {
+            program_id,
+            accounts,
+            data: BASE64
+                .decode(&expected.instruction_data_base64)
+                .expect("instruction data"),
+        };
+        let blockhash = solana_transaction::Hash::new_from_array([9; 32]);
+        let mut transaction = solana_transaction::Transaction::new_with_payer(
+            &[instruction],
+            Some(&proposer.pubkey()),
+        );
+        transaction
+            .try_partial_sign(&[proposer], blockhash)
+            .expect("sign proposer");
+        transaction
+            .try_partial_sign(&[refund_funder], blockhash)
+            .expect("sign refund funder");
+        SignedTransaction::parse(
+            &BASE64.encode(
+                wincode::serialize(&solana_transaction::versioned::VersionedTransaction::from(
+                    transaction,
+                ))
+                .expect("serialize transaction"),
+            ),
+        )
+        .expect("signed transaction")
+    }
+
+    fn refund_claim_request(
+        proposer: &Keypair,
+        refund_funder: &Keypair,
+    ) -> SettlementRefundClaimCompileRequest {
+        let unique = || solana_transaction::Address::new_unique().to_string();
+        SettlementRefundClaimCompileRequest {
+            program_id: settlement_client::SETTLEMENT_PROGRAM_ID.to_string(),
+            proposer: proposer.pubkey().to_string(),
+            refund_funder: refund_funder.pubkey().to_string(),
+            merchant: unique(),
+            mint: unique(),
+            token_program: settlement_client::SPL_TOKEN_PROGRAM_ID.to_string(),
+            original_receipt: unique(),
+            adjustment: unique(),
+            tax_vault: unique(),
+            net_source: unique(),
+            refund_destination: unique(),
+            claim_nonce: 7,
+            execute_after_unix: 1_790_000_000,
+            expires_at_unix: 1_790_003_600,
+            reference_digest: [8; 32],
+        }
     }
 
     fn settlement_instruction(
@@ -1729,6 +2156,110 @@ mod tests {
                 .verify_settlement_instruction(&wrong_program)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn verifies_the_exact_signed_adjustment_instruction() {
+        let approver = Keypair::new();
+        let expected =
+            compile_settlement_adjustment_instruction(&compile_adjustment_request(&approver))
+                .expect("compile adjustment");
+        let signed = signed_adjustment(&expected, &approver);
+        signed
+            .verify_adjustment_instruction(&expected)
+            .expect("exact adjustment must verify");
+
+        let mut wrong_data = expected.clone();
+        wrong_data.instruction_data_base64 = BASE64.encode([0; 8]);
+        assert!(signed.verify_adjustment_instruction(&wrong_data).is_err());
+
+        let mut wrong_account = expected.clone();
+        wrong_account.accounts.swap(0, 1);
+        assert!(
+            signed
+                .verify_adjustment_instruction(&wrong_account)
+                .is_err()
+        );
+
+        let extra = signed_with_instruction_sequence(
+            &approver,
+            &[solana_transaction::Instruction {
+                program_id: solana_transaction::Address::new_unique(),
+                accounts: Vec::new(),
+                data: vec![1],
+            }],
+        );
+        assert!(extra.verify_adjustment_instruction(&expected).is_err());
+    }
+
+    #[test]
+    fn verifies_the_exact_signed_refund_instruction() {
+        let proposer = Keypair::new();
+        let refund_funder = Keypair::new();
+        let expected = compile_settlement_refund_claim_instruction(&refund_claim_request(
+            &proposer,
+            &refund_funder,
+        ))
+        .expect("compile refund claim");
+        let signed = signed_refund(&expected, &proposer, &refund_funder);
+        signed
+            .verify_refund_instruction(&expected)
+            .expect("exact refund instruction must verify");
+
+        let mut wrong_data = expected.clone();
+        wrong_data.instruction_data_base64 = BASE64.encode([0; 8]);
+        assert!(signed.verify_refund_instruction(&wrong_data).is_err());
+
+        let mut wrong_account = expected.clone();
+        wrong_account.accounts.swap(0, 1);
+        assert!(signed.verify_refund_instruction(&wrong_account).is_err());
+
+        let base_instruction = solana_transaction::Instruction {
+            program_id: expected.program_id.parse().expect("program id"),
+            accounts: expected
+                .accounts
+                .iter()
+                .map(|account| {
+                    let pubkey = account.pubkey.parse().expect("account pubkey");
+                    if account.is_writable {
+                        solana_transaction::AccountMeta::new(pubkey, account.is_signer)
+                    } else {
+                        solana_transaction::AccountMeta::new_readonly(pubkey, account.is_signer)
+                    }
+                })
+                .collect(),
+            data: BASE64
+                .decode(&expected.instruction_data_base64)
+                .expect("instruction data"),
+        };
+        let mut extra_tx = solana_transaction::Transaction::new_with_payer(
+            &[
+                base_instruction,
+                solana_transaction::Instruction {
+                    program_id: solana_transaction::Address::new_unique(),
+                    accounts: Vec::new(),
+                    data: vec![1],
+                },
+            ],
+            Some(&proposer.pubkey()),
+        );
+        let extra_blockhash = solana_transaction::Hash::new_from_array([9; 32]);
+        extra_tx
+            .try_partial_sign(&[&proposer], extra_blockhash)
+            .expect("sign proposer");
+        extra_tx
+            .try_partial_sign(&[&refund_funder], extra_blockhash)
+            .expect("sign refund funder");
+        let extra = SignedTransaction::parse(
+            &BASE64.encode(
+                wincode::serialize(&solana_transaction::versioned::VersionedTransaction::from(
+                    extra_tx,
+                ))
+                .expect("serialize transaction"),
+            ),
+        )
+        .expect("signed transaction");
+        assert!(extra.verify_refund_instruction(&expected).is_err());
     }
 
     #[test]

@@ -9,6 +9,7 @@ members = [
     "crates/observability",
     "crates/policy",
     "crates/route-verifier",
+    "crates/refund-workflow",
     "crates/rpc-fixture",
     "crates/split-plan",
     "crates/storage",

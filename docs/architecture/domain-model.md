@@ -13,6 +13,7 @@
 | Asset | mint metadata, token program, decimals, stablecoin status, extension risk | arbitrary token acceptance |
 | Settlement Route Registry | tenant-scoped merchant/mint/vault/destination/token configuration, route versions, activation lifecycle | payer keys, tax interpretation, funds, on-chain ownership proof |
 | Route Verification | finalized account topology proofs, bounded provider agreement, activation evidence | route authoring, tax interpretation, funds, program governance |
+| Refund Movement | governed claim/execute intents, wallet artifacts, signer separation, nonce fencing, movement reconciliation | tax-rule authoring, wallet custody, finality without chain proof |
 | Reconciliation | raw events, balance snapshots, status projections, gap detection | on-chain authority |
 
 ## Core aggregates and accounts
@@ -68,6 +69,7 @@ crates/
     split_plan/
     vault/
     asset/
+    refund_movement/
   application/
     compile_settlement/
     submit_settlement/

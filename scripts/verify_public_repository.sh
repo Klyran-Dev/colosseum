@@ -62,6 +62,12 @@ for file in \
   docs/adr/0158-server-owned-refund-proof-orchestration.md \
   docs/adr/0168-dockerized-solana-conformance-runner.md \
   docs/adr/0169-sbf-stack-frame-safety.md \
+  docs/adr/0170-adjustment-submission-and-finalized-recording.md \
+  docs/adr/0171-adjustment-wallet-workspace.md \
+  docs/adr/0172-exact-chain-u64-wire-encoding.md \
+  docs/adr/0173-refund-claim-wallet-orchestration.md \
+  docs/adr/0174-finalized-refund-funding-topology-verification.md \
+  docs/adr/0175-durable-refund-claim-execute-intents.md \
   test-vectors/settlement-adjustment-evidence-v1.json \
   test-vectors/settlement-refund-claim-v1.json \
   docs/operations/slo-error-budget-policy.md \

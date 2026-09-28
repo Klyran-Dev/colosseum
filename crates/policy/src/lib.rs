@@ -30,7 +30,7 @@ pub fn merchant_identity_digest(merchant_uuid_bytes: &[u8; 16]) -> Digest32 {
 }
 
 pub mod serde_u64_string {
-    use serde::{Deserialize, Deserializer, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
 
     pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -43,8 +43,23 @@ pub mod serde_u64_string {
     where
         D: Deserializer<'de>,
     {
-        let value = String::deserialize(deserializer)?;
-        value.parse::<u64>().map_err(serde::de::Error::custom)
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum WireValue {
+            String(String),
+            Number(u64),
+        }
+
+        match WireValue::deserialize(deserializer)? {
+            WireValue::Number(value) => Ok(value),
+            WireValue::String(value) => {
+                let parsed = value.parse::<u64>().map_err(D::Error::custom)?;
+                if value != parsed.to_string() {
+                    return Err(D::Error::custom("u64 string is not canonical"));
+                }
+                Ok(parsed)
+            }
+        }
     }
 }
 
@@ -368,5 +383,31 @@ mod tests {
         assert_ne!(first, merchant_identity_digest(&[2; 16]));
         let plain_digest: Digest32 = Sha256::digest([1; 16]).into();
         assert_ne!(first, plain_digest);
+    }
+
+    #[test]
+    fn u64_wire_values_serialize_as_canonical_strings_and_read_legacy_numbers() {
+        #[derive(Debug, Deserialize, Serialize)]
+        struct WireValue {
+            #[serde(with = "serde_u64_string")]
+            value: u64,
+        }
+
+        let encoded = serde_json::to_string(&WireValue { value: u64::MAX }).unwrap();
+        assert_eq!(encoded, r#"{"value":"18446744073709551615"}"#);
+        assert_eq!(
+            serde_json::from_str::<WireValue>(r#"{"value":9007199254740992}"#)
+                .unwrap()
+                .value,
+            9_007_199_254_740_992
+        );
+        assert_eq!(
+            serde_json::from_str::<WireValue>(r#"{"value":"18446744073709551615"}"#)
+                .unwrap()
+                .value,
+            u64::MAX
+        );
+        assert!(serde_json::from_str::<WireValue>(r#"{"value":"01"}"#).is_err());
+        assert!(serde_json::from_str::<WireValue>(r#"{"value":"18446744073709551616"}"#).is_err());
     }
 }

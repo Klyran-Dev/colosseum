@@ -1,7 +1,8 @@
 use indexer::{
-    JsonRpcTransport, MAX_PROVIDER_ATTEMPTS, MAX_ROUTE_RPC_RESULT_BYTES, ReqwestJsonRpcTransport,
-    RouteVerificationError, SettlementRouteConfig, SettlementRouteVerification,
-    verify_settlement_route,
+    JsonRpcTransport, MAX_PROVIDER_ATTEMPTS, MAX_ROUTE_RPC_RESULT_BYTES,
+    RefundFundingTopologyConfig, RefundFundingTopologyVerification, RefundFundingVerificationError,
+    ReqwestJsonRpcTransport, RouteVerificationError, SettlementRouteConfig,
+    SettlementRouteVerification, verify_refund_funding_topology, verify_settlement_route,
 };
 use std::{env, sync::Arc, time::Duration};
 use storage::{
@@ -15,6 +16,7 @@ pub const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(2);
 pub const DEFAULT_BATCH_SIZE: usize = 8;
 pub const DEFAULT_POOL_SIZE: usize = 8;
 pub const MAX_BATCH_SIZE: usize = 64;
+const REFUND_FUNDING_VERIFIER_ACTOR: &str = "system:refund-funding-verifier";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeploymentEnvironment {
@@ -143,6 +145,8 @@ pub enum RouteVerifierError {
     Storage(#[from] StorageError),
     #[error("route verifier account proof failed: {0}")]
     Verification(#[from] RouteVerificationError),
+    #[error("refund funding verifier account proof failed: {0}")]
+    RefundFundingVerification(#[from] RefundFundingVerificationError),
     #[error("all configured RPC providers failed: {0}")]
     ProvidersExhausted(String),
 }
@@ -206,6 +210,70 @@ pub async fn verify_once(
     Ok(summary)
 }
 
+pub async fn verify_refund_funding_once(
+    store: &PgStore,
+    transports: &[Arc<dyn JsonRpcTransport>],
+    batch_size: usize,
+    rpc_timeout: Duration,
+) -> Result<VerificationSummary, RouteVerifierError> {
+    validate_verifier_bounds(transports, batch_size, rpc_timeout)?;
+    let candidates = store
+        .list_refund_funding_configurations_for_verification(batch_size)
+        .await?;
+    let mut summary = VerificationSummary {
+        examined: candidates.len(),
+        ..VerificationSummary::default()
+    };
+    for candidate in candidates {
+        if let Err(error) = store
+            .begin_refund_funding_verification(
+                candidate.merchant_id,
+                candidate.id,
+                REFUND_FUNDING_VERIFIER_ACTOR,
+            )
+            .await
+        {
+            summary.failed += 1;
+            tracing::warn!(configuration_id = %candidate.id, %error, "refund funding verification claim failed");
+            continue;
+        }
+        let topology = RefundFundingTopologyConfig {
+            configuration_id: candidate.id,
+            version: candidate.version,
+            configuration_digest: candidate.configuration_digest,
+            merchant_account: candidate.merchant_account,
+            mint: candidate.mint,
+            tax_vault: candidate.tax_vault,
+            vault_authority: candidate.vault_authority,
+            refund_funder: candidate.refund_funder,
+            net_source: candidate.net_source,
+            token_program: candidate.token_program,
+        };
+        match verify_refund_funding_with_failover(transports, &topology, rpc_timeout).await {
+            Ok(verification) => match store
+                .activate_refund_funding_configuration(
+                    candidate.merchant_id,
+                    candidate.id,
+                    &verification,
+                )
+                .await
+            {
+                Ok(true) => summary.activated += 1,
+                Ok(false) => summary.already_active += 1,
+                Err(error) => {
+                    summary.failed += 1;
+                    tracing::warn!(configuration_id = %candidate.id, %error, "refund funding verification evidence could not be activated");
+                }
+            },
+            Err(error) => {
+                summary.failed += 1;
+                tracing::warn!(configuration_id = %candidate.id, %error, "refund funding topology verification failed closed");
+            }
+        }
+    }
+    Ok(summary)
+}
+
 async fn verify_with_failover(
     transports: &[Arc<dyn JsonRpcTransport>],
     route: &SettlementRouteConfig,
@@ -246,6 +314,65 @@ fn select_agreed_verification(
         ));
     }
     Ok(first)
+}
+
+async fn verify_refund_funding_with_failover(
+    transports: &[Arc<dyn JsonRpcTransport>],
+    topology: &RefundFundingTopologyConfig,
+    rpc_timeout: Duration,
+) -> Result<RefundFundingTopologyVerification, RouteVerifierError> {
+    let mut successes = Vec::new();
+    let mut last_error = None;
+    for transport in transports {
+        match timeout(
+            rpc_timeout,
+            verify_refund_funding_topology(transport.as_ref(), topology),
+        )
+        .await
+        {
+            Ok(Ok(verification)) => successes.push(verification),
+            Ok(Err(error)) => last_error = Some(error.to_string()),
+            Err(_) => last_error = Some("RPC verification deadline exceeded".to_string()),
+        }
+    }
+    let Some(first) = successes.first().cloned() else {
+        return Err(RouteVerifierError::ProvidersExhausted(
+            last_error.unwrap_or_else(|| "no provider returned a result".to_string()),
+        ));
+    };
+    if successes
+        .iter()
+        .any(|candidate| candidate.verification_digest != first.verification_digest)
+    {
+        return Err(RouteVerifierError::ProvidersExhausted(
+            "configured providers returned conflicting finalized refund funding evidence"
+                .to_string(),
+        ));
+    }
+    Ok(first)
+}
+
+fn validate_verifier_bounds(
+    transports: &[Arc<dyn JsonRpcTransport>],
+    batch_size: usize,
+    rpc_timeout: Duration,
+) -> Result<(), RouteVerifierError> {
+    if transports.is_empty() || transports.len() > MAX_PROVIDER_ATTEMPTS {
+        return Err(RouteVerifierError::Configuration(
+            "verifier provider pool is outside the bounded range".to_string(),
+        ));
+    }
+    if batch_size == 0 || batch_size > MAX_BATCH_SIZE {
+        return Err(RouteVerifierError::Configuration(
+            "verifier batch size is outside the bounded range".to_string(),
+        ));
+    }
+    if !(Duration::from_millis(50)..=Duration::from_secs(10)).contains(&rpc_timeout) {
+        return Err(RouteVerifierError::Configuration(
+            "verifier RPC timeout is outside the bounded range".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn route_config(candidate: &SettlementRouteVerificationCandidate) -> SettlementRouteConfig {

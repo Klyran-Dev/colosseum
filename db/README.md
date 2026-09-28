@@ -241,6 +241,40 @@ record-adjustment evidence intents. Each intent snapshots the derived
 finalized registry address, slot, commitment, and account digest. The intent is
 an unsigned compiler artifact; it is not a chain submission or funds ledger.
 
+Migration `0037` adds the finalized typed `SettlementAdjustmentRecorded`
+projection while retaining raw Anchor bytes as authoritative evidence.
+Migration `0038` adds the separate UUIDv7 wallet-submission/reconciliation
+lifecycle for those immutable evidence intents. Chain-intent status is
+transport state only; it cannot replace finalized event matching.
+Migration `0039` expands the typed projection with the on-chain adjustment
+evidence digest; legacy rows remain incomplete until raw-event rebuild and are
+rejected by reconciliation rather than silently upgraded.
+
+Migration `0040` adds the tenant-scoped, versioned refund funding
+configuration boundary. It records the explicit tax-vault, vault-authority,
+merchant-funder, net-source, mint, and token-program topology with UUIDv7
+identity, idempotent creation, four-eyes approval, append-only lifecycle
+events, and immutable account fields. A configuration is never active without
+separate finalized Solana topology verification; this table cannot authorize
+token movement by itself.
+
+Migration `0041` adds immutable finalized verification slot, commitment,
+bounded evidence, verifier version, and verification timestamp fields. Only
+the server-owned topology verifier may populate them while moving a reviewed
+configuration through `pending_verification` to `active`.
+
+Migration `0042` adds the explicit refund-funder subject and the durable Refund
+Movement bounded context: separate claim and execute intents, per-adjustment
+nonce allocation, immutable server-owned wallet artifacts, bounded lifecycle
+state, append-only lifecycle events, and tenant-scoped foreign keys. These
+rows are transport/reconciliation state only; a refund is not successful until
+finalized transaction-bound event and balance evidence is verified.
+
+Migration `0043` hardens the database guards so all claim and execute
+financial, signer, topology, receipt, nonce, and unsigned-artifact fields are
+immutable after creation. It also prevents reviewed funding configurations
+from advancing without the explicit refund-funder subject.
+
 Migration requirements:
 
 - run migrations through a reviewed migration runner, never by editing production tables manually;

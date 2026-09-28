@@ -43,13 +43,95 @@ are complete.
 
 ## ADR-0170 — wallet-bound adjustment submission and finalized recording
 
-- [ ] Add a separate mutable chain-intent lifecycle for wallet submission;
+- [x] Add a separate mutable chain-intent lifecycle for wallet submission;
   keep the compiler/evidence intent immutable.
-- [ ] Verify canonical signed `record_adjustment` bytes, exact account metas,
+- [x] Verify canonical signed `record_adjustment` bytes, exact account metas,
   authority, and server-bound instruction digest before submission.
-- [ ] Project `SettlementAdjustmentRecorded` from finalized raw event evidence
+- [x] Project `SettlementAdjustmentRecorded` from finalized raw event evidence
   and advance only after an exact intent/event match. Submission acknowledgement
   must never imply recording, payment, filing, or legal compliance.
+
+## ADR-0171 — wallet-bound adjustment browser workflow
+
+- [x] Drive server-owned adjustment compilation from the operator workspace
+  without constructing financial values in the browser.
+- [x] Reuse the shared injected-wallet boundary and require the connected
+  approver key to match the compiled signer account before the wallet prompt.
+- [x] Submit unchanged signed bytes through the durable chain intent and make
+  timeout, wallet rejection, unknown, provider disagreement, and indexer-lag
+  states explicit and accessible.
+- [ ] Allow `finalized` to render only after the API confirms the exact
+  finalized typed event; never imply payment, filing, or legal compliance.
+
+## ADR-0172 — exact decimal wire encoding for Solana `u64` values
+
+- [x] Serialize adjustment nonces, registry slots, and refund claim nonces as
+  canonical decimal strings at API/browser boundaries.
+- [x] Reject numeric, non-canonical, and out-of-range counters in the browser;
+  preserve Rust `u64` semantics and legacy vector deserialization.
+- [x] Add cross-language serialization tests and update the API contract before
+  enabling high-range wallet-bound protocol evidence.
+
+## ADR-0173 — server-owned refund-claim wallet orchestration
+
+Design the refund movement bounded context before implementation. Add an
+explicit merchant/mint funding configuration, durable claim and execute
+intents, server-owned finalized topology verification, shared non-custodial
+wallet orchestration, and transaction-bound proof gating. The browser must not
+provide financial values or token-account topology, and no state may say paid
+from a wallet signature, provider acknowledgement, or indexed event alone.
+- [x] Add the tenant-scoped versioned funding-configuration schema, UUIDv7
+  identity, idempotent create/read operations, four-eyes approval, bounded
+  suspension/retirement transitions, append-only events, and API scope/role
+  boundaries. The configuration is evidence only and cannot become active
+  without finalized Solana verification.
+- [ ] Add durable claim/execute intents, exact signed-message verification,
+  claim-account topology verification, shared wallet orchestration, and proof
+  gated lifecycle transitions.
+- [ ] Complete migration/API/domain/UI failure states and TDD evidence before
+  Linux validator conformance and production enablement are considered.
+
+## ADR-0174 — finalized refund-funding topology verification
+
+Add the server-owned finalized account-set verifier required before an
+approved funding configuration can become active. Derive the vault-authority
+PDA, verify the merchant, mint, tax-vault, net-source, and refund-funder
+accounts at one finalized slot, compare complete provider attempts, and bind
+the resulting digest to immutable activation evidence. The first activation
+contract is legacy SPL Token only; Token-2022 requires a separate compatibility
+decision and validator evidence.
+- [ ] Add the bounded provider/parser port and failing-first topology vectors.
+- [ ] Add immutable verification evidence and the approval-to-active state
+  machine; browser status/evidence must never activate a configuration.
+- [ ] Add API/operator activation flow, metrics, UI failure states, and
+  provider-disagreement/restart tests.
+- [ ] Add Linux validator topology-rotation and claim-admission conformance.
+
+## ADR-0175 — durable refund claim and execute intents
+
+Create the Refund Movement bounded context with separate server-owned claim and
+execute intents. Load finalized receipt evidence and active verified funding
+configuration server-side, bind an explicit refund-funder subject to the
+configured key, allocate claim nonces transactionally, persist unsigned wallet
+artifacts before signing, and verify exact signed transaction bytes before any
+RPC submission. Only finalized transaction-bound event and balance proof may
+advance a movement to a successful state.
+
+- [x] Record the authority, schema, state-machine, alternative-analysis, and
+  failure-policy decision in ADR-0175.
+- [x] Add the pure `refund-workflow` domain boundary for server-owned payer
+  destination derivation, claim/execute compilation, conservation checks, and
+  tenant/configuration/receipt-bound artifact digests.
+- [ ] Add the `refund_claim_intents`, `refund_execute_intents`, nonce allocator,
+  append-only lifecycle evidence, and outbox schema.
+- [ ] Add server-owned artifact builders, exact signed-message verification,
+  bounded submission/reconciliation, and API contracts.
+- [ ] Add wallet workspace states, accessibility journeys, validator
+  conformance, load evidence, and production enablement gates.
+
+Migration `0043` hardens the intent mutation guards and requires a funder
+subject for reviewed funding configurations; it is a prerequisite for the
+storage implementation rather than evidence that movement is enabled.
 
 ## ADR-0167 — finalized server-owned adjustment-registry verification
 

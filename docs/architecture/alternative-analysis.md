@@ -1008,6 +1008,24 @@ avoid introducing a second financial implementation.
 | Trust client digest/signature or RPC acknowledgement | Lowest implementation cost | Does not prove message binding, finality, or emitted adjustment evidence | Rejected |
 | **Separate wallet-bound chain-intent lifecycle plus typed finalized event projection** | Immutable audit boundary, bounded retries, exact message proof, and independent finalized evidence | Adds migration, decoder, and reconciliation work | **Selected in ADR-0170** |
 
+### Adjustment wallet workspace
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Duplicate wallet/signing code in the adjustment panel | Fast local implementation | Splits security review, serialization, timeout, and rejection behavior | Rejected |
+| Browser constructs or mutates `record_adjustment` bytes | Flexible UI | Creates an account/data substitution authority and numeric drift surface | Rejected |
+| Persist signed bytes in browser storage | Convenient retry after reload | Increases sensitive material exposure and can cross operator/session boundaries | Rejected |
+| **Reuse the shared injected-wallet boundary with server-owned compile, exact submission, and explicit reconciliation** | One wallet trust boundary, immutable server authority, bounded UX states | Requires a typed adjustment artifact parser and wallet mismatch checks | **Selected in ADR-0171** |
+
+### Solana `u64` browser wire representation
+
+| Alternative | Decision | Trade-off |
+| --- | --- | --- |
+| JSON numbers with browser safe-integer rejection | Rejected | Valid Solana counters above `2^53 - 1` cannot be represented. |
+| Hex/base64 protocol counters | Rejected | Exact but inconsistent with canonical decimal financial values and less interoperable. |
+| JavaScript `BigInt` as the universal client representation | Rejected | Does not solve JSON transport and complicates wallet/UI boundaries. |
+| **Canonical decimal strings at API/browser boundaries; Rust `u64` internally** | **Selected** | Exact, deterministic, cross-language, and compatible with existing financial string semantics. |
+
 ### Governed adjustment refund movement
 
 | Alternative | Strengths | Risks / costs | Decision |
@@ -1017,6 +1035,45 @@ avoid introducing a second financial implementation.
 | Transfer from the original payer source | Appears to reverse the checkout | Original token account is not stored in the immutable receipt and payer is not necessarily the funder | Rejected |
 | Browser/API direct transfer | Fast to expose | Bypasses on-chain account binding, atomicity, replay fencing, and non-custodial authority | Rejected |
 | **Immutable refund claim with tax-vault and merchant-funder sources, one payer-bound destination, and two atomic checked CPIs** | Exact authority topology, conservation, replay protection, and explicit first-scope semantics | Adds claim lifecycle and requires separate contracts for other adjustment kinds | **Selected in ADR-0154** |
+
+### Refund-claim wallet orchestration
+
+**Criteria:** preserve non-custodial wallet authority, prevent account
+substitution, retain four-eyes governance, make retries idempotent, and prove
+finalized token movement independently from event indexing.
+
+| Option | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Browser-supplied refund topology | Small API surface | Client can redirect source or beneficiary; cannot establish authority | Rejected |
+| Immediate claim-and-execute flow | Fewer screens and tables | Removes approval separation and makes ambiguous submission unsafe | Rejected |
+| Generic settlement-intent reuse | Existing submission machinery | Does not bind claim PDA, two refund signers, or movement proof | Rejected |
+| **Separate server-owned claim and execute intents with shared wallet adapter, finalized typed evidence, and transaction-bound proof** | Strong authority separation, replay fencing, and explicit recovery | More durable state and operator workflow | **Selected in ADR-0173** |
+
+### Refund funding configuration
+
+**Criteria:** make the source and authority topology explicit, preserve tenant
+isolation and four-eyes governance, support versioned rotation, and prevent an
+off-chain row from being mistaken for chain ownership evidence.
+
+| Option | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Caller-supplied funding accounts per refund | No setup workflow | Account substitution and beneficiary ambiguity; no durable rotation evidence | Rejected |
+| Reuse the generic settlement route | Existing schema | A refund funder and payer destination have different authority semantics; conflates checkout and refund funding | Rejected |
+| Mutable one-row merchant funding settings | Simple reads | Breaks replay of an existing claim when accounts rotate | Rejected |
+| **Versioned tenant/mint funding configuration with append-only governance and separate finalized topology verification** | Stable claim binding, four-eyes control, auditable rotation, and explicit chain authority boundary | Adds a control-plane lifecycle and verification work | **Selected in ADR-0173** |
+
+### Refund-funding topology activation
+
+**Criteria:** prove the complete authority topology at one finalized slot,
+prevent browser- or database-controlled activation, preserve bounded provider
+failover, and make verification evidence replayable.
+
+| Option | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Trust approved database account strings | No activation RPC | Does not prove chain ownership, token layout, PDA, or finality | Rejected |
+| Reuse generic settlement-route verification unchanged | Existing implementation | Omits refund-funder wallet/source authority semantics | Rejected |
+| Independent account reads | Small individual responses | Can mix slots and create a topology that never existed atomically | Rejected |
+| **Complete finalized account-set read with provider agreement and immutable digest** | Exact authority checks, one-slot evidence, bounded failover, and replayability | Adds one provisioning operation and starts legacy-SPL-only | **Selected in ADR-0174** |
 
 ### Finalized refund execution evidence
 
@@ -1052,3 +1109,12 @@ avoid introducing a second financial implementation.
 | Client/operator supplies complete account topology | Smallest integration surface | Allows account substitution and cannot establish server authority | Rejected |
 | Mutable database topology projection | Fast reads | Adds a second mutable authority and synchronization lifecycle | Rejected |
 | **Resolve topology from the finalized claim inside a complete provider attempt** | Server-owned bindings, bounded failover, replayable evidence | Adds one bounded claim read | **Selected in ADR-0158** |
+
+### Durable refund claim and execute intents
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Reuse the generic adjustment chain intent | Smallest schema | Collapses claim creation and execution authority and weakens proof semantics | Rejected |
+| Let the browser provide refund accounts, amounts, and nonce | Minimal server orchestration | Makes financial topology and replay protection caller-controlled | Rejected |
+| Server custody and immediate submission | Simple retry behavior | Expands custody and removes explicit merchant wallet consent | Rejected |
+| **Separate server-owned claim/execute intents with exact signed-message verification** | Four-eyes authority, durable idempotency, replayable evidence, and non-custodial wallet flow | Additional lifecycle, evidence, and reconciliation implementation | **Selected in ADR-0175** |

@@ -33,8 +33,10 @@ use settlement_adjustments::{
 };
 use settlement_coordinator::{SettlementStatus, can_transition};
 use sha2::{Digest, Sha256};
+use solana_pubkey::Pubkey;
 use std::{
     collections::{HashMap, VecDeque},
+    str::FromStr,
     sync::{
         Arc, Mutex, MutexGuard,
         atomic::{AtomicU64, Ordering},
@@ -44,6 +46,9 @@ use std::{
 use tax_engine::{CalculationResult, Digest32, RuleSet, RuleSetDocument, TaxError, TaxFacts};
 use thiserror::Error;
 use uuid::Uuid;
+
+const SPL_TOKEN_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const TOKEN_2022_PROGRAM_ID: &str = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 
 pub const CALCULATION_STATUS: &str = "calculated_unattested";
 pub const DEFAULT_POOL_SIZE: usize = 16;
@@ -55,6 +60,8 @@ pub const MAX_OUTBOX_BATCH_SIZE: usize = 100;
 pub const DEFAULT_OUTBOX_LEASE: Duration = Duration::from_secs(30);
 pub const MAX_OUTBOX_ATTEMPTS: i32 = 10;
 pub const OUTBOX_PAYLOAD_SCHEMA_VERSION: u32 = 1;
+pub const REFUND_FUNDING_VERIFIER_VERSION: &str = "refund-funding-topology-v1";
+const REFUND_FUNDING_VERIFIER_ACTOR: &str = "system:refund-funding-verifier";
 pub const DEFAULT_REPLAY_BATCH_SIZE: usize = 16;
 pub const MAX_REPLAY_BATCH_SIZE: usize = 64;
 pub const DEFAULT_REPLAY_LEASE: Duration = Duration::from_secs(30);
@@ -155,6 +162,20 @@ pub enum StorageError {
     SettlementRouteVerificationInvalid(String),
     #[error("settlement route cannot be activated in its current lifecycle state")]
     SettlementRouteActivationConflict,
+    #[error("refund funding configuration was not found")]
+    RefundFundingConfigurationNotFound,
+    #[error("refund funding configuration idempotency key was reused for different input")]
+    RefundFundingConfigurationIdempotencyConflict,
+    #[error("refund funding configuration is invalid: {0}")]
+    InvalidRefundFundingConfiguration(String),
+    #[error("refund funding configuration transition is invalid")]
+    InvalidRefundFundingConfigurationTransition,
+    #[error("refund funding configuration governance conflict")]
+    RefundFundingConfigurationGovernanceConflict,
+    #[error("refund funding verification evidence is invalid: {0}")]
+    RefundFundingConfigurationVerificationInvalid(String),
+    #[error("refund funding configuration cannot be activated in its current lifecycle state")]
+    RefundFundingConfigurationActivationConflict,
     #[error("settlement split plan was not found for this merchant")]
     SettlementSplitPlanNotFound,
     #[error("settlement split plan is not active or is outside its effective window")]
@@ -209,6 +230,12 @@ pub enum StorageError {
     AdjustmentEvidenceIntentConflict,
     #[error("adjustment evidence intent is invalid: {0}")]
     InvalidAdjustmentEvidenceIntent(String),
+    #[error("adjustment chain intent was not found")]
+    AdjustmentChainIntentNotFound,
+    #[error("adjustment chain intent conflicts with immutable evidence")]
+    AdjustmentChainIntentConflict,
+    #[error("adjustment chain intent lifecycle transition is not allowed")]
+    InvalidAdjustmentChainTransition,
     #[error("settlement evidence exceeds the bounded size")]
     SettlementEvidenceTooLarge,
     #[error("invalid tax-rule governance transition")]
@@ -1043,6 +1070,93 @@ pub struct SettlementRoute {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RefundFundingConfiguration {
+    pub id: Uuid,
+    pub merchant_id: Uuid,
+    pub idempotency_key: String,
+    pub request_digest: Digest32,
+    pub configuration_digest: Digest32,
+    pub configuration_key: String,
+    pub version: i32,
+    pub status: String,
+    pub merchant_account: String,
+    pub mint: String,
+    pub tax_vault: String,
+    pub vault_authority: String,
+    pub refund_funder: String,
+    pub refund_funder_subject: Option<String>,
+    pub net_source: String,
+    pub token_program: String,
+    pub proposer_subject: String,
+    pub approver_subject: Option<String>,
+    pub verification_digest: Option<Digest32>,
+    pub verification_slot: Option<String>,
+    pub verification_commitment: Option<String>,
+    pub verification_evidence: Option<Value>,
+    pub verifier_version: Option<String>,
+    pub verified_at: Option<String>,
+    pub effective_from: String,
+    pub effective_until: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CreateRefundFundingConfigurationCommand {
+    pub merchant_id: Uuid,
+    pub actor_subject: String,
+    pub idempotency_key: String,
+    pub configuration_key: String,
+    pub version: i32,
+    pub merchant_account: String,
+    pub mint: String,
+    pub tax_vault: String,
+    pub vault_authority: String,
+    pub refund_funder: String,
+    pub refund_funder_subject: String,
+    pub net_source: String,
+    pub token_program: String,
+    pub effective_from_unix: i64,
+    pub effective_until_unix: Option<i64>,
+}
+
+#[derive(Clone, Debug)]
+pub enum RefundFundingConfigurationOutcome {
+    Created(RefundFundingConfiguration),
+    Replay(RefundFundingConfiguration),
+}
+
+#[derive(Clone, Debug)]
+pub struct RefundFundingConfigurationTransition {
+    pub merchant_id: Uuid,
+    pub configuration_id: Uuid,
+    pub actor_subject: String,
+    pub to_status: String,
+    pub evidence: Value,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RefundFundingConfigurationTransitionResult {
+    pub configuration_id: Uuid,
+    pub from_status: String,
+    pub to_status: String,
+    pub approver_subject: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RefundFundingVerificationCandidate {
+    pub id: Uuid,
+    pub merchant_id: Uuid,
+    pub version: i32,
+    pub configuration_digest: Digest32,
+    pub merchant_account: String,
+    pub mint: String,
+    pub tax_vault: String,
+    pub vault_authority: String,
+    pub refund_funder: String,
+    pub net_source: String,
+    pub token_program: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SettlementSplitPlan {
     pub id: Uuid,
     pub plan_key: String,
@@ -1350,6 +1464,42 @@ pub struct CreateSettlementAdjustmentEvidenceIntent {
     pub registry_commitment: String,
     pub registry_account_digest: [u8; 32],
     pub request_digest: [u8; 32],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SettlementAdjustmentChainIntent {
+    pub id: Uuid,
+    pub evidence_intent_id: Uuid,
+    pub adjustment_id: Uuid,
+    pub merchant_id: Uuid,
+    pub instruction_digest: [u8; 32],
+    pub status: String,
+    pub signed_transaction_digest: Option<[u8; 32]>,
+    pub signature: Option<String>,
+    pub slot: Option<u64>,
+    pub commitment: Option<String>,
+    pub last_error_code: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CreateSettlementAdjustmentChainIntent {
+    pub evidence_intent_id: Uuid,
+    pub adjustment_id: Uuid,
+    pub merchant_id: Uuid,
+    pub instruction_digest: [u8; 32],
+}
+
+#[derive(Clone, Debug)]
+pub struct SettlementAdjustmentChainTransition {
+    pub intent_id: Uuid,
+    pub merchant_id: Uuid,
+    pub expected_status: String,
+    pub next_status: String,
+    pub signed_transaction_digest: Option<[u8; 32]>,
+    pub signature: Option<String>,
+    pub slot: Option<u64>,
+    pub last_error_code: Option<String>,
+    pub evidence: Value,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4249,6 +4399,314 @@ impl PgStore {
         parse_settlement_adjustment_evidence_intent_row(row)
     }
 
+    pub async fn reserve_settlement_adjustment_chain_intent(
+        &self,
+        command: CreateSettlementAdjustmentChainIntent,
+    ) -> Result<SettlementAdjustmentChainIntent, StorageError> {
+        if command.evidence_intent_id.get_version_num() != 7
+            || command.adjustment_id.get_version_num() != 7
+            || command.merchant_id.get_version_num() != 7
+            || command.instruction_digest == [0; 32]
+        {
+            return Err(StorageError::AdjustmentChainIntentConflict);
+        }
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let row = transaction
+            .query_opt(
+                "INSERT INTO settlement_adjustment_chain_intents
+                    (evidence_intent_id, adjustment_id, merchant_id, instruction_digest)
+                 SELECT $1, $2, $3, $4
+                 WHERE EXISTS (
+                    SELECT 1 FROM settlement_adjustment_evidence_intents evidence
+                    WHERE evidence.id = $1 AND evidence.merchant_id = $3
+                      AND evidence.adjustment_id = $2
+                      AND evidence.instruction_digest = $4
+                      AND evidence.status = 'prepared_unsubmitted'
+                 )
+                 ON CONFLICT (evidence_intent_id, merchant_id) DO NOTHING
+                 RETURNING id, evidence_intent_id, adjustment_id, merchant_id,
+                           instruction_digest, status, signed_transaction_digest,
+                           signature, slot::text, commitment, last_error_code",
+                &[
+                    &command.evidence_intent_id,
+                    &command.adjustment_id,
+                    &command.merchant_id,
+                    &&command.instruction_digest[..],
+                ],
+            )
+            .await?;
+        let row = match row {
+            Some(row) => row,
+            None => transaction
+                .query_opt(
+                    "SELECT id, evidence_intent_id, adjustment_id, merchant_id,
+                            instruction_digest, status, signed_transaction_digest,
+                            signature, slot::text, commitment, last_error_code
+                     FROM settlement_adjustment_chain_intents
+                     WHERE evidence_intent_id = $1 AND merchant_id = $2
+                     FOR UPDATE",
+                    &[&command.evidence_intent_id, &command.merchant_id],
+                )
+                .await?
+                .ok_or(StorageError::AdjustmentChainIntentConflict)?,
+        };
+        let intent = parse_settlement_adjustment_chain_intent_row(row)?;
+        if intent.adjustment_id != command.adjustment_id
+            || intent.merchant_id != command.merchant_id
+            || intent.instruction_digest != command.instruction_digest
+        {
+            return Err(StorageError::AdjustmentChainIntentConflict);
+        }
+        transaction.commit().await?;
+        Ok(intent)
+    }
+
+    pub async fn transition_settlement_adjustment_chain_intent(
+        &self,
+        command: SettlementAdjustmentChainTransition,
+    ) -> Result<bool, StorageError> {
+        let expected = parse_settlement_status(&command.expected_status)?;
+        let next = parse_settlement_status(&command.next_status)?;
+        if !can_transition(expected, next) || command.evidence.to_string().len() > 64 * 1024 {
+            return Err(StorageError::InvalidAdjustmentChainTransition);
+        }
+        if command
+            .signature
+            .as_deref()
+            .is_some_and(|value| value.is_empty() || value.len() > 128)
+            || command
+                .last_error_code
+                .as_deref()
+                .is_some_and(|value| value.trim().is_empty() || value.len() > 128)
+        {
+            return Err(StorageError::InvalidAdjustmentChainTransition);
+        }
+        if matches!(next, SettlementStatus::Unknown) && command.last_error_code.is_none() {
+            return Err(StorageError::InvalidAdjustmentChainTransition);
+        }
+        let commitment = match next {
+            SettlementStatus::Processed => Some("processed"),
+            SettlementStatus::Confirmed => Some("confirmed"),
+            SettlementStatus::Finalized => Some("finalized"),
+            _ => None,
+        };
+        let slot_text = command.slot.map(|value| value.to_string());
+        let signed_digest = command
+            .signed_transaction_digest
+            .map(|value| value.to_vec());
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::ReadCommitted)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let updated = transaction
+            .execute(
+                "UPDATE settlement_adjustment_chain_intents
+                 SET status = $3, signed_transaction_digest = COALESCE($4, signed_transaction_digest),
+                     signature = COALESCE($5, signature), slot = COALESCE($6::text::numeric, slot),
+                     commitment = COALESCE($7, commitment), last_error_code = $8
+                 WHERE id = $1 AND merchant_id = $2 AND status = $9",
+                &[
+                    &command.intent_id,
+                    &command.merchant_id,
+                    &command.next_status,
+                    &signed_digest,
+                    &command.signature,
+                    &slot_text,
+                    &commitment,
+                    &command.last_error_code,
+                    &command.expected_status,
+                ],
+            )
+            .await?;
+        if updated != 1 {
+            transaction.rollback().await?;
+            return Ok(false);
+        }
+        transaction
+            .execute(
+                "INSERT INTO settlement_adjustment_chain_intent_events
+                    (intent_id, merchant_id, from_status, to_status, signature, slot, evidence)
+                 VALUES ($1, $2, $3, $4, $5, $6::text::numeric, $7)",
+                &[
+                    &command.intent_id,
+                    &command.merchant_id,
+                    &command.expected_status,
+                    &command.next_status,
+                    &command.signature,
+                    &slot_text,
+                    &command.evidence,
+                ],
+            )
+            .await?;
+        transaction.commit().await?;
+        Ok(true)
+    }
+
+    pub async fn load_settlement_adjustment_chain_intent(
+        &self,
+        intent_id: Uuid,
+        merchant_id: Uuid,
+    ) -> Result<Option<SettlementAdjustmentChainIntent>, StorageError> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let row = client
+            .query_opt(
+                "SELECT id, evidence_intent_id, adjustment_id, merchant_id,
+                        instruction_digest, status, signed_transaction_digest,
+                        signature, slot::text, commitment, last_error_code
+                 FROM settlement_adjustment_chain_intents
+                 WHERE id = $1 AND merchant_id = $2",
+                &[&intent_id, &merchant_id],
+            )
+            .await?;
+        row.map(parse_settlement_adjustment_chain_intent_row)
+            .transpose()
+    }
+
+    pub async fn load_settlement_adjustment_evidence_intent(
+        &self,
+        intent_id: Uuid,
+        merchant_id: Uuid,
+    ) -> Result<Option<SettlementAdjustmentEvidenceIntent>, StorageError> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let row = client
+            .query_opt(
+                "SELECT id, adjustment_id, merchant_id, nonce::text,
+                        proposer, approver, original_receipt, merchant, mint,
+                        token_program, registry_address, registry_slot::text,
+                        registry_commitment, registry_account_digest,
+                        request_digest, instruction_digest, status
+                 FROM settlement_adjustment_evidence_intents
+                 WHERE id = $1 AND merchant_id = $2",
+                &[&intent_id, &merchant_id],
+            )
+            .await?;
+        row.map(parse_settlement_adjustment_evidence_intent_row)
+            .transpose()
+    }
+
+    pub async fn load_finalized_settlement_adjustment_record(
+        &self,
+        intent_id: Uuid,
+        merchant_id: Uuid,
+        expected: &IndexedSettlementAdjustment,
+    ) -> Result<Option<IndexedSettlementAdjustment>, StorageError> {
+        indexer::merge_settlement_adjustment(None, expected.clone())?;
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let rows = client
+            .query(
+                "SELECT indexed.signature, indexed.slot::text, indexed.event_index::text,
+                        indexed.adjustment, indexed.original_receipt, indexed.merchant,
+                        indexed.mint, indexed.nonce::text, indexed.kind::text,
+                        indexed.gross_sign::text, indexed.gross_magnitude::text,
+                        indexed.tax_sign::text, indexed.tax_magnitude::text,
+                        indexed.net_sign::text, indexed.net_magnitude::text,
+                        indexed.adjustment_digest, indexed.adjustment_evidence_digest,
+                        indexed.evidence_digest, indexed.approver
+                 FROM settlement_adjustment_chain_intents chain
+                 JOIN indexed_settlement_adjustments indexed
+                   ON indexed.signature = chain.signature
+                 JOIN raw_chain_evidence raw
+                   ON raw.stream_key = indexed.stream_key
+                  AND raw.signature = indexed.signature
+                  AND raw.event_index = indexed.event_index
+                 WHERE chain.id = $1 AND chain.merchant_id = $2
+                   AND chain.signature = $3
+                   AND indexed.slot = $4::text::numeric
+                   AND indexed.adjustment = $5
+                   AND indexed.original_receipt = $6
+                   AND indexed.merchant = $7
+                   AND indexed.mint = $8
+                   AND indexed.nonce = $9::text::numeric
+                   AND indexed.kind = $10::text::smallint
+                   AND indexed.gross_sign = $11::text::smallint
+                   AND indexed.gross_magnitude = $12::text::numeric
+                   AND indexed.tax_sign = $13::text::smallint
+                   AND indexed.tax_magnitude = $14::text::numeric
+                   AND indexed.net_sign = $15::text::smallint
+                   AND indexed.net_magnitude = $16::text::numeric
+                   AND indexed.adjustment_digest = $17
+                   AND indexed.adjustment_evidence_digest = $18
+                   AND indexed.approver = $19
+                   AND raw.event_discriminator = $20
+                 LIMIT 2",
+                &[
+                    &intent_id,
+                    &merchant_id,
+                    &expected.signature,
+                    &expected.slot.to_string(),
+                    &&expected.adjustment[..],
+                    &&expected.original_receipt[..],
+                    &&expected.merchant[..],
+                    &&expected.mint[..],
+                    &expected.nonce.to_string(),
+                    &expected.kind.to_string(),
+                    &expected.gross_sign.to_string(),
+                    &expected.gross_magnitude.to_string(),
+                    &expected.tax_sign.to_string(),
+                    &expected.tax_magnitude.to_string(),
+                    &expected.net_sign.to_string(),
+                    &expected.net_magnitude.to_string(),
+                    &&expected.adjustment_digest[..],
+                    &&expected.adjustment_evidence_digest[..],
+                    &&expected.approver[..],
+                    &&indexer::SETTLEMENT_ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR[..],
+                ],
+            )
+            .await?;
+        match rows.len() {
+            0 => Ok(None),
+            1 => rows
+                .into_iter()
+                .next()
+                .map(parse_indexed_settlement_adjustment_row)
+                .transpose(),
+            _ => Err(StorageError::InvalidIndexerState(
+                "multiple conflicting finalized adjustment projections matched".into(),
+            )),
+        }
+    }
+
     /// Applies one authenticated tax-rule governance transition and records
     /// the transition evidence in the same database transaction. The
     /// lifecycle is intentionally narrow: subjects are assigned at their
@@ -6244,6 +6702,609 @@ impl PgStore {
         Ok(())
     }
 
+    /// Creates one immutable, tenant-scoped refund funding topology. The row
+    /// is configuration evidence only: it is not active until a separate
+    /// finalized Solana topology verifier records verification evidence.
+    pub async fn create_refund_funding_configuration(
+        &self,
+        command: CreateRefundFundingConfigurationCommand,
+    ) -> Result<RefundFundingConfigurationOutcome, StorageError> {
+        validate_refund_funding_configuration_command(&command)?;
+        let configuration_digest = refund_funding_configuration_digest(&command);
+        let request_digest =
+            refund_funding_configuration_request_digest(&command, configuration_digest);
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+
+        let id = Uuid::now_v7();
+        let from_unix = command.effective_from_unix.to_string();
+        let until_unix = command.effective_until_unix.map(|value| value.to_string());
+        let inserted = transaction
+            .query_opt(
+                "INSERT INTO refund_funding_configurations
+                    (id, merchant_id, idempotency_key, request_digest,
+                     configuration_digest, configuration_key, version, status,
+                     merchant_account, mint, tax_vault, vault_authority,
+                     refund_funder, refund_funder_subject, net_source, token_program, proposer_subject,
+                     effective_from, effective_until)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, 'proposed', $8, $9,
+                         $10, $11, $12, $13, $14, $15, $16,
+                         to_timestamp($17::double precision),
+                         CASE WHEN $18::text IS NULL THEN NULL
+                              ELSE to_timestamp($18::double precision) END)
+                 ON CONFLICT (merchant_id, idempotency_key) DO NOTHING
+                 RETURNING id, merchant_id, idempotency_key, request_digest,
+                           configuration_digest, configuration_key, version,
+                           status, merchant_account, mint, tax_vault,
+                           vault_authority, refund_funder, refund_funder_subject, net_source,
+                           token_program, proposer_subject, approver_subject,
+                           verification_digest, verification_slot::text,
+                           verification_commitment, verification_evidence,
+                           verifier_version,
+                           to_char(verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),
+                           to_char(effective_from AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),
+                           to_char(effective_until AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')",
+                &[
+                    &id,
+                    &command.merchant_id,
+                    &command.idempotency_key,
+                    &&request_digest[..],
+                    &&configuration_digest[..],
+                    &command.configuration_key,
+                    &command.version,
+                    &command.merchant_account,
+                    &command.mint,
+                    &command.tax_vault,
+                    &command.vault_authority,
+                    &command.refund_funder,
+                    &command.refund_funder_subject,
+                    &command.net_source,
+                    &command.token_program,
+                    &command.actor_subject,
+                    &from_unix,
+                    &until_unix,
+                ],
+            )
+            .await?;
+        if let Some(row) = inserted {
+            let configuration = parse_refund_funding_configuration_row(row)?;
+            transaction
+                .execute(
+                    "INSERT INTO refund_funding_configuration_events
+                        (configuration_id, merchant_id, actor_subject, action,
+                         from_status, to_status, evidence)
+                     VALUES ($1, $2, $3, 'propose', 'none', 'proposed', $4)",
+                    &[
+                        &configuration.id,
+                        &command.merchant_id,
+                        &command.actor_subject,
+                        &serde_json::json!({
+                            "request_digest": request_digest,
+                            "configuration_digest": configuration_digest,
+                        }),
+                    ],
+                )
+                .await?;
+            transaction
+                .execute(
+                    "INSERT INTO outbox_events
+                        (aggregate_type, aggregate_id, event_type, payload)
+                     VALUES ($1, $2, $3, $4)",
+                    &[
+                        &"refund_funding_configuration",
+                        &configuration.id,
+                        &"tax.refund_funding_configuration.proposed",
+                        &serde_json::json!({
+                            "schema_version": OUTBOX_PAYLOAD_SCHEMA_VERSION,
+                            "merchant_id": command.merchant_id,
+                            "configuration": configuration,
+                        }),
+                    ],
+                )
+                .await?;
+            transaction.commit().await?;
+            return Ok(RefundFundingConfigurationOutcome::Created(configuration));
+        }
+
+        let row = transaction
+            .query_one(
+                "SELECT id, merchant_id, idempotency_key, request_digest,
+                        configuration_digest, configuration_key, version,
+                        status, merchant_account, mint, tax_vault,
+                        vault_authority, refund_funder, refund_funder_subject, net_source,
+                        token_program, proposer_subject, approver_subject,
+                        verification_digest, verification_slot::text,
+                        verification_commitment, verification_evidence,
+                        verifier_version,
+                        to_char(verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),
+                        to_char(effective_from AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),
+                        to_char(effective_until AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')
+                 FROM refund_funding_configurations
+                 WHERE merchant_id = $1 AND idempotency_key = $2
+                 FOR UPDATE",
+                &[&command.merchant_id, &command.idempotency_key],
+            )
+            .await?;
+        let configuration = parse_refund_funding_configuration_row(row)?;
+        if configuration.request_digest != request_digest {
+            return Err(StorageError::RefundFundingConfigurationIdempotencyConflict);
+        }
+        transaction.commit().await?;
+        Ok(RefundFundingConfigurationOutcome::Replay(configuration))
+    }
+
+    pub async fn load_refund_funding_configuration(
+        &self,
+        configuration_id: Uuid,
+        merchant_id: Uuid,
+    ) -> Result<RefundFundingConfiguration, StorageError> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let row = client
+            .query_opt(
+                "SELECT id, merchant_id, idempotency_key, request_digest,
+                        configuration_digest, configuration_key, version,
+                        status, merchant_account, mint, tax_vault,
+                        vault_authority, refund_funder, refund_funder_subject, net_source,
+                        token_program, proposer_subject, approver_subject,
+                        verification_digest, verification_slot::text,
+                        verification_commitment, verification_evidence,
+                        verifier_version,
+                        to_char(verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),
+                        to_char(effective_from AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),
+                        to_char(effective_until AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')
+                 FROM refund_funding_configurations
+                 WHERE id = $1 AND merchant_id = $2",
+                &[&configuration_id, &merchant_id],
+            )
+            .await?
+            .ok_or(StorageError::RefundFundingConfigurationNotFound)?;
+        parse_refund_funding_configuration_row(row)
+    }
+
+    pub async fn list_refund_funding_configurations(
+        &self,
+        merchant_id: Uuid,
+    ) -> Result<Vec<RefundFundingConfiguration>, StorageError> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let rows = client
+            .query(
+                "SELECT id, merchant_id, idempotency_key, request_digest,
+                        configuration_digest, configuration_key, version,
+                        status, merchant_account, mint, tax_vault,
+                        vault_authority, refund_funder, refund_funder_subject, net_source,
+                        token_program, proposer_subject, approver_subject,
+                        verification_digest, verification_slot::text,
+                        verification_commitment, verification_evidence,
+                        verifier_version,
+                        to_char(verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),
+                        to_char(effective_from AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),
+                        to_char(effective_until AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')
+                 FROM refund_funding_configurations
+                 WHERE merchant_id = $1
+                 ORDER BY configuration_key, version DESC, id
+                 LIMIT 64",
+                &[&merchant_id],
+            )
+            .await?;
+        rows.into_iter()
+            .map(parse_refund_funding_configuration_row)
+            .collect()
+    }
+
+    pub async fn transition_refund_funding_configuration(
+        &self,
+        command: RefundFundingConfigurationTransition,
+    ) -> Result<RefundFundingConfigurationTransitionResult, StorageError> {
+        validate_refund_funding_configuration_transition(&command)?;
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let row = transaction
+            .query_opt(
+                "SELECT status, proposer_subject, approver_subject
+                 FROM refund_funding_configurations
+                 WHERE id = $1 AND merchant_id = $2
+                 FOR UPDATE",
+                &[&command.configuration_id, &command.merchant_id],
+            )
+            .await?
+            .ok_or(StorageError::RefundFundingConfigurationNotFound)?;
+        let from_status: String = row.get(0);
+        let proposer_subject: String = row.get(1);
+        let current_approver: Option<String> = row.get(2);
+        let approver_subject = match (from_status.as_str(), command.to_status.as_str()) {
+            ("proposed", "approved") => {
+                if command.actor_subject == proposer_subject {
+                    return Err(StorageError::RefundFundingConfigurationGovernanceConflict);
+                }
+                Some(command.actor_subject.clone())
+            }
+            ("active", "suspended" | "retired") | ("suspended", "retired") => {
+                if current_approver.as_deref() != Some(command.actor_subject.as_str()) {
+                    return Err(StorageError::RefundFundingConfigurationGovernanceConflict);
+                }
+                current_approver.clone()
+            }
+            _ => return Err(StorageError::InvalidRefundFundingConfigurationTransition),
+        };
+        let updated = transaction
+            .execute(
+                "UPDATE refund_funding_configurations
+                 SET status = $3, approver_subject = $4, updated_at = now()
+                 WHERE id = $1 AND merchant_id = $2 AND status = $5",
+                &[
+                    &command.configuration_id,
+                    &command.merchant_id,
+                    &command.to_status,
+                    &approver_subject,
+                    &from_status,
+                ],
+            )
+            .await?;
+        if updated != 1 {
+            return Err(StorageError::InvalidRefundFundingConfigurationTransition);
+        }
+        let action = match command.to_status.as_str() {
+            "approved" => "approve",
+            "suspended" => "suspend",
+            "retired" => "retire",
+            _ => return Err(StorageError::InvalidRefundFundingConfigurationTransition),
+        };
+        transaction
+            .execute(
+                "INSERT INTO refund_funding_configuration_events
+                    (configuration_id, merchant_id, actor_subject, action,
+                     from_status, to_status, evidence)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                &[
+                    &command.configuration_id,
+                    &command.merchant_id,
+                    &command.actor_subject,
+                    &action,
+                    &from_status,
+                    &command.to_status,
+                    &command.evidence,
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "INSERT INTO outbox_events
+                    (aggregate_type, aggregate_id, event_type, payload)
+                 VALUES ($1, $2, $3, $4)",
+                &[
+                    &"refund_funding_configuration",
+                    &command.configuration_id,
+                    &format!("tax.refund_funding_configuration.{action}"),
+                    &serde_json::json!({
+                        "schema_version": OUTBOX_PAYLOAD_SCHEMA_VERSION,
+                        "merchant_id": command.merchant_id,
+                        "configuration_id": command.configuration_id,
+                        "from_status": from_status,
+                        "to_status": command.to_status,
+                    }),
+                ],
+            )
+            .await?;
+        transaction.commit().await?;
+        Ok(RefundFundingConfigurationTransitionResult {
+            configuration_id: command.configuration_id,
+            from_status,
+            to_status: command.to_status,
+            approver_subject,
+        })
+    }
+
+    /// Claims an approved funding configuration for server-owned finalized
+    /// topology verification. The claim is durable and idempotent; a failed
+    /// provider attempt leaves the configuration pending for bounded retry.
+    pub async fn begin_refund_funding_verification(
+        &self,
+        merchant_id: Uuid,
+        configuration_id: Uuid,
+        actor_subject: &str,
+    ) -> Result<bool, StorageError> {
+        if actor_subject.is_empty() || actor_subject.len() > 256 {
+            return Err(StorageError::InvalidRefundFundingConfiguration(
+                "verification actor subject must contain 1 to 256 bytes".to_string(),
+            ));
+        }
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let status = transaction
+            .query_opt(
+                "SELECT status FROM refund_funding_configurations
+                 WHERE id = $1 AND merchant_id = $2 FOR UPDATE",
+                &[&configuration_id, &merchant_id],
+            )
+            .await?
+            .ok_or(StorageError::RefundFundingConfigurationNotFound)?
+            .get::<_, String>(0);
+        if status == "pending_verification" {
+            transaction.commit().await?;
+            return Ok(false);
+        }
+        if status != "approved" {
+            return Err(StorageError::RefundFundingConfigurationActivationConflict);
+        }
+        transaction
+            .execute(
+                "UPDATE refund_funding_configurations
+                 SET status = 'pending_verification', updated_at = now()
+                 WHERE id = $1 AND merchant_id = $2 AND status = 'approved'",
+                &[&configuration_id, &merchant_id],
+            )
+            .await?;
+        let evidence = serde_json::json!({ "verifier_version": REFUND_FUNDING_VERIFIER_VERSION });
+        transaction
+            .execute(
+                "INSERT INTO refund_funding_configuration_events
+                    (configuration_id, merchant_id, actor_subject, action,
+                     from_status, to_status, evidence)
+                 VALUES ($1, $2, $3, 'begin_verification', 'approved',
+                         'pending_verification', $4)",
+                &[&configuration_id, &merchant_id, &actor_subject, &evidence],
+            )
+            .await?;
+        transaction
+            .execute(
+                "INSERT INTO outbox_events
+                    (aggregate_type, aggregate_id, event_type, payload)
+                 VALUES ($1, $2, $3, $4)",
+                &[
+                    &"refund_funding_configuration",
+                    &configuration_id,
+                    &"tax.refund_funding_configuration.verification_started",
+                    &serde_json::json!({
+                        "schema_version": OUTBOX_PAYLOAD_SCHEMA_VERSION,
+                        "merchant_id": merchant_id,
+                        "configuration_id": configuration_id,
+                    }),
+                ],
+            )
+            .await?;
+        transaction.commit().await?;
+        Ok(true)
+    }
+
+    pub async fn list_refund_funding_configurations_for_verification(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<RefundFundingVerificationCandidate>, StorageError> {
+        if limit == 0 || limit > 64 {
+            return Err(StorageError::InvalidConfiguration(
+                "refund funding verification batch must be between 1 and 64".to_string(),
+            ));
+        }
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let rows = client
+            .query(
+                "SELECT id, merchant_id, version, configuration_digest,
+                        merchant_account, mint, tax_vault, vault_authority,
+                        refund_funder, net_source, token_program
+                 FROM refund_funding_configurations
+                 WHERE status IN ('approved', 'pending_verification')
+                 ORDER BY updated_at, id
+                 LIMIT $1",
+                &[&(limit as i64)],
+            )
+            .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(RefundFundingVerificationCandidate {
+                    id: row.get(0),
+                    merchant_id: row.get(1),
+                    version: row.get(2),
+                    configuration_digest: parse_digest(row.get(3))?,
+                    merchant_account: row.get(4),
+                    mint: row.get(5),
+                    tax_vault: row.get(6),
+                    vault_authority: row.get(7),
+                    refund_funder: row.get(8),
+                    net_source: row.get(9),
+                    token_program: row.get(10),
+                })
+            })
+            .collect()
+    }
+
+    /// Atomically stores one complete finalized topology proof and activates
+    /// only the exact pending configuration it was produced for.
+    pub async fn activate_refund_funding_configuration(
+        &self,
+        merchant_id: Uuid,
+        configuration_id: Uuid,
+        verification: &indexer::RefundFundingTopologyVerification,
+    ) -> Result<bool, StorageError> {
+        if verification.configuration_id != configuration_id
+            || verification.configuration_version <= 0
+            || verification.verification_slot == 0
+            || verification.verification_digest == [0; 32]
+            || verification.accounts.len() != 5
+            || verification.verification_commitment != "finalized"
+        {
+            return Err(StorageError::RefundFundingConfigurationVerificationInvalid(
+                "verification identity, commitment, account count, slot, or digest is invalid"
+                    .to_string(),
+            ));
+        }
+        let evidence = serde_json::to_value(verification)?;
+        let evidence_bytes = serde_json::to_vec(&evidence)?;
+        if evidence_bytes.is_empty() || evidence_bytes.len() > 32 * 1024 {
+            return Err(StorageError::RefundFundingConfigurationVerificationInvalid(
+                "verification evidence exceeds the bounded persistence limit".to_string(),
+            ));
+        }
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let row = transaction
+            .query_opt(
+                "SELECT status, version, configuration_digest,
+                        merchant_account, mint, tax_vault, vault_authority,
+                        refund_funder, net_source, token_program,
+                        verification_digest
+                 FROM refund_funding_configurations
+                 WHERE id = $1 AND merchant_id = $2 FOR UPDATE",
+                &[&configuration_id, &merchant_id],
+            )
+            .await?
+            .ok_or(StorageError::RefundFundingConfigurationNotFound)?;
+        let status: String = row.get(0);
+        let version: i32 = row.get(1);
+        let existing_digest: Option<Vec<u8>> = row.get(10);
+        if version != verification.configuration_version
+            || row.get::<_, Vec<u8>>(2).as_slice() != verification.configuration_digest
+            || row.get::<_, String>(3) != verification.merchant_account
+            || row.get::<_, String>(4) != verification.mint
+            || row.get::<_, String>(5) != verification.tax_vault
+            || row.get::<_, String>(6) != verification.vault_authority
+            || row.get::<_, String>(7) != verification.refund_funder
+            || row.get::<_, String>(8) != verification.net_source
+            || row.get::<_, String>(9) != verification.token_program
+        {
+            return Err(StorageError::RefundFundingConfigurationVerificationInvalid(
+                "verification does not match the stored funding configuration".to_string(),
+            ));
+        }
+        if status == "active"
+            && existing_digest.as_deref() == Some(&verification.verification_digest[..])
+        {
+            transaction.commit().await?;
+            return Ok(false);
+        }
+        if status != "pending_verification" {
+            return Err(StorageError::RefundFundingConfigurationActivationConflict);
+        }
+        transaction
+            .execute(
+                "UPDATE refund_funding_configurations
+                 SET status = 'active', verification_digest = $3,
+                     verification_slot = $4::text::numeric,
+                     verification_commitment = $5,
+                     verification_evidence = $6,
+                     verifier_version = $7,
+                     verified_at = now(), updated_at = now()
+                 WHERE id = $1 AND merchant_id = $2
+                   AND status = 'pending_verification'",
+                &[
+                    &configuration_id,
+                    &merchant_id,
+                    &&verification.verification_digest[..],
+                    &verification.verification_slot.to_string(),
+                    &verification.verification_commitment,
+                    &evidence,
+                    &REFUND_FUNDING_VERIFIER_VERSION,
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "INSERT INTO refund_funding_configuration_events
+                    (configuration_id, merchant_id, actor_subject, action,
+                     from_status, to_status, evidence)
+                 VALUES ($1, $2, $3, 'activate', 'pending_verification',
+                         'active', $4)",
+                &[
+                    &configuration_id,
+                    &merchant_id,
+                    &REFUND_FUNDING_VERIFIER_ACTOR,
+                    &evidence,
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "INSERT INTO outbox_events
+                    (aggregate_type, aggregate_id, event_type, payload)
+                 VALUES ($1, $2, $3, $4)",
+                &[
+                    &"refund_funding_configuration",
+                    &configuration_id,
+                    &"tax.refund_funding_configuration.active",
+                    &serde_json::json!({
+                        "schema_version": OUTBOX_PAYLOAD_SCHEMA_VERSION,
+                        "merchant_id": merchant_id,
+                        "configuration_id": configuration_id,
+                        "verification_digest": verification.verification_digest,
+                    }),
+                ],
+            )
+            .await?;
+        transaction.commit().await?;
+        Ok(true)
+    }
+
     /// Returns a bounded batch of routes that require a separately authorized
     /// finalized chain verification. This read is intentionally not used by
     /// checkout or settlement compilation.
@@ -7821,6 +8882,33 @@ fn parse_settlement_intent_row(
     })
 }
 
+fn parse_settlement_adjustment_chain_intent_row(
+    row: deadpool_postgres::tokio_postgres::Row,
+) -> Result<SettlementAdjustmentChainIntent, StorageError> {
+    let signed_transaction_digest: Option<Vec<u8>> = row.get(6);
+    let slot: Option<String> = row.get(8);
+    let instruction_digest = parse_digest(row.get(4))?;
+    if instruction_digest == [0; 32] {
+        return Err(StorageError::AdjustmentChainIntentConflict);
+    }
+    Ok(SettlementAdjustmentChainIntent {
+        id: row.get(0),
+        evidence_intent_id: row.get(1),
+        adjustment_id: row.get(2),
+        merchant_id: row.get(3),
+        instruction_digest,
+        status: row.get(5),
+        signed_transaction_digest: signed_transaction_digest.map(parse_digest).transpose()?,
+        signature: row.get(7),
+        slot: slot
+            .as_deref()
+            .map(|value| parse_u64(value, "adjustment chain slot"))
+            .transpose()?,
+        commitment: row.get(9),
+        last_error_code: row.get(10),
+    })
+}
+
 fn parse_settlement_receipt_binding_row(
     row: deadpool_postgres::tokio_postgres::Row,
     settlement_id: Uuid,
@@ -8139,6 +9227,228 @@ fn parse_settlement_adjustment_row(
     })
 }
 
+fn parse_refund_funding_configuration_row(
+    row: deadpool_postgres::tokio_postgres::Row,
+) -> Result<RefundFundingConfiguration, StorageError> {
+    let parse_optional_digest =
+        |index: usize, field: &str| -> Result<Option<Digest32>, StorageError> {
+            row.get::<_, Option<Vec<u8>>>(index)
+                .map(|value| {
+                    value.try_into().map_err(|_| {
+                        StorageError::InvalidRefundFundingConfiguration(format!(
+                            "{field} is not 32 bytes"
+                        ))
+                    })
+                })
+                .transpose()
+        };
+    Ok(RefundFundingConfiguration {
+        id: row.get(0),
+        merchant_id: row.get(1),
+        idempotency_key: row.get(2),
+        request_digest: parse_digest(row.get(3))?,
+        configuration_digest: parse_digest(row.get(4))?,
+        configuration_key: row.get(5),
+        version: row.get(6),
+        status: row.get(7),
+        merchant_account: row.get(8),
+        mint: row.get(9),
+        tax_vault: row.get(10),
+        vault_authority: row.get(11),
+        refund_funder: row.get(12),
+        refund_funder_subject: row.get(13),
+        net_source: row.get(14),
+        token_program: row.get(15),
+        proposer_subject: row.get(16),
+        approver_subject: row.get(17),
+        verification_digest: parse_optional_digest(18, "verification digest")?,
+        verification_slot: row.get(19),
+        verification_commitment: row.get(20),
+        verification_evidence: row.get(21),
+        verifier_version: row.get(22),
+        verified_at: row.get(23),
+        effective_from: row.get(24),
+        effective_until: row.get(25),
+    })
+}
+
+fn validate_refund_funding_configuration_command(
+    command: &CreateRefundFundingConfigurationCommand,
+) -> Result<(), StorageError> {
+    if command.merchant_id.get_version_num() != 7 {
+        return Err(StorageError::InvalidRefundFundingConfiguration(
+            "merchant ID must be UUIDv7".into(),
+        ));
+    }
+    if command.actor_subject.trim().is_empty()
+        || command.actor_subject.len() > 256
+        || command
+            .actor_subject
+            .bytes()
+            .any(|byte| byte.is_ascii_control())
+    {
+        return Err(StorageError::InvalidRefundFundingConfiguration(
+            "proposer subject is invalid".into(),
+        ));
+    }
+    if command.refund_funder_subject.trim().is_empty()
+        || command.refund_funder_subject.len() > 256
+        || command
+            .refund_funder_subject
+            .bytes()
+            .any(|byte| byte.is_ascii_control())
+    {
+        return Err(StorageError::InvalidRefundFundingConfiguration(
+            "refund funder subject is invalid".into(),
+        ));
+    }
+    for (field, value, max) in [
+        ("idempotency key", command.idempotency_key.as_str(), 200),
+        ("configuration key", command.configuration_key.as_str(), 128),
+    ] {
+        if value.trim().is_empty() || value.len() > max || value != value.trim() {
+            return Err(StorageError::InvalidRefundFundingConfiguration(format!(
+                "{field} is outside its bounded text domain"
+            )));
+        }
+    }
+    if command.version <= 0 {
+        return Err(StorageError::InvalidRefundFundingConfiguration(
+            "configuration version must be positive".into(),
+        ));
+    }
+    for (field, value) in [
+        ("merchant account", command.merchant_account.as_str()),
+        ("mint", command.mint.as_str()),
+        ("tax vault", command.tax_vault.as_str()),
+        ("vault authority", command.vault_authority.as_str()),
+        ("refund funder", command.refund_funder.as_str()),
+        ("net source", command.net_source.as_str()),
+        ("token program", command.token_program.as_str()),
+    ] {
+        if value.trim().len() < 32 || value.len() > 44 || value != value.trim() {
+            return Err(StorageError::InvalidRefundFundingConfiguration(format!(
+                "{field} is outside the bounded Solana address domain"
+            )));
+        }
+        let parsed = Pubkey::from_str(value).map_err(|_| {
+            StorageError::InvalidRefundFundingConfiguration(format!(
+                "{field} is not a valid Solana public key"
+            ))
+        })?;
+        if parsed.to_string() != value {
+            return Err(StorageError::InvalidRefundFundingConfiguration(format!(
+                "{field} is not canonically encoded"
+            )));
+        }
+    }
+    if !matches!(
+        command.token_program.as_str(),
+        SPL_TOKEN_PROGRAM_ID | TOKEN_2022_PROGRAM_ID
+    ) {
+        return Err(StorageError::InvalidRefundFundingConfiguration(
+            "token program is not an explicitly supported program".into(),
+        ));
+    }
+    let addresses = [
+        command.tax_vault.as_str(),
+        command.net_source.as_str(),
+        command.refund_funder.as_str(),
+        command.mint.as_str(),
+    ];
+    for (index, address) in addresses.iter().enumerate() {
+        if addresses[..index].contains(address) {
+            return Err(StorageError::InvalidRefundFundingConfiguration(
+                "funding accounts and mint must be pairwise distinct".into(),
+            ));
+        }
+    }
+    if command.effective_from_unix <= 0
+        || command
+            .effective_until_unix
+            .is_some_and(|until| until <= command.effective_from_unix)
+    {
+        return Err(StorageError::InvalidRefundFundingConfiguration(
+            "effective window is invalid".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn refund_funding_configuration_digest(
+    command: &CreateRefundFundingConfigurationCommand,
+) -> Digest32 {
+    let mut hasher = Sha256::new();
+    hasher.update(b"solana-tax-protocol/refund-funding-configuration/v1");
+    hasher.update(command.merchant_id.as_bytes());
+    write_projection_text(&mut hasher, &command.configuration_key);
+    hasher.update(command.version.to_le_bytes());
+    for value in [
+        &command.merchant_account,
+        &command.mint,
+        &command.tax_vault,
+        &command.vault_authority,
+        &command.refund_funder,
+        &command.refund_funder_subject,
+        &command.net_source,
+        &command.token_program,
+    ] {
+        write_projection_text(&mut hasher, value);
+    }
+    hasher.update(command.effective_from_unix.to_le_bytes());
+    hasher.update(
+        command
+            .effective_until_unix
+            .unwrap_or_default()
+            .to_le_bytes(),
+    );
+    hasher.finalize().into()
+}
+
+fn refund_funding_configuration_request_digest(
+    command: &CreateRefundFundingConfigurationCommand,
+    configuration_digest: Digest32,
+) -> Digest32 {
+    let mut hasher = Sha256::new();
+    hasher.update(b"solana-tax-protocol/refund-funding-request/v1");
+    hasher.update(command.merchant_id.as_bytes());
+    write_projection_text(&mut hasher, &command.idempotency_key);
+    write_projection_text(&mut hasher, &command.actor_subject);
+    hasher.update(configuration_digest);
+    hasher.finalize().into()
+}
+
+fn validate_refund_funding_configuration_transition(
+    command: &RefundFundingConfigurationTransition,
+) -> Result<(), StorageError> {
+    if command.merchant_id.get_version_num() != 7
+        || command.configuration_id.get_version_num() != 7
+        || command.actor_subject.trim().is_empty()
+        || command.actor_subject.len() > 256
+        || command
+            .actor_subject
+            .bytes()
+            .any(|byte| byte.is_ascii_control())
+        || !command.evidence.is_object()
+    {
+        return Err(StorageError::InvalidRefundFundingConfiguration(
+            "transition identity, actor, or evidence is invalid".into(),
+        ));
+    }
+    if serde_json::to_vec(&command.evidence)?.len() > MAX_VAULT_RELEASE_EVIDENCE_BYTES {
+        return Err(StorageError::InvalidRefundFundingConfiguration(
+            "transition evidence exceeds the bounded size".into(),
+        ));
+    }
+    if !matches!(
+        command.to_status.as_str(),
+        "approved" | "suspended" | "retired"
+    ) {
+        return Err(StorageError::InvalidRefundFundingConfigurationTransition);
+    }
+    Ok(())
+}
+
 fn parse_u64(value: &str, field: &str) -> Result<u64, StorageError> {
     value
         .parse()
@@ -8146,7 +9456,7 @@ fn parse_u64(value: &str, field: &str) -> Result<u64, StorageError> {
 }
 
 fn valid_adjustment_authority_role(role: &str) -> bool {
-    matches!(role, "proposer" | "approver")
+    matches!(role, "proposer" | "approver" | "refund_funder")
 }
 
 fn validate_adjustment_authority_challenge_command(
@@ -8319,7 +9629,8 @@ async fn persist_indexed_settlement_adjustments(
                         original_receipt, merchant, mint, nonce::text, kind::text,
                         gross_sign::text, gross_magnitude::text, tax_sign::text,
                         tax_magnitude::text, net_sign::text, net_magnitude::text,
-                        adjustment_digest, evidence_digest, approver
+                        adjustment_digest, adjustment_evidence_digest,
+                        evidence_digest, approver
                  FROM indexed_settlement_adjustments
                  WHERE stream_key = $1 AND signature = $2
                    AND event_index = $3::text::smallint
@@ -8356,12 +9667,13 @@ async fn persist_indexed_settlement_adjustments(
                     (stream_key, signature, slot, event_index, adjustment,
                      original_receipt, merchant, mint, nonce, kind, gross_sign,
                      gross_magnitude, tax_sign, tax_magnitude, net_sign,
-                     net_magnitude, adjustment_digest, evidence_digest, approver)
+                     net_magnitude, adjustment_digest, adjustment_evidence_digest,
+                     evidence_digest, approver)
                  VALUES ($1, $2, $3::text::numeric, $4::text::smallint, $5,
                          $6, $7, $8, $9::text::numeric, $10::text::smallint,
                          $11::text::smallint, $12::text::numeric,
                          $13::text::smallint, $14::text::numeric,
-                         $15::text::smallint, $16::text::numeric, $17, $18, $19)",
+                         $15::text::smallint, $16::text::numeric, $17, $18, $19, $20)",
                 &[
                     &stream_key,
                     &record.signature,
@@ -8380,6 +9692,7 @@ async fn persist_indexed_settlement_adjustments(
                     &record.net_sign.to_string(),
                     &record.net_magnitude.to_string(),
                     &&record.adjustment_digest[..],
+                    &&record.adjustment_evidence_digest[..],
                     &&record.evidence_digest[..],
                     &&record.approver[..],
                 ],
@@ -8408,6 +9721,17 @@ fn parse_indexed_settlement_adjustment_row(
         .map_err(|_| {
             StorageError::InvalidIndexerState("adjustment event_index is not u16".into())
         })?;
+    let adjustment_evidence_digest: Option<Vec<u8>> = row.get(16);
+    let adjustment_evidence_digest = adjustment_evidence_digest
+        .ok_or_else(|| {
+            StorageError::InvalidIndexerState(
+                "legacy adjustment projection lacks on-chain evidence digest".into(),
+            )
+        })?
+        .try_into()
+        .map_err(|_| {
+            StorageError::InvalidIndexerState("adjustment evidence digest is not 32 bytes".into())
+        })?;
     Ok(IndexedSettlementAdjustment {
         signature: row.get(0),
         slot: parse_u64(row.get(1), "adjustment slot")?,
@@ -8425,8 +9749,9 @@ fn parse_indexed_settlement_adjustment_row(
         net_sign: to_u8(13, "net sign")?,
         net_magnitude: parse_u64(row.get(14), "net magnitude")?,
         adjustment_digest: to_digest(15, "adjustment digest")?,
-        evidence_digest: to_digest(16, "adjustment evidence digest")?,
-        approver: to_digest(17, "adjustment approver")?,
+        adjustment_evidence_digest,
+        evidence_digest: to_digest(17, "raw evidence digest")?,
+        approver: to_digest(18, "adjustment approver")?,
     })
 }
 
@@ -8864,6 +10189,26 @@ mod tests {
             reference_digest: [9; 32],
             execute_after_unix: 1_790_000_000,
             expires_at_unix: 1_790_003_600,
+        }
+    }
+
+    fn refund_funding_configuration_command() -> CreateRefundFundingConfigurationCommand {
+        CreateRefundFundingConfigurationCommand {
+            merchant_id: Uuid::now_v7(),
+            actor_subject: "funding-proposer".to_string(),
+            idempotency_key: "funding-1".to_string(),
+            configuration_key: "primary-usdc".to_string(),
+            version: 1,
+            merchant_account: "11111111111111111111111111111111".to_string(),
+            mint: "So11111111111111111111111111111111111111112".to_string(),
+            tax_vault: "SysvarRent111111111111111111111111111111111".to_string(),
+            vault_authority: "Vote111111111111111111111111111111111111111".to_string(),
+            refund_funder: "Stake11111111111111111111111111111111111111".to_string(),
+            refund_funder_subject: "refund-funder-subject".to_string(),
+            net_source: "Config1111111111111111111111111111111111111".to_string(),
+            token_program: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA".to_string(),
+            effective_from_unix: 1_790_000_000,
+            effective_until_unix: Some(1_800_000_000),
         }
     }
 
@@ -9692,5 +11037,53 @@ mod tests {
             parse_digest(vec![1; 31]).unwrap_err().to_string(),
             "settlement digest must contain exactly 32 bytes"
         );
+    }
+
+    #[test]
+    fn refund_funding_configuration_is_bounded_and_digest_bound() {
+        let command = refund_funding_configuration_command();
+        assert!(validate_refund_funding_configuration_command(&command).is_ok());
+        let digest = refund_funding_configuration_digest(&command);
+        let request_digest = refund_funding_configuration_request_digest(&command, digest);
+        assert_ne!(digest, request_digest);
+
+        let mut aliased = command.clone();
+        aliased.net_source = aliased.tax_vault.clone();
+        assert!(matches!(
+            validate_refund_funding_configuration_command(&aliased),
+            Err(StorageError::InvalidRefundFundingConfiguration(message))
+                if message.contains("pairwise distinct")
+        ));
+
+        let mut changed = command;
+        changed.net_source = "Address111111111111111111111111111111111111".to_string();
+        assert_ne!(digest, refund_funding_configuration_digest(&changed));
+    }
+
+    #[test]
+    fn refund_funding_configuration_requires_four_eyes_and_bounded_transitions() {
+        let command = RefundFundingConfigurationTransition {
+            merchant_id: Uuid::now_v7(),
+            configuration_id: Uuid::now_v7(),
+            actor_subject: "funding-approver".to_string(),
+            to_status: "approved".to_string(),
+            evidence: serde_json::json!({"ticket": "INC-1"}),
+        };
+        assert!(validate_refund_funding_configuration_transition(&command).is_ok());
+
+        let mut invalid = command.clone();
+        invalid.to_status = "active".to_string();
+        assert!(matches!(
+            validate_refund_funding_configuration_transition(&invalid),
+            Err(StorageError::InvalidRefundFundingConfigurationTransition)
+        ));
+
+        let mut unbounded = command;
+        unbounded.evidence =
+            serde_json::json!({"note": "x".repeat(MAX_VAULT_RELEASE_EVIDENCE_BYTES)});
+        assert!(matches!(
+            validate_refund_funding_configuration_transition(&unbounded),
+            Err(StorageError::InvalidRefundFundingConfiguration(_))
+        ));
     }
 }

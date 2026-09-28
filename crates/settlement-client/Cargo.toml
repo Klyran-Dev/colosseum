@@ -13,4 +13,5 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 split-plan = { path = "../split-plan" }
+policy = { path = "../policy" }
 thiserror.workspace = true

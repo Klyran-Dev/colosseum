@@ -86,6 +86,7 @@ pub struct SettlementAdjustmentCompileRequest {
     pub mint: String,
     pub token_program: String,
     pub original_receipt: String,
+    #[serde(with = "policy::serde_u64_string")]
     pub adjustment_nonce: u64,
     pub kind: u8,
     pub gross_sign: u8,
@@ -113,6 +114,7 @@ pub struct SettlementRefundClaimCompileRequest {
     pub tax_vault: String,
     pub net_source: String,
     pub refund_destination: String,
+    #[serde(with = "policy::serde_u64_string")]
     pub claim_nonce: u64,
     pub execute_after_unix: i64,
     pub expires_at_unix: i64,
@@ -133,6 +135,7 @@ pub struct SettlementRefundExecutionCompileRequest {
     pub tax_vault: String,
     pub net_source: String,
     pub refund_destination: String,
+    #[serde(with = "policy::serde_u64_string")]
     pub claim_nonce: u64,
 }
 
@@ -215,6 +218,7 @@ pub struct CompiledSettlementAdjustmentInstruction {
     pub adjustment: String,
     pub adjustment_registry: String,
     pub original_receipt: String,
+    #[serde(with = "policy::serde_u64_string")]
     pub adjustment_nonce: u64,
 }
 
@@ -228,6 +232,7 @@ pub struct CompiledSettlementRefundInstruction {
     pub adjustment: String,
     pub original_receipt: String,
     pub claim: String,
+    #[serde(with = "policy::serde_u64_string")]
     pub claim_nonce: u64,
 }
 
@@ -1397,6 +1402,18 @@ mod tests {
         let actual = compile_settlement_adjustment_instruction(&vector.request)
             .expect("shared adjustment vector must compile");
         assert_eq!(actual, vector.expected);
+    }
+
+    #[test]
+    fn compiled_adjustment_nonce_serializes_as_an_exact_decimal_string() {
+        let compiled = compile_settlement_adjustment_instruction(&valid_adjustment_request())
+            .expect("valid adjustment evidence instruction");
+        let encoded =
+            serde_json::to_value(&compiled).expect("compiled instruction is serializable");
+        assert_eq!(encoded["adjustment_nonce"], serde_json::json!("11"));
+        let decoded: CompiledSettlementAdjustmentInstruction =
+            serde_json::from_value(encoded).expect("canonical string must round-trip");
+        assert_eq!(decoded.adjustment_nonce, 11);
     }
 
     #[test]

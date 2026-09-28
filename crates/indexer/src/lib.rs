@@ -1071,6 +1071,64 @@ pub struct SettlementRouteVerification {
     pub verification_digest: [u8; 32],
 }
 
+/// Server-owned funding topology supplied by the approved configuration. It
+/// is data only until [`verify_refund_funding_topology`] proves the finalized
+/// chain accounts.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RefundFundingTopologyConfig {
+    pub configuration_id: uuid::Uuid,
+    pub version: i32,
+    pub configuration_digest: [u8; 32],
+    pub merchant_account: String,
+    pub mint: String,
+    pub tax_vault: String,
+    pub vault_authority: String,
+    pub refund_funder: String,
+    pub net_source: String,
+    pub token_program: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RefundFundingTopologyVerification {
+    pub configuration_id: uuid::Uuid,
+    pub configuration_version: i32,
+    pub configuration_digest: [u8; 32],
+    pub merchant_account: String,
+    pub mint: String,
+    pub tax_vault: String,
+    pub vault_authority: String,
+    pub refund_funder: String,
+    pub net_source: String,
+    pub token_program: String,
+    pub verification_slot: u64,
+    pub verification_commitment: &'static str,
+    pub mint_decimals: u8,
+    pub accounts: Vec<VerifiedRouteAccount>,
+    pub verification_digest: [u8; 32],
+}
+
+#[derive(Debug, Error, Eq, PartialEq)]
+pub enum RefundFundingVerificationError {
+    #[error("invalid refund funding topology: {0}")]
+    InvalidTopology(String),
+    #[error("refund funding verification provider failed: {0}")]
+    Provider(#[from] ProviderError),
+    #[error("refund funding verification response is invalid: {0}")]
+    InvalidResponse(String),
+    #[error("refund funding account is missing: {0}")]
+    MissingAccount(String),
+    #[error("refund funding account owner does not match the required program: {0}")]
+    AccountOwnerMismatch(&'static str),
+    #[error("refund funding account has an unsupported layout: {0}")]
+    UnsupportedAccountLayout(&'static str),
+    #[error("refund funding token account is bound to a different mint: {0}")]
+    TokenAccountMintMismatch(&'static str),
+    #[error("refund funding token authority does not match the configured authority: {0}")]
+    TokenAuthorityMismatch(&'static str),
+    #[error("configured vault authority does not match the deterministic PDA")]
+    VaultAuthorityMismatch,
+}
+
 #[derive(Debug, Error, Eq, PartialEq)]
 pub enum RouteVerificationError {
     #[error("invalid settlement route: {0}")]
@@ -1196,6 +1254,121 @@ pub async fn verify_settlement_route<T: JsonRpcTransport + ?Sized>(
         tax_vault: route.tax_vault.clone(),
         net_destination: route.net_destination.clone(),
         token_program: route.token_program.clone(),
+        verification_slot: slot,
+        verification_commitment: "finalized",
+        mint_decimals,
+        accounts,
+        verification_digest,
+    })
+}
+
+/// Verifies the complete legacy-SPL refund funding topology at one finalized
+/// slot. Token-2022 is deliberately rejected until its extension semantics
+/// have a separate compatibility decision and validator evidence.
+pub async fn verify_refund_funding_topology<T: JsonRpcTransport + ?Sized>(
+    transport: &T,
+    topology: &RefundFundingTopologyConfig,
+) -> Result<RefundFundingTopologyVerification, RefundFundingVerificationError> {
+    let keys = validate_refund_funding_topology(topology)?;
+    let addresses = [
+        topology.merchant_account.as_str(),
+        topology.mint.as_str(),
+        topology.tax_vault.as_str(),
+        topology.refund_funder.as_str(),
+        topology.net_source.as_str(),
+    ];
+    let response = transport
+        .call(
+            "getMultipleAccounts",
+            json!([
+                addresses,
+                { "commitment": "finalized", "encoding": "base64" }
+            ]),
+        )
+        .await?;
+    let encoded_response = serde_json::to_vec(&response)
+        .map_err(|error| RefundFundingVerificationError::InvalidResponse(error.to_string()))?;
+    if encoded_response.len() > MAX_ROUTE_RPC_RESULT_BYTES {
+        return Err(RefundFundingVerificationError::InvalidResponse(
+            "getMultipleAccounts response exceeds the bounded refund funding limit".to_string(),
+        ));
+    }
+    let slot = response
+        .get("context")
+        .and_then(|value| value.get("slot"))
+        .and_then(Value::as_u64)
+        .filter(|slot| *slot > 0)
+        .ok_or_else(|| {
+            RefundFundingVerificationError::InvalidResponse(
+                "finalized verification slot is invalid".to_string(),
+            )
+        })?;
+    let values = response
+        .get("value")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            RefundFundingVerificationError::InvalidResponse(
+                "refund funding account values are not an array".to_string(),
+            )
+        })?;
+    if values.len() != addresses.len() {
+        return Err(RefundFundingVerificationError::InvalidResponse(
+            "refund funding response contains an unexpected account count".to_string(),
+        ));
+    }
+    let snapshots = values
+        .iter()
+        .zip(addresses)
+        .map(|(value, address)| {
+            parse_route_account_bounded(value, address, MAX_ROUTE_ACCOUNT_DATA_BYTES).map_err(
+                |error| match error {
+                    RouteVerificationError::MissingAccount(address) => {
+                        RefundFundingVerificationError::MissingAccount(address)
+                    }
+                    RouteVerificationError::InvalidResponse(message) => {
+                        RefundFundingVerificationError::InvalidResponse(message)
+                    }
+                    _ => RefundFundingVerificationError::InvalidResponse(error.to_string()),
+                },
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let merchant = &snapshots[0];
+    verify_system_account(merchant, "merchant_account")?;
+    let mint = &snapshots[1];
+    verify_token_container(mint, &keys.token_program, "mint", 82)?;
+    let mint_decimals = mint.data.get(44).copied().ok_or(
+        RefundFundingVerificationError::UnsupportedAccountLayout("mint"),
+    )?;
+    let tax_vault = &snapshots[2];
+    verify_token_container(tax_vault, &keys.token_program, "tax_vault", 165)?;
+    verify_token_mint_for_refund(tax_vault, &keys.mint, "tax_vault")?;
+    verify_token_authority_for_refund(tax_vault, &keys.vault_authority, "tax_vault")?;
+    let refund_funder = &snapshots[3];
+    verify_system_account(refund_funder, "refund_funder")?;
+    let net_source = &snapshots[4];
+    verify_token_container(net_source, &keys.token_program, "net_source", 165)?;
+    verify_token_mint_for_refund(net_source, &keys.mint, "net_source")?;
+    verify_token_authority_for_refund(net_source, &keys.refund_funder, "net_source")?;
+
+    let accounts = snapshots
+        .into_iter()
+        .map(route_account_evidence)
+        .collect::<Vec<_>>();
+    let verification_digest =
+        refund_funding_verification_digest(topology, slot, mint_decimals, &accounts);
+    Ok(RefundFundingTopologyVerification {
+        configuration_id: topology.configuration_id,
+        configuration_version: topology.version,
+        configuration_digest: topology.configuration_digest,
+        merchant_account: topology.merchant_account.clone(),
+        mint: topology.mint.clone(),
+        tax_vault: topology.tax_vault.clone(),
+        vault_authority: topology.vault_authority.clone(),
+        refund_funder: topology.refund_funder.clone(),
+        net_source: topology.net_source.clone(),
+        token_program: topology.token_program.clone(),
         verification_slot: slot,
         verification_commitment: "finalized",
         mint_decimals,
@@ -2623,6 +2796,178 @@ struct ValidatedRouteKeys {
     vault_authority: Pubkey,
 }
 
+struct ValidatedRefundFundingKeys {
+    mint: Pubkey,
+    token_program: Pubkey,
+    vault_authority: Pubkey,
+    refund_funder: Pubkey,
+}
+
+fn validate_refund_funding_topology(
+    topology: &RefundFundingTopologyConfig,
+) -> Result<ValidatedRefundFundingKeys, RefundFundingVerificationError> {
+    if topology.configuration_id.is_nil() || topology.version <= 0 {
+        return Err(RefundFundingVerificationError::InvalidTopology(
+            "configuration identity and positive version are required".to_string(),
+        ));
+    }
+    let merchant = parse_refund_funding_pubkey("merchant_account", &topology.merchant_account)?;
+    let mint = parse_refund_funding_pubkey("mint", &topology.mint)?;
+    let tax_vault = parse_refund_funding_pubkey("tax_vault", &topology.tax_vault)?;
+    let vault_authority =
+        parse_refund_funding_pubkey("vault_authority", &topology.vault_authority)?;
+    let refund_funder = parse_refund_funding_pubkey("refund_funder", &topology.refund_funder)?;
+    let net_source = parse_refund_funding_pubkey("net_source", &topology.net_source)?;
+    let token_program = parse_refund_funding_pubkey("token_program", &topology.token_program)?;
+    let spl_token =
+        parse_refund_funding_pubkey("token_program", settlement_client::SPL_TOKEN_PROGRAM_ID)?;
+    if token_program != spl_token {
+        return Err(RefundFundingVerificationError::InvalidTopology(
+            "refund funding activation supports only the legacy SPL Token program".to_string(),
+        ));
+    }
+    let unique = [merchant, mint, tax_vault, refund_funder, net_source];
+    if unique.iter().enumerate().any(|(index, value)| {
+        unique
+            .iter()
+            .enumerate()
+            .any(|(other_index, other)| index != other_index && value == other)
+    }) {
+        return Err(RefundFundingVerificationError::InvalidTopology(
+            "refund funding account addresses must be distinct".to_string(),
+        ));
+    }
+    let (derived_vault_authority, _) = Pubkey::find_program_address(
+        &[b"vault-authority", merchant.as_ref(), mint.as_ref()],
+        &settlement_client::settlement_program_id(),
+    );
+    if vault_authority != derived_vault_authority {
+        return Err(RefundFundingVerificationError::VaultAuthorityMismatch);
+    }
+    Ok(ValidatedRefundFundingKeys {
+        mint,
+        token_program,
+        vault_authority,
+        refund_funder,
+    })
+}
+
+fn parse_refund_funding_pubkey(
+    field: &'static str,
+    value: &str,
+) -> Result<Pubkey, RefundFundingVerificationError> {
+    Pubkey::from_str(value.trim()).map_err(|_| {
+        RefundFundingVerificationError::InvalidTopology(format!(
+            "{field} is not a valid Solana public key"
+        ))
+    })
+}
+
+fn verify_system_account(
+    account: &RouteAccountSnapshot,
+    field: &'static str,
+) -> Result<(), RefundFundingVerificationError> {
+    if account.executable
+        || account.owner != settlement_client::SYSTEM_PROGRAM_ID
+        || !account.data.is_empty()
+    {
+        return Err(RefundFundingVerificationError::AccountOwnerMismatch(field));
+    }
+    Ok(())
+}
+
+fn verify_token_container(
+    account: &RouteAccountSnapshot,
+    token_program: &Pubkey,
+    field: &'static str,
+    expected_len: usize,
+) -> Result<(), RefundFundingVerificationError> {
+    if account.executable || account.owner != token_program.to_string() {
+        return Err(RefundFundingVerificationError::AccountOwnerMismatch(field));
+    }
+    if account.data.len() != expected_len {
+        return Err(RefundFundingVerificationError::UnsupportedAccountLayout(
+            field,
+        ));
+    }
+    Ok(())
+}
+
+fn verify_token_mint_for_refund(
+    account: &RouteAccountSnapshot,
+    mint: &Pubkey,
+    field: &'static str,
+) -> Result<(), RefundFundingVerificationError> {
+    let actual = read_refund_pubkey_field(account, 0, field)?;
+    if actual != *mint {
+        return Err(RefundFundingVerificationError::TokenAccountMintMismatch(
+            field,
+        ));
+    }
+    Ok(())
+}
+
+fn verify_token_authority_for_refund(
+    account: &RouteAccountSnapshot,
+    authority: &Pubkey,
+    field: &'static str,
+) -> Result<(), RefundFundingVerificationError> {
+    let actual = read_refund_pubkey_field(account, 32, field)?;
+    if actual != *authority {
+        return Err(RefundFundingVerificationError::TokenAuthorityMismatch(
+            field,
+        ));
+    }
+    Ok(())
+}
+
+fn read_refund_pubkey_field(
+    account: &RouteAccountSnapshot,
+    offset: usize,
+    field: &'static str,
+) -> Result<Pubkey, RefundFundingVerificationError> {
+    let bytes = account.data.get(offset..offset.saturating_add(32)).ok_or(
+        RefundFundingVerificationError::UnsupportedAccountLayout(field),
+    )?;
+    Pubkey::try_from(bytes)
+        .map_err(|_| RefundFundingVerificationError::UnsupportedAccountLayout(field))
+}
+
+fn refund_funding_verification_digest(
+    topology: &RefundFundingTopologyConfig,
+    slot: u64,
+    mint_decimals: u8,
+    accounts: &[VerifiedRouteAccount],
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"solana-tax-protocol/refund-funding-verification/v1");
+    hasher.update(topology.configuration_id.as_bytes());
+    hasher.update(topology.version.to_le_bytes());
+    hasher.update(topology.configuration_digest);
+    for value in [
+        &topology.merchant_account,
+        &topology.mint,
+        &topology.tax_vault,
+        &topology.vault_authority,
+        &topology.refund_funder,
+        &topology.net_source,
+        &topology.token_program,
+    ] {
+        write_route_text(&mut hasher, value);
+    }
+    hasher.update(slot.to_le_bytes());
+    hasher.update([mint_decimals]);
+    for account in accounts {
+        write_route_text(&mut hasher, &account.address);
+        write_route_text(&mut hasher, &account.owner);
+        hasher.update([u8::from(account.executable)]);
+        hasher.update(account.lamports.to_le_bytes());
+        hasher.update((account.data_len as u64).to_le_bytes());
+        hasher.update(account.data_digest);
+    }
+    hasher.finalize().into()
+}
+
 fn validate_route_config(
     route: &SettlementRouteConfig,
 ) -> Result<ValidatedRouteKeys, RouteVerificationError> {
@@ -3333,6 +3678,7 @@ pub struct IndexedSettlementAdjustment {
     pub net_sign: u8,
     pub net_magnitude: u64,
     pub adjustment_digest: [u8; 32],
+    pub adjustment_evidence_digest: [u8; 32],
     pub evidence_digest: [u8; 32],
     pub approver: [u8; 32],
 }
@@ -3348,6 +3694,7 @@ impl IndexedSettlementAdjustment {
             || self.nonce == 0
             || !(1..=5).contains(&self.kind)
             || self.adjustment_digest == [0; 32]
+            || self.adjustment_evidence_digest == [0; 32]
             || self.evidence_digest == [0; 32]
             || self.approver == [0; 32]
         {
@@ -3422,7 +3769,7 @@ struct SettlementAdjustmentRecordedEvent {
 
 impl SettlementAdjustmentRecordedEvent {
     fn decode(data: &[u8]) -> Result<Self, ProviderError> {
-        const EVENT_BYTES: usize = 8 + (32 * 5) + 8 + (3 * 9) + (32 * 3);
+        const EVENT_BYTES: usize = 8 + (32 * 5) + 8 + 1 + (3 * 9) + (32 * 2);
         if data.len() != EVENT_BYTES
             || data[..8] != SETTLEMENT_ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR
         {
@@ -3470,7 +3817,8 @@ impl SettlementAdjustmentRecordedEvent {
             net_sign: event.net_sign,
             net_magnitude: event.net_magnitude,
             adjustment_digest: event.adjustment_digest,
-            evidence_digest: event.evidence_digest,
+            adjustment_evidence_digest: event.evidence_digest,
+            evidence_digest: [1; 32],
             approver: event.approver,
         };
         indexed.validate_identity().map_err(|_| {
@@ -3941,7 +4289,8 @@ impl ReceiptDecoder for SettlementExecutedDecoder {
                             net_sign: event.net_sign,
                             net_magnitude: event.net_magnitude,
                             adjustment_digest: event.adjustment_digest,
-                            evidence_digest: event.evidence_digest,
+                            adjustment_evidence_digest: event.evidence_digest,
+                            evidence_digest,
                             approver: event.approver,
                         });
                     decoded.raw_evidence.push(RawChainEvidence {
@@ -5144,6 +5493,57 @@ mod tests {
         (route, response)
     }
 
+    fn verified_refund_funding_fixture() -> (RefundFundingTopologyConfig, Value) {
+        let merchant = Pubkey::new_from_array([11; 32]);
+        let mint = Pubkey::new_from_array([12; 32]);
+        let tax_vault = Pubkey::new_from_array([13; 32]);
+        let refund_funder = Pubkey::new_from_array([14; 32]);
+        let net_source = Pubkey::new_from_array([15; 32]);
+        let (vault_authority, _) = Pubkey::find_program_address(
+            &[b"vault-authority", merchant.as_ref(), mint.as_ref()],
+            &settlement_client::settlement_program_id(),
+        );
+        let mut mint_data = vec![0; 82];
+        mint_data[44] = 6;
+        let mut tax_data = vec![0; 165];
+        tax_data[..32].copy_from_slice(mint.as_ref());
+        tax_data[32..64].copy_from_slice(vault_authority.as_ref());
+        let mut source_data = vec![0; 165];
+        source_data[..32].copy_from_slice(mint.as_ref());
+        source_data[32..64].copy_from_slice(refund_funder.as_ref());
+        let account = |owner: &str, data: Vec<u8>| {
+            json!({
+                "lamports": 1_000_000,
+                "owner": owner,
+                "executable": false,
+                "data": [BASE64.encode(data), "base64"]
+            })
+        };
+        let topology = RefundFundingTopologyConfig {
+            configuration_id: uuid::Uuid::from_u128(2),
+            version: 1,
+            configuration_digest: [22; 32],
+            merchant_account: merchant.to_string(),
+            mint: mint.to_string(),
+            tax_vault: tax_vault.to_string(),
+            vault_authority: vault_authority.to_string(),
+            refund_funder: refund_funder.to_string(),
+            net_source: net_source.to_string(),
+            token_program: settlement_client::SPL_TOKEN_PROGRAM_ID.to_string(),
+        };
+        let response = json!({
+            "context": {"slot": 888},
+            "value": [
+                account(settlement_client::SYSTEM_PROGRAM_ID, Vec::new()),
+                account(settlement_client::SPL_TOKEN_PROGRAM_ID, mint_data),
+                account(settlement_client::SPL_TOKEN_PROGRAM_ID, tax_data),
+                account(settlement_client::SYSTEM_PROGRAM_ID, Vec::new()),
+                account(settlement_client::SPL_TOKEN_PROGRAM_ID, source_data)
+            ]
+        });
+        (topology, response)
+    }
+
     struct EmptyReceiptDecoder;
 
     #[async_trait]
@@ -5175,6 +5575,62 @@ mod tests {
         assert_eq!(calls[0].1[1]["commitment"], "finalized");
         assert_eq!(calls[0].1[1]["encoding"], "base64");
         assert_eq!(calls[0].1[0].as_array().unwrap().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn refund_funding_verifier_requires_complete_finalized_topology() {
+        let (topology, response) = verified_refund_funding_fixture();
+        let rpc = FakeRpc {
+            results: Mutex::new(VecDeque::from([response])),
+            calls: Mutex::new(Vec::new()),
+        };
+        let evidence = verify_refund_funding_topology(&rpc, &topology)
+            .await
+            .unwrap();
+        assert_eq!(evidence.verification_slot, 888);
+        assert_eq!(evidence.mint_decimals, 6);
+        assert_eq!(evidence.accounts.len(), 5);
+        assert_ne!(evidence.verification_digest, [0; 32]);
+        let calls = rpc.calls.lock().unwrap();
+        assert_eq!(calls[0].0, "getMultipleAccounts");
+        assert_eq!(calls[0].1[1]["commitment"], "finalized");
+        assert_eq!(calls[0].1[1]["encoding"], "base64");
+        assert_eq!(calls[0].1[0].as_array().unwrap().len(), 5);
+    }
+
+    #[tokio::test]
+    async fn refund_funding_verifier_rejects_source_authority_substitution() {
+        let (topology, mut response) = verified_refund_funding_fixture();
+        let encoded = response["value"][4]["data"][0].as_str().unwrap();
+        let mut data = BASE64.decode(encoded).unwrap();
+        data[32] ^= 1;
+        response["value"][4]["data"][0] = Value::String(BASE64.encode(data));
+        let rpc = FakeRpc {
+            results: Mutex::new(VecDeque::from([response])),
+            calls: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            verify_refund_funding_topology(&rpc, &topology).await,
+            Err(RefundFundingVerificationError::TokenAuthorityMismatch(
+                "net_source"
+            ))
+        );
+    }
+
+    #[tokio::test]
+    async fn refund_funding_verifier_rejects_token_2022_before_rpc() {
+        let (mut topology, _response) = verified_refund_funding_fixture();
+        topology.token_program = settlement_client::TOKEN_2022_PROGRAM_ID.to_string();
+        let rpc = FakeRpc {
+            results: Mutex::new(VecDeque::from([_response])),
+            calls: Mutex::new(Vec::new()),
+        };
+        assert!(matches!(
+            verify_refund_funding_topology(&rpc, &topology).await,
+            Err(RefundFundingVerificationError::InvalidTopology(message))
+                if message.contains("legacy SPL Token")
+        ));
+        assert!(rpc.calls.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -5267,6 +5723,27 @@ mod tests {
         data.extend_from_slice(&[27; 32]);
         data.extend_from_slice(&[28; 32]);
         data.extend_from_slice(&[29; 32]);
+        BASE64.encode(data)
+    }
+
+    fn encoded_settlement_adjustment_event(gross: u64, tax: u64, net: u64) -> String {
+        let mut data = Vec::with_capacity(299);
+        data.extend_from_slice(&SETTLEMENT_ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR);
+        data.extend_from_slice(&[31; 32]);
+        data.extend_from_slice(&[32; 32]);
+        data.extend_from_slice(&[33; 32]);
+        data.extend_from_slice(&[34; 32]);
+        data.extend_from_slice(&41_u64.to_le_bytes());
+        data.push(1);
+        data.push(1);
+        data.extend_from_slice(&gross.to_le_bytes());
+        data.push(1);
+        data.extend_from_slice(&tax.to_le_bytes());
+        data.push(1);
+        data.extend_from_slice(&net.to_le_bytes());
+        data.extend_from_slice(&[35; 32]);
+        data.extend_from_slice(&[36; 32]);
+        data.extend_from_slice(&[37; 32]);
         BASE64.encode(data)
     }
 
@@ -5382,6 +5859,62 @@ mod tests {
                 42,
             )
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn settlement_decoder_projects_finalized_adjustment_record_evidence() {
+        let decoder = SettlementExecutedDecoder;
+        let block = json!({
+            "transactions": [{
+                "transaction": {"signatures": ["adjustment-signature"]},
+                "meta": {
+                    "err": null,
+                    "logMessages": [
+                        "Program 4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi invoke [1]",
+                        format!("Program data: {}", encoded_settlement_adjustment_event(100, 25, 75))
+                    ]
+                }
+            }]
+        });
+        let decoded = decoder.decode_block(42, block).await.unwrap();
+        assert!(decoded.receipts.is_empty());
+        assert_eq!(decoded.adjustment_records.len(), 1);
+        let record = &decoded.adjustment_records[0];
+        assert_eq!(record.adjustment, [31; 32]);
+        assert_eq!(record.gross_magnitude, 100);
+        assert_eq!(record.tax_magnitude, 25);
+        assert_eq!(record.net_magnitude, 75);
+        assert_eq!(record.approver, [37; 32]);
+        assert_eq!(decoded.raw_evidence.len(), 1);
+        assert_eq!(
+            decoded.raw_evidence[0].event_discriminator,
+            SETTLEMENT_ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR
+        );
+        assert_eq!(
+            record.evidence_digest,
+            decoded.raw_evidence[0].evidence_digest
+        );
+    }
+
+    #[tokio::test]
+    async fn settlement_decoder_rejects_non_conserving_adjustment_record() {
+        let decoder = SettlementExecutedDecoder;
+        let block = json!({
+            "transactions": [{
+                "transaction": {"signatures": ["adjustment-signature"]},
+                "meta": {
+                    "err": null,
+                    "logMessages": [
+                        "Program 4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi invoke [1]",
+                        format!("Program data: {}", encoded_settlement_adjustment_event(100, 25, 74))
+                    ]
+                }
+            }]
+        });
+        assert!(matches!(
+            decoder.decode_block(42, block).await,
+            Err(ProviderError::InvalidResponse(_))
+        ));
     }
 
     #[tokio::test]

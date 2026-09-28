@@ -7,6 +7,7 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [Source analysis and requirement boundary](source-analysis.md)
 - [System architecture](architecture/system-architecture.md)
 - [Domain model and bounded contexts](architecture/domain-model.md)
+- [Refund Movement bounded context](adr/0175-durable-refund-claim-execute-intents.md)
 - [Tier-1 tax engine](architecture/tax-engine.md)
 - [Jurisdiction-resolution bounded context](architecture/jurisdiction-resolution.md)
 - [Gold-standard UI/UX](architecture/ui-ux.md)
@@ -65,6 +66,12 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [ADR-0167: Finalized server-owned adjustment-registry verification](adr/0167-finalized-adjustment-registry-verification.md)
 - [ADR-0168: Dockerized Solana conformance runner](adr/0168-dockerized-solana-conformance-runner.md)
 - [ADR-0169: SBF stack-frame safety boundary](adr/0169-sbf-stack-frame-safety.md)
+- [ADR-0170: Wallet-bound adjustment submission and finalized recording evidence](adr/0170-adjustment-submission-and-finalized-recording.md)
+- [ADR-0171: Wallet-bound adjustment browser workflow](adr/0171-adjustment-wallet-workspace.md)
+- [ADR-0172: Exact decimal wire encoding for Solana `u64` values](adr/0172-exact-chain-u64-wire-encoding.md)
+- [ADR-0173: Server-owned refund-claim wallet orchestration](adr/0173-refund-claim-wallet-orchestration.md)
+- [ADR-0174: Finalized refund-funding topology verification](adr/0174-finalized-refund-funding-topology-verification.md)
+- [ADR-0175: Durable refund claim and execute intents](adr/0175-durable-refund-claim-execute-intents.md)
 - [Operations runbooks](runbooks/README.md)
 
 ## Status and scope
@@ -72,10 +79,11 @@ This directory is the architecture and delivery baseline for a production-grade,
 This is the architecture and implementation baseline for a system still in its foundation phase. It does not claim that tax treatment is legally correct for every jurisdiction, that an oracle is a tax authority, or that escrow funds can be withdrawn without the configured governance and release controls. Legal, tax, custody, and licensing review are release gates. The current executable foundation is deliberately limited to the deterministic tax engine, authenticated persisted published-rule quote path with an atomic outbox event, server-owned persisted-rule simulation with tenant, jurisdiction, digest, and retirement checks, server-owned quote-bound calculation-attestation ingestion, authenticated tax-rule author/reviewer/approver workflow with append-only governance evidence, repeatable-read governance projection and operator workspace, authenticated replay-gap operations and their typed operator workspace, bounded NATS JetStream dispatcher, finalized-indexer/reconciliation domain and coordinator plus PostgreSQL persistence slice, isolated preview API, authenticated quote UI, governed vault-release API/UI and append-only evidence projection, PostgreSQL migrations, product shell, and a governed token-interface settlement contract with cached policy-attestation binding. It is not yet a production settlement deployment.
 
 The current foundation additionally includes wallet-bound adjustment authority
-proofs and the finalized server-owned adjustment evidence compiler. The
-authenticated Docker path is covered by `make integration-check`; validator
-registry lifecycle, wallet submission, and finalized reconciliation remain
-release gates.
+proofs, the finalized server-owned adjustment evidence compiler, the durable
+chain-intent submission/reconciliation API, and the accessible browser wallet
+workflow. The authenticated Docker path is covered by
+`make integration-check`; validator registry lifecycle, live wallet/provider
+evidence, and finalized reconciliation remain release gates.
 
 The current foundation also includes ADR-0145's facts-only, two-replica
 persisted-rule simulation latency harness. The 2026-09-27 Docker run measured

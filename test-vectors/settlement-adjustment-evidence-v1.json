@@ -8,7 +8,7 @@
     "mint": "111BuZ6b86gm7XhxjvTakhRvxSMjXp2GqgifkNUmDK",
     "token_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
     "original_receipt": "111FJo4zLAGU9nzTWa6EnbV4VAmtG4FR8kcokrtZYr",
-    "adjustment_nonce": 11,
+    "adjustment_nonce": "11",
     "kind": 1,
     "gross_sign": 1,
     "gross_magnitude": "100",
@@ -40,6 +40,6 @@
     "adjustment": "Fk3Z5sqgXWRYu3dFuQqshGmgGJoSxQSnxTHSFt9CKM5T",
     "adjustment_registry": "4fuGSLS5aka44BPDqoH7RSg1HLvy4bMU4zY551u2Dnts",
     "original_receipt": "111FJo4zLAGU9nzTWa6EnbV4VAmtG4FR8kcokrtZYr",
-    "adjustment_nonce": 11
+    "adjustment_nonce": "11"
   }
 }

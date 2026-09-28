@@ -1,6 +1,6 @@
 use axum::{Router, extract::State, http::StatusCode, routing::get};
 use observability::ServiceMetrics;
-use route_verifier::{RouteVerifierConfig, build_store, verify_once};
+use route_verifier::{RouteVerifierConfig, build_store, verify_once, verify_refund_funding_once};
 use std::{
     net::SocketAddr,
     sync::{
@@ -52,7 +52,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let store = Arc::new(build_store(&config).await?);
     let health_state = HealthState {
         ready: Arc::new(AtomicBool::new(true)),
-        metrics: Arc::new(ServiceMetrics::new("route_verifier", &["verify"])?),
+        metrics: Arc::new(ServiceMetrics::new(
+            "route_verifier",
+            &["verify", "verify_refund_funding"],
+        )?),
     };
     let bind_address = std::env::var("ROUTE_VERIFIER_HEALTH_BIND_ADDRESS")
         .unwrap_or_else(|_| "0.0.0.0:8083".to_string());
@@ -92,6 +95,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     Err(error) => {
                         warn!(%error, "route verification pass failed; routes remain inactive");
                         let _ = health_state.metrics.observe("verify", started.elapsed(), true);
+                    }
+                }
+                let started = Instant::now();
+                match verify_refund_funding_once(&store, &transports, config.batch_size, config.rpc_timeout).await {
+                    Ok(summary) => {
+                        info!(examined = summary.examined, activated = summary.activated, failed = summary.failed, "refund funding verification pass completed");
+                        let _ = health_state.metrics.observe("verify_refund_funding", started.elapsed(), summary.failed > 0);
+                    }
+                    Err(error) => {
+                        warn!(%error, "refund funding verification pass failed; configurations remain inactive");
+                        let _ = health_state.metrics.observe("verify_refund_funding", started.elapsed(), true);
                     }
                 }
             }

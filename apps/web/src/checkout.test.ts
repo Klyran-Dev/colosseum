@@ -1,18 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { Buffer } from "buffer";
 import {
   buildSettlementTransaction,
+  buildSettlementAdjustmentTransaction,
   parseCompiledSettlementArtifact,
+  parseCompiledSettlementAdjustmentArtifact,
+  parseCanonicalU64,
   parsePolicyDigest,
   parseSettlementRoutes,
   parseSettlementStatusResponse,
+  parseSettlementAdjustmentChainIntentResponse,
   parseSettlementSplitPlans,
   signAndEncodeSettlement,
   settlementIntentAllowsRetry,
   validateCompiledSettlementInstruction,
+  validateCompiledSettlementAdjustmentInstruction,
 } from "./checkout";
 import settlementVector from "../../../test-vectors/settlement-instruction-v1.json";
+import adjustmentVector from "../../../test-vectors/settlement-adjustment-evidence-v1.json";
 
 const payer = new PublicKey("11111111111111111111111111111111");
 const vectorInstruction = {
@@ -45,6 +51,14 @@ describe("checkout settlement boundary", () => {
     expect(parsePolicyDigest("00".repeat(31) + "ff")).toEqual([...new Uint8Array(31), 255]);
     expect(() => parsePolicyDigest("00")).toThrow(/32 bytes/);
     expect(() => parsePolicyDigest("zz".repeat(32))).toThrow(/32 bytes/);
+  });
+
+  it("preserves canonical Solana u64 values as decimal strings", () => {
+    expect(parseCanonicalU64("9007199254740992", "slot")).toBe("9007199254740992");
+    expect(parseCanonicalU64("18446744073709551615", "slot")).toBe("18446744073709551615");
+    expect(() => parseCanonicalU64(9007199254740992, "slot")).toThrow(/canonical unsigned/);
+    expect(() => parseCanonicalU64("01", "slot")).toThrow(/canonical unsigned/);
+    expect(() => parseCanonicalU64("18446744073709551616", "slot")).toThrow(/canonical unsigned/);
   });
 
   it("accepts only bounded UUIDv7 settlement intent status responses", () => {
@@ -101,6 +115,22 @@ describe("checkout settlement boundary", () => {
       signature: null,
       provider_index: null,
     })).toThrow(/bound signature/);
+  });
+
+  it("requires a bound signature for adjustment reconciliation states", () => {
+    const parsed = parseSettlementAdjustmentChainIntentResponse({
+      chain_intent_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d13",
+      status: "unknown",
+      signature: "5".repeat(88),
+      provider_index: 1,
+    });
+    expect(parsed.status).toBe("unknown");
+    expect(() => parseSettlementAdjustmentChainIntentResponse({
+      chain_intent_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d13",
+      status: "finalized",
+      signature: null,
+      provider_index: null,
+    })).toThrow(/bound signature/i);
   });
 
   it("validates bounded routes and compiled artifacts before review", () => {
@@ -325,6 +355,63 @@ describe("checkout settlement boundary", () => {
       }],
     }];
     expect(() => parseSettlementSplitPlans(payload)).toThrow(/conserving/);
+  });
+
+  it("parses the bounded adjustment compile artifact and rejects signer substitution", () => {
+    const id = "01992f1b-4a70-7e30-8ea2-b6e37a9d9d13";
+    const artifact = parseCompiledSettlementAdjustmentArtifact({
+      status: "prepared_unsubmitted",
+      intent_id: id,
+      chain_intent_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d15",
+      request_digest: new Array(32).fill(1),
+      instruction_digest: new Array(32).fill(2),
+      registry: adjustmentVector.expected.adjustment_registry,
+      registry_slot: "12",
+      registry_commitment: "finalized",
+      registry_account_digest: new Array(32).fill(3),
+      instruction: adjustmentVector.expected,
+    });
+    expect(artifact.chain_intent_id).toBe("01992f1b-4a70-7e30-8ea2-b6e37a9d9d15");
+    expect(artifact.instruction.accounts).toHaveLength(10);
+    expect(() => validateCompiledSettlementAdjustmentInstruction(
+      artifact.instruction,
+      new PublicKey(adjustmentVector.expected.accounts[1].pubkey),
+    )).toThrow(/approver|signer/i);
+    expect(() => parseCompiledSettlementAdjustmentArtifact({
+      status: "prepared_unsubmitted",
+      intent_id: id,
+      chain_intent_id: id,
+      request_digest: new Array(32).fill(1),
+      instruction_digest: new Array(32).fill(2),
+      registry: adjustmentVector.expected.adjustment_registry,
+      registry_slot: "12",
+      registry_commitment: "confirmed",
+      registry_account_digest: new Array(32).fill(3),
+      instruction: adjustmentVector.expected,
+    })).toThrow(/finalized/i);
+  });
+
+  it("builds a record-only adjustment transaction without compute-budget injection", async () => {
+    const approver = new PublicKey(adjustmentVector.expected.accounts[0].pubkey);
+    const typedInstruction = parseCompiledSettlementAdjustmentArtifact({
+      status: "prepared_unsubmitted",
+      intent_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d13",
+      chain_intent_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d15",
+      request_digest: new Array(32).fill(1),
+      instruction_digest: new Array(32).fill(2),
+      registry: adjustmentVector.expected.adjustment_registry,
+      registry_slot: "12",
+      registry_commitment: "finalized",
+      registry_account_digest: new Array(32).fill(3),
+      instruction: adjustmentVector.expected,
+    }).instruction;
+    const connection = {
+      getLatestBlockhash: vi.fn().mockResolvedValue({ blockhash: approver.toBase58() }),
+    } as unknown as Connection;
+    const transaction = await buildSettlementAdjustmentTransaction(typedInstruction, approver, connection);
+    expect(transaction.instructions).toHaveLength(1);
+    expect(transaction.instructions[0].programId.toBase58()).toBe(adjustmentVector.expected.program_id);
+    expect(transaction.feePayer?.toBase58()).toBe(approver.toBase58());
   });
 
   it("fails closed when no injected wallet is available", async () => {

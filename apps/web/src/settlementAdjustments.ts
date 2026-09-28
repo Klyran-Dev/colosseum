@@ -35,8 +35,58 @@ export type SettlementAdjustmentTransitionResponse = {
   approver_subject: string | null;
 };
 
+export type CompiledSettlementAdjustmentAccount = {
+  pubkey: string;
+  is_signer: boolean;
+  is_writable: boolean;
+};
+
+export type CompiledSettlementAdjustmentInstruction = {
+  status: "prepared_unsubmitted";
+  program_id: string;
+  instruction_data_base64: string;
+  accounts: CompiledSettlementAdjustmentAccount[];
+  adjustment: string;
+  adjustment_registry: string;
+  original_receipt: string;
+  adjustment_nonce: string;
+};
+
+export type CompiledSettlementAdjustmentArtifact = {
+  status: "prepared_unsubmitted";
+  intent_id: string;
+  chain_intent_id: string;
+  request_digest: number[];
+  instruction_digest: number[];
+  registry: string;
+  registry_slot: string;
+  registry_commitment: "finalized";
+  registry_account_digest: number[];
+  instruction: CompiledSettlementAdjustmentInstruction;
+};
+
+export type AdjustmentChainIntentStatus =
+  | "prepared_unsubmitted"
+  | "signed"
+  | "submitting"
+  | "submitted"
+  | "processed"
+  | "confirmed"
+  | "finalized"
+  | "rejected"
+  | "unknown";
+
+export type AdjustmentChainIntentResponse = {
+  chain_intent_id: string;
+  status: AdjustmentChainIntentStatus;
+  signature: string | null;
+  provider_index: number | null;
+};
+
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DECIMAL = /^(?:0|-[1-9][0-9]*|[1-9][0-9]*)$/;
+const UINT64_DECIMAL = /^(?:0|[1-9][0-9]*)$/;
+const UINT64_MAX_DECIMAL = "18446744073709551615";
 const MAX_ATOMIC = BigInt("18446744073709551615");
 const NEGATIVE_KINDS: readonly AdjustmentKind[] = ["Refund", "Reversal", "Chargeback"];
 const KINDS: readonly AdjustmentKind[] = ["Refund", "Reversal", "Correction", "Chargeback", "RemittanceAdjustment"];
@@ -49,6 +99,16 @@ function objectValue(value: unknown, label: string): Record<string, unknown> {
 
 function requiredString(value: unknown, label: string): string {
   if (typeof value !== "string" || value.length === 0) throw new Error(`${label} must be a non-empty string.`);
+  return value;
+}
+
+export function parseCanonicalU64(value: unknown, label: string): string {
+  if (typeof value !== "string"
+      || !UINT64_DECIMAL.test(value)
+      || value.length > UINT64_MAX_DECIMAL.length
+      || (value.length === UINT64_MAX_DECIMAL.length && value > UINT64_MAX_DECIMAL)) {
+    throw new Error(`${label} must be a canonical unsigned 64-bit decimal string.`);
+  }
   return value;
 }
 

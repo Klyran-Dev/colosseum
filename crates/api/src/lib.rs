@@ -44,11 +44,13 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use storage::{
     BindAdjustmentAuthority, CreateAdjustmentAuthorityChallenge, CreateJurisdictionPolicyCommand,
+    CreateRefundFundingConfigurationCommand, CreateSettlementAdjustmentChainIntent,
     CreateSettlementAdjustmentCommand, CreateSettlementAdjustmentEvidenceIntent,
     CreateVaultReleaseClaimCommand, DatabasePoolStats, EvidenceAccessAuditCommand,
-    JurisdictionPolicyGovernanceTransition, PgStore, QuoteCommand, QuoteOutcome, RuleCacheStats,
-    RuleGovernanceTransition, SettlementAdjustmentTransition, SettlementTransition, StorageError,
-    VaultReleaseClaimTransition,
+    JurisdictionPolicyGovernanceTransition, PgStore, QuoteCommand, QuoteOutcome,
+    RefundFundingConfigurationTransition, RuleCacheStats, RuleGovernanceTransition,
+    SettlementAdjustmentChainTransition, SettlementAdjustmentTransition, SettlementTransition,
+    StorageError, VaultReleaseClaimTransition,
 };
 use tax_engine::{CalculationResult, RuleSet, TaxError, TaxFacts, calculate};
 use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
@@ -195,6 +197,31 @@ pub struct SettlementAdjustmentTransitionRequest {
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct RefundFundingConfigurationCreateRequest {
+    pub idempotency_key: String,
+    pub configuration_key: String,
+    pub version: i32,
+    pub merchant_account: String,
+    pub mint: String,
+    pub tax_vault: String,
+    pub vault_authority: String,
+    pub refund_funder: String,
+    pub refund_funder_subject: String,
+    pub net_source: String,
+    pub token_program: String,
+    pub effective_from_unix: i64,
+    pub effective_until_unix: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RefundFundingConfigurationTransitionRequest {
+    pub to_status: String,
+    pub evidence: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct AdjustmentAuthorityRoleRequest {
     pub role: String,
 }
@@ -236,13 +263,31 @@ pub struct SettlementAdjustmentEvidenceCompileRequest {
 pub struct CompiledSettlementAdjustmentResponse {
     pub status: &'static str,
     pub intent_id: Uuid,
+    pub chain_intent_id: Uuid,
     pub request_digest: Digest32,
     pub instruction_digest: Digest32,
     pub registry: String,
+    #[serde(with = "policy::serde_u64_string")]
     pub registry_slot: u64,
     pub registry_commitment: &'static str,
     pub registry_account_digest: Digest32,
     pub instruction: CompiledSettlementAdjustmentInstruction,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SubmitSettlementAdjustmentRequest {
+    pub chain_intent_id: Uuid,
+    pub signed_transaction_base64: String,
+    pub instruction: CompiledSettlementAdjustmentInstruction,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SubmitSettlementAdjustmentResponse {
+    pub chain_intent_id: Uuid,
+    pub status: String,
+    pub signature: Option<String>,
+    pub provider_index: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -672,6 +717,45 @@ impl From<StorageError> for ApiError {
                 "the settlement route cannot be activated in its current lifecycle state"
                     .to_string(),
             ),
+            StorageError::RefundFundingConfigurationNotFound => (
+                StatusCode::NOT_FOUND,
+                "REFUND_FUNDING_CONFIGURATION_NOT_FOUND",
+                "no refund funding configuration was found for this merchant".to_string(),
+            ),
+            StorageError::RefundFundingConfigurationIdempotencyConflict => (
+                StatusCode::CONFLICT,
+                "REFUND_FUNDING_CONFIGURATION_IDEMPOTENCY_CONFLICT",
+                "the idempotency key was already used for different refund funding input"
+                    .to_string(),
+            ),
+            StorageError::InvalidRefundFundingConfiguration(message) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_REFUND_FUNDING_CONFIGURATION",
+                message,
+            ),
+            StorageError::InvalidRefundFundingConfigurationTransition => (
+                StatusCode::CONFLICT,
+                "INVALID_REFUND_FUNDING_CONFIGURATION_TRANSITION",
+                "the refund funding configuration cannot take that lifecycle transition"
+                    .to_string(),
+            ),
+            StorageError::RefundFundingConfigurationGovernanceConflict => (
+                StatusCode::FORBIDDEN,
+                "REFUND_FUNDING_CONFIGURATION_GOVERNANCE_CONFLICT",
+                "the authenticated subject cannot perform that funding configuration transition"
+                    .to_string(),
+            ),
+            StorageError::RefundFundingConfigurationVerificationInvalid(message) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "REFUND_FUNDING_CONFIGURATION_VERIFICATION_INVALID",
+                message,
+            ),
+            StorageError::RefundFundingConfigurationActivationConflict => (
+                StatusCode::CONFLICT,
+                "REFUND_FUNDING_CONFIGURATION_ACTIVATION_CONFLICT",
+                "the refund funding configuration cannot be activated in its current lifecycle state"
+                    .to_string(),
+            ),
             StorageError::SettlementSplitPlanNotFound => (
                 StatusCode::NOT_FOUND,
                 "SETTLEMENT_SPLIT_PLAN_NOT_FOUND",
@@ -732,6 +816,22 @@ impl From<StorageError> for ApiError {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "INVALID_ADJUSTMENT_EVIDENCE_INTENT",
                 "stored adjustment evidence intent failed integrity validation".to_string(),
+            ),
+            StorageError::AdjustmentChainIntentNotFound => (
+                StatusCode::NOT_FOUND,
+                "ADJUSTMENT_CHAIN_INTENT_NOT_FOUND",
+                "the adjustment submission intent was not found".to_string(),
+            ),
+            StorageError::AdjustmentChainIntentConflict => (
+                StatusCode::CONFLICT,
+                "ADJUSTMENT_CHAIN_INTENT_CONFLICT",
+                "the adjustment submission intent conflicts with immutable evidence".to_string(),
+            ),
+            StorageError::InvalidAdjustmentChainTransition => (
+                StatusCode::CONFLICT,
+                "INVALID_ADJUSTMENT_CHAIN_TRANSITION",
+                "the adjustment submission cannot advance through this lifecycle transition"
+                    .to_string(),
             ),
             StorageError::Tax(tax_error) => {
                 return ApiError::from(tax_error);
@@ -1237,6 +1337,30 @@ pub fn router() -> Router<AppState> {
         .route(
             "/v1/settlement/adjustments/{adjustment_id}/compile",
             post(compile_settlement_adjustment),
+        )
+        .route(
+            "/v1/settlement/adjustment-chain-intents/submit",
+            post(submit_settlement_adjustment),
+        )
+        .route(
+            "/v1/settlement/adjustment-chain-intents/{intent_id}",
+            get(get_settlement_adjustment_chain_intent),
+        )
+        .route(
+            "/v1/settlement/adjustment-chain-intents/{intent_id}/reconcile",
+            post(reconcile_settlement_adjustment_chain_intent),
+        )
+        .route(
+            "/v1/settlement/refund-funding-configurations",
+            post(create_refund_funding_configuration).get(list_refund_funding_configurations),
+        )
+        .route(
+            "/v1/settlement/refund-funding-configurations/{configuration_id}",
+            get(load_refund_funding_configuration),
+        )
+        .route(
+            "/v1/settlement/refund-funding-configurations/{configuration_id}/transition",
+            post(transition_refund_funding_configuration),
         )
         .route(
             "/v1/vault/reconciliation/targets",
@@ -2432,9 +2556,19 @@ async fn compile_settlement_adjustment_inner(
         )
         .await
         .map_err(|error| log_adjustment_compile_storage_error("bind_instruction_digest", error))?;
+    let chain_intent = store
+        .reserve_settlement_adjustment_chain_intent(CreateSettlementAdjustmentChainIntent {
+            evidence_intent_id: intent.id,
+            adjustment_id: intent.adjustment_id,
+            merchant_id: intent.merchant_id,
+            instruction_digest,
+        })
+        .await
+        .map_err(|error| log_adjustment_compile_storage_error("reserve_chain_intent", error))?;
     Ok(Json(CompiledSettlementAdjustmentResponse {
         status: "prepared_unsubmitted",
         intent_id: intent.id,
+        chain_intent_id: chain_intent.id,
         request_digest: intent.request_digest,
         instruction_digest,
         registry: registry.registry,
@@ -2443,6 +2577,404 @@ async fn compile_settlement_adjustment_inner(
         registry_account_digest: registry.account_digest,
         instruction: compiled,
     }))
+}
+
+async fn submit_settlement_adjustment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    payload: Result<Json<SubmitSettlementAdjustmentRequest>, JsonRejection>,
+) -> Result<Json<SubmitSettlementAdjustmentResponse>, ApiError> {
+    let principal = authenticate_scope_role(
+        &state,
+        &headers,
+        "tax:adjustment:submit",
+        "settlement_adjustment_approver",
+    )?;
+    let Json(request) = payload.map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "INVALID_JSON",
+        message: "request body is invalid".to_string(),
+    })?;
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "SETTLEMENT_ADJUSTMENT_STORAGE_UNAVAILABLE",
+        message: "settlement adjustment storage is not configured".to_string(),
+    })?;
+    let intent = store
+        .load_settlement_adjustment_chain_intent(request.chain_intent_id, principal.merchant_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError {
+            status: StatusCode::NOT_FOUND,
+            code: "ADJUSTMENT_CHAIN_INTENT_NOT_FOUND",
+            message: "the adjustment submission intent was not found".to_string(),
+        })?;
+    if intent.status != SettlementStatus::PreparedUnsubmitted.as_str()
+        && intent.status != SettlementStatus::Signed.as_str()
+    {
+        return Ok(Json(SubmitSettlementAdjustmentResponse {
+            chain_intent_id: intent.id,
+            status: intent.status,
+            signature: intent.signature,
+            provider_index: None,
+        }));
+    }
+    let coordinator = state.settlement_coordinator.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "SETTLEMENT_RPC_NOT_CONFIGURED",
+        message: "settlement RPC providers are not configured".to_string(),
+    })?;
+    let transaction =
+        SignedTransaction::parse(&request.signed_transaction_base64).map_err(ApiError::from)?;
+    let signed_digest = sha256_digest(transaction.bytes());
+    let instruction_digest = sha256_digest(&serde_json::to_vec(&request.instruction).map_err(
+        |error| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "SETTLEMENT_DIGEST_FAILURE",
+            message: error.to_string(),
+        },
+    )?);
+    if instruction_digest != intent.instruction_digest {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "ADJUSTMENT_INSTRUCTION_CONFLICT",
+            message: "compiled adjustment instruction does not match the durable intent".into(),
+        });
+    }
+    transaction
+        .verify_adjustment_instruction(&request.instruction)
+        .map_err(ApiError::from)?;
+    let transaction_signature = transaction.signature().map_err(ApiError::from)?;
+    coordinator
+        .validate_blockhash(&transaction)
+        .await
+        .map_err(ApiError::from)?;
+    if let Some(existing_digest) = intent.signed_transaction_digest
+        && existing_digest != signed_digest
+    {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "ADJUSTMENT_SIGNED_BYTES_CONFLICT",
+            message: "intent is already bound to different signed bytes".into(),
+        });
+    }
+    if intent.status == SettlementStatus::PreparedUnsubmitted.as_str()
+        && !store
+            .transition_settlement_adjustment_chain_intent(SettlementAdjustmentChainTransition {
+                intent_id: intent.id,
+                merchant_id: principal.merchant_id,
+                expected_status: SettlementStatus::PreparedUnsubmitted.as_str().into(),
+                next_status: SettlementStatus::Signed.as_str().into(),
+                signed_transaction_digest: Some(signed_digest),
+                signature: None,
+                slot: None,
+                last_error_code: None,
+                evidence: serde_json::json!({"source": "wallet_handoff"}),
+            })
+            .await
+            .map_err(ApiError::from)?
+    {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "ADJUSTMENT_CHAIN_INTENT_STATE_CHANGED",
+            message: "adjustment submission changed concurrently; reconcile before retry".into(),
+        });
+    }
+    if !store
+        .transition_settlement_adjustment_chain_intent(SettlementAdjustmentChainTransition {
+            intent_id: intent.id,
+            merchant_id: principal.merchant_id,
+            expected_status: SettlementStatus::Signed.as_str().into(),
+            next_status: SettlementStatus::Submitting.as_str().into(),
+            signed_transaction_digest: Some(signed_digest),
+            signature: Some(transaction_signature.clone()),
+            slot: None,
+            last_error_code: None,
+            evidence: serde_json::json!({"source": "submission_fence"}),
+        })
+        .await
+        .map_err(ApiError::from)?
+    {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "ADJUSTMENT_SUBMISSION_IN_PROGRESS",
+            message: "adjustment submission is already owned by another request; reconcile the intent before retry".into(),
+        });
+    }
+    let submitted = match coordinator.submit(&transaction).await {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            let error_code = settlement_submission_error_code(&error);
+            let _ = store
+                .transition_settlement_adjustment_chain_intent(
+                    SettlementAdjustmentChainTransition {
+                        intent_id: intent.id,
+                        merchant_id: principal.merchant_id,
+                        expected_status: SettlementStatus::Submitting.as_str().into(),
+                        next_status: SettlementStatus::Unknown.as_str().into(),
+                        signed_transaction_digest: Some(signed_digest),
+                        signature: Some(transaction_signature),
+                        slot: None,
+                        last_error_code: Some(error_code.to_string()),
+                        evidence: serde_json::json!({"source": "rpc", "error_code": error_code}),
+                    },
+                )
+                .await;
+            return Err(ApiError {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                code: "ADJUSTMENT_SUBMISSION_UNKNOWN",
+                message:
+                    "provider outcome is unknown; reconcile the adjustment intent before retry"
+                        .into(),
+            });
+        }
+    };
+    if !store
+        .transition_settlement_adjustment_chain_intent(SettlementAdjustmentChainTransition {
+            intent_id: intent.id,
+            merchant_id: principal.merchant_id,
+            expected_status: SettlementStatus::Submitting.as_str().into(),
+            next_status: submitted.status.as_str().into(),
+            signed_transaction_digest: None,
+            signature: Some(submitted.signature.clone()),
+            slot: None,
+            last_error_code: None,
+            evidence: serde_json::json!({"source": "rpc", "provider_index": submitted.provider_index}),
+        })
+        .await
+        .map_err(ApiError::from)?
+    {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "ADJUSTMENT_CHAIN_INTENT_STATE_CHANGED",
+            message: "adjustment submission changed concurrently; reconcile by signature".into(),
+        });
+    }
+    Ok(Json(SubmitSettlementAdjustmentResponse {
+        chain_intent_id: intent.id,
+        status: submitted.status.as_str().to_string(),
+        signature: Some(submitted.signature),
+        provider_index: Some(submitted.provider_index),
+    }))
+}
+
+async fn get_settlement_adjustment_chain_intent(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(intent_id): Path<Uuid>,
+) -> Result<Json<SubmitSettlementAdjustmentResponse>, ApiError> {
+    let principal = authenticate_scope(&state, &headers, "tax:adjustment:read")?;
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "SETTLEMENT_ADJUSTMENT_STORAGE_UNAVAILABLE",
+        message: "settlement adjustment storage is not configured".to_string(),
+    })?;
+    let intent = store
+        .load_settlement_adjustment_chain_intent(intent_id, principal.merchant_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError {
+            status: StatusCode::NOT_FOUND,
+            code: "ADJUSTMENT_CHAIN_INTENT_NOT_FOUND",
+            message: "the adjustment submission intent was not found".to_string(),
+        })?;
+    Ok(Json(SubmitSettlementAdjustmentResponse {
+        chain_intent_id: intent.id,
+        status: intent.status,
+        signature: intent.signature,
+        provider_index: None,
+    }))
+}
+
+async fn reconcile_settlement_adjustment_chain_intent(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(intent_id): Path<Uuid>,
+) -> Result<Json<SubmitSettlementAdjustmentResponse>, ApiError> {
+    let principal = authenticate_scope(&state, &headers, "tax:adjustment:reconcile")?;
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "SETTLEMENT_ADJUSTMENT_STORAGE_UNAVAILABLE",
+        message: "settlement adjustment storage is not configured".to_string(),
+    })?;
+    let coordinator = state.settlement_coordinator.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "SETTLEMENT_RPC_NOT_CONFIGURED",
+        message: "settlement RPC providers are not configured".to_string(),
+    })?;
+    let intent = store
+        .load_settlement_adjustment_chain_intent(intent_id, principal.merchant_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError {
+            status: StatusCode::NOT_FOUND,
+            code: "ADJUSTMENT_CHAIN_INTENT_NOT_FOUND",
+            message: "the adjustment submission intent was not found".to_string(),
+        })?;
+    let Some(signature) = intent.signature.clone() else {
+        return Ok(Json(SubmitSettlementAdjustmentResponse {
+            chain_intent_id: intent.id,
+            status: intent.status,
+            signature: None,
+            provider_index: None,
+        }));
+    };
+    let observed = coordinator
+        .observe(&signature)
+        .await
+        .map_err(ApiError::from)?;
+    let current = parse_settlement_status_for_api(&intent.status)?;
+    let target = if observed.status == SettlementStatus::Finalized {
+        SettlementStatus::Confirmed
+    } else {
+        observed.status
+    };
+    let mut status = current;
+    if target != current
+        && can_transition(current, target)
+        && store
+            .transition_settlement_adjustment_chain_intent(SettlementAdjustmentChainTransition {
+                intent_id: intent.id,
+                merchant_id: principal.merchant_id,
+                expected_status: current.as_str().into(),
+                next_status: target.as_str().into(),
+                signed_transaction_digest: None,
+                signature: Some(signature.clone()),
+                slot: observed.slot,
+                last_error_code: (target == SettlementStatus::Unknown)
+                    .then_some("rpc_status_unknown".to_string()),
+                evidence: serde_json::json!({
+                    "source": "rpc_status",
+                    "provider_index": observed.provider_index,
+                    "finalized_event_required": observed.status == SettlementStatus::Finalized
+                }),
+            })
+            .await
+            .map_err(ApiError::from)?
+    {
+        status = target;
+    }
+    if observed.status == SettlementStatus::Finalized {
+        let evidence_intent = store
+            .load_settlement_adjustment_evidence_intent(
+                intent.evidence_intent_id,
+                principal.merchant_id,
+            )
+            .await
+            .map_err(ApiError::from)?
+            .ok_or_else(|| ApiError {
+                status: StatusCode::CONFLICT,
+                code: "ADJUSTMENT_EVIDENCE_INTENT_NOT_FOUND",
+                message: "immutable adjustment evidence is unavailable for reconciliation".into(),
+            })?;
+        let adjustment = store
+            .load_settlement_adjustment(intent.adjustment_id, principal.merchant_id)
+            .await
+            .map_err(ApiError::from)?;
+        let Some(observed_slot) = observed.slot else {
+            return Ok(Json(SubmitSettlementAdjustmentResponse {
+                chain_intent_id: intent.id,
+                status: status.as_str().to_string(),
+                signature: Some(signature),
+                provider_index: Some(observed.provider_index),
+            }));
+        };
+        let adjustment_pda = Pubkey::find_program_address(
+            &[
+                b"adjustment",
+                &evidence_intent.original_receipt,
+                &evidence_intent.nonce.to_le_bytes(),
+            ],
+            &Pubkey::from_str(SETTLEMENT_PROGRAM_ID).map_err(|_| ApiError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "SETTLEMENT_PROGRAM_CONFIGURATION_INVALID",
+                message: "configured settlement program id is invalid".into(),
+            })?,
+        )
+        .0;
+        let (gross_sign, gross_magnitude) = signed_magnitude_u64(adjustment.delta.gross_atomic)?;
+        let (tax_sign, tax_magnitude) = signed_magnitude_u64(adjustment.delta.tax_atomic)?;
+        let (net_sign, net_magnitude) = signed_magnitude_u64(adjustment.delta.net_atomic)?;
+        let expected = indexer::IndexedSettlementAdjustment {
+            signature: signature.clone(),
+            slot: observed_slot,
+            event_index: 0,
+            adjustment: adjustment_pda.to_bytes(),
+            original_receipt: evidence_intent.original_receipt,
+            merchant: evidence_intent.merchant,
+            mint: evidence_intent.mint,
+            nonce: evidence_intent.nonce,
+            kind: adjustment_kind_tag(adjustment.kind),
+            gross_sign,
+            gross_magnitude,
+            tax_sign,
+            tax_magnitude,
+            net_sign,
+            net_magnitude,
+            adjustment_digest: adjustment.adjustment_digest,
+            adjustment_evidence_digest: adjustment.evidence_digest,
+            evidence_digest: [1; 32],
+            approver: evidence_intent.approver,
+        };
+        if let Some(record) = store
+            .load_finalized_settlement_adjustment_record(
+                intent.id,
+                principal.merchant_id,
+                &expected,
+            )
+            .await
+            .map_err(ApiError::from)?
+            && status != SettlementStatus::Finalized
+            && can_transition(status, SettlementStatus::Finalized)
+            && store
+                .transition_settlement_adjustment_chain_intent(
+                    SettlementAdjustmentChainTransition {
+                        intent_id: intent.id,
+                        merchant_id: principal.merchant_id,
+                        expected_status: status.as_str().into(),
+                        next_status: SettlementStatus::Finalized.as_str().into(),
+                        signed_transaction_digest: None,
+                        signature: Some(record.signature.clone()),
+                        slot: Some(record.slot),
+                        last_error_code: None,
+                        evidence: serde_json::json!({
+                            "source": "finalized_indexer_event",
+                            "event_index": record.event_index,
+                            "evidence_digest": record.evidence_digest
+                        }),
+                    },
+                )
+                .await
+                .map_err(ApiError::from)?
+        {
+            status = SettlementStatus::Finalized;
+        }
+    }
+    Ok(Json(SubmitSettlementAdjustmentResponse {
+        chain_intent_id: intent.id,
+        status: status.as_str().to_string(),
+        signature: Some(signature),
+        provider_index: Some(observed.provider_index),
+    }))
+}
+
+fn parse_settlement_status_for_api(value: &str) -> Result<SettlementStatus, ApiError> {
+    match value {
+        "prepared_unsubmitted" => Ok(SettlementStatus::PreparedUnsubmitted),
+        "signed" => Ok(SettlementStatus::Signed),
+        "submitting" => Ok(SettlementStatus::Submitting),
+        "submitted" => Ok(SettlementStatus::Submitted),
+        "processed" => Ok(SettlementStatus::Processed),
+        "confirmed" => Ok(SettlementStatus::Confirmed),
+        "finalized" => Ok(SettlementStatus::Finalized),
+        "rejected" => Ok(SettlementStatus::Rejected),
+        "unknown" => Ok(SettlementStatus::Unknown),
+        _ => Err(ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "INVALID_ADJUSTMENT_CHAIN_LIFECYCLE",
+            message: "stored adjustment chain status is invalid".to_string(),
+        }),
+    }
 }
 
 fn adjustment_authority_requirements(role: &str) -> Result<(&'static str, &'static str), ApiError> {
@@ -2455,10 +2987,14 @@ fn adjustment_authority_requirements(role: &str) -> Result<(&'static str, &'stat
             "tax:adjustment:authority:bind",
             "settlement_adjustment_approver",
         )),
+        "refund_funder" => Ok((
+            "tax:refund:authority:bind",
+            "refund_funding_funder",
+        )),
         _ => Err(ApiError {
             status: StatusCode::BAD_REQUEST,
             code: "INVALID_ADJUSTMENT_AUTHORITY_ROLE",
-            message: "role must be proposer or approver".to_string(),
+            message: "role must be proposer, approver, or refund_funder".to_string(),
         }),
     }
 }
@@ -2506,6 +3042,15 @@ fn signed_magnitude(value: i128) -> Result<(u8, String), ApiError> {
         message: "adjustment amount exceeds the unsigned atomic range".to_string(),
     })?;
     Ok((u8::from(value < 0), magnitude.to_string()))
+}
+
+fn signed_magnitude_u64(value: i128) -> Result<(u8, u64), ApiError> {
+    let magnitude = u64::try_from(value.unsigned_abs()).map_err(|_| ApiError {
+        status: StatusCode::UNPROCESSABLE_ENTITY,
+        code: "SETTLEMENT_ADJUSTMENT_AMOUNT_OUT_OF_RANGE",
+        message: "adjustment amount exceeds the unsigned atomic range".to_string(),
+    })?;
+    Ok((u8::from(value < 0), magnitude))
 }
 
 fn calculation_reference_digest(calculation_id: Uuid) -> Digest32 {
@@ -3327,6 +3872,268 @@ async fn list_settlement_routes(
             .await
             .map_err(ApiError::from)?,
     ))
+}
+
+async fn create_refund_funding_configuration(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    payload: Result<Json<RefundFundingConfigurationCreateRequest>, JsonRejection>,
+) -> Result<Json<storage::RefundFundingConfiguration>, ApiError> {
+    let started = std::time::Instant::now();
+    let metrics = Arc::clone(&state.metrics);
+    let result = create_refund_funding_configuration_inner(state, headers, payload).await;
+    let _ = metrics.observe(
+        "refund_funding_configuration_create",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+async fn create_refund_funding_configuration_inner(
+    state: AppState,
+    headers: HeaderMap,
+    payload: Result<Json<RefundFundingConfigurationCreateRequest>, JsonRejection>,
+) -> Result<Json<storage::RefundFundingConfiguration>, ApiError> {
+    let principal = authenticate_scope_role(
+        &state,
+        &headers,
+        "tax:refund:configure",
+        "refund_funding_proposer",
+    )?;
+    let Json(request) = payload.map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "INVALID_JSON",
+        message: "request body is invalid".to_string(),
+    })?;
+    let keys = canonicalize_refund_funding_public_keys(&request)?;
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "REFUND_FUNDING_STORAGE_UNAVAILABLE",
+        message: "refund funding configuration storage is not configured".to_string(),
+    })?;
+    let result = store
+        .create_refund_funding_configuration(CreateRefundFundingConfigurationCommand {
+            merchant_id: principal.merchant_id,
+            actor_subject: principal.subject,
+            idempotency_key: request.idempotency_key,
+            configuration_key: request.configuration_key,
+            version: request.version,
+            merchant_account: keys.merchant_account,
+            mint: keys.mint,
+            tax_vault: keys.tax_vault,
+            vault_authority: keys.vault_authority,
+            refund_funder: keys.refund_funder,
+            refund_funder_subject: request.refund_funder_subject,
+            net_source: keys.net_source,
+            token_program: keys.token_program,
+            effective_from_unix: request.effective_from_unix,
+            effective_until_unix: request.effective_until_unix,
+        })
+        .await
+        .map_err(ApiError::from)?;
+    let configuration = match result {
+        storage::RefundFundingConfigurationOutcome::Created(configuration)
+        | storage::RefundFundingConfigurationOutcome::Replay(configuration) => configuration,
+    };
+    Ok(Json(configuration))
+}
+
+async fn list_refund_funding_configurations(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<storage::RefundFundingConfiguration>>, ApiError> {
+    let started = std::time::Instant::now();
+    let metrics = Arc::clone(&state.metrics);
+    let result = list_refund_funding_configurations_inner(state, headers).await;
+    let _ = metrics.observe(
+        "refund_funding_configuration_read",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+async fn list_refund_funding_configurations_inner(
+    state: AppState,
+    headers: HeaderMap,
+) -> Result<Json<Vec<storage::RefundFundingConfiguration>>, ApiError> {
+    let principal = authenticate_scope_any_role(
+        &state,
+        &headers,
+        "tax:refund:configure",
+        &[
+            "refund_funding_proposer",
+            "refund_funding_approver",
+            "settlement_adjustment_auditor",
+        ],
+    )?;
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "REFUND_FUNDING_STORAGE_UNAVAILABLE",
+        message: "refund funding configuration storage is not configured".to_string(),
+    })?;
+    Ok(Json(
+        store
+            .list_refund_funding_configurations(principal.merchant_id)
+            .await
+            .map_err(ApiError::from)?,
+    ))
+}
+
+async fn load_refund_funding_configuration(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(configuration_id): Path<Uuid>,
+) -> Result<Json<storage::RefundFundingConfiguration>, ApiError> {
+    let started = std::time::Instant::now();
+    let metrics = Arc::clone(&state.metrics);
+    let result = load_refund_funding_configuration_inner(state, headers, configuration_id).await;
+    let _ = metrics.observe(
+        "refund_funding_configuration_read",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+async fn load_refund_funding_configuration_inner(
+    state: AppState,
+    headers: HeaderMap,
+    configuration_id: Uuid,
+) -> Result<Json<storage::RefundFundingConfiguration>, ApiError> {
+    let principal = authenticate_scope_any_role(
+        &state,
+        &headers,
+        "tax:refund:configure",
+        &[
+            "refund_funding_proposer",
+            "refund_funding_approver",
+            "settlement_adjustment_auditor",
+        ],
+    )?;
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "REFUND_FUNDING_STORAGE_UNAVAILABLE",
+        message: "refund funding configuration storage is not configured".to_string(),
+    })?;
+    Ok(Json(
+        store
+            .load_refund_funding_configuration(configuration_id, principal.merchant_id)
+            .await
+            .map_err(ApiError::from)?,
+    ))
+}
+
+async fn transition_refund_funding_configuration(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(configuration_id): Path<Uuid>,
+    payload: Result<Json<RefundFundingConfigurationTransitionRequest>, JsonRejection>,
+) -> Result<Json<storage::RefundFundingConfigurationTransitionResult>, ApiError> {
+    let started = std::time::Instant::now();
+    let metrics = Arc::clone(&state.metrics);
+    let result =
+        transition_refund_funding_configuration_inner(state, headers, configuration_id, payload)
+            .await;
+    let _ = metrics.observe(
+        "refund_funding_configuration_transition",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+async fn transition_refund_funding_configuration_inner(
+    state: AppState,
+    headers: HeaderMap,
+    configuration_id: Uuid,
+    payload: Result<Json<RefundFundingConfigurationTransitionRequest>, JsonRejection>,
+) -> Result<Json<storage::RefundFundingConfigurationTransitionResult>, ApiError> {
+    let Json(request) = payload.map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "INVALID_JSON",
+        message: "request body is invalid".to_string(),
+    })?;
+    let to_status = request.to_status;
+    let role: &'static str = match to_status.as_str() {
+        "approved" | "suspended" | "retired" => "refund_funding_approver",
+        _ => {
+            return Err(ApiError {
+                status: StatusCode::BAD_REQUEST,
+                code: "INVALID_REFUND_FUNDING_TRANSITION",
+                message: "unsupported refund funding configuration transition".to_string(),
+            });
+        }
+    };
+    let principal = authenticate_scope_role(&state, &headers, "tax:refund:configure", role)?;
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "REFUND_FUNDING_STORAGE_UNAVAILABLE",
+        message: "refund funding configuration storage is not configured".to_string(),
+    })?;
+    Ok(Json(
+        store
+            .transition_refund_funding_configuration(RefundFundingConfigurationTransition {
+                merchant_id: principal.merchant_id,
+                configuration_id,
+                actor_subject: principal.subject,
+                to_status,
+                evidence: request.evidence,
+            })
+            .await
+            .map_err(ApiError::from)?,
+    ))
+}
+
+struct CanonicalRefundFundingPublicKeys {
+    merchant_account: String,
+    mint: String,
+    tax_vault: String,
+    vault_authority: String,
+    refund_funder: String,
+    net_source: String,
+    token_program: String,
+}
+
+fn canonicalize_refund_funding_public_keys(
+    request: &RefundFundingConfigurationCreateRequest,
+) -> Result<CanonicalRefundFundingPublicKeys, ApiError> {
+    let parse = |field: &'static str, value: &str| {
+        Pubkey::from_str(value)
+            .map(|key| key.to_string())
+            .map_err(|_| ApiError {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                code: "INVALID_REFUND_FUNDING_ACCOUNT",
+                message: format!("{field} is not a valid Solana public key"),
+            })
+    };
+    let result = CanonicalRefundFundingPublicKeys {
+        merchant_account: parse("merchant_account", &request.merchant_account)?,
+        mint: parse("mint", &request.mint)?,
+        tax_vault: parse("tax_vault", &request.tax_vault)?,
+        vault_authority: parse("vault_authority", &request.vault_authority)?,
+        refund_funder: parse("refund_funder", &request.refund_funder)?,
+        net_source: parse("net_source", &request.net_source)?,
+        token_program: parse("token_program", &request.token_program)?,
+    };
+    let accounts = [
+        result.mint.as_str(),
+        result.tax_vault.as_str(),
+        result.vault_authority.as_str(),
+        result.refund_funder.as_str(),
+        result.net_source.as_str(),
+    ];
+    for (index, account) in accounts.iter().enumerate() {
+        if accounts[..index].contains(account) {
+            return Err(ApiError {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                code: "INVALID_REFUND_FUNDING_ACCOUNT",
+                message: "funding accounts and mint must be pairwise distinct".to_string(),
+            });
+        }
+    }
+    Ok(result)
 }
 
 async fn list_settlement_split_plans(
@@ -4199,6 +5006,9 @@ mod tests {
                     "adjustment_authority_challenge",
                     "adjustment_authority_bind",
                     "settlement_adjustment_compile",
+                    "refund_funding_configuration_create",
+                    "refund_funding_configuration_read",
+                    "refund_funding_configuration_transition",
                     "vault_reconciliation_read",
                     "indexer_replay_operator",
                     "indexer_targeted_recovery",
@@ -4752,6 +5562,67 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn refund_funding_configuration_requires_the_exact_proposer_role() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let (token, _) = auth::test_token_with_scope(now, "tax:refund:configure");
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: false,
+                storage: None,
+                authenticator: Some(auth::test_authenticator()),
+                jurisdiction_provider_registry: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/settlement/refund-funding-configurations")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn refund_funding_configuration_rejects_activation_before_authentication() {
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: false,
+                storage: None,
+                authenticator: None,
+                jurisdiction_provider_registry: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!(
+                        "/v1/settlement/refund-funding-configurations/{}/transition",
+                        Uuid::now_v7()
+                    ))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"to_status":"active","evidence":{}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
