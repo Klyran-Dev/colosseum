@@ -122,16 +122,65 @@ advance a movement to a successful state.
 - [x] Add the pure `refund-workflow` domain boundary for server-owned payer
   destination derivation, claim/execute compilation, conservation checks, and
   tenant/configuration/receipt-bound artifact digests.
-- [ ] Add the `refund_claim_intents`, `refund_execute_intents`, nonce allocator,
-  append-only lifecycle evidence, and outbox schema.
-- [ ] Add server-owned artifact builders, exact signed-message verification,
-  bounded submission/reconciliation, and API contracts.
+- [x] Add the `refund_claim_intents`, `refund_execute_intents`, nonce allocator,
+  append-only lifecycle evidence, and outbox schema. Claim-intent persistence,
+  UUIDv7 nonce allocation, and first outbox publication are now implemented;
+  execute-intent persistence remains a release gate.
+- [x] Add the first server-owned claim artifact builder and preparation API;
+  exact signed-message verification, bounded submission/reconciliation, and
+  execute-intent API contracts remain separate release gates.
 - [ ] Add wallet workspace states, accessibility journeys, validator
   conformance, load evidence, and production enablement gates.
+
+## ADR-0177 — exact signed refund-claim submission
+
+Connect the existing bounded signed-transaction verifier to the durable claim
+aggregate. Submission accepts only an intent ID and canonical signed bytes;
+the API loads the immutable artifact, fences the lifecycle, submits unchanged
+bytes, and records ambiguous provider outcomes as `unknown`.
+
+- [x] Record the exact-verification, recovery, and ambiguity policy in
+  ADR-0177.
+- [x] Add claim recovery and signed-submission routes with durable CAS
+  transitions.
+- [ ] Add RPC-fixture integration, contention, and accessibility recovery
+  evidence.
+
+## ADR-0178 — two-signer refund-claim wallet workspace
+
+Add a dedicated lazy React workspace for server-owned claim review, sequential
+proposer/refund-funder wallet signing, explicit recovery input, and transport
+versus finalized-proof state semantics.
+
+- [x] Record the wallet-boundary alternatives, invariants, and recovery policy
+  in ADR-0178.
+- [x] Add strict browser parsing, two-role signing, submission gating, and
+  accessible explicit failure states.
+- [ ] Add real injected-wallet multi-account, reload, RPC-fixture, and
+  finalized-proof browser evidence.
+
+## ADR-0176 — server-owned refund claim preparation API
+
+Expose only a server-owned, tenant-scoped claim-preparation request containing
+an approved adjustment ID, idempotency key, and explicit confirmation. The API
+loads approved adjustment, finalized receipt, active verified funding, and
+wallet bindings; derives all financial and account inputs; allocates the claim
+nonce; and persists the unsigned artifact idempotently before any wallet prompt.
+
+- [x] Record the request contract, alternatives, invariants, and release
+  boundary in ADR-0176.
+- [x] Add server-side loading and claim artifact preparation endpoint; the
+  endpoint stops at `prepared_unsubmitted` and does not submit or sign.
+- [ ] Add API contract tests, concurrent idempotency tests, and accessible
+  wallet-review states.
 
 Migration `0043` hardens the intent mutation guards and requires a funder
 subject for reviewed funding configurations; it is a prerequisite for the
 storage implementation rather than evidence that movement is enabled.
+
+Migration `0044` adds the explicit `refund_funder` wallet-proof role and
+funding activation verifies that the active binding matches the configured
+funder public key exactly.
 
 ## ADR-0167 — finalized server-owned adjustment-registry verification
 

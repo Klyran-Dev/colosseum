@@ -899,12 +899,9 @@ account topology remains independently validated.
 See [ADR-0157](adr/0157-transaction-bound-refund-balance-proof.md) for the
 transaction-bound proof contract.
 
-ADR-0173 is the design gate for the future claim/execute HTTP and browser
-workflow. Until its funding-configuration, claim-intent, execute-intent,
-finalized-event, and transaction-bound-proof requirements are implemented,
-there are intentionally no refund movement endpoints. Existing adjustment
-approval, adjustment evidence recording, and indexed refund evidence must not
-be presented as a paid or refunded outcome.
+ADR-0173 is the design gate for the claim/execute HTTP and browser workflow.
+Existing adjustment approval, adjustment evidence recording, and indexed
+refund evidence must not be presented as a paid or refunded outcome.
 
 The first ADR-0173 control-plane slice now exposes the non-movement funding
 configuration boundary:
@@ -916,6 +913,10 @@ configuration boundary:
   validation. The subject must later be bound to the configured funder key
   through the single-use wallet authority proof boundary; it is not a caller
   selectable signer during claim compilation.
+- The existing wallet authority challenge/bind endpoints accept the
+  `refund_funder` role with `tax:refund:authority:bind` and
+  `refund_funding_funder`. A funding configuration cannot activate until that
+  subject has an active proof binding whose public key equals `refund_funder`.
 - `GET /v1/settlement/refund-funding-configurations` and
   `GET /v1/settlement/refund-funding-configurations/{configuration_id}` require
   the same scope and a governed funding/audit role. Tenant scope is derived
@@ -934,15 +935,41 @@ or evidence cannot satisfy this boundary.
 These endpoints configure evidence only; they cannot compile a claim, submit
 a wallet transaction, move tokens, or imply a refund outcome.
 
-ADR-0175 adds the next contract boundary but does not enable these endpoints
-yet: claim and execute intent creation will accept only idempotency and
-workflow inputs, while finalized receipt, adjustment amounts, funding
-topology, payer-bound destination, claim nonce, and wallet artifact bytes are
-server-owned. Signed submission will accept the canonical wallet transaction
-only after exact program, instruction, account, signer, and artifact-digest
-verification. A timeout is `unknown`, not success; only finalized
-transaction-bound event and balance proof can produce a successful movement
-state.
+ADR-0175 and ADR-0176 now enable only the preparation boundary:
+
+- `POST /v1/settlement/refund-claims` requires the exact
+  `tax:refund:claim:prepare` scope and `settlement_adjustment_proposer` role.
+  The request contains `adjustment_id`, an idempotency key, and `confirm: true`.
+  The adjustment ID is only a tenant-scoped aggregate selector; receipt,
+  adjustment PDA, amounts, funding configuration, token accounts, claim nonce,
+  wallet bindings, and expiry are loaded or derived server-side.
+- The response is a durable `prepared_unsubmitted` claim intent with a
+  versioned unsigned artifact. It includes the server-derived gross/tax/net
+  values, mint/token program, tax vault, source, payer destination, receipt
+  signature/slot, claim PDA, instruction/artifact digests, and bounded claim
+  window for wallet review. It does not submit, sign, or report a refund.
+- A retry with the same tenant and idempotency key returns the exact persisted
+  artifact when the canonical server-owned request digest matches. A changed
+  adjustment, authority, topology, or financial input fails with a conflict;
+  any nonce gap after a process crash is intentional and safe.
+
+Signed submission, exact program/instruction/account/signer/artifact-digest
+verification, execute-intent creation, finalized event evidence, and
+transaction-bound balance proof remain separate release gates. A timeout is
+`unknown`, not success; only finalized transaction-bound event and balance
+proof can produce a successful movement state.
+
+ADR-0177 defines the next claim transport contract. Its recovery endpoint is
+`GET /v1/settlement/refund-claims/{intent_id}`. Its submission endpoint is
+`POST /v1/settlement/refund-claims/submit` with only `intent_id` and canonical
+`signed_transaction_base64`; the server loads the persisted artifact and
+rejects any caller-supplied instruction replacement. Submission verifies the
+exact fixed-program refund instruction and recent blockhash before the RPC
+call. Provider ambiguity advances the intent to `unknown`, and no response
+claims a refund until later finalized event and balance proof.
+The recovery response exposes the persisted signed-transaction digest,
+signature, submitted slot, commitment, and bounded error code when present;
+these are transport evidence only and are not a refund-success assertion.
 
 ## Compatibility rules
 

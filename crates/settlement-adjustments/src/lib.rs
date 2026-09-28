@@ -32,7 +32,7 @@ pub fn authority_challenge_message(
         return Err(AdjustmentError::InvalidUuid("challenge ID"));
     }
     validate_subject(subject, "authority subject")?;
-    if !matches!(role, "proposer" | "approver") {
+    if !matches!(role, "proposer" | "approver" | "refund_funder") {
         return Err(AdjustmentError::InvalidAuthorityRole);
     }
     if expires_at_unix <= 0 {
@@ -774,6 +774,14 @@ mod tests {
         let error = authority_challenge_message(id(20), id(21), "subject", "reviewer", 10)
             .expect_err("unsupported authority role");
         assert_eq!(error, AdjustmentError::InvalidAuthorityRole);
+        let refund_funder =
+            authority_challenge_message(id(20), id(21), "subject", "refund_funder", 10)
+                .expect("refund-funder authority is supported");
+        assert!(
+            String::from_utf8(refund_funder)
+                .expect("challenge is UTF-8")
+                .contains("role=refund_funder")
+        );
         let error = authority_challenge_message(id(20), id(21), "", "proposer", 10)
             .expect_err("empty subject");
         assert_eq!(error, AdjustmentError::InvalidSubject("authority subject"));

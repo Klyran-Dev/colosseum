@@ -16,6 +16,7 @@ jurisdiction = { path = "../jurisdiction" }
 indexer.workspace = true
 indexer-service = { path = "../indexer-service" }
 policy = { path = "../policy" }
+refund-workflow = { path = "../refund-workflow" }
 settlement-client = { path = "../settlement-client" }
 settlement-adjustments = { path = "../settlement-adjustments" }
 settlement-coordinator = { path = "../settlement-coordinator" }

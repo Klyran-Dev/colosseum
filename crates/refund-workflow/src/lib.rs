@@ -56,6 +56,7 @@ pub struct RefundClaimServerInputs {
     pub mint: [u8; 32],
     pub token_program: String,
     pub proposer: String,
+    pub proposer_subject: String,
     pub refund_funder: String,
     pub refund_funder_subject: String,
     pub tax_vault: String,
@@ -103,9 +104,23 @@ pub struct RefundArtifact {
     pub funding_configuration_id: Uuid,
     pub funding_configuration_digest: [u8; 32],
     pub receipt_signature: String,
+    #[serde(with = "policy::serde_optional_u64_string")]
     pub receipt_slot: Option<u64>,
     pub authority_subject: String,
+    pub proposer_subject: String,
     pub refund_funder_subject: String,
+    pub proposer: String,
+    pub refund_funder: String,
+    pub merchant: String,
+    pub mint: String,
+    pub token_program: String,
+    pub tax_vault: String,
+    pub net_source: String,
+    pub gross_atomic: Option<String>,
+    pub tax_atomic: Option<String>,
+    pub net_atomic: Option<String>,
+    pub execute_after_unix: Option<i64>,
+    pub expires_at_unix: Option<i64>,
 }
 
 impl RefundArtifact {
@@ -133,6 +148,15 @@ pub fn build_claim_artifact(
         tax_vault: input.tax_vault.as_str(),
         net_source: input.net_source.as_str(),
     })?;
+    if input.proposer_subject.trim().is_empty()
+        || input.proposer_subject.len() > 256
+        || input
+            .proposer_subject
+            .bytes()
+            .any(|byte| byte.is_ascii_control())
+    {
+        return Err(RefundWorkflowError::InvalidSubject("proposer_subject"));
+    }
     if input.gross_atomic == 0 {
         return Err(RefundWorkflowError::InvalidAmount);
     }
@@ -186,10 +210,106 @@ pub fn build_claim_artifact(
             receipt_signature: input.receipt_signature.clone(),
             receipt_slot: Some(input.receipt_slot),
             authority_subject: proposer,
+            proposer_subject: input.proposer_subject.clone(),
             refund_funder_subject: input.refund_funder_subject.clone(),
+            proposer: input.proposer.clone(),
+            refund_funder: input.refund_funder.clone(),
+            merchant: Pubkey::new_from_array(input.merchant).to_string(),
+            mint: Pubkey::new_from_array(input.mint).to_string(),
+            token_program: input.token_program.clone(),
+            tax_vault: input.tax_vault.clone(),
+            net_source: input.net_source.clone(),
+            gross_atomic: Some(input.gross_atomic.to_string()),
+            tax_atomic: Some(input.tax_atomic.to_string()),
+            net_atomic: Some(input.net_atomic.to_string()),
+            execute_after_unix: Some(input.execute_after_unix),
+            expires_at_unix: Some(input.expires_at_unix),
         },
         refund_destination,
     )
+}
+
+/// Computes the canonical preparation digest for idempotency and evidence.
+/// The claim nonce and preparation window are deliberately excluded because
+/// they are server-allocated; all other authoritative inputs are
+/// length-delimited to prevent ambiguous concatenations.
+pub fn claim_request_digest(input: &RefundClaimServerInputs) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"refund-claim-request/v1");
+    hasher.update(input.merchant_id.as_bytes());
+    hasher.update(input.adjustment_id.as_bytes());
+    hasher.update(input.funding_configuration_id.as_bytes());
+    hasher.update(input.funding_configuration_digest);
+    update_digest_text(&mut hasher, &input.receipt_signature);
+    hasher.update(input.receipt_slot.to_le_bytes());
+    hasher.update(input.original_receipt);
+    hasher.update(input.adjustment);
+    hasher.update(input.payer);
+    hasher.update(input.merchant);
+    hasher.update(input.mint);
+    update_digest_text(&mut hasher, &input.token_program);
+    update_digest_text(&mut hasher, &input.proposer);
+    update_digest_text(&mut hasher, &input.proposer_subject);
+    update_digest_text(&mut hasher, &input.refund_funder);
+    update_digest_text(&mut hasher, &input.refund_funder_subject);
+    update_digest_text(&mut hasher, &input.tax_vault);
+    update_digest_text(&mut hasher, &input.net_source);
+    hasher.update(input.gross_atomic.to_le_bytes());
+    hasher.update(input.tax_atomic.to_le_bytes());
+    hasher.update(input.net_atomic.to_le_bytes());
+    hasher.update(input.reference_digest);
+    hasher.finalize().into()
+}
+
+/// Recompiles and compares a claim artifact at an authority-sensitive storage
+/// boundary. This makes the persisted artifact self-validating instead of
+/// relying on the caller having used the builder correctly.
+pub fn validate_claim_artifact(
+    input: &RefundClaimServerInputs,
+    artifact: &RefundArtifact,
+) -> Result<(), RefundWorkflowError> {
+    let expected = build_claim_artifact(input)?;
+    if expected.instruction != artifact.instruction
+        || expected.instruction_digest != artifact.instruction_digest
+        || expected.artifact_digest != artifact.artifact_digest
+        || expected.refund_destination != artifact.refund_destination
+        || expected.merchant_id != artifact.merchant_id
+        || expected.adjustment_id != artifact.adjustment_id
+        || expected.funding_configuration_id != artifact.funding_configuration_id
+        || expected.funding_configuration_digest != artifact.funding_configuration_digest
+        || expected.receipt_signature != artifact.receipt_signature
+        || expected.receipt_slot != artifact.receipt_slot
+        || expected.authority_subject != artifact.authority_subject
+        || expected.proposer_subject != artifact.proposer_subject
+        || expected.refund_funder_subject != artifact.refund_funder_subject
+        || expected.proposer != artifact.proposer
+        || expected.refund_funder != artifact.refund_funder
+        || expected.merchant != artifact.merchant
+        || expected.mint != artifact.mint
+        || expected.token_program != artifact.token_program
+        || expected.tax_vault != artifact.tax_vault
+        || expected.net_source != artifact.net_source
+        || expected.gross_atomic != artifact.gross_atomic
+        || expected.tax_atomic != artifact.tax_atomic
+        || expected.net_atomic != artifact.net_atomic
+        || expected.execute_after_unix != artifact.execute_after_unix
+        || expected.expires_at_unix != artifact.expires_at_unix
+    {
+        return Err(RefundWorkflowError::InvalidIdentity);
+    }
+    Ok(())
+}
+
+pub fn refund_instruction_digest(
+    instruction: &CompiledSettlementRefundInstruction,
+) -> Result<[u8; 32], RefundWorkflowError> {
+    let instruction_bytes = serde_json::to_vec(instruction)?;
+    Ok(Sha256::digest([b"refund-instruction/v1".as_slice(), &instruction_bytes].concat()).into())
+}
+
+fn update_digest_text(hasher: &mut Sha256, value: &str) {
+    hasher.update((value.len() as u64).to_le_bytes());
+    hasher.update(value.as_bytes());
 }
 
 pub fn build_execute_artifact(
@@ -249,7 +369,20 @@ pub fn build_execute_artifact(
             receipt_signature: input.receipt_signature.clone(),
             receipt_slot: Some(input.receipt_slot),
             authority_subject: approver,
+            proposer_subject: String::new(),
             refund_funder_subject: input.refund_funder_subject.clone(),
+            proposer: String::new(),
+            refund_funder: input.refund_funder.clone(),
+            merchant: Pubkey::new_from_array(input.merchant).to_string(),
+            mint: Pubkey::new_from_array(input.mint).to_string(),
+            token_program: input.token_program.clone(),
+            tax_vault: input.tax_vault.clone(),
+            net_source: input.net_source.clone(),
+            gross_atomic: None,
+            tax_atomic: None,
+            net_atomic: None,
+            execute_after_unix: None,
+            expires_at_unix: None,
         },
         refund_destination,
     )
@@ -328,7 +461,20 @@ struct ArtifactContext {
     receipt_signature: String,
     receipt_slot: Option<u64>,
     authority_subject: String,
+    proposer_subject: String,
     refund_funder_subject: String,
+    proposer: String,
+    refund_funder: String,
+    merchant: String,
+    mint: String,
+    token_program: String,
+    tax_vault: String,
+    net_source: String,
+    gross_atomic: Option<String>,
+    tax_atomic: Option<String>,
+    net_atomic: Option<String>,
+    execute_after_unix: Option<i64>,
+    expires_at_unix: Option<i64>,
 }
 
 fn finish_artifact(
@@ -336,9 +482,7 @@ fn finish_artifact(
     context: ArtifactContext,
     refund_destination: String,
 ) -> Result<RefundArtifact, RefundWorkflowError> {
-    let instruction_bytes = serde_json::to_vec(&instruction)?;
-    let instruction_digest =
-        Sha256::digest([b"refund-instruction/v1".as_slice(), &instruction_bytes].concat()).into();
+    let instruction_digest = refund_instruction_digest(&instruction)?;
     let mut artifact_hasher = Sha256::new();
     artifact_hasher.update(b"refund-artifact/v1");
     artifact_hasher.update(context.merchant_id.as_bytes());
@@ -349,6 +493,7 @@ fn finish_artifact(
     artifact_hasher.update(context.receipt_slot.unwrap_or_default().to_le_bytes());
     artifact_hasher.update(instruction_digest);
     artifact_hasher.update(context.authority_subject.as_bytes());
+    artifact_hasher.update(context.proposer_subject.as_bytes());
     artifact_hasher.update(context.refund_funder_subject.as_bytes());
     let artifact_digest = artifact_hasher.finalize().into();
     Ok(RefundArtifact {
@@ -364,7 +509,20 @@ fn finish_artifact(
         receipt_signature: context.receipt_signature,
         receipt_slot: context.receipt_slot,
         authority_subject: context.authority_subject,
+        proposer_subject: context.proposer_subject,
         refund_funder_subject: context.refund_funder_subject,
+        proposer: context.proposer,
+        refund_funder: context.refund_funder,
+        merchant: context.merchant,
+        mint: context.mint,
+        token_program: context.token_program,
+        tax_vault: context.tax_vault,
+        net_source: context.net_source,
+        gross_atomic: context.gross_atomic,
+        tax_atomic: context.tax_atomic,
+        net_atomic: context.net_atomic,
+        execute_after_unix: context.execute_after_unix,
+        expires_at_unix: context.expires_at_unix,
     })
 }
 
@@ -388,6 +546,7 @@ mod tests {
             mint: [5; 32],
             token_program: SPL_TOKEN_PROGRAM.into(),
             proposer: Pubkey::new_unique().to_string(),
+            proposer_subject: "proposer".into(),
             refund_funder: Pubkey::new_unique().to_string(),
             refund_funder_subject: "funder".into(),
             tax_vault: Pubkey::new_unique().to_string(),
@@ -408,6 +567,8 @@ mod tests {
         let artifact = build_claim_artifact(&input).expect("artifact");
         assert_eq!(artifact.schema, ARTIFACT_SCHEMA);
         assert_eq!(artifact.receipt_slot, Some(input.receipt_slot));
+        assert_eq!(artifact.proposer_subject, input.proposer_subject);
+        assert_eq!(artifact.gross_atomic.as_deref(), Some("100"));
         assert_ne!(artifact.instruction_digest, [0; 32]);
         assert_ne!(artifact.artifact_digest, [0; 32]);
         assert_eq!(artifact.instruction.claim_nonce, input.claim_nonce);
@@ -428,5 +589,18 @@ mod tests {
             build_claim_artifact(&input),
             Err(RefundWorkflowError::InvalidIdentity)
         ));
+    }
+
+    #[test]
+    fn request_digest_excludes_server_allocated_nonce() {
+        let first = claim();
+        let mut second = first.clone();
+        second.claim_nonce += 1;
+        assert_eq!(claim_request_digest(&first), claim_request_digest(&second));
+        second.execute_after_unix += 1;
+        second.expires_at_unix += 1;
+        assert_eq!(claim_request_digest(&first), claim_request_digest(&second));
+        second.net_atomic += 1;
+        assert_ne!(claim_request_digest(&first), claim_request_digest(&second));
     }
 }

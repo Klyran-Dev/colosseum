@@ -18,8 +18,9 @@ const ReplayOpsPanel = lazy(() => import("./ReplayOpsPanel"));
 const VaultReleasePanel = lazy(() => import("./VaultReleasePanel"));
 const VaultReconciliationPanel = lazy(() => import("./VaultReconciliationPanel"));
 const SettlementAdjustmentPanel = lazy(() => import("./SettlementAdjustmentPanel"));
+const RefundClaimPanel = lazy(() => import("./RefundClaimPanel"));
 
-type Workspace = "quote" | "preview" | "checkout" | "governance" | "replay-ops" | "vault-release" | "vault-reconciliation" | "adjustments";
+type Workspace = "quote" | "preview" | "checkout" | "governance" | "replay-ops" | "vault-release" | "vault-reconciliation" | "adjustments" | "refund-claims";
 type ServiceState = "checking" | "online" | "offline";
 
 type Calculation = {
@@ -240,7 +241,7 @@ export default function App() {
   const serviceLabel = { checking: "Checking service", online: "Calculation service online", offline: "Calculation service unavailable" }[serviceState];
   const submit = workspace === "quote" ? createQuote : calculatePreview;
   const formatAtomic = (value: string, currency: string) => formatAtomicValue(value, currency, locale);
-  const statusLabel = workspace === "governance" ? "Governance workspace" : workspace === "replay-ops" ? "Replay operations" : workspace === "vault-release" ? "Vault release control" : workspace === "vault-reconciliation" ? "Vault reconciliation" : workspace === "adjustments" ? "Settlement adjustments" : calculation?.status === "attested" ? "Attested" : calculation?.status === "calculated_unattested" ? "Calculated" : calculation ? "Preview" : "Awaiting input";
+  const statusLabel = workspace === "governance" ? "Governance workspace" : workspace === "replay-ops" ? "Replay operations" : workspace === "vault-release" ? "Vault release control" : workspace === "vault-reconciliation" ? "Vault reconciliation" : workspace === "adjustments" ? "Settlement adjustments" : workspace === "refund-claims" ? "Refund claim wallet boundary" : calculation?.status === "attested" ? "Attested" : calculation?.status === "calculated_unattested" ? "Calculated" : calculation ? "Preview" : "Awaiting input";
 
   return (
     <div className="app-shell" dir={direction}>
@@ -264,7 +265,7 @@ export default function App() {
       <main className="content" id="main-content">
         <section className="hero">
           <div><p className="eyebrow">Merchant operations / evidence first</p><h1>Make every withheld cent explainable.</h1><p className="hero-copy">Create an authenticated, idempotent quote, inspect a clearly isolated preview, review a governed rule release or adjustment, inspect finalized vault evidence, or repair a bounded indexer projection. The browser never treats a calculation as wallet authorization or settlement confirmation.</p></div>
-          <div className="hero-badge"><span className="badge-label">Current boundary</span><strong>{workspace === "quote" ? "Authenticated quote" : workspace === "preview" ? "Rule preview" : workspace === "governance" ? "Rule governance" : workspace === "replay-ops" ? "Replay operations" : workspace === "vault-release" ? "Vault release control" : workspace === "vault-reconciliation" ? "Vault reconciliation" : workspace === "adjustments" ? "Settlement adjustments" : "Checkout authorization"}</strong><span>{workspace === "quote" ? "Persisted evidence and exact replay." : workspace === "preview" ? "Caller-supplied rules; never settlement authority." : workspace === "governance" ? "Server-owned lifecycle and audit trail." : workspace === "replay-ops" ? "Dead-letter review and bounded repair." : workspace === "vault-release" ? "Two-person claim lifecycle and reconciliation." : workspace === "vault-reconciliation" ? "Finalized read-only balance evidence." : workspace === "adjustments" ? "Governed financial evidence; no token movement." : "Wallet review before any signature."}</span></div>
+          <div className="hero-badge"><span className="badge-label">Current boundary</span><strong>{workspace === "quote" ? "Authenticated quote" : workspace === "preview" ? "Rule preview" : workspace === "governance" ? "Rule governance" : workspace === "replay-ops" ? "Replay operations" : workspace === "vault-release" ? "Vault release control" : workspace === "vault-reconciliation" ? "Vault reconciliation" : workspace === "adjustments" ? "Settlement adjustments" : workspace === "refund-claims" ? "Refund claim wallet" : "Checkout authorization"}</strong><span>{workspace === "quote" ? "Persisted evidence and exact replay." : workspace === "preview" ? "Caller-supplied rules; never settlement authority." : workspace === "governance" ? "Server-owned lifecycle and audit trail." : workspace === "replay-ops" ? "Dead-letter review and bounded repair." : workspace === "vault-release" ? "Two-person claim lifecycle and reconciliation." : workspace === "vault-reconciliation" ? "Finalized read-only balance evidence." : workspace === "adjustments" ? "Governed financial evidence; no token movement." : workspace === "refund-claims" ? "Two wallet signatures; finality remains separate." : "Wallet review before any signature."}</span></div>
         </section>
 
         <nav className="workspace-tabs" aria-label="Tax workspace">
@@ -275,6 +276,7 @@ export default function App() {
           <button type="button" className={workspace === "vault-release" ? "tab-active" : ""} aria-pressed={workspace === "vault-release"} aria-controls="workspace-content" onClick={() => setWorkspace("vault-release")}>Vault releases</button>
           <button type="button" className={workspace === "vault-reconciliation" ? "tab-active" : ""} aria-pressed={workspace === "vault-reconciliation"} aria-controls="workspace-content" onClick={() => setWorkspace("vault-reconciliation")}>Vault reconciliation</button>
           <button type="button" className={workspace === "adjustments" ? "tab-active" : ""} aria-pressed={workspace === "adjustments"} aria-controls="workspace-content" onClick={() => setWorkspace("adjustments")}>Settlement adjustments</button>
+          <button type="button" className={workspace === "refund-claims" ? "tab-active" : ""} aria-pressed={workspace === "refund-claims"} aria-controls="workspace-content" onClick={() => setWorkspace("refund-claims")}>Refund claims</button>
           <button type="button" className={workspace === "checkout" ? "tab-active" : ""} aria-pressed={workspace === "checkout"} aria-controls="workspace-content" onClick={() => setWorkspace("checkout")}>Checkout authorization</button>
         </nav>
 
@@ -307,10 +309,15 @@ export default function App() {
           accessToken={accessToken}
           locale={locale}
           timeZone={effectiveTimeZone}
-        /></Suspense> : workspace === "adjustments" ? <Suspense fallback={<section className="adjustment-layout" aria-live="polite"><article className="panel empty-state"><strong>Loading settlement adjustments…</strong><p>The financial-evidence workspace is loaded only when selected.</p></article></section>}><SettlementAdjustmentPanel
+          /></Suspense> : workspace === "adjustments" ? <Suspense fallback={<section className="adjustment-layout" aria-live="polite"><article className="panel empty-state"><strong>Loading settlement adjustments…</strong><p>The financial-evidence workspace is loaded only when selected.</p></article></section>}><SettlementAdjustmentPanel
           apiBase={API_BASE}
           serviceOnline={serviceState === "online"}
           accessToken={accessToken}
+        /></Suspense> : workspace === "refund-claims" ? <Suspense fallback={<section className="adjustment-layout" aria-live="polite"><article className="panel empty-state"><strong>Loading refund claim wallet boundary…</strong><p>The two-signer wallet workflow is loaded only when selected.</p></article></section>}><RefundClaimPanel
+          apiBase={API_BASE}
+          serviceOnline={serviceState === "online"}
+          accessToken={accessToken}
+          locale={locale}
         /></Suspense> : workspace === "checkout" ? <Suspense fallback={<section className="checkout-layout" aria-live="polite"><article className="panel empty-state"><strong>Loading wallet checkout boundary…</strong><p>The signing client is loaded only when checkout is selected.</p></article></section>}><CheckoutPanel
           apiBase={API_BASE}
           serviceOnline={serviceState === "online"}

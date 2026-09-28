@@ -316,6 +316,7 @@ dependencies = [
  "jurisdiction",
  "observability",
  "policy",
+ "refund-workflow",
  "serde",
  "serde_json",
  "settlement-adjustments",
@@ -2579,6 +2580,7 @@ dependencies = [
 name = "refund-workflow"
 version = "0.1.0"
 dependencies = [
+ "policy",
  "serde",
  "serde_json",
  "settlement-client",
@@ -4228,9 +4230,11 @@ dependencies = [
  "indexer",
  "jurisdiction",
  "policy",
+ "refund-workflow",
  "serde",
  "serde_json",
  "settlement-adjustments",
+ "settlement-client",
  "settlement-coordinator",
  "sha2 0.11.0",
  "solana-pubkey 4.4.0",

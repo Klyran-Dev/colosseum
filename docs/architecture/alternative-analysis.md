@@ -1118,3 +1118,41 @@ failover, and make verification evidence replayable.
 | Let the browser provide refund accounts, amounts, and nonce | Minimal server orchestration | Makes financial topology and replay protection caller-controlled | Rejected |
 | Server custody and immediate submission | Simple retry behavior | Expands custody and removes explicit merchant wallet consent | Rejected |
 | **Separate server-owned claim/execute intents with exact signed-message verification** | Four-eyes authority, durable idempotency, replayable evidence, and non-custodial wallet flow | Additional lifecycle, evidence, and reconciliation implementation | **Selected in ADR-0175** |
+
+### Refund claim preparation API
+
+**Criteria:** keep financial inputs server-owned, bind the active finalized
+funding topology, preserve wallet consent, and make concurrent browser retries
+safe and replayable.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Browser supplies receipt, accounts, amounts, and nonce | Smallest request | Account substitution, stale evidence, and caller-controlled money | Rejected |
+| Reuse the generic adjustment compiler | Existing route and response shape | Does not bind refund-funder authority or claim lifecycle | Rejected |
+| Custodial server submission | Fewer wallet interactions | Key custody and no explicit merchant authorization | Rejected |
+| **Server-owned idempotent claim-preparation endpoint** | Complete review artifact, tenant isolation, deterministic replay, and non-custodial signing | Requires bounded intent persistence and later submission APIs | **Selected in ADR-0176** |
+
+### Signed refund-claim submission
+
+**Criteria:** prevent artifact substitution, preserve wallet consent, fence
+concurrent submissions, and make provider ambiguity recoverable.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Accept browser-supplied instruction and artifact | Small request | Account, signer, and digest substitution | Rejected |
+| Recompile from browser fields at submit time | Flexible | Reopens stale topology and amount races | Rejected |
+| Custodial server submission | Fewer wallet steps | Key custody and weaker consent boundary | Rejected |
+| Treat provider acknowledgement as success | Low latency | Does not prove inclusion or finality | Rejected |
+| **Persisted-artifact exact verification plus durable submission fence** | Non-custodial, replay-safe, and recoverable | Requires lifecycle storage and reconciliation | **Selected in ADR-0177** |
+
+### Refund claim wallet workspace
+
+**Criteria:** make two-signer authority explicit, preserve server-owned financial
+inputs, support bounded recovery, and avoid implying refund completion.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Generic checkout panel | Reuses existing UI | Hides refund-funder co-signing and proof boundaries | Rejected |
+| Custodial server signing | One-click experience | Adds key custody and removes wallet consent | Rejected |
+| Browser-editable refund transaction | Flexible | Allows stale topology and amount substitution | Rejected |
+| **Dedicated lazy two-signer workspace with memory-only artifact recovery** | Explicit review, role binding, accessible failure states, and no financial authority in the browser | Requires sequential wallet actions | **Selected in ADR-0178** |

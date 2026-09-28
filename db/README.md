@@ -275,6 +275,11 @@ financial, signer, topology, receipt, nonce, and unsigned-artifact fields are
 immutable after creation. It also prevents reviewed funding configurations
 from advancing without the explicit refund-funder subject.
 
+Migration `0044` extends the cryptographic wallet-authority role set with
+`refund_funder`. Funding activation now requires an active binding for the
+configured subject whose public key exactly equals the verified refund-funder
+system account.
+
 Migration requirements:
 
 - run migrations through a reviewed migration runner, never by editing production tables manually;

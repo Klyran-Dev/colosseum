@@ -10,6 +10,7 @@ import ReplayOpsPanel from "./ReplayOpsPanel";
 import VaultReconciliationPanel from "./VaultReconciliationPanel";
 import VaultReleasePanel from "./VaultReleasePanel";
 import SettlementAdjustmentPanel from "./SettlementAdjustmentPanel";
+import RefundClaimPanel from "./RefundClaimPanel";
 
 afterEach(() => {
   cleanup();
@@ -37,6 +38,7 @@ describe("primary product accessibility contract", () => {
       <VaultReconciliationPanel key="vault-reconciliation" apiBase="/api" serviceOnline />,
       <VaultReleasePanel key="vault" apiBase="/api" serviceOnline accessToken="" />,
       <SettlementAdjustmentPanel key="adjustments" apiBase="/api" serviceOnline accessToken="" />,
+      <RefundClaimPanel key="refund-claims" apiBase="/api" serviceOnline accessToken="" locale="en-US" />,
       <CheckoutPanel
         key="checkout"
         apiBase="/api"
