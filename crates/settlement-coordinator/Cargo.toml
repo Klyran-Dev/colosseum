@@ -1,0 +1,27 @@
+[package]
+name = "settlement-coordinator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+async-trait.workspace = true
+base64.workspace = true
+indexer.workspace = true
+settlement-client = { path = "../settlement-client" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+solana-transaction.workspace = true
+solana-address-lookup-table-interface.workspace = true
+solana-message.workspace = true
+wincode.workspace = true
+
+[dev-dependencies]
+proptest = "=1.11.0"
+solana-keypair.workspace = true
+solana-signer = "=4.0.0"
+tokio.workspace = true

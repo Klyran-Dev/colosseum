@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: Solana Tax Protocol
+    orgId: 1
+    folder: Solana Tax Protocol
+    type: file
+    disableDeletion: true
+    editable: false
+    options:
+      path: /var/lib/grafana/dashboards

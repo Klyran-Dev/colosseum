@@ -1,0 +1,37 @@
+[package]
+name = "api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+anchor-lang.workspace = true
+axum.workspace = true
+observability = { path = "../observability" }
+base64.workspace = true
+ed25519-dalek.workspace = true
+jurisdiction = { path = "../jurisdiction" }
+indexer.workspace = true
+indexer-service = { path = "../indexer-service" }
+policy = { path = "../policy" }
+settlement-client = { path = "../settlement-client" }
+settlement-adjustments = { path = "../settlement-adjustments" }
+settlement-coordinator = { path = "../settlement-coordinator" }
+solana-transaction.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+storage = { path = "../storage" }
+thiserror.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tower.workspace = true
+uuid.workspace = true
+tax-engine = { path = "../tax-engine" }
+
+[dev-dependencies]
+ed25519-dalek.workspace = true

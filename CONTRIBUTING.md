@@ -28,7 +28,24 @@ Do not report a feature as production-ready unless the relevant production-readi
 
 ## Local development
 
-Docker Compose is the required development boundary. Host-installed tools may be used for investigation, but a contribution must be reproducible from the repository’s pinned containers and lockfiles. Bootstrap and test commands will be documented here when Phase 1 implementation lands.
+Docker Compose is the required development boundary. Host-installed tools may be used for investigation, but a contribution must be reproducible from the repository’s pinned containers and lockfiles.
+
+The reproducible checks are:
+
+- `make check` for formatting, linting, Rust and web tests, type checking,
+  production web build, security scanning, Compose configuration,
+  observability configuration, and public-documentation contracts;
+- `make integration-check` for the isolated Docker API, PostgreSQL, NATS,
+  NGINX, authentication, quote, attestation, governance, and persistence
+  paths;
+- `make solana-conformance` for the explicit validator-backed gate. It
+  requires a Linux runtime that exposes the capabilities required by the
+  pinned Agave validator and must not be replaced by a simulated transaction;
+- `make public-docs-check` for the public repository contract.
+
+Changes affecting money movement, tax arithmetic, authorization, replay,
+serialization, migrations, or concurrency must add or update executable tests
+before implementation and must identify the relevant ADR and readiness gate.
 
 ## Code and documentation style
 
@@ -42,4 +59,3 @@ Docker Compose is the required development boundary. Host-installed tools may be
 ## Commit and review guidance
 
 Use clear, imperative commit subjects. Keep unrelated formatting or dependency upgrades separate. Reviewers should be able to reproduce the claimed behavior and understand why the chosen design is safe.
-

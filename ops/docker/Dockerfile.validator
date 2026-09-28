@@ -1,0 +1,36 @@
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS installer
+
+ARG AGAVE_VERSION=4.3.0
+ARG AGAVE_INSTALL_INIT_SHA256=1c2ca01cd33204453fa97762b6fca40772e17e749d58266ea0847d7bc01756e1
+
+RUN apt-get update \
+  && apt-get install --yes --no-install-recommends ca-certificates curl libssl3 libudev1 \
+  && rm -rf /var/lib/apt/lists/* \
+  && curl --fail --silent --show-error --location \
+       "https://github.com/anza-xyz/agave/releases/download/v${AGAVE_VERSION}/agave-install-init-x86_64-unknown-linux-gnu" \
+       --output /usr/local/bin/agave-install-init \
+  && echo "${AGAVE_INSTALL_INIT_SHA256}  /usr/local/bin/agave-install-init" | sha256sum --check \
+  && chmod 0755 /usr/local/bin/agave-install-init \
+  && agave-install-init "v${AGAVE_VERSION}" \
+  && mkdir --parents /opt/solana \
+  && cp --archive \
+       "/root/.local/share/solana/install/releases/${AGAVE_VERSION}/solana-release" \
+       /opt/solana/active_release
+
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS runtime
+
+RUN apt-get update \
+  && apt-get install --yes --no-install-recommends ca-certificates libssl3 libudev1 wget \
+  && groupadd --system --gid 10001 validator \
+  && useradd --system --uid 10001 --gid 10001 --home-dir /nonexistent --shell /usr/sbin/nologin validator \
+  && mkdir --parents /ledger \
+  && chown --recursive 10001:10001 /ledger \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY --from=installer /opt/solana/active_release /opt/solana/active_release
+
+ENV PATH="/opt/solana/active_release/bin:${PATH}"
+USER validator
+WORKDIR /ledger
+EXPOSE 8899 8900
+ENTRYPOINT ["solana-test-validator"]

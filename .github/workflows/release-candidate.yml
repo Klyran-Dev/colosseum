@@ -1,0 +1,92 @@
+name: Release candidate evidence
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-candidate:
+    name: Build and retain release-candidate evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.21.0
+
+      - name: Activate pinned pnpm
+        run: corepack enable && corepack prepare pnpm@12.3.4 --activate
+
+      - name: Verify pinned Rust toolchain
+        run: rustup show active-toolchain && rustc --version && cargo --version
+
+      - name: Install locked web dependencies
+        run: pnpm --dir apps/web install --frozen-lockfile
+
+      - name: Run repository checks
+        run: make check
+
+      - name: Run validator-backed conformance
+        env:
+          SOLANA_USE_DOCKER_BUILDER: true
+        run: make solana-conformance
+
+      - name: Run scheduled vault-reconciliation drill
+        run: |
+          mkdir -p release-bundle
+          make vault-reconciliation-drill | tee release-bundle/vault-reconciliation.txt
+
+      - name: Run multi-provider RPC failover drill
+        env:
+          VAULT_RECONCILIATION_PROVIDER_MODE: failover
+        run: |
+          mkdir -p release-bundle
+          make vault-reconciliation-drill | tee release-bundle/rpc-failover.txt
+
+      - name: Run migration integrity drill
+        run: |
+          mkdir -p release-bundle
+          make migration-integrity-drill | tee release-bundle/migration-integrity.txt
+
+      - name: Build locked release binaries
+        run: cargo build --locked --release --workspace
+
+      - name: Build production web bundle
+        run: pnpm --dir apps/web build
+
+      - name: Capture security report
+        run: |
+          mkdir -p release-bundle
+          ./scripts/security_scan.sh > release-bundle/security-scan.txt 2>&1
+
+      - name: Generate release SBOM
+        run: ./scripts/generate_release_sbom.sh
+
+      - name: Retain Compose and validator metadata
+        run: |
+          docker compose --profile cache --profile observability --profile indexer --profile route-verifier --profile solana config > release-bundle/compose-config.yml
+          cp -R test-results/solana-conformance release-bundle/validator-conformance
+
+      - name: Create and verify release bundle
+        env:
+          RELEASE_REF: ${{ github.ref_name }}
+        run: ./scripts/create_release_bundle.sh
+
+      - name: Upload release-candidate evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-candidate-${{ github.ref_name }}-${{ github.sha }}
+          path: release-bundle/
+          if-no-files-found: error
+          retention-days: 30

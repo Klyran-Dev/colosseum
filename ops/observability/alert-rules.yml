@@ -1,0 +1,182 @@
+groups:
+  - name: solana-tax-protocol.availability
+    interval: 15s
+    rules:
+      - alert: STPServiceScrapeUnavailable
+        expr: up{job=~"api|worker|indexer"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          owner: platform-sre
+        annotations:
+          summary: "{{ $labels.job }} metrics endpoint is unavailable"
+          description: "Prometheus cannot scrape the {{ $labels.job }} service in {{ $labels.instance }} for at least two minutes."
+          runbook: docs/architecture/operations.md#deployment-model
+
+  - name: solana-tax-protocol.slo
+    interval: 15s
+    rules:
+      - alert: STPRequestErrorBudgetBurn
+        expr: >-
+          (
+            sum by (service) (rate(stp_errors_total[5m]))
+            /
+            clamp_min(sum by (service) (rate(stp_requests_total[5m])), 1)
+          ) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+          owner: platform-sre
+        annotations:
+          summary: "{{ $labels.service }} request error ratio exceeds 1%"
+          description: "The five-minute request error ratio for {{ $labels.service }} has exceeded the initial 1% alert threshold for ten minutes."
+          runbook: docs/architecture/operations.md#slo-and-alerts
+
+      - alert: STPQuoteP95LatencyBudgetBreach
+        expr: >-
+          histogram_quantile(
+            0.95,
+            sum by (service, operation, le) (
+              rate(stp_request_duration_ms_bucket{operation="tax_quote"}[5m])
+            )
+          ) > 100
+        for: 10m
+        labels:
+          severity: warning
+          owner: platform-sre
+        annotations:
+          summary: "{{ $labels.service }} quote p95 latency exceeds 100 ms"
+          description: "The five-minute p95 tax-quote latency for {{ $labels.service }} has exceeded the declared synchronous quote budget."
+          runbook: docs/architecture/low-latency.md#latency-budget
+
+      - alert: STPSettlementCompileP95LatencyBudgetBreach
+        expr: >-
+          histogram_quantile(
+            0.95,
+            sum by (service, operation, le) (
+              rate(stp_request_duration_ms_bucket{operation="settlement_compile"}[5m])
+            )
+          ) > 150
+        for: 10m
+        labels:
+          severity: warning
+          owner: platform-sre
+        annotations:
+          summary: "{{ $labels.service }} settlement compile p95 latency exceeds 150 ms"
+          description: "The five-minute p95 settlement compilation latency for {{ $labels.service }} has exceeded the bounded compile budget."
+          runbook: docs/architecture/low-latency.md#latency-budget
+
+  - name: solana-tax-protocol.capacity
+    interval: 15s
+    rules:
+      - alert: STPTaxRuleCacheNearCapacity
+        expr: >-
+          (
+            stp_tax_rule_cache_entries{service="api"}
+            /
+            clamp_min(stp_tax_rule_cache_capacity{service="api"}, 1)
+          ) > 0.90
+        for: 15m
+        labels:
+          severity: info
+          owner: platform-sre
+        annotations:
+          summary: "API compiled tax-rule cache is above 90% capacity"
+          description: "The bounded compiled-rule cache is nearing eviction pressure; investigate rule churn and memory profile before changing its cap."
+          runbook: docs/architecture/operations.md#telemetry
+
+  - name: solana-tax-protocol.indexer-replay
+    interval: 15s
+    rules:
+      - alert: STPProtocolPauseActive
+        expr: stp_settlement_protocol_paused{service="indexer"} == 1
+        for: 0m
+        labels:
+          severity: critical
+          owner: protocol-security
+        annotations:
+          summary: "The Solana settlement protocol is paused"
+          description: "A finalized ProtocolPauseChanged event shows settlement is paused. Stop retries and follow the governed emergency-pause runbook; do not clear the pause from the API."
+          runbook: docs/runbooks/emergency-pause.md
+
+      - alert: STPProtocolPauseStateUnknown
+        expr: stp_settlement_protocol_pause_known{service="indexer"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          owner: protocol-security
+        annotations:
+          summary: "The finalized protocol pause state is unknown"
+          description: "The indexer has not observed a finalized protocol pause event for this stream or cannot refresh its bounded state. Treat settlement availability as unsafe until chain evidence is verified."
+          runbook: docs/runbooks/emergency-pause.md
+
+      - alert: STPIndexerReplayBacklog
+        expr: >-
+          stp_indexer_replay_gaps{service="indexer",status="queued"} > 0
+        for: 10m
+        labels:
+          severity: warning
+          owner: platform-sre
+        annotations:
+          summary: "Indexer replay backlog is not draining"
+          description: "Queued finalized-chain projection repair work has remained non-zero for ten minutes; inspect provider health, lease state, and the replay runbook."
+          runbook: docs/architecture/operations.md#telemetry
+
+      - alert: STPIndexerReplayDeadLettered
+        expr: >-
+          stp_indexer_replay_gaps{service="indexer",status="dead_lettered"} > 0
+        for: 2m
+        labels:
+          severity: critical
+          owner: platform-sre
+        annotations:
+          summary: "Indexer replay work is dead-lettered"
+          description: "At least one replay gap exhausted its bounded retry budget and requires an authenticated incident review before requeue."
+          runbook: docs/architecture/operations.md#telemetry
+
+      - alert: STPTargetedRecoveryAuditStale
+        expr: >-
+          stp_indexer_targeted_recovery_stale_requested{service="indexer"} > 0
+        for: 2m
+        labels:
+          severity: critical
+          owner: platform-sre
+        annotations:
+          summary: "Targeted recovery has an incomplete audit attempt"
+          description: "A targeted finalized-evidence recovery request has remained without a terminal audit row beyond the reconciliation grace period; inspect the immutable audit ledger before retrying or declaring repair complete."
+          runbook: docs/runbooks/indexer-gap.md
+
+      - alert: STPVaultBalanceReconciliationMismatch
+        expr: >-
+          stp_indexer_vault_reconciliation_mismatch{service="indexer"} > 0
+        for: 1m
+        labels:
+          severity: critical
+          owner: finance-tax-sre
+        annotations:
+          summary: "A finalized tax-vault balance is not explained by evidence"
+          description: "At least one active vault target has a latest finalized observation that differs from its opening-balance plus receipt-tax minus governed-release expectation; stop release operations and follow the vault incident runbook."
+          runbook: docs/runbooks/vault-release-incident.md
+
+      - alert: STPVaultBalanceReconciliationError
+        expr: >-
+          stp_indexer_vault_reconciliation_error{service="indexer"} > 0
+        for: 2m
+        labels:
+          severity: critical
+          owner: finance-tax-sre
+        annotations:
+          summary: "Vault balance reconciliation cannot prove an observation"
+          description: "At least one active vault target has a latest reconciliation error caused by provider, account-layout, finality, or projection evidence failure; do not treat the target as matched."
+          runbook: docs/runbooks/vault-release-incident.md
+
+      - alert: STPRefundProofBacklog
+        expr: stp_indexer_refund_proofs_pending{service="indexer"} > 0
+        for: 10m
+        labels:
+          severity: warning
+          owner: finance-tax-sre
+        annotations:
+          summary: "Finalized refund balance proof backlog is not draining"
+          description: "At least one indexed refund execution has no immutable finalized balance proof for ten minutes; inspect the transaction-bound evidence and provider health before retrying."
+          runbook: docs/runbooks/vault-release-incident.md

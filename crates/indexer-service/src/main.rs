@@ -1,0 +1,174 @@
+use axum::{
+    Router,
+    extract::State,
+    http::{StatusCode, header::CONTENT_TYPE},
+    response::{IntoResponse, Response},
+    routing::get,
+};
+use indexer_service::{
+    IndexerConfig, IndexerServiceError, ReplayMetrics, ReplayOutcome,
+    prove_one_refund_balance_once, provider_health, reconcile_vaults_once, refresh_replay_metrics,
+    replay_once, run_once,
+};
+use observability::ServiceMetrics;
+use std::{
+    net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Instant,
+};
+use storage::PgStore;
+use tokio::time::interval;
+use tracing::{info, warn};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+#[derive(Clone)]
+struct HealthState {
+    ready: Arc<AtomicBool>,
+    metrics: Arc<ServiceMetrics>,
+    replay_metrics: Arc<ReplayMetrics>,
+}
+
+async fn healthz() -> StatusCode {
+    StatusCode::NO_CONTENT
+}
+
+async fn readyz(State(state): State<HealthState>) -> StatusCode {
+    if state.ready.load(Ordering::Acquire) {
+        StatusCode::NO_CONTENT
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    }
+}
+
+async fn metrics(State(state): State<HealthState>) -> Response {
+    let mut rendered = state.metrics.render_prometheus();
+    rendered.push_str(&state.replay_metrics.render_prometheus());
+    (
+        [(CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        rendered,
+    )
+        .into_response()
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::from_default_env())
+        .with(tracing_subscriber::fmt::layer().json())
+        .init();
+
+    let config = IndexerConfig::from_env()?;
+    let source = config.build_source()?;
+    let vault_source = config.build_vault_balance_source()?;
+    let refund_proof_source = config.build_refund_balance_proof_source()?;
+    let store = Arc::new(PgStore::from_url(
+        &config.database_url,
+        config.database_pool_size,
+        storage::DEFAULT_POOL_WAIT_TIMEOUT,
+        tax_engine::ENGINE_VERSION,
+    )?);
+    store.ping().await?;
+    let replay_metrics = Arc::new(ReplayMetrics::default());
+    refresh_replay_metrics(&store, &config.stream_key, &replay_metrics).await?;
+
+    let health_state = HealthState {
+        ready: Arc::new(AtomicBool::new(true)),
+        metrics: Arc::new(ServiceMetrics::new(
+            "indexer",
+            &["replay", "forward", "refund_proof"],
+        )?),
+        replay_metrics,
+    };
+    let health_bind_address =
+        std::env::var("INDEXER_HEALTH_BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:8082".to_string());
+    let health_address: SocketAddr = health_bind_address.parse()?;
+    let health_router = Router::new()
+        .route("/healthz", get(healthz))
+        .route("/readyz", get(readyz))
+        .route("/metrics", get(metrics))
+        .with_state(health_state.clone());
+    let health_listener = tokio::net::TcpListener::bind(health_address).await?;
+    let health_server = async move { axum::serve(health_listener, health_router).await };
+    tokio::pin!(health_server);
+
+    info!(
+        stream = %config.stream_key,
+        providers = config.rpc_endpoints.len(),
+        page_slots = config.page_slots,
+        "finalized indexer started"
+    );
+    let mut ticks = interval(config.poll_interval);
+    let mut vault_ticks = interval(config.vault_reconciliation_poll_interval);
+    let mut shutdown = Box::pin(async {
+        tokio::signal::ctrl_c().await.ok();
+    });
+    loop {
+        tokio::select! {
+            result = &mut health_server => {
+                return match result {
+                    Ok(()) => Err("indexer health server stopped unexpectedly".into()),
+                    Err(error) => Err(error.into()),
+                };
+            }
+            _ = &mut shutdown => {
+                info!("finalized indexer shutting down");
+                break;
+            }
+            _ = ticks.tick() => {
+                let replay_started = Instant::now();
+                let replay_result = replay_once(&store, &source, &config).await;
+                let _ = health_state.metrics.observe("replay", replay_started.elapsed(), replay_result.is_err());
+                match replay_result {
+                    Ok(ReplayOutcome::Idle) => {}
+                    Ok(ReplayOutcome::Completed) => info!("replay gap completed"),
+                    Ok(ReplayOutcome::ChunkRequeued) => info!("replay chunk committed; gap remains queued"),
+                    Err(error) => warn!(%error, "replay iteration failed; bounded lease state retained"),
+                }
+                let forward_started = Instant::now();
+                let forward_result = run_once(&store, &source, &config).await;
+                let _ = health_state.metrics.observe("forward", forward_started.elapsed(), forward_result.is_err());
+                match forward_result {
+                    Ok(checkpoint) => info!(next_slot = checkpoint.next_slot, finalized_slot = checkpoint.finalized_slot, "finalized page committed"),
+                    Err(IndexerServiceError::Provider(error)) => warn!(%error, health = ?provider_health(&source), "provider page failed; replay gap recorded"),
+                    Err(error) => warn!(%error, "indexer iteration failed; retrying on bounded interval"),
+                }
+                if let Err(error) = refresh_replay_metrics(&store, &config.stream_key, &health_state.replay_metrics).await {
+                    warn!(%error, "replay metrics refresh failed; retaining the last bounded snapshot");
+                }
+            }
+            _ = vault_ticks.tick() => {
+                if let Err(error) = reconcile_vaults_once(
+                    &store,
+                    &vault_source,
+                    config.vault_reconciliation_target_limit,
+                ).await {
+                    warn!(%error, "vault reconciliation cycle failed; retaining the last bounded snapshot");
+                }
+                let refund_proof_started = Instant::now();
+                let refund_proof_result = prove_one_refund_balance_once(
+                    &store,
+                    &refund_proof_source,
+                    &config.stream_key,
+                )
+                .await;
+                let _ = health_state.metrics.observe(
+                    "refund_proof",
+                    refund_proof_started.elapsed(),
+                    refund_proof_result.is_err(),
+                );
+                match refund_proof_result {
+                    Ok(true) => info!("one finalized refund balance proof persisted"),
+                    Ok(false) => {}
+                    Err(error) => warn!(%error, "refund balance proof cycle failed; retaining the pending evidence candidate"),
+                }
+                if let Err(error) = refresh_replay_metrics(&store, &config.stream_key, &health_state.replay_metrics).await {
+                    warn!(%error, "vault reconciliation metrics refresh failed; retaining the last bounded snapshot");
+                }
+            }
+        }
+    }
+    Ok(())
+}

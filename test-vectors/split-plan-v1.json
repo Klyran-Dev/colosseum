@@ -1,0 +1,32 @@
+{
+  "schema": "solana-tax-protocol/split-plan/v1",
+  "plan": {
+    "merchant": "8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR",
+    "mint": "GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq",
+    "version": 1,
+    "recipients": [
+      {
+        "token_account": "QWmroo4YnnMqYW3cnxWkFdaTxGD3P7vMSzwMHGbUzwF",
+        "basis_points": 7000
+      },
+      {
+        "token_account": "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8",
+        "basis_points": 3000
+      }
+    ]
+  },
+  "expected_digest": [
+    245, 27, 219, 197, 243, 59, 244, 252,
+    226, 232, 224, 208, 52, 31, 115, 134,
+    54, 180, 76, 219, 116, 190, 27, 48,
+    217, 210, 150, 151, 38, 71, 128, 199
+  ],
+  "cases": [
+    { "net_atomic": "1", "allocations": ["1", "0"] },
+    { "net_atomic": "1000", "allocations": ["700", "300"] },
+    {
+      "net_atomic": "18446744073709551615",
+      "allocations": ["12912720851596686131", "5534023222112865484"]
+    }
+  ]
+}

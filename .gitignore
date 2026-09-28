@@ -2,6 +2,7 @@
 /target/
 **/target/
 Cargo.lock
+!Cargo.lock
 !/**/Cargo.lock
 *.rs.bk
 
@@ -32,6 +33,7 @@ flamegraph.svg
 criterion/
 **/criterion/
 test-results/
+release-bundle/
 playwright-report/
 blob-report/
 
@@ -95,4 +97,3 @@ sbom.*
 *.dump
 *.sql.gz
 *.bak
-

@@ -1,0 +1,25 @@
+{
+  "schema": "solana-tax-protocol/jurisdiction-resolution/v1",
+  "policy": {
+    "id": "digital-commerce",
+    "version": 1,
+    "ordered_sources": ["ShippingDestination", "CustomerResidence", "MerchantRegistration"],
+    "conflict_mode": "HighestPrecedence"
+  },
+  "candidates": [
+    {
+      "jurisdiction_code": "US-CA",
+      "source": "CustomerResidence",
+      "evidence_digest": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    },
+    {
+      "jurisdiction_code": "DE-BE",
+      "source": "ShippingDestination",
+      "evidence_digest": [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]
+    }
+  ],
+  "expected": {
+    "jurisdiction_code": "DE-BE",
+    "source": "ShippingDestination"
+  }
+}

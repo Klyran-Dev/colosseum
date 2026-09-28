@@ -35,5 +35,14 @@ Out of scope:
 
 ## Security posture
 
-The project is currently documentation-first and is not claiming an audited or production-ready deployment. Security controls, audit status, supported versions, and release artifacts will be published as implementation progresses.
+The repository contains an executable implementation foundation, but it is not
+an audited or production-ready deployment. `make security-scan` runs the
+pinned vulnerability, secret, and Docker-misconfiguration scan; a passing scan
+is evidence for that revision only and is not a security audit. Security
+controls, audit status, supported versions, release artifacts, and remaining
+production gates are tracked in
+[`docs/plans/production-readiness.md`](docs/plans/production-readiness.md).
 
+Do not include credentials, seed phrases, private keys, raw jurisdiction
+evidence, or production data in bug reports. Use synthetic fixtures and redact
+logs before sharing them.

@@ -47,6 +47,10 @@ Audit
   - Evidence bundle
   - Settlement receipt
   - Reconciliation and exports
+Incident operations
+  - Replay-gap queue
+  - Dead-letter review
+  - Bounded projection repair
 ```
 
 ## Checkout UX
@@ -128,6 +132,20 @@ The UI must explicitly handle:
 - indexer lag or reconciliation required;
 - vault release pending governance.
 
+### Replay-gap operator workspace
+
+The replay workspace is a system-operator surface, not a merchant dashboard.
+It requires an in-memory bearer token, an explicit stream and bounded status
+filter, and renders only the authenticated API projection. A dead-letter row
+shows its slot range, observed finalized slot, retry count, reason, error code,
+timestamps, and any immutable operator review. The operator must enter an
+incident-backed note before acknowledgement or requeue; the UI labels
+acknowledgement as review evidence and requeue as bounded projection repair.
+After either mutation it reloads the server projection. `401`, `403`, `409`,
+timeout, malformed response, and reload failure states remain visible with the
+API correlation reference where available. No browser state advances a
+checkpoint or claims chain finality.
+
 Every state provides the next safe action and preserves the calculation/settlement correlation ID.
 
 ## Frontend architecture
@@ -149,4 +167,3 @@ shared/
 ```
 
 Use generated API/IDL types, a single money-formatting package, server-authoritative calculation results, and an optional Rust/WASM preview that is visibly labeled as a preview until the API attestation is returned.
-

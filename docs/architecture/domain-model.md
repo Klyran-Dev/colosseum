@@ -11,6 +11,8 @@
 | Split plan | ordered recipients, basis points, fixed/variable constraints, version | tax policy |
 | Vault | segregated reserves, release claims, release governance | how a tax amount was legally calculated |
 | Asset | mint metadata, token program, decimals, stablecoin status, extension risk | arbitrary token acceptance |
+| Settlement Route Registry | tenant-scoped merchant/mint/vault/destination/token configuration, route versions, activation lifecycle | payer keys, tax interpretation, funds, on-chain ownership proof |
+| Route Verification | finalized account topology proofs, bounded provider agreement, activation evidence | route authoring, tax interpretation, funds, program governance |
 | Reconciliation | raw events, balance snapshots, status projections, gap detection | on-chain authority |
 
 ## Core aggregates and accounts
@@ -26,6 +28,7 @@
 | ReleaseClaim | `release`, vault, claim id | single-use claim, authorized destination, amount <= available reserve |
 | RuleSet | database identity + immutable content hash | one effective version, provenance, approval state, no overlapping published versions |
 | TaxCalculation | calculation id, input/rule digests | deterministic output, complete trace, replayable result |
+| SettlementRoute | route id, tenant, account tuple, version, lifecycle/effective window | immutable active account fields, supported programs, distinct token accounts |
 
 ## Value objects
 

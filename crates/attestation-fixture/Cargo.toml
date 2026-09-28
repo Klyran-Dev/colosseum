@@ -1,0 +1,20 @@
+[package]
+name = "attestation-fixture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "attestation-fixture"
+path = "src/main.rs"
+
+[dependencies]
+ed25519-dalek.workspace = true
+jurisdiction = { path = "../jurisdiction" }
+policy = { path = "../policy" }
+serde_json.workspace = true
+solana-pubkey.workspace = true
+tax-engine = { path = "../tax-engine" }
+uuid.workspace = true

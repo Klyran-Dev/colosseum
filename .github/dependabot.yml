@@ -1,0 +1,61 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "02:00"
+      timezone: UTC
+    open-pull-requests-limit: 10
+    groups:
+      rust-patch-and-minor:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: "/apps/web"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "02:30"
+      timezone: UTC
+    open-pull-requests-limit: 10
+    groups:
+      web-patch-and-minor:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: tuesday
+      time: "02:00"
+      timezone: UTC
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: docker
+    directory: "/ops/docker"
+    schedule:
+      interval: weekly
+      day: tuesday
+      time: "02:30"
+      timezone: UTC
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: wednesday
+      time: "02:00"
+      timezone: UTC
+    open-pull-requests-limit: 10
+    groups:
+      github-actions-patch-and-minor:
+        update-types:
+          - minor
+          - patch

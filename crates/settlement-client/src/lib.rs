@@ -1,0 +1,1649 @@
+#![deny(unsafe_code)]
+
+use anchor_lang::prelude::Pubkey;
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use split_plan::{MAX_RECIPIENTS, SplitPlan, SplitRecipient};
+use std::{collections::BTreeSet, str::FromStr};
+use thiserror::Error;
+
+pub const SETTLEMENT_PROGRAM_ID: &str = "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi";
+pub const SYSTEM_PROGRAM_ID: &str = "11111111111111111111111111111111";
+pub const ASSOCIATED_TOKEN_PROGRAM_ID: &str = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+pub const SPL_TOKEN_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+pub const TOKEN_2022_PROGRAM_ID: &str = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+pub const COMPUTE_BUDGET_PROGRAM_ID: &str = "ComputeBudget111111111111111111111111111111";
+pub const COMPUTE_BUDGET_POLICY_VERSION: u32 = 1;
+pub const DEFAULT_COMPUTE_UNIT_LIMIT: u32 = 200_000;
+pub const DEFAULT_MICRO_LAMPORTS_PER_COMPUTE_UNIT: u64 = 1_000;
+pub const MAX_COMPUTE_UNIT_LIMIT: u32 = 1_400_000;
+pub const MAX_MICRO_LAMPORTS_PER_COMPUTE_UNIT: u64 = 10_000_000;
+pub const SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT: usize = 12;
+pub const SPLIT_SETTLEMENT_INSTRUCTION_BASE_ACCOUNT_COUNT: usize = 12;
+pub const SOLANA_LEGACY_PACKET_BYTES: usize = 1_232;
+pub const SETTLEMENT_PACKET_SAFETY_MARGIN_BYTES: usize = 256;
+pub const MAX_SETTLEMENT_SIGNED_BYTES: usize =
+    SOLANA_LEGACY_PACKET_BYTES - SETTLEMENT_PACKET_SAFETY_MARGIN_BYTES;
+pub const MAX_SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT: usize =
+    SPLIT_SETTLEMENT_INSTRUCTION_BASE_ACCOUNT_COUNT + MAX_RECIPIENTS;
+pub const MAX_REFUND_CLAIM_WINDOW_SECONDS: i64 = 90 * 24 * 60 * 60;
+
+// These byte arrays are the canonical decoded values of the fixed public IDs
+// above. Keeping them as data removes a runtime panic from the hot path while
+// the test suite proves the string/byte compatibility contract.
+const SETTLEMENT_PROGRAM_BYTES: [u8; 32] = [1; 32];
+const SPL_TOKEN_PROGRAM_BYTES: [u8; 32] = [
+    6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237,
+    95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
+];
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SettlementCompileRequest {
+    pub program_id: String,
+    pub payer: String,
+    pub merchant: String,
+    pub source: String,
+    pub mint: String,
+    pub tax_vault: String,
+    pub net_destination: String,
+    pub token_program: String,
+    pub nonce: u64,
+    pub policy_sequence: u64,
+    pub gross_atomic: String,
+    pub tax_atomic: String,
+    pub net_atomic: String,
+    #[serde(deserialize_with = "deserialize_digest")]
+    pub policy_digest: [u8; 32],
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SplitSettlementCompileRequest {
+    pub program_id: String,
+    pub payer: String,
+    pub merchant: String,
+    pub source: String,
+    pub mint: String,
+    pub tax_vault: String,
+    pub token_program: String,
+    pub nonce: u64,
+    pub policy_sequence: u64,
+    pub split_plan_version: u64,
+    pub recipients: Vec<SplitRecipient>,
+    pub gross_atomic: String,
+    pub tax_atomic: String,
+    pub net_atomic: String,
+    #[serde(deserialize_with = "deserialize_digest")]
+    pub policy_digest: [u8; 32],
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SettlementAdjustmentCompileRequest {
+    pub program_id: String,
+    pub proposer: String,
+    pub approver: String,
+    pub merchant: String,
+    pub mint: String,
+    pub token_program: String,
+    pub original_receipt: String,
+    pub adjustment_nonce: u64,
+    pub kind: u8,
+    pub gross_sign: u8,
+    pub gross_magnitude: String,
+    pub tax_sign: u8,
+    pub tax_magnitude: String,
+    pub net_sign: u8,
+    pub net_magnitude: String,
+    pub adjustment_digest: [u8; 32],
+    pub evidence_digest: [u8; 32],
+    pub source_calculation_digest: [u8; 32],
+    pub replacement_calculation_digest: [u8; 32],
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SettlementRefundClaimCompileRequest {
+    pub program_id: String,
+    pub proposer: String,
+    pub refund_funder: String,
+    pub merchant: String,
+    pub mint: String,
+    pub token_program: String,
+    pub original_receipt: String,
+    pub adjustment: String,
+    pub tax_vault: String,
+    pub net_source: String,
+    pub refund_destination: String,
+    pub claim_nonce: u64,
+    pub execute_after_unix: i64,
+    pub expires_at_unix: i64,
+    #[serde(deserialize_with = "deserialize_digest")]
+    pub reference_digest: [u8; 32],
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SettlementRefundExecutionCompileRequest {
+    pub program_id: String,
+    pub approver: String,
+    pub refund_funder: String,
+    pub merchant: String,
+    pub mint: String,
+    pub token_program: String,
+    pub original_receipt: String,
+    pub adjustment: String,
+    pub tax_vault: String,
+    pub net_source: String,
+    pub refund_destination: String,
+    pub claim_nonce: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CompiledSettlementInstruction {
+    pub status: String,
+    pub program_id: String,
+    pub instruction_data_base64: String,
+    pub accounts: Vec<CompiledAccountMeta>,
+    pub protocol_config: String,
+    pub vault_authority: String,
+    pub policy_attestation: String,
+    pub receipt: String,
+    pub compute_budget_policy: ComputeBudgetPolicy,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CompiledSplitSettlementInstruction {
+    pub status: String,
+    pub program_id: String,
+    pub instruction_data_base64: String,
+    pub accounts: Vec<CompiledAccountMeta>,
+    pub protocol_config: String,
+    pub vault_authority: String,
+    pub policy_attestation: String,
+    pub split_plan: String,
+    pub split_plan_digest: Vec<u8>,
+    pub receipt: String,
+    pub compute_budget_policy: ComputeBudgetPolicy,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ComputeBudgetPolicy {
+    pub policy_version: u32,
+    pub compute_unit_limit: u32,
+    pub micro_lamports_per_compute_unit: u64,
+}
+
+impl Default for ComputeBudgetPolicy {
+    fn default() -> Self {
+        Self {
+            policy_version: COMPUTE_BUDGET_POLICY_VERSION,
+            compute_unit_limit: DEFAULT_COMPUTE_UNIT_LIMIT,
+            micro_lamports_per_compute_unit: DEFAULT_MICRO_LAMPORTS_PER_COMPUTE_UNIT,
+        }
+    }
+}
+
+impl ComputeBudgetPolicy {
+    pub fn validate(&self) -> Result<(), SettlementCompileError> {
+        if self.policy_version != COMPUTE_BUDGET_POLICY_VERSION
+            || self.compute_unit_limit == 0
+            || self.compute_unit_limit > MAX_COMPUTE_UNIT_LIMIT
+            || self.micro_lamports_per_compute_unit > MAX_MICRO_LAMPORTS_PER_COMPUTE_UNIT
+        {
+            return Err(SettlementCompileError::InvalidComputeBudgetPolicy);
+        }
+        Ok(())
+    }
+
+    pub fn set_compute_unit_limit_data(&self) -> Vec<u8> {
+        let mut data = vec![2_u8];
+        data.extend_from_slice(&self.compute_unit_limit.to_le_bytes());
+        data
+    }
+
+    pub fn set_compute_unit_price_data(&self) -> Vec<u8> {
+        let mut data = vec![3_u8];
+        data.extend_from_slice(&self.micro_lamports_per_compute_unit.to_le_bytes());
+        data
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CompiledSettlementAdjustmentInstruction {
+    pub status: String,
+    pub program_id: String,
+    pub instruction_data_base64: String,
+    pub accounts: Vec<CompiledAccountMeta>,
+    pub adjustment: String,
+    pub adjustment_registry: String,
+    pub original_receipt: String,
+    pub adjustment_nonce: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CompiledSettlementRefundInstruction {
+    pub status: String,
+    pub program_id: String,
+    pub instruction_data_base64: String,
+    pub accounts: Vec<CompiledAccountMeta>,
+    pub registry: String,
+    pub adjustment: String,
+    pub original_receipt: String,
+    pub claim: String,
+    pub claim_nonce: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CompiledAccountMeta {
+    pub pubkey: String,
+    pub is_signer: bool,
+    pub is_writable: bool,
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum SettlementCompileError {
+    #[error("invalid public key for {field}")]
+    InvalidPublicKey { field: &'static str },
+    #[error("invalid unsigned amount for {field}")]
+    InvalidAmount { field: &'static str },
+    #[error("settlement program id is not the configured protocol program")]
+    UnsupportedProgramId,
+    #[error("gross amount must be positive")]
+    InvalidGrossAmount,
+    #[error("tax plus net must equal gross")]
+    AmountConservationViolation,
+    #[error("policy digest must not be all zeroes")]
+    EmptyPolicyDigest,
+    #[error("settlement nonce must be positive")]
+    InvalidNonce,
+    #[error("policy sequence must be positive")]
+    InvalidPolicySequence,
+    #[error("token program is not a supported SPL token program")]
+    UnsupportedTokenProgram,
+    #[error("source, tax vault, and destination token accounts must be distinct")]
+    AliasedTokenAccounts,
+    #[error("settlement account metas must contain unique public keys")]
+    DuplicateAccountMeta,
+    #[error("split plan is invalid: {message}")]
+    InvalidSplitPlan { message: String },
+    #[error("settlement wire budget or shape is invalid")]
+    InvalidWireBudget,
+    #[error("compute budget policy is unsupported or outside its safety bounds")]
+    InvalidComputeBudgetPolicy,
+    #[error("adjustment nonce must be positive")]
+    InvalidAdjustmentNonce,
+    #[error("adjustment kind is unsupported")]
+    InvalidAdjustmentKind,
+    #[error("adjustment signer authorities must be distinct")]
+    AdjustmentAuthorityConflict,
+    #[error("adjustment sign must be zero or one")]
+    InvalidAdjustmentSign,
+    #[error("adjustment magnitude is invalid for {field}")]
+    InvalidAdjustmentMagnitude { field: &'static str },
+    #[error("adjustment signed amounts do not conserve gross = tax + net")]
+    AdjustmentAmountConservationViolation,
+    #[error("adjustment digest must not be all zeroes")]
+    EmptyAdjustmentDigest,
+    #[error("adjustment evidence digest must not be all zeroes")]
+    EmptyAdjustmentEvidenceDigest,
+    #[error("adjustment original receipt must not be the default key")]
+    InvalidAdjustmentReceipt,
+    #[error("refund claim nonce must be positive")]
+    InvalidRefundClaimNonce,
+    #[error("refund claim execution window is invalid")]
+    InvalidRefundClaimWindow,
+    #[error("refund reference digest must not be all zeroes")]
+    EmptyRefundReferenceDigest,
+    #[error("refund claim signer authorities must be distinct")]
+    RefundClaimAuthorityConflict,
+    #[error("refund token accounts must be distinct")]
+    AliasedRefundTokenAccounts,
+}
+
+pub fn settlement_program_id() -> Pubkey {
+    Pubkey::new_from_array(SETTLEMENT_PROGRAM_BYTES)
+}
+
+pub fn spl_token_program_id() -> Pubkey {
+    Pubkey::new_from_array(SPL_TOKEN_PROGRAM_BYTES)
+}
+
+/// Derives the payer's canonical associated token account without an RPC
+/// lookup. The account must already exist; the settlement hot path never
+/// creates an ATA or silently substitutes another payer-owned token account.
+pub fn derive_source_token_account(
+    payer: &str,
+    mint: &str,
+    token_program: &str,
+) -> Result<String, SettlementCompileError> {
+    let payer = parse_pubkey("payer", payer)?;
+    let mint = parse_pubkey("mint", mint)?;
+    let token_program = parse_pubkey("token_program", token_program)?;
+    if token_program != spl_token_program_id()
+        && token_program != parse_pubkey("token_program", TOKEN_2022_PROGRAM_ID)?
+    {
+        return Err(SettlementCompileError::UnsupportedTokenProgram);
+    }
+    let associated_token_program =
+        parse_pubkey("associated_token_program", ASSOCIATED_TOKEN_PROGRAM_ID)?;
+    let (address, _) = Pubkey::find_program_address(
+        &[payer.as_ref(), token_program.as_ref(), mint.as_ref()],
+        &associated_token_program,
+    );
+    Ok(address.to_string())
+}
+
+pub fn compile_settlement_instruction(
+    request: &SettlementCompileRequest,
+) -> Result<CompiledSettlementInstruction, SettlementCompileError> {
+    let program_id = parse_pubkey("program_id", &request.program_id)?;
+    if program_id != settlement_program_id() {
+        return Err(SettlementCompileError::UnsupportedProgramId);
+    }
+    let payer = parse_pubkey("payer", &request.payer)?;
+    let merchant = parse_pubkey("merchant", &request.merchant)?;
+    let source = parse_pubkey("source", &request.source)?;
+    let mint = parse_pubkey("mint", &request.mint)?;
+    let tax_vault = parse_pubkey("tax_vault", &request.tax_vault)?;
+    let net_destination = parse_pubkey("net_destination", &request.net_destination)?;
+    let token_program = parse_pubkey("token_program", &request.token_program)?;
+
+    if token_program != spl_token_program_id()
+        && token_program != parse_pubkey("token_program", TOKEN_2022_PROGRAM_ID)?
+    {
+        return Err(SettlementCompileError::UnsupportedTokenProgram);
+    }
+    if request.nonce == 0 {
+        return Err(SettlementCompileError::InvalidNonce);
+    }
+    if request.policy_sequence == 0 {
+        return Err(SettlementCompileError::InvalidPolicySequence);
+    }
+    if request.policy_digest == [0; 32] {
+        return Err(SettlementCompileError::EmptyPolicyDigest);
+    }
+    let compute_budget_policy = ComputeBudgetPolicy::default();
+    compute_budget_policy.validate()?;
+
+    let gross_atomic = parse_amount("gross_atomic", &request.gross_atomic)?;
+    let tax_atomic = parse_amount("tax_atomic", &request.tax_atomic)?;
+    let net_atomic = parse_amount("net_atomic", &request.net_atomic)?;
+    if gross_atomic == 0 {
+        return Err(SettlementCompileError::InvalidGrossAmount);
+    }
+    if tax_atomic.checked_add(net_atomic) != Some(gross_atomic) {
+        return Err(SettlementCompileError::AmountConservationViolation);
+    }
+    if source == tax_vault || source == net_destination || tax_vault == net_destination {
+        return Err(SettlementCompileError::AliasedTokenAccounts);
+    }
+
+    let (protocol_config, _) = Pubkey::find_program_address(&[b"protocol-config"], &program_id);
+    let (vault_authority, _) = Pubkey::find_program_address(
+        &[b"vault-authority", merchant.as_ref(), mint.as_ref()],
+        &program_id,
+    );
+    let (policy_attestation, _) = Pubkey::find_program_address(
+        &[
+            b"policy-attestation",
+            merchant.as_ref(),
+            mint.as_ref(),
+            &request.policy_sequence.to_le_bytes(),
+        ],
+        &program_id,
+    );
+    let (receipt, _) = Pubkey::find_program_address(
+        &[
+            b"receipt",
+            payer.as_ref(),
+            merchant.as_ref(),
+            &request.nonce.to_le_bytes(),
+        ],
+        &program_id,
+    );
+
+    let accounts = vec![
+        account(payer, true, true),
+        account(protocol_config, false, false),
+        account(merchant, false, false),
+        account(source, false, true),
+        account(mint, false, false),
+        account(tax_vault, false, true),
+        account(vault_authority, false, false),
+        account(policy_attestation, false, false),
+        account(net_destination, false, true),
+        account(receipt, false, true),
+        account(token_program, false, false),
+        account(
+            parse_pubkey("system_program", SYSTEM_PROGRAM_ID)?,
+            false,
+            false,
+        ),
+    ];
+    ensure_unique_account_keys(&accounts, &program_id)?;
+
+    let mut instruction_data = settle_discriminator();
+    instruction_data.extend_from_slice(&request.nonce.to_le_bytes());
+    instruction_data.extend_from_slice(&request.policy_sequence.to_le_bytes());
+    instruction_data.extend_from_slice(&gross_atomic.to_le_bytes());
+    instruction_data.extend_from_slice(&tax_atomic.to_le_bytes());
+    instruction_data.extend_from_slice(&net_atomic.to_le_bytes());
+    instruction_data.extend_from_slice(&request.policy_digest);
+    estimate_legacy_settlement_wire_bytes_with_compute_budget(
+        accounts.len(),
+        instruction_data.len(),
+    )?;
+
+    Ok(CompiledSettlementInstruction {
+        status: "prepared_unsubmitted".to_string(),
+        program_id: program_id.to_string(),
+        instruction_data_base64: BASE64_STANDARD.encode(instruction_data),
+        accounts,
+        protocol_config: protocol_config.to_string(),
+        vault_authority: vault_authority.to_string(),
+        policy_attestation: policy_attestation.to_string(),
+        receipt: receipt.to_string(),
+        compute_budget_policy,
+    })
+}
+
+pub fn compile_settlement_adjustment_instruction(
+    request: &SettlementAdjustmentCompileRequest,
+) -> Result<CompiledSettlementAdjustmentInstruction, SettlementCompileError> {
+    let program_id = parse_pubkey("program_id", &request.program_id)?;
+    if program_id != settlement_program_id() {
+        return Err(SettlementCompileError::UnsupportedProgramId);
+    }
+    let proposer = parse_pubkey("proposer", &request.proposer)?;
+    let approver = parse_pubkey("approver", &request.approver)?;
+    let merchant = parse_pubkey("merchant", &request.merchant)?;
+    let mint = parse_pubkey("mint", &request.mint)?;
+    let token_program = parse_pubkey("token_program", &request.token_program)?;
+    if token_program != spl_token_program_id()
+        && token_program != parse_pubkey("token_program", TOKEN_2022_PROGRAM_ID)?
+    {
+        return Err(SettlementCompileError::UnsupportedTokenProgram);
+    }
+    let original_receipt = parse_pubkey("original_receipt", &request.original_receipt)?;
+    if original_receipt == Pubkey::default() {
+        return Err(SettlementCompileError::InvalidAdjustmentReceipt);
+    }
+    if proposer == approver {
+        return Err(SettlementCompileError::AdjustmentAuthorityConflict);
+    }
+    if request.adjustment_nonce == 0 {
+        return Err(SettlementCompileError::InvalidAdjustmentNonce);
+    }
+    if !matches!(request.kind, 1..=5) {
+        return Err(SettlementCompileError::InvalidAdjustmentKind);
+    }
+    let gross = parse_signed_magnitude(
+        "gross_magnitude",
+        request.gross_sign,
+        &request.gross_magnitude,
+    )?;
+    let tax = parse_signed_magnitude("tax_magnitude", request.tax_sign, &request.tax_magnitude)?;
+    let net = parse_signed_magnitude("net_magnitude", request.net_sign, &request.net_magnitude)?;
+    validate_signed_adjustment(request.kind, gross, tax, net)?;
+    if request.adjustment_digest == [0; 32] {
+        return Err(SettlementCompileError::EmptyAdjustmentDigest);
+    }
+    if request.evidence_digest == [0; 32] {
+        return Err(SettlementCompileError::EmptyAdjustmentEvidenceDigest);
+    }
+
+    let (protocol_config, _) = Pubkey::find_program_address(&[b"protocol-config"], &program_id);
+    let (adjustment_registry, _) = Pubkey::find_program_address(
+        &[b"adjustment-registry", merchant.as_ref(), mint.as_ref()],
+        &program_id,
+    );
+    let (adjustment, _) = Pubkey::find_program_address(
+        &[
+            b"adjustment",
+            original_receipt.as_ref(),
+            &request.adjustment_nonce.to_le_bytes(),
+        ],
+        &program_id,
+    );
+    let accounts = vec![
+        account(approver, true, true),
+        account(proposer, false, false),
+        account(merchant, false, false),
+        account(mint, false, false),
+        account(token_program, false, false),
+        account(protocol_config, false, false),
+        account(adjustment_registry, false, false),
+        account(original_receipt, false, false),
+        account(adjustment, false, true),
+        account(
+            parse_pubkey("system_program", SYSTEM_PROGRAM_ID)?,
+            false,
+            false,
+        ),
+    ];
+    ensure_unique_account_keys(&accounts, &program_id)?;
+
+    let mut instruction_data = instruction_discriminator("global:record_adjustment");
+    instruction_data.extend_from_slice(&request.adjustment_nonce.to_le_bytes());
+    instruction_data.push(request.kind);
+    append_signed_amount(&mut instruction_data, gross);
+    append_signed_amount(&mut instruction_data, tax);
+    append_signed_amount(&mut instruction_data, net);
+    instruction_data.extend_from_slice(&request.adjustment_digest);
+    instruction_data.extend_from_slice(&request.evidence_digest);
+    instruction_data.extend_from_slice(&request.source_calculation_digest);
+    instruction_data.extend_from_slice(&request.replacement_calculation_digest);
+    estimate_legacy_settlement_wire_bytes(accounts.len(), instruction_data.len())?;
+
+    Ok(CompiledSettlementAdjustmentInstruction {
+        status: "prepared_unsubmitted".to_string(),
+        program_id: program_id.to_string(),
+        instruction_data_base64: BASE64_STANDARD.encode(instruction_data),
+        accounts,
+        adjustment: adjustment.to_string(),
+        adjustment_registry: adjustment_registry.to_string(),
+        original_receipt: original_receipt.to_string(),
+        adjustment_nonce: request.adjustment_nonce,
+    })
+}
+
+pub fn compile_settlement_refund_claim_instruction(
+    request: &SettlementRefundClaimCompileRequest,
+) -> Result<CompiledSettlementRefundInstruction, SettlementCompileError> {
+    let program_id = parse_pubkey("program_id", &request.program_id)?;
+    validate_settlement_program_id(program_id)?;
+    let proposer = parse_pubkey("proposer", &request.proposer)?;
+    let refund_funder = parse_pubkey("refund_funder", &request.refund_funder)?;
+    let merchant = parse_pubkey("merchant", &request.merchant)?;
+    let mint = parse_pubkey("mint", &request.mint)?;
+    let token_program = parse_supported_token_program(&request.token_program)?;
+    let original_receipt = parse_pubkey("original_receipt", &request.original_receipt)?;
+    let adjustment = parse_pubkey("adjustment", &request.adjustment)?;
+    let tax_vault = parse_pubkey("tax_vault", &request.tax_vault)?;
+    let net_source = parse_pubkey("net_source", &request.net_source)?;
+    let refund_destination = parse_pubkey("refund_destination", &request.refund_destination)?;
+    if proposer == refund_funder {
+        return Err(SettlementCompileError::RefundClaimAuthorityConflict);
+    }
+    if request.claim_nonce == 0 {
+        return Err(SettlementCompileError::InvalidRefundClaimNonce);
+    }
+    if request.reference_digest == [0; 32] {
+        return Err(SettlementCompileError::EmptyRefundReferenceDigest);
+    }
+    let window = request
+        .expires_at_unix
+        .checked_sub(request.execute_after_unix)
+        .ok_or(SettlementCompileError::InvalidRefundClaimWindow)?;
+    if window <= 0 || window > MAX_REFUND_CLAIM_WINDOW_SECONDS {
+        return Err(SettlementCompileError::InvalidRefundClaimWindow);
+    }
+    if tax_vault == net_source
+        || tax_vault == refund_destination
+        || net_source == refund_destination
+    {
+        return Err(SettlementCompileError::AliasedRefundTokenAccounts);
+    }
+
+    let (protocol_config, _) = Pubkey::find_program_address(&[b"protocol-config"], &program_id);
+    let (registry, _) = Pubkey::find_program_address(
+        &[b"adjustment-registry", merchant.as_ref(), mint.as_ref()],
+        &program_id,
+    );
+    let (vault_authority, _) = Pubkey::find_program_address(
+        &[b"vault-authority", merchant.as_ref(), mint.as_ref()],
+        &program_id,
+    );
+    let (claim, _) = Pubkey::find_program_address(
+        &[
+            b"refund-claim",
+            adjustment.as_ref(),
+            &request.claim_nonce.to_le_bytes(),
+        ],
+        &program_id,
+    );
+    let accounts = vec![
+        account(proposer, true, true),
+        account(refund_funder, true, false),
+        account(merchant, false, false),
+        account(mint, false, false),
+        account(token_program, false, false),
+        account(protocol_config, false, false),
+        account(registry, false, false),
+        account(adjustment, false, false),
+        account(original_receipt, false, false),
+        account(tax_vault, false, false),
+        account(vault_authority, false, false),
+        account(net_source, false, false),
+        account(refund_destination, false, false),
+        account(claim, false, true),
+        account(
+            parse_pubkey("system_program", SYSTEM_PROGRAM_ID)?,
+            false,
+            false,
+        ),
+    ];
+    ensure_unique_account_keys(&accounts, &program_id)?;
+
+    let mut instruction_data = instruction_discriminator("global:create_adjustment_refund_claim");
+    instruction_data.extend_from_slice(&request.claim_nonce.to_le_bytes());
+    instruction_data.extend_from_slice(&request.reference_digest);
+    instruction_data.extend_from_slice(&request.execute_after_unix.to_le_bytes());
+    instruction_data.extend_from_slice(&request.expires_at_unix.to_le_bytes());
+    estimate_legacy_settlement_wire_bytes(accounts.len(), instruction_data.len())?;
+
+    Ok(CompiledSettlementRefundInstruction {
+        status: "prepared_unsubmitted".to_string(),
+        program_id: program_id.to_string(),
+        instruction_data_base64: BASE64_STANDARD.encode(instruction_data),
+        accounts,
+        registry: registry.to_string(),
+        adjustment: adjustment.to_string(),
+        original_receipt: original_receipt.to_string(),
+        claim: claim.to_string(),
+        claim_nonce: request.claim_nonce,
+    })
+}
+
+pub fn compile_settlement_refund_execution_instruction(
+    request: &SettlementRefundExecutionCompileRequest,
+) -> Result<CompiledSettlementRefundInstruction, SettlementCompileError> {
+    let program_id = parse_pubkey("program_id", &request.program_id)?;
+    validate_settlement_program_id(program_id)?;
+    let approver = parse_pubkey("approver", &request.approver)?;
+    let refund_funder = parse_pubkey("refund_funder", &request.refund_funder)?;
+    let merchant = parse_pubkey("merchant", &request.merchant)?;
+    let mint = parse_pubkey("mint", &request.mint)?;
+    let token_program = parse_supported_token_program(&request.token_program)?;
+    let original_receipt = parse_pubkey("original_receipt", &request.original_receipt)?;
+    let adjustment = parse_pubkey("adjustment", &request.adjustment)?;
+    let tax_vault = parse_pubkey("tax_vault", &request.tax_vault)?;
+    let net_source = parse_pubkey("net_source", &request.net_source)?;
+    let refund_destination = parse_pubkey("refund_destination", &request.refund_destination)?;
+    if approver == refund_funder {
+        return Err(SettlementCompileError::RefundClaimAuthorityConflict);
+    }
+    if request.claim_nonce == 0 {
+        return Err(SettlementCompileError::InvalidRefundClaimNonce);
+    }
+    if tax_vault == net_source
+        || tax_vault == refund_destination
+        || net_source == refund_destination
+    {
+        return Err(SettlementCompileError::AliasedRefundTokenAccounts);
+    }
+
+    let (protocol_config, _) = Pubkey::find_program_address(&[b"protocol-config"], &program_id);
+    let (registry, _) = Pubkey::find_program_address(
+        &[b"adjustment-registry", merchant.as_ref(), mint.as_ref()],
+        &program_id,
+    );
+    let (vault_authority, _) = Pubkey::find_program_address(
+        &[b"vault-authority", merchant.as_ref(), mint.as_ref()],
+        &program_id,
+    );
+    let (claim, _) = Pubkey::find_program_address(
+        &[
+            b"refund-claim",
+            adjustment.as_ref(),
+            &request.claim_nonce.to_le_bytes(),
+        ],
+        &program_id,
+    );
+    let accounts = vec![
+        account(approver, true, false),
+        account(refund_funder, true, false),
+        account(merchant, false, false),
+        account(mint, false, false),
+        account(token_program, false, false),
+        account(protocol_config, false, false),
+        account(registry, false, false),
+        account(adjustment, false, false),
+        account(original_receipt, false, false),
+        account(tax_vault, false, true),
+        account(vault_authority, false, false),
+        account(net_source, false, true),
+        account(refund_destination, false, true),
+        account(claim, false, true),
+    ];
+    ensure_unique_account_keys(&accounts, &program_id)?;
+
+    let mut instruction_data = instruction_discriminator("global:execute_adjustment_refund");
+    instruction_data.extend_from_slice(&request.claim_nonce.to_le_bytes());
+    estimate_legacy_settlement_wire_bytes(accounts.len(), instruction_data.len())?;
+
+    Ok(CompiledSettlementRefundInstruction {
+        status: "prepared_unsubmitted".to_string(),
+        program_id: program_id.to_string(),
+        instruction_data_base64: BASE64_STANDARD.encode(instruction_data),
+        accounts,
+        registry: registry.to_string(),
+        adjustment: adjustment.to_string(),
+        original_receipt: original_receipt.to_string(),
+        claim: claim.to_string(),
+        claim_nonce: request.claim_nonce,
+    })
+}
+
+pub fn compile_split_settlement_instruction(
+    request: &SplitSettlementCompileRequest,
+) -> Result<CompiledSplitSettlementInstruction, SettlementCompileError> {
+    let program_id = parse_pubkey("program_id", &request.program_id)?;
+    if program_id != settlement_program_id() {
+        return Err(SettlementCompileError::UnsupportedProgramId);
+    }
+    let payer = parse_pubkey("payer", &request.payer)?;
+    let merchant = parse_pubkey("merchant", &request.merchant)?;
+    let source = parse_pubkey("source", &request.source)?;
+    let mint = parse_pubkey("mint", &request.mint)?;
+    let tax_vault = parse_pubkey("tax_vault", &request.tax_vault)?;
+    let token_program = parse_pubkey("token_program", &request.token_program)?;
+    if token_program != spl_token_program_id()
+        && token_program != parse_pubkey("token_program", TOKEN_2022_PROGRAM_ID)?
+    {
+        return Err(SettlementCompileError::UnsupportedTokenProgram);
+    }
+    if request.nonce == 0 {
+        return Err(SettlementCompileError::InvalidNonce);
+    }
+    if request.policy_sequence == 0 {
+        return Err(SettlementCompileError::InvalidPolicySequence);
+    }
+    if request.policy_digest == [0; 32] {
+        return Err(SettlementCompileError::EmptyPolicyDigest);
+    }
+    let compute_budget_policy = ComputeBudgetPolicy::default();
+    compute_budget_policy.validate()?;
+    let gross_atomic = parse_amount("gross_atomic", &request.gross_atomic)?;
+    let tax_atomic = parse_amount("tax_atomic", &request.tax_atomic)?;
+    let net_atomic = parse_amount("net_atomic", &request.net_atomic)?;
+    if gross_atomic == 0 {
+        return Err(SettlementCompileError::InvalidGrossAmount);
+    }
+    if tax_atomic.checked_add(net_atomic) != Some(gross_atomic) {
+        return Err(SettlementCompileError::AmountConservationViolation);
+    }
+
+    let plan = SplitPlan::new(
+        request.merchant.clone(),
+        request.mint.clone(),
+        request.split_plan_version,
+        request.recipients.clone(),
+    )
+    .map_err(|error| SettlementCompileError::InvalidSplitPlan {
+        message: error.to_string(),
+    })?;
+    let split_plan_digest =
+        plan.digest()
+            .map_err(|error| SettlementCompileError::InvalidSplitPlan {
+                message: error.to_string(),
+            })?;
+    let recipient_keys = plan
+        .recipients
+        .iter()
+        .map(|recipient| parse_pubkey("recipient", &recipient.token_account))
+        .collect::<Result<Vec<_>, _>>()?;
+    if source == tax_vault
+        || recipient_keys.contains(&source)
+        || recipient_keys.contains(&tax_vault)
+    {
+        return Err(SettlementCompileError::AliasedTokenAccounts);
+    }
+
+    let (protocol_config, _) = Pubkey::find_program_address(&[b"protocol-config"], &program_id);
+    let (vault_authority, _) = Pubkey::find_program_address(
+        &[b"vault-authority", merchant.as_ref(), mint.as_ref()],
+        &program_id,
+    );
+    let (policy_attestation, _) = Pubkey::find_program_address(
+        &[
+            b"policy-attestation",
+            merchant.as_ref(),
+            mint.as_ref(),
+            &request.policy_sequence.to_le_bytes(),
+        ],
+        &program_id,
+    );
+    let (split_plan, _) = Pubkey::find_program_address(
+        &[
+            b"split-plan",
+            merchant.as_ref(),
+            mint.as_ref(),
+            &request.split_plan_version.to_le_bytes(),
+        ],
+        &program_id,
+    );
+    let (receipt, _) = Pubkey::find_program_address(
+        &[
+            b"receipt",
+            payer.as_ref(),
+            merchant.as_ref(),
+            &request.nonce.to_le_bytes(),
+        ],
+        &program_id,
+    );
+
+    let mut accounts = vec![
+        account(payer, true, true),
+        account(protocol_config, false, false),
+        account(merchant, false, false),
+        account(source, false, true),
+        account(mint, false, false),
+        account(tax_vault, false, true),
+        account(vault_authority, false, false),
+        account(policy_attestation, false, false),
+        account(split_plan, false, false),
+        account(receipt, false, true),
+        account(token_program, false, false),
+        account(
+            parse_pubkey("system_program", SYSTEM_PROGRAM_ID)?,
+            false,
+            false,
+        ),
+    ];
+    accounts.extend(
+        recipient_keys
+            .iter()
+            .copied()
+            .map(|recipient| account(recipient, false, true)),
+    );
+    ensure_unique_account_keys(&accounts, &program_id)?;
+
+    let mut instruction_data = instruction_discriminator("global:settle_split");
+    instruction_data.extend_from_slice(&request.nonce.to_le_bytes());
+    instruction_data.extend_from_slice(&request.policy_sequence.to_le_bytes());
+    instruction_data.extend_from_slice(&request.split_plan_version.to_le_bytes());
+    instruction_data.extend_from_slice(&gross_atomic.to_le_bytes());
+    instruction_data.extend_from_slice(&tax_atomic.to_le_bytes());
+    instruction_data.extend_from_slice(&net_atomic.to_le_bytes());
+    instruction_data.extend_from_slice(&request.policy_digest);
+    estimate_legacy_settlement_wire_bytes_with_compute_budget(
+        accounts.len(),
+        instruction_data.len(),
+    )?;
+
+    Ok(CompiledSplitSettlementInstruction {
+        status: "prepared_unsubmitted".to_string(),
+        program_id: program_id.to_string(),
+        instruction_data_base64: BASE64_STANDARD.encode(instruction_data),
+        accounts,
+        protocol_config: protocol_config.to_string(),
+        vault_authority: vault_authority.to_string(),
+        policy_attestation: policy_attestation.to_string(),
+        split_plan: split_plan.to_string(),
+        split_plan_digest: split_plan_digest.to_vec(),
+        receipt: receipt.to_string(),
+        compute_budget_policy,
+    })
+}
+
+/// Hashes the canonical JSON representation emitted by serde for the full
+/// compiled instruction artifact. Instruction data alone is intentionally
+/// insufficient because account and program substitution must be detectable.
+pub fn compiled_instruction_digest(
+    instruction: &CompiledSettlementInstruction,
+) -> Result<[u8; 32], serde_json::Error> {
+    Ok(Sha256::digest(serde_json::to_vec(instruction)?).into())
+}
+
+/// Estimates the serialized size of a one-signature legacy transaction with
+/// one settlement instruction. The estimate models Solana short-vector
+/// lengths, the program key, static account keys, the recent blockhash, and
+/// the instruction payload. It is independent of RPC and wallet state.
+pub fn estimate_legacy_settlement_wire_bytes(
+    instruction_account_count: usize,
+    instruction_data_bytes: usize,
+) -> Result<usize, SettlementCompileError> {
+    if instruction_account_count > u8::MAX as usize
+        || instruction_data_bytes > u16::MAX as usize
+        || instruction_account_count > MAX_SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT
+    {
+        return Err(SettlementCompileError::InvalidWireBudget);
+    }
+    let static_account_count = instruction_account_count
+        .checked_add(1)
+        .ok_or(SettlementCompileError::InvalidWireBudget)?;
+    let signature_bytes = short_vec_len(1)?
+        .checked_add(64)
+        .ok_or(SettlementCompileError::InvalidWireBudget)?;
+    let message_bytes = 3_usize
+        .checked_add(short_vec_len(static_account_count)?)
+        .and_then(|bytes| bytes.checked_add(static_account_count.checked_mul(32)?))
+        .and_then(|bytes| bytes.checked_add(32))
+        .and_then(|bytes| bytes.checked_add(short_vec_len(1).ok()?))
+        .and_then(|bytes| bytes.checked_add(1))
+        .and_then(|bytes| bytes.checked_add(short_vec_len(instruction_account_count).ok()?))
+        .and_then(|bytes| bytes.checked_add(instruction_account_count))
+        .and_then(|bytes| bytes.checked_add(short_vec_len(instruction_data_bytes).ok()?))
+        .and_then(|bytes| bytes.checked_add(instruction_data_bytes))
+        .ok_or(SettlementCompileError::InvalidWireBudget)?;
+    let total = signature_bytes
+        .checked_add(message_bytes)
+        .ok_or(SettlementCompileError::InvalidWireBudget)?;
+    if total > MAX_SETTLEMENT_SIGNED_BYTES {
+        return Err(SettlementCompileError::InvalidWireBudget);
+    }
+    Ok(total)
+}
+
+/// Estimates the serialized size of a one-signature legacy transaction with
+/// the governed compute-budget pair followed by one settlement instruction.
+/// This is intentionally conservative and network-independent.
+pub fn estimate_legacy_settlement_wire_bytes_with_compute_budget(
+    instruction_account_count: usize,
+    instruction_data_bytes: usize,
+) -> Result<usize, SettlementCompileError> {
+    if instruction_account_count > u8::MAX as usize
+        || instruction_data_bytes > u16::MAX as usize
+        || instruction_account_count > MAX_SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT
+    {
+        return Err(SettlementCompileError::InvalidWireBudget);
+    }
+    let static_account_count = instruction_account_count
+        .checked_add(2)
+        .ok_or(SettlementCompileError::InvalidWireBudget)?;
+    let signature_bytes = short_vec_len(1)?
+        .checked_add(64)
+        .ok_or(SettlementCompileError::InvalidWireBudget)?;
+    let compute_limit_data = 5_usize;
+    let compute_price_data = 9_usize;
+    let compute_budget_instruction_bytes =
+        (1 + 1 + short_vec_len(compute_limit_data)? + compute_limit_data)
+            .checked_add(1 + 1 + short_vec_len(compute_price_data)? + compute_price_data)
+            .ok_or(SettlementCompileError::InvalidWireBudget)?;
+    let settlement_instruction_bytes = 1_usize
+        .checked_add(short_vec_len(instruction_account_count)?)
+        .and_then(|bytes| bytes.checked_add(instruction_account_count))
+        .and_then(|bytes| bytes.checked_add(short_vec_len(instruction_data_bytes).ok()?))
+        .and_then(|bytes| bytes.checked_add(instruction_data_bytes))
+        .ok_or(SettlementCompileError::InvalidWireBudget)?;
+    let message_bytes = 3_usize
+        .checked_add(short_vec_len(static_account_count)?)
+        .and_then(|bytes| bytes.checked_add(static_account_count.checked_mul(32)?))
+        .and_then(|bytes| bytes.checked_add(32))
+        .and_then(|bytes| bytes.checked_add(short_vec_len(3).ok()?))
+        .and_then(|bytes| bytes.checked_add(compute_budget_instruction_bytes))
+        .and_then(|bytes| bytes.checked_add(settlement_instruction_bytes))
+        .ok_or(SettlementCompileError::InvalidWireBudget)?;
+    let total = signature_bytes
+        .checked_add(message_bytes)
+        .ok_or(SettlementCompileError::InvalidWireBudget)?;
+    if total > MAX_SETTLEMENT_SIGNED_BYTES {
+        return Err(SettlementCompileError::InvalidWireBudget);
+    }
+    Ok(total)
+}
+
+fn short_vec_len(value: usize) -> Result<usize, SettlementCompileError> {
+    if value > u16::MAX as usize {
+        return Err(SettlementCompileError::InvalidWireBudget);
+    }
+    let mut remaining = value;
+    let mut length = 1_usize;
+    while remaining >= 128 {
+        remaining >>= 7;
+        length = length
+            .checked_add(1)
+            .ok_or(SettlementCompileError::InvalidWireBudget)?;
+    }
+    Ok(length)
+}
+
+fn parse_pubkey(field: &'static str, value: &str) -> Result<Pubkey, SettlementCompileError> {
+    Pubkey::from_str(value.trim()).map_err(|_| SettlementCompileError::InvalidPublicKey { field })
+}
+
+fn validate_settlement_program_id(program_id: Pubkey) -> Result<(), SettlementCompileError> {
+    if program_id != settlement_program_id() {
+        return Err(SettlementCompileError::UnsupportedProgramId);
+    }
+    Ok(())
+}
+
+fn parse_supported_token_program(value: &str) -> Result<Pubkey, SettlementCompileError> {
+    let token_program = parse_pubkey("token_program", value)?;
+    if token_program != spl_token_program_id()
+        && token_program != parse_pubkey("token_program", TOKEN_2022_PROGRAM_ID)?
+    {
+        return Err(SettlementCompileError::UnsupportedTokenProgram);
+    }
+    Ok(token_program)
+}
+
+fn ensure_unique_account_keys(
+    accounts: &[CompiledAccountMeta],
+    program_id: &Pubkey,
+) -> Result<(), SettlementCompileError> {
+    let program_id = program_id.to_string();
+    let mut seen = BTreeSet::from([program_id.as_str()]);
+    if accounts
+        .iter()
+        .any(|account| !seen.insert(account.pubkey.as_str()))
+    {
+        return Err(SettlementCompileError::DuplicateAccountMeta);
+    }
+    Ok(())
+}
+
+fn parse_amount(field: &'static str, value: &str) -> Result<u64, SettlementCompileError> {
+    value
+        .parse::<u64>()
+        .map_err(|_| SettlementCompileError::InvalidAmount { field })
+}
+
+fn parse_signed_magnitude(
+    field: &'static str,
+    sign: u8,
+    magnitude: &str,
+) -> Result<(u8, u64), SettlementCompileError> {
+    if sign > 1 {
+        return Err(SettlementCompileError::InvalidAdjustmentSign);
+    }
+    let magnitude = magnitude
+        .parse::<u64>()
+        .map_err(|_| SettlementCompileError::InvalidAdjustmentMagnitude { field })?;
+    if magnitude == 0 && sign != 0 {
+        return Err(SettlementCompileError::InvalidAdjustmentSign);
+    }
+    Ok((sign, magnitude))
+}
+
+fn validate_signed_adjustment(
+    kind: u8,
+    gross: (u8, u64),
+    tax: (u8, u64),
+    net: (u8, u64),
+) -> Result<(), SettlementCompileError> {
+    if matches!(kind, 1 | 2 | 4)
+        && (gross.1 == 0 || gross.0 != 1 || (tax.1 > 0 && tax.0 != 1) || (net.1 > 0 && net.0 != 1))
+    {
+        return Err(SettlementCompileError::InvalidAdjustmentSign);
+    }
+    let result = if tax.0 == net.0 {
+        let magnitude = tax
+            .1
+            .checked_add(net.1)
+            .ok_or(SettlementCompileError::AdjustmentAmountConservationViolation)?;
+        (tax.0, magnitude)
+    } else if tax.1 >= net.1 {
+        (tax.0, tax.1 - net.1)
+    } else {
+        (net.0, net.1 - tax.1)
+    };
+    if result != gross || (gross.1 == 0 && tax.1 == 0 && net.1 == 0) {
+        return Err(SettlementCompileError::AdjustmentAmountConservationViolation);
+    }
+    Ok(())
+}
+
+fn append_signed_amount(payload: &mut Vec<u8>, amount: (u8, u64)) {
+    payload.push(amount.0);
+    payload.extend_from_slice(&amount.1.to_le_bytes());
+}
+
+fn account(pubkey: Pubkey, is_signer: bool, is_writable: bool) -> CompiledAccountMeta {
+    CompiledAccountMeta {
+        pubkey: pubkey.to_string(),
+        is_signer,
+        is_writable,
+    }
+}
+
+fn settle_discriminator() -> Vec<u8> {
+    instruction_discriminator("global:settle")
+}
+
+fn instruction_discriminator(name: &str) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(name.as_bytes());
+    hasher.finalize()[..8].to_vec()
+}
+
+fn deserialize_digest<'de, D>(deserializer: D) -> Result<[u8; 32], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Vec::<u8>::deserialize(deserializer)?;
+    value.try_into().map_err(|value: Vec<u8>| {
+        serde::de::Error::custom(format!(
+            "policy digest must contain 32 bytes, got {}",
+            value.len()
+        ))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Deserialize)]
+    struct SettlementVector {
+        schema: String,
+        request: SettlementCompileRequest,
+        expected: SettlementVectorExpected,
+    }
+
+    #[derive(Deserialize)]
+    struct SettlementVectorExpected {
+        status: String,
+        program_id: String,
+        instruction_data_base64_chunks: Vec<String>,
+        accounts: Vec<CompiledAccountMeta>,
+        protocol_config: String,
+        vault_authority: String,
+        policy_attestation: String,
+        receipt: String,
+        compute_budget_policy: ComputeBudgetPolicy,
+    }
+
+    #[test]
+    fn fixed_program_id_bytes_match_canonical_base58_contract() {
+        assert_eq!(settlement_program_id().to_string(), SETTLEMENT_PROGRAM_ID);
+        assert_eq!(spl_token_program_id().to_string(), SPL_TOKEN_PROGRAM_ID);
+    }
+
+    #[test]
+    fn matches_the_shared_cross_language_settlement_vector() {
+        let vector: SettlementVector = serde_json::from_str(include_str!(
+            "../../../test-vectors/settlement-instruction-v1.json"
+        ))
+        .expect("settlement vector must be valid JSON");
+        assert_eq!(
+            vector.schema,
+            "solana-tax-protocol/settlement-instruction/v1"
+        );
+
+        let compiled = compile_settlement_instruction(&vector.request)
+            .expect("the shared settlement vector must compile");
+        assert_eq!(compiled.status, vector.expected.status);
+        assert_eq!(compiled.program_id, vector.expected.program_id);
+        assert_eq!(
+            compiled.instruction_data_base64,
+            vector.expected.instruction_data_base64_chunks.concat()
+        );
+        assert_eq!(compiled.accounts, vector.expected.accounts);
+        assert_eq!(compiled.protocol_config, vector.expected.protocol_config);
+        assert_eq!(compiled.vault_authority, vector.expected.vault_authority);
+        assert_eq!(
+            compiled.policy_attestation,
+            vector.expected.policy_attestation
+        );
+        assert_eq!(compiled.receipt, vector.expected.receipt);
+        assert_eq!(
+            compiled.compute_budget_policy,
+            vector.expected.compute_budget_policy
+        );
+    }
+
+    #[test]
+    fn compiles_the_canonical_settlement_instruction() {
+        let request = valid_request();
+        let compiled = compile_settlement_instruction(&request).expect("valid instruction");
+
+        assert_eq!(compiled.status, "prepared_unsubmitted");
+        assert_eq!(compiled.accounts.len(), 12);
+        assert_eq!(compiled.accounts[0].pubkey, request.payer);
+        assert!(compiled.accounts[0].is_signer);
+        assert!(compiled.accounts[0].is_writable);
+        assert_eq!(compiled.accounts[1].pubkey, compiled.protocol_config);
+        assert_eq!(compiled.accounts[7].pubkey, compiled.policy_attestation);
+        assert_eq!(compiled.accounts[8].pubkey, request.net_destination);
+        assert_eq!(compiled.accounts[9].pubkey, compiled.receipt);
+        assert_eq!(compiled.instruction_data_base64.len(), 108);
+        assert_eq!(
+            compiled.instruction_data_base64,
+            "ryq5V5CDZtQJAAAAAAAAAAMAAAAAAAAAZAAAAAAAAAAZAAAAAAAAAEsAAAAAAAAABwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="
+        );
+    }
+
+    #[test]
+    fn compiles_a_bounded_split_settlement_with_ordered_remaining_accounts() {
+        let request = split_request();
+        let compiled = compile_split_settlement_instruction(&request).expect("valid split");
+
+        assert_eq!(compiled.status, "prepared_unsubmitted");
+        assert_eq!(
+            compiled.accounts.len(),
+            SPLIT_SETTLEMENT_INSTRUCTION_BASE_ACCOUNT_COUNT + 2
+        );
+        assert_eq!(compiled.accounts[8].pubkey, compiled.split_plan);
+        assert_eq!(
+            compiled.accounts[12].pubkey,
+            request.recipients[0].token_account
+        );
+        assert_eq!(
+            compiled.accounts[13].pubkey,
+            request.recipients[1].token_account
+        );
+        assert_eq!(
+            compiled.split_plan_digest,
+            vec![
+                245, 27, 219, 197, 243, 59, 244, 252, 226, 232, 224, 208, 52, 31, 115, 134, 54,
+                180, 76, 219, 116, 190, 27, 48, 217, 210, 150, 151, 38, 71, 128, 199,
+            ]
+        );
+    }
+
+    #[test]
+    fn split_compiler_rejects_duplicate_recipient_accounts() {
+        let mut request = split_request();
+        request.recipients[1].token_account = request.recipients[0].token_account.clone();
+        assert!(matches!(
+            compile_split_settlement_instruction(&request),
+            Err(SettlementCompileError::InvalidSplitPlan { .. })
+        ));
+    }
+
+    #[test]
+    fn derives_the_pdas_from_the_program_domain() {
+        let request = valid_request();
+        let compiled = compile_settlement_instruction(&request).expect("valid instruction");
+        let program_id = Pubkey::from_str(&request.program_id).expect("program id");
+        let (expected_protocol_config, _) =
+            Pubkey::find_program_address(&[b"protocol-config"], &program_id);
+        let (expected_vault_authority, _) = Pubkey::find_program_address(
+            &[
+                b"vault-authority",
+                Pubkey::from_str(&request.merchant)
+                    .expect("merchant")
+                    .as_ref(),
+                Pubkey::from_str(&request.mint).expect("mint").as_ref(),
+            ],
+            &program_id,
+        );
+
+        assert_eq!(
+            compiled.protocol_config,
+            expected_protocol_config.to_string()
+        );
+        assert_eq!(
+            compiled.vault_authority,
+            expected_vault_authority.to_string()
+        );
+    }
+
+    #[test]
+    fn rejects_non_conserving_amounts_before_serialization() {
+        let mut request = valid_request();
+        request.net_atomic = "74".to_string();
+
+        assert!(matches!(
+            compile_settlement_instruction(&request),
+            Err(SettlementCompileError::AmountConservationViolation)
+        ));
+    }
+
+    #[test]
+    fn maximum_split_shape_stays_below_the_packet_ceiling_with_margin() {
+        let estimate = estimate_legacy_settlement_wire_bytes(20, 88).expect("bounded shape");
+        assert_eq!(estimate, 885);
+        assert_eq!(SOLANA_LEGACY_PACKET_BYTES - estimate, 347);
+        assert!(estimate <= MAX_SETTLEMENT_SIGNED_BYTES);
+    }
+
+    #[test]
+    fn wire_budget_rejects_unrepresentable_instruction_shapes() {
+        assert!(estimate_legacy_settlement_wire_bytes(256, 88).is_err());
+        assert!(estimate_legacy_settlement_wire_bytes(20, 65_536).is_err());
+    }
+
+    #[test]
+    fn rejects_aliasing_token_accounts() {
+        let mut request = valid_request();
+        request.net_destination = request.source.clone();
+
+        assert!(matches!(
+            compile_settlement_instruction(&request),
+            Err(SettlementCompileError::AliasedTokenAccounts)
+        ));
+    }
+
+    #[test]
+    fn rejects_duplicate_static_account_metas_before_signing() {
+        let mut request = valid_request();
+        request.merchant = SYSTEM_PROGRAM_ID.to_string();
+
+        assert!(matches!(
+            compile_settlement_instruction(&request),
+            Err(SettlementCompileError::DuplicateAccountMeta)
+        ));
+    }
+
+    #[test]
+    fn rejects_program_id_as_a_static_account_meta() {
+        let mut request = valid_request();
+        request.payer = request.program_id.clone();
+
+        assert!(matches!(
+            compile_settlement_instruction(&request),
+            Err(SettlementCompileError::DuplicateAccountMeta)
+        ));
+    }
+
+    #[test]
+    fn rejects_unsupported_token_programs() {
+        let mut request = valid_request();
+        request.token_program = Pubkey::new_unique().to_string();
+
+        let error = compile_settlement_instruction(&request).expect_err("must reject");
+        assert_eq!(error, SettlementCompileError::UnsupportedTokenProgram);
+    }
+
+    #[test]
+    fn compiles_the_canonical_on_chain_adjustment_evidence_instruction() {
+        let request = valid_adjustment_request();
+        let compiled = compile_settlement_adjustment_instruction(&request)
+            .expect("valid adjustment evidence instruction");
+
+        assert_eq!(compiled.status, "prepared_unsubmitted");
+        assert_eq!(compiled.accounts.len(), 10);
+        assert!(compiled.accounts[0].is_signer);
+        assert!(compiled.accounts[0].is_writable);
+        assert!(!compiled.accounts[1].is_signer);
+        assert_eq!(compiled.accounts[7].pubkey, request.original_receipt);
+        assert_eq!(compiled.instruction_data_base64.len(), 232);
+        assert_eq!(compiled.adjustment_nonce, request.adjustment_nonce);
+    }
+
+    #[test]
+    fn matches_the_shared_cross_language_adjustment_evidence_vector() {
+        #[derive(Deserialize)]
+        struct AdjustmentVector {
+            schema: String,
+            request: SettlementAdjustmentCompileRequest,
+            expected: CompiledSettlementAdjustmentInstruction,
+        }
+
+        let vector: AdjustmentVector = serde_json::from_str(include_str!(
+            "../../../test-vectors/settlement-adjustment-evidence-v1.json"
+        ))
+        .expect("adjustment evidence vector must be valid JSON");
+        assert_eq!(
+            vector.schema,
+            "solana-tax-protocol/settlement-adjustment-evidence/v1"
+        );
+        let actual = compile_settlement_adjustment_instruction(&vector.request)
+            .expect("shared adjustment vector must compile");
+        assert_eq!(actual, vector.expected);
+    }
+
+    #[test]
+    fn adjustment_compiler_rejects_non_conserving_signed_deltas() {
+        let mut request = valid_adjustment_request();
+        request.net_magnitude = "41".to_string();
+
+        assert!(matches!(
+            compile_settlement_adjustment_instruction(&request),
+            Err(SettlementCompileError::AdjustmentAmountConservationViolation)
+        ));
+    }
+
+    #[test]
+    fn adjustment_compiler_rejects_invalid_refund_sign_and_duplicate_authority() {
+        let mut request = valid_adjustment_request();
+        request.gross_sign = 0;
+        assert!(matches!(
+            compile_settlement_adjustment_instruction(&request),
+            Err(SettlementCompileError::InvalidAdjustmentSign)
+        ));
+
+        let mut request = valid_adjustment_request();
+        request.approver = request.proposer.clone();
+        assert!(matches!(
+            compile_settlement_adjustment_instruction(&request),
+            Err(SettlementCompileError::AdjustmentAuthorityConflict)
+        ));
+    }
+
+    #[test]
+    fn adjustment_compiler_derives_a_receipt_bound_pda_and_rejects_zero_digests() {
+        let request = valid_adjustment_request();
+        let compiled = compile_settlement_adjustment_instruction(&request)
+            .expect("valid adjustment evidence instruction");
+        let program_id = settlement_program_id();
+        let receipt = Pubkey::from_str(&request.original_receipt).expect("receipt");
+        let (expected, _) = Pubkey::find_program_address(
+            &[
+                b"adjustment",
+                receipt.as_ref(),
+                &request.adjustment_nonce.to_le_bytes(),
+            ],
+            &program_id,
+        );
+        assert_eq!(compiled.adjustment, expected.to_string());
+
+        let mut request = valid_adjustment_request();
+        request.evidence_digest = [0; 32];
+        assert!(matches!(
+            compile_settlement_adjustment_instruction(&request),
+            Err(SettlementCompileError::EmptyAdjustmentEvidenceDigest)
+        ));
+    }
+
+    #[test]
+    fn compiles_bounded_refund_claim_and_execution_shapes() {
+        let claim_request = valid_refund_claim_request();
+        let claim = compile_settlement_refund_claim_instruction(&claim_request)
+            .expect("valid refund claim");
+        assert_eq!(claim.accounts.len(), 15);
+        assert!(claim.accounts[0].is_signer);
+        assert!(claim.accounts[1].is_signer);
+        assert_eq!(claim.accounts[13].pubkey, claim.claim);
+        assert_eq!(claim.accounts[14].pubkey, SYSTEM_PROGRAM_ID);
+
+        let execution = compile_settlement_refund_execution_instruction(
+            &SettlementRefundExecutionCompileRequest {
+                program_id: claim_request.program_id.clone(),
+                approver: Pubkey::new_unique().to_string(),
+                refund_funder: claim_request.refund_funder.clone(),
+                merchant: claim_request.merchant.clone(),
+                mint: claim_request.mint.clone(),
+                token_program: claim_request.token_program.clone(),
+                original_receipt: claim_request.original_receipt.clone(),
+                adjustment: claim_request.adjustment.clone(),
+                tax_vault: claim_request.tax_vault.clone(),
+                net_source: claim_request.net_source.clone(),
+                refund_destination: claim_request.refund_destination.clone(),
+                claim_nonce: claim_request.claim_nonce,
+            },
+        )
+        .expect("valid refund execution");
+        assert_eq!(execution.accounts.len(), 14);
+        assert!(execution.accounts[0].is_signer);
+        assert!(execution.accounts[9].is_writable);
+        assert_eq!(execution.claim, claim.claim);
+    }
+
+    #[test]
+    fn matches_the_shared_cross_language_refund_claim_vector() {
+        #[derive(Deserialize)]
+        struct RefundVector {
+            schema: String,
+            request: SettlementRefundClaimCompileRequest,
+            expected: CompiledSettlementRefundInstruction,
+        }
+
+        let vector: RefundVector = serde_json::from_str(include_str!(
+            "../../../test-vectors/settlement-refund-claim-v1.json"
+        ))
+        .expect("refund claim vector must be valid JSON");
+        assert_eq!(
+            vector.schema,
+            "solana-tax-protocol/settlement-refund-claim/v1"
+        );
+        let actual = compile_settlement_refund_claim_instruction(&vector.request)
+            .expect("shared refund claim vector must compile");
+        assert_eq!(actual, vector.expected);
+    }
+
+    #[test]
+    fn refund_compiler_rejects_window_authority_and_account_aliases() {
+        let mut request = valid_refund_claim_request();
+        request.expires_at_unix = request.execute_after_unix;
+        assert!(matches!(
+            compile_settlement_refund_claim_instruction(&request),
+            Err(SettlementCompileError::InvalidRefundClaimWindow)
+        ));
+
+        let mut request = valid_refund_claim_request();
+        request.refund_funder = request.proposer.clone();
+        assert!(matches!(
+            compile_settlement_refund_claim_instruction(&request),
+            Err(SettlementCompileError::RefundClaimAuthorityConflict)
+        ));
+
+        let mut request = valid_refund_claim_request();
+        request.net_source = request.refund_destination.clone();
+        assert!(matches!(
+            compile_settlement_refund_claim_instruction(&request),
+            Err(SettlementCompileError::AliasedRefundTokenAccounts)
+        ));
+    }
+
+    #[test]
+    fn rejects_zero_policy_digest_and_zero_sequences() {
+        let mut request = valid_request();
+        request.policy_digest = [0; 32];
+        assert!(matches!(
+            compile_settlement_instruction(&request),
+            Err(SettlementCompileError::EmptyPolicyDigest)
+        ));
+
+        let mut request = valid_request();
+        request.policy_sequence = 0;
+        assert!(matches!(
+            compile_settlement_instruction(&request),
+            Err(SettlementCompileError::InvalidPolicySequence)
+        ));
+    }
+
+    #[test]
+    fn rejects_program_substitution() {
+        let mut request = valid_request();
+        request.program_id = Pubkey::new_unique().to_string();
+
+        assert!(matches!(
+            compile_settlement_instruction(&request),
+            Err(SettlementCompileError::UnsupportedProgramId)
+        ));
+    }
+
+    #[test]
+    fn compiled_digest_covers_the_entire_artifact() {
+        let instruction = compile_settlement_instruction(&valid_request()).expect("instruction");
+        let original = compiled_instruction_digest(&instruction).expect("digest");
+        let mut changed = instruction;
+        changed.accounts[0].is_writable = !changed.accounts[0].is_writable;
+        assert_ne!(
+            original,
+            compiled_instruction_digest(&changed).expect("digest")
+        );
+    }
+
+    #[test]
+    fn derives_a_canonical_payer_ata_without_rpc_or_ata_creation() {
+        let payer = Pubkey::new_unique().to_string();
+        let mint = Pubkey::new_unique().to_string();
+        let first = derive_source_token_account(&payer, &mint, SPL_TOKEN_PROGRAM_ID)
+            .expect("valid payer ATA");
+        let second = derive_source_token_account(&payer, &mint, SPL_TOKEN_PROGRAM_ID)
+            .expect("same payer ATA");
+        assert_eq!(first, second);
+        assert_ne!(first, payer);
+        assert_ne!(first, mint);
+
+        let token_2022 = derive_source_token_account(&payer, &mint, TOKEN_2022_PROGRAM_ID)
+            .expect("valid Token-2022 payer ATA");
+        assert_ne!(first, token_2022);
+    }
+
+    fn valid_request() -> SettlementCompileRequest {
+        SettlementCompileRequest {
+            program_id: settlement_program_id().to_string(),
+            payer: Pubkey::new_unique().to_string(),
+            merchant: Pubkey::new_unique().to_string(),
+            source: Pubkey::new_unique().to_string(),
+            mint: Pubkey::new_unique().to_string(),
+            tax_vault: Pubkey::new_unique().to_string(),
+            net_destination: Pubkey::new_unique().to_string(),
+            token_program: spl_token_program_id().to_string(),
+            nonce: 9,
+            policy_sequence: 3,
+            gross_atomic: "100".to_string(),
+            tax_atomic: "25".to_string(),
+            net_atomic: "75".to_string(),
+            policy_digest: [7; 32],
+        }
+    }
+
+    fn split_request() -> SplitSettlementCompileRequest {
+        SplitSettlementCompileRequest {
+            program_id: settlement_program_id().to_string(),
+            payer: "cGfHiC6Kgg3FpFZvgwGcswsCRtp4aBP2fzuXRQPizuN".to_string(),
+            merchant: "8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR".to_string(),
+            source: Pubkey::new_unique().to_string(),
+            mint: "GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq".to_string(),
+            tax_vault: "LbUiWL3xVV8hTFYBVdbTNrpDo41NKS6o3LHHuDzjfcY".to_string(),
+            token_program: SPL_TOKEN_PROGRAM_ID.to_string(),
+            nonce: 9,
+            policy_sequence: 3,
+            split_plan_version: 1,
+            recipients: vec![
+                SplitRecipient {
+                    token_account: "QWmroo4YnnMqYW3cnxWkFdaTxGD3P7vMSzwMHGbUzwF".to_string(),
+                    basis_points: 7_000,
+                },
+                SplitRecipient {
+                    token_account: "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8".to_string(),
+                    basis_points: 3_000,
+                },
+            ],
+            gross_atomic: "100".to_string(),
+            tax_atomic: "25".to_string(),
+            net_atomic: "75".to_string(),
+            policy_digest: [7; 32],
+        }
+    }
+
+    fn valid_adjustment_request() -> SettlementAdjustmentCompileRequest {
+        SettlementAdjustmentCompileRequest {
+            program_id: settlement_program_id().to_string(),
+            proposer: Pubkey::new_unique().to_string(),
+            approver: Pubkey::new_unique().to_string(),
+            merchant: Pubkey::new_unique().to_string(),
+            mint: Pubkey::new_unique().to_string(),
+            token_program: SPL_TOKEN_PROGRAM_ID.to_string(),
+            original_receipt: Pubkey::new_unique().to_string(),
+            adjustment_nonce: 11,
+            kind: 1,
+            gross_sign: 1,
+            gross_magnitude: "100".to_string(),
+            tax_sign: 1,
+            tax_magnitude: "25".to_string(),
+            net_sign: 1,
+            net_magnitude: "75".to_string(),
+            adjustment_digest: [3; 32],
+            evidence_digest: [4; 32],
+            source_calculation_digest: [5; 32],
+            replacement_calculation_digest: [6; 32],
+        }
+    }
+
+    fn valid_refund_claim_request() -> SettlementRefundClaimCompileRequest {
+        SettlementRefundClaimCompileRequest {
+            program_id: settlement_program_id().to_string(),
+            proposer: Pubkey::new_unique().to_string(),
+            refund_funder: Pubkey::new_unique().to_string(),
+            merchant: Pubkey::new_unique().to_string(),
+            mint: Pubkey::new_unique().to_string(),
+            token_program: SPL_TOKEN_PROGRAM_ID.to_string(),
+            original_receipt: Pubkey::new_unique().to_string(),
+            adjustment: Pubkey::new_unique().to_string(),
+            tax_vault: Pubkey::new_unique().to_string(),
+            net_source: Pubkey::new_unique().to_string(),
+            refund_destination: Pubkey::new_unique().to_string(),
+            claim_nonce: 3,
+            execute_after_unix: 1_800_000_000,
+            expires_at_unix: 1_800_000_600,
+            reference_digest: [9; 32],
+        }
+    }
+}

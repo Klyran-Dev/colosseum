@@ -1,0 +1,21 @@
+[package]
+name = "route-verifier"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+async-trait.workspace = true
+indexer.workspace = true
+observability = { path = "../observability" }
+reqwest.workspace = true
+storage = { path = "../storage" }
+tax-engine = { path = "../tax-engine" }
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+axum.workspace = true
+uuid.workspace = true

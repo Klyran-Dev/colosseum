@@ -1,0 +1,67 @@
+{
+  "schema": "solana-tax-protocol/settlement-instruction/v1",
+  "request": {
+    "program_id": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+    "payer": "cGfHiC6Kgg3FpFZvgwGcswsCRtp4aBP2fzuXRQPizuN",
+    "merchant": "8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR",
+    "source": "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8",
+    "mint": "GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq",
+    "tax_vault": "LbUiWL3xVV8hTFYBVdbTNrpDo41NKS6o3LHHuDzjfcY",
+    "net_destination": "QWmroo4YnnMqYW3cnxWkFdaTxGD3P7vMSzwMHGbUzwF",
+    "token_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "nonce": 9,
+    "policy_sequence": 3,
+    "gross_atomic": "100",
+    "tax_atomic": "25",
+    "net_atomic": "75",
+    "policy_digest": [
+      7, 7, 7, 7, 7, 7, 7, 7,
+      7, 7, 7, 7, 7, 7, 7, 7,
+      7, 7, 7, 7, 7, 7, 7, 7,
+      7, 7, 7, 7, 7, 7, 7, 7
+    ]
+  },
+  "expected": {
+    "status": "prepared_unsubmitted",
+    "program_id": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+    "instruction_data_base64_chunks": [
+      "ryq5V5CD",
+      "ZtQJAAAA",
+      "AAAAAAMA",
+      "AAAAAAAA",
+      "ZAAAAAAA",
+      "AAAZAAAA",
+      "AAAAAEsA",
+      "AAAAAAAA",
+      "BwcHBwcH",
+      "BwcHBwcH",
+      "BwcHBwcH",
+      "BwcHBwcH",
+      "BwcHBwcH",
+      "Bwc="
+    ],
+    "accounts": [
+      { "pubkey": "cGfHiC6Kgg3FpFZvgwGcswsCRtp4aBP2fzuXRQPizuN", "is_signer": true, "is_writable": true },
+      { "pubkey": "qcfm6jd37nhqmbY6JomQWtdD9S4HieqnmRm49Hum6ir", "is_signer": false, "is_writable": false },
+      { "pubkey": "8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR", "is_signer": false, "is_writable": false },
+      { "pubkey": "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8", "is_signer": false, "is_writable": true },
+      { "pubkey": "GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq", "is_signer": false, "is_writable": false },
+      { "pubkey": "LbUiWL3xVV8hTFYBVdbTNrpDo41NKS6o3LHHuDzjfcY", "is_signer": false, "is_writable": true },
+      { "pubkey": "CsNjEE9EUZUJeAVqSWmbZxT9WB9h4xYvuLNRRPymrGcs", "is_signer": false, "is_writable": false },
+      { "pubkey": "3MUvGdb23Wh2N42NKSiQE1wcRbR3RXSXZde2MPiihHAq", "is_signer": false, "is_writable": false },
+      { "pubkey": "QWmroo4YnnMqYW3cnxWkFdaTxGD3P7vMSzwMHGbUzwF", "is_signer": false, "is_writable": true },
+      { "pubkey": "8nGRRJuGoubpUKHVa5paPCvGLQU39nnu3zFWYREbSeNN", "is_signer": false, "is_writable": true },
+      { "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "is_signer": false, "is_writable": false },
+      { "pubkey": "11111111111111111111111111111111", "is_signer": false, "is_writable": false }
+    ],
+    "protocol_config": "qcfm6jd37nhqmbY6JomQWtdD9S4HieqnmRm49Hum6ir",
+    "vault_authority": "CsNjEE9EUZUJeAVqSWmbZxT9WB9h4xYvuLNRRPymrGcs",
+    "policy_attestation": "3MUvGdb23Wh2N42NKSiQE1wcRbR3RXSXZde2MPiihHAq",
+    "receipt": "8nGRRJuGoubpUKHVa5paPCvGLQU39nnu3zFWYREbSeNN",
+    "compute_budget_policy": {
+      "policy_version": 1,
+      "compute_unit_limit": 200000,
+      "micro_lamports_per_compute_unit": 1000
+    }
+  }
+}

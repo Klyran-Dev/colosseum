@@ -1,0 +1,48 @@
+# Public repository release contract
+
+This repository is currently an implementation foundation, not a production
+settlement release. The public documentation must remain truthful while the
+remaining Solana, security, operations, legal, performance, and accessibility
+gates in the [production-readiness plan](plans/production-readiness.md) are
+open.
+
+## Required before public source release
+
+- An explicit license decision is approved by the repository owner and the
+  selected `LICENSE` or `LICENSE.md` file is committed. Until then, the source
+  must not be represented as licensed for general reuse.
+- The root [README](../README.md), [AGENTS.md](../AGENTS.md),
+  [contribution guide](../CONTRIBUTING.md), [security policy](../SECURITY.md),
+  [code of conduct](../CODE_OF_CONDUCT.md), and [changelog](../CHANGELOG.md)
+  describe the same implementation status and limitations.
+- The [ADR index](adr/README.md), [API contract](api-contract.md),
+  [tax-coverage matrix](product/tax-coverage-matrix.md),
+  [implementation plan](plans/implementation-plan.md), and
+  [production-readiness gates](plans/production-readiness.md) are linked from
+  the public entry points and contain no unsupported production claims.
+- CI records the exact toolchain, dependency lockfiles, container image
+  digests, security-scan result, test result, and validator-conformance result
+  for every release candidate. ADR-0129 provides the tag/manual workflow,
+  grouped dependency automation, checksums, SBOM, and retained evidence bundle;
+  the workflow does not publish images or deploy to production.
+- A maintainer has reviewed public examples, fixtures, logs, benchmark output,
+  and test artifacts for credentials, private keys, PII, and sensitive
+  jurisdiction evidence.
+
+## Required before production settlement enablement
+
+The repository must not be described as production-ready until every relevant
+unchecked item in the readiness plan has attached evidence. In particular,
+architecture prose, unit tests, simulated API responses, and a successful
+Docker build do not substitute for validator-backed token-conservation tests,
+program/security review, key ceremonies, regional latency measurements,
+multi-provider failover evidence, backup/key-recovery drills, accessibility
+automation, legal/tax ownership, or approved operational on-call coverage.
+
+## Automated contract
+
+Run `make public-docs-check` from a clean checkout. The check verifies the
+required public files, root documentation links, ADR-index coverage, explicit
+status language, and tracked-secret filename hygiene. It intentionally does
+not approve a license or production readiness; those are human governance
+decisions and remain release blockers until evidenced in the readiness plan.

@@ -1,0 +1,45 @@
+{
+  "schema": "solana-tax-protocol/settlement-adjustment-evidence/v1",
+  "request": {
+    "program_id": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+    "proposer": "11157t3sqMV725NVRLrVQbAu98Jjfk1uCKehJnXXQs",
+    "approver": "1117mWrzzrZr312ebPDHu8tbfMwFNvCvMbr6WepCNG",
+    "merchant": "1119DWteoLSdjvrT6g6L8C2PfDD2faiTQUpsjY2RiF",
+    "mint": "111BuZ6b86gm7XhxjvTakhRvxSMjXp2GqgifkNUmDK",
+    "token_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "original_receipt": "111FJo4zLAGU9nzTWa6EnbV4VAmtG4FR8kcokrtZYr",
+    "adjustment_nonce": 11,
+    "kind": 1,
+    "gross_sign": 1,
+    "gross_magnitude": "100",
+    "tax_sign": 1,
+    "tax_magnitude": "25",
+    "net_sign": 1,
+    "net_magnitude": "75",
+    "adjustment_digest": [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3],
+    "evidence_digest": [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4],
+    "source_calculation_digest": [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5],
+    "replacement_calculation_digest": [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
+  },
+  "expected": {
+    "status": "prepared_unsubmitted",
+    "program_id": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+    "instruction_data_base64": "UEIK4GeoFyALAAAAAAAAAAEBZAAAAAAAAAABGQAAAAAAAAABSwAAAAAAAAADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBg==",
+    "accounts": [
+      { "pubkey": "1117mWrzzrZr312ebPDHu8tbfMwFNvCvMbr6WepCNG", "is_signer": true, "is_writable": true },
+      { "pubkey": "11157t3sqMV725NVRLrVQbAu98Jjfk1uCKehJnXXQs", "is_signer": false, "is_writable": false },
+      { "pubkey": "1119DWteoLSdjvrT6g6L8C2PfDD2faiTQUpsjY2RiF", "is_signer": false, "is_writable": false },
+      { "pubkey": "111BuZ6b86gm7XhxjvTakhRvxSMjXp2GqgifkNUmDK", "is_signer": false, "is_writable": false },
+      { "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "is_signer": false, "is_writable": false },
+      { "pubkey": "qcfm6jd37nhqmbY6JomQWtdD9S4HieqnmRm49Hum6ir", "is_signer": false, "is_writable": false },
+      { "pubkey": "4fuGSLS5aka44BPDqoH7RSg1HLvy4bMU4zY551u2Dnts", "is_signer": false, "is_writable": false },
+      { "pubkey": "111FJo4zLAGU9nzTWa6EnbV4VAmtG4FR8kcokrtZYr", "is_signer": false, "is_writable": false },
+      { "pubkey": "Fk3Z5sqgXWRYu3dFuQqshGmgGJoSxQSnxTHSFt9CKM5T", "is_signer": false, "is_writable": true },
+      { "pubkey": "11111111111111111111111111111111", "is_signer": false, "is_writable": false }
+    ],
+    "adjustment": "Fk3Z5sqgXWRYu3dFuQqshGmgGJoSxQSnxTHSFt9CKM5T",
+    "adjustment_registry": "4fuGSLS5aka44BPDqoH7RSg1HLvy4bMU4zY551u2Dnts",
+    "original_receipt": "111FJo4zLAGU9nzTWa6EnbV4VAmtG4FR8kcokrtZYr",
+    "adjustment_nonce": 11
+  }
+}

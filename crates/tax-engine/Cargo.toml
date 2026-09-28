@@ -1,0 +1,22 @@
+[package]
+name = "tax-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+jurisdiction = { path = "../jurisdiction" }
+serde.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+criterion = "=0.8.2"
+proptest = "=1.11.0"
+serde_json.workspace = true
+
+[[bench]]
+name = "tax_engine"
+harness = false

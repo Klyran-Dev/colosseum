@@ -1,0 +1,371 @@
+name: solana-tax-protocol
+
+services:
+  postgres:
+    image: postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    environment:
+      POSTGRES_DB: tax_protocol
+      POSTGRES_USER: tax_protocol
+      POSTGRES_PASSWORD: local-development-only
+    ports:
+      - "${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - postgres18-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tax_protocol -d tax_protocol"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  migrator:
+    build:
+      context: .
+      dockerfile: ops/docker/Dockerfile.migration-runner
+    environment:
+      DATABASE_URL: postgres://tax_protocol:local-development-only@postgres:5432/tax_protocol
+      MIGRATIONS_DIR: /migrations
+      SEED_DIR: /seeds
+      MIGRATION_STATEMENT_TIMEOUT_MS: ${MIGRATION_STATEMENT_TIMEOUT_MS:-300000}
+    volumes:
+      - ./db/migrations:/migrations:ro
+      - ./db/fixtures:/seeds:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: ops/docker/Dockerfile.api
+    environment:
+      API_BIND_ADDRESS: 0.0.0.0:8080
+      API_DATABASE_URL: postgres://tax_protocol:local-development-only@postgres:5432/tax_protocol
+      API_DATABASE_POOL_SIZE: "${API_DATABASE_POOL_SIZE:-16}"
+      API_SIMULATION_MODE: ${API_SIMULATION_MODE:-true}
+      API_ENV: ${API_ENV:-local}
+      API_ALLOW_INSECURE_LOCAL_RPC: ${API_ALLOW_INSECURE_LOCAL_RPC:-false}
+      API_SETTLEMENT_RPC_ENDPOINTS: ${API_SETTLEMENT_RPC_ENDPOINTS:-}
+      API_INDEXER_RPC_ENDPOINTS: ${API_INDEXER_RPC_ENDPOINTS:-}
+      API_INDEXER_STREAM_KEY: ${API_INDEXER_STREAM_KEY:-localnet/settlement/v1}
+      API_INDEXER_TARGETED_RECOVERY_MAX_PAGES: ${API_INDEXER_TARGETED_RECOVERY_MAX_PAGES:-64}
+      API_AUTH_ISSUER: ${API_AUTH_ISSUER:-https://local-identity.invalid}
+      API_AUTH_AUDIENCE: ${API_AUTH_AUDIENCE:-tax-api}
+      API_AUTH_JWKS_KID: ${API_AUTH_JWKS_KID:-local-development-key}
+      API_AUTH_JWKS_PUBLIC_KEY: ${API_AUTH_JWKS_PUBLIC_KEY:-fBTjJ2wbKth0799nmehvmjl3jO_Qjjo18jfFqILUQWE}
+      API_EVIDENCE_KEY_ID: ${API_EVIDENCE_KEY_ID-local-development-evidence-key-v1}
+      API_EVIDENCE_KEY_B64: ${API_EVIDENCE_KEY_B64-bG9jYWwtZGV2LWV2aWRlbmNlLWtleS0zMi1ieXRlcyE=}
+      API_EVIDENCE_KEY_RING_JSON: ${API_EVIDENCE_KEY_RING_JSON:-}
+      API_JURISDICTION_PROVIDER_KEY_ID: ${API_JURISDICTION_PROVIDER_KEY_ID:-0404040404040404040404040404040404040404040404040404040404040404}
+      API_JURISDICTION_PROVIDER_PUBLIC_KEY: ${API_JURISDICTION_PROVIDER_PUBLIC_KEY:-_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg}
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "${API_PORT:-18080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  nats:
+    image: nats:2.12.3-alpine@sha256:88fe8e0e09d6084a06b3d4dbbffbca70fa632b1ad981af8473da23c446630957
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "${NATS_PORT:-44222}:4222"
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:8222/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  redis:
+    profiles: ["cache", "observability"]
+    image: redis:8.6.7-alpine@sha256:ac2da09bc822f325a9f68f533120b86fa39c1b8db46b3aa7c1bbea7fdfd4fcba
+    command: ["redis-server", "--appendonly", "no", "--save", "", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "${REDIS_PORT:-46379}:6379"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /data:rw,noexec,nosuid,size=64m
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:v3.13.3@sha256:6976aa8a60fec930796ce5772b8d12da7a318a5daa8d40d69c5c7819a05eeed7
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.listen-address=0.0.0.0:9090
+    ports:
+      - "${PROMETHEUS_PORT:-49090}:9090"
+    volumes:
+      - prometheus-data:/prometheus
+      - ./ops/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./ops/observability/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+    restart: unless-stopped
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      api:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:9090/-/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 768M
+
+  grafana:
+    profiles: ["observability"]
+    image: grafana/grafana:13.2.2@sha256:ac461fb352abc50da10a51c7d02462e9c05488f11f53f14b3ad79a8145f638a0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-local-development-only}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SERVER_ROOT_URL: http://localhost:${GRAFANA_PORT:-43000}
+    ports:
+      - "${GRAFANA_PORT:-43000}:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./ops/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    restart: unless-stopped
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+
+  otel-collector:
+    profiles: ["observability"]
+    image: otel/opentelemetry-collector-contrib:0.142.0@sha256:38c349c3b7a2fd7ea46700cde8fa13d35b699ef2ce245bdf34dae2a413512f76
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    ports:
+      - "${OTEL_GRPC_PORT:-44317}:4317"
+      - "${OTEL_HTTP_PORT:-44318}:4318"
+    volumes:
+      - ./ops/observability/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    restart: unless-stopped
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      # The upstream collector image is distroless and has no shell or wget.
+      # Validate the mounted configuration as an executable health probe.
+      test: ["CMD", "/otelcol-contrib", "validate", "--config=/etc/otelcol-contrib/config.yaml"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  worker:
+    build:
+      context: .
+      dockerfile: ops/docker/Dockerfile.worker
+    environment:
+      WORKER_DATABASE_URL: postgres://tax_protocol:local-development-only@postgres:5432/tax_protocol
+      WORKER_NATS_URL: nats://nats:4222
+      WORKER_NATS_STREAM: TAX_EVENTS
+      WORKER_OUTBOX_BATCH_SIZE: "32"
+      WORKER_OUTBOX_POLL_MS: "250"
+      WORKER_HEALTH_BIND_ADDRESS: 0.0.0.0:8081
+      RUST_LOG: info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:8081/readyz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  indexer:
+    profiles: ["indexer"]
+    build:
+      context: .
+      dockerfile: ops/docker/Dockerfile.indexer
+    environment:
+      INDEXER_ENV: ${INDEXER_ENV:-local}
+      INDEXER_DATABASE_URL: postgres://tax_protocol:local-development-only@postgres:5432/tax_protocol
+      INDEXER_RPC_ENDPOINTS: ${INDEXER_RPC_ENDPOINTS:-http://validator:8899}
+      INDEXER_ALLOW_INSECURE_LOCAL_RPC: ${INDEXER_ALLOW_INSECURE_LOCAL_RPC:-true}
+      INDEXER_STREAM_KEY: ${INDEXER_STREAM_KEY:-localnet/settlement/v1}
+      INDEXER_START_SLOT: ${INDEXER_START_SLOT:-0}
+      INDEXER_PAGE_SLOTS: ${INDEXER_PAGE_SLOTS:-128}
+      INDEXER_POLL_MS: ${INDEXER_POLL_MS:-250}
+      INDEXER_RPC_TIMEOUT_MS: ${INDEXER_RPC_TIMEOUT_MS:-2000}
+      INDEXER_REPLAY_LEASE_MS: ${INDEXER_REPLAY_LEASE_MS:-30000}
+      INDEXER_VAULT_RECONCILIATION_POLL_MS: ${INDEXER_VAULT_RECONCILIATION_POLL_MS:-30000}
+      INDEXER_VAULT_RECONCILIATION_TARGET_LIMIT: ${INDEXER_VAULT_RECONCILIATION_TARGET_LIMIT:-64}
+      INDEXER_HEALTH_BIND_ADDRESS: 0.0.0.0:8082
+      RUST_LOG: info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:8082/readyz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    ports:
+      - "${INDEXER_HEALTH_PORT:-18082}:8082"
+
+  route-verifier:
+    profiles: ["route-verifier"]
+    build:
+      context: .
+      dockerfile: ops/docker/Dockerfile.route-verifier
+    environment:
+      ROUTE_VERIFIER_ENV: ${ROUTE_VERIFIER_ENV:-local}
+      ROUTE_VERIFIER_DATABASE_URL: postgres://tax_protocol:local-development-only@postgres:5432/tax_protocol
+      ROUTE_VERIFIER_RPC_ENDPOINTS: ${ROUTE_VERIFIER_RPC_ENDPOINTS:-http://validator:8899}
+      ROUTE_VERIFIER_ALLOW_INSECURE_LOCAL_RPC: ${ROUTE_VERIFIER_ALLOW_INSECURE_LOCAL_RPC:-true}
+      ROUTE_VERIFIER_BATCH_SIZE: ${ROUTE_VERIFIER_BATCH_SIZE:-8}
+      ROUTE_VERIFIER_POLL_MS: ${ROUTE_VERIFIER_POLL_MS:-5000}
+      ROUTE_VERIFIER_RPC_TIMEOUT_MS: ${ROUTE_VERIFIER_RPC_TIMEOUT_MS:-2000}
+      ROUTE_VERIFIER_HEALTH_BIND_ADDRESS: 0.0.0.0:8083
+      RUST_LOG: info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:8083/readyz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+
+  edge:
+    build:
+      context: .
+      dockerfile: ops/docker/Dockerfile.web
+    ports:
+      - "${EDGE_PORT:-8088}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp/nginx:rw,noexec,nosuid,size=64m,mode=1777
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  web-e2e:
+    profiles: ["browser"]
+    build:
+      context: .
+      dockerfile: ops/docker/Dockerfile.web-e2e
+    environment:
+      WEB_E2E_BASE_URL: http://edge:8080
+      HOME: /tmp/pwuser
+    depends_on:
+      edge:
+        condition: service_healthy
+    volumes:
+      - ./test-results:/workspace/artifacts
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m
+    shm_size: "1gb"
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+
+  validator:
+    profiles: ["solana"]
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: ops/docker/Dockerfile.validator
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        exec solana-test-validator --reset
+        --bind-address "$(hostname -i | awk '{print $1}')"
+        --bpf-program 4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi /workspace/target/deploy/settlement.so
+        --faucet-port 8900 --faucet-sol 1000000000 --ledger /ledger --log
+    ports:
+      - "8899:8899"
+      - "8900:8900"
+    volumes:
+      - solana-ledger:/ledger
+      - .:/workspace:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:8899/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 4G
+
+  rpc-fixture:
+    profiles: ["settlement-submit-drill"]
+    build:
+      context: .
+      dockerfile: ops/docker/Dockerfile.rpc-fixture
+    environment:
+      RPC_FIXTURE_BIND_ADDRESS: 0.0.0.0:8899
+      RPC_FIXTURE_SEND_DELAY_MS: ${RPC_FIXTURE_SEND_DELAY_MS:-75}
+    ports:
+      - "${RPC_FIXTURE_PORT:-28899}:8899"
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:8899/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  postgres18-data:
+  nats-data:
+  solana-ledger:
+  prometheus-data:
+  grafana-data:

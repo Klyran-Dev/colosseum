@@ -2,7 +2,7 @@
 
 ## Executive design
 
-The system is a Solana-native settlement protocol with a thin Rust integration plane and a React SPA. The critical path is a signed client transaction that invokes one Solana program instruction. The API prepares quotes, policy references, split plans, and transaction messages; it does not custody payer funds or decide tax law.
+The system is a Solana-native settlement protocol with a thin Rust integration plane and a React SPA. The critical path is a signed client transaction that invokes one Solana program instruction. The API prepares quotes, policy references, split plans, tenant-scoped settlement routes, and transaction messages; it does not custody payer funds or decide tax law.
 
 ```text
                          control plane
@@ -48,9 +48,16 @@ The program owns no business logic that requires external HTTP, floating-point m
 An Axum/Tokio-style Rust service, organized by DDD bounded contexts, that:
 
 - validates merchant requests and authorization;
+- resolves merchant-side settlement accounts through the authenticated
+  tenant-scoped route registry and derives the payer's canonical associated
+  token account without an RPC lookup;
 - resolves a current policy reference from a local cache;
 - derives and validates all PDAs and associated token accounts;
+- returns a deterministic `prepared_unsubmitted` Anchor instruction with a
+  canonical account-meta order;
 - compiles a versioned transaction with minimal account metas;
+- accepts only canonical wallet-signed bytes at submission, uses the bounded
+  non-custodial coordinator, and persists UUIDv7 intent/lifecycle evidence;
 - simulates before submission when latency budget permits;
 - selects the RPC path, blockhash, compute limit, and priority fee;
 - accepts client signatures without ever receiving private keys;
@@ -76,7 +83,18 @@ Each supported stablecoin has a program-controlled vault authority. Vault balanc
 
 The indexer consumes program logs/events and confirmed transactions, writes an append-only raw event table, and builds read models. It replays from a checkpoint, detects gaps, and reconciles balances from chain state. WebSocket notifications are an acceleration signal, never the final authority.
 
-### 7. React SPA and NGINX
+### 7. Settlement route verifier
+
+The route verifier is a separate provisioning service. It reads pending or
+explicitly re-verifiable routes, queries a bounded RPC provider pool with
+finalized `getMultipleAccounts`, validates the merchant System account, mint,
+extension-free token-account layouts, token-program owners, mint bindings, and
+vault-authority PDA, then atomically persists append-only evidence and promotes
+the route. It is never called from checkout, quote, wallet signing, or
+settlement submission. Provider failure and conflicting finalized evidence
+leave the route inactive.
+
+### 8. React SPA and NGINX
 
 React 19.3 + TypeScript + Vite provides checkout, tax explanations, merchant configuration, rule authoring, simulation, approvals, settlement history, and vault reporting views. The browser signs with a wallet adapter. NGINX serves immutable static assets, terminates TLS, adds security headers, and reverse-proxies the API. No Next.js runtime is required or permitted.
 

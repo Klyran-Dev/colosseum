@@ -34,6 +34,7 @@ The source of truth for money movement is Solana. The Tier-1 Tax Engine is an of
 - Treat Token-2022 extensions as opt-in compatibility contracts. Reject unsupported transfer hooks, fees, delegates, confidential features, or authorities rather than guessing behavior.
 - Bound recipient fan-out, rule/attestation size, compute units, transaction size, and all user-controlled collection sizes.
 - Separate merchant configuration, policy issuer, vault release, and program upgrade authorities. Govern privileged actions with multisig/timelock where compatible with incident response.
+- Vault releases must use a merchant/mint-scoped registry with separate governance, proposal, and approval authorities. Immutable release-claim PDAs must bind nonce, amount, destination, reference digest, and a bounded execution window; only the vault-authority PDA may sign the checked outbound CPI. API services and browsers never custody or sign vault-release keys. Claim creation, execution, cancellation, and finalized balance evidence are separate auditable lifecycle events.
 
 ### Tier-1 Tax Engine
 
@@ -51,9 +52,16 @@ The source of truth for money movement is Solana. The Tier-1 Tax Engine is an of
 
 - Use Rust/Tokio for API, transaction compiler, tax engine service, indexer, reconciliation, and operational workers unless an ADR proves another technology materially better.
 - Use structured concurrency: bounded task lifetimes, cancellation propagation, deadlines, backpressure, bounded queues, and explicit retry budgets.
+- Require an explicit process deployment environment (`local`, `staging`, or
+  `production`) at service startup. Simulation mode and insecure RPC transport
+  are local-only combinations; staging and production must fail closed before
+  binding listeners when either is enabled or the environment is missing or
+  unknown. Environment labels do not replace deployment approval, secret
+  provisioning, HSM/KMS, multisig, or mainnet allow-list controls.
 - Never spawn unbounded tasks, use unbounded channels for user-controlled traffic, block an async executor, hold a mutex across `.await`, or retry indefinitely.
 - Keep RPC, database, cache, signer, clock, policy, and message-bus integrations behind ports/traits. Domain and application code must be testable without network access.
 - The API prepares and submits transactions; it does not custody user funds or become a settlement authority.
+- Every persisted quote, policy mutation, settlement intent, and evidence query must derive tenant scope from an authenticated principal. Never accept a caller-supplied merchant identifier as an authority boundary. OIDC-compatible EdDSA JWT verification, issuer/audience checks, key rotation, expiry, revocation policy, and role/scope checks must be explicit and fail closed.
 - The indexer treats subscriptions as acceleration signals, not final truth. Persist checkpoints, detect gaps, backfill by slot/signature, and reconcile against finalized chain state.
 - Do not place a message broker, tax API, database round-trip, or slow external dependency in the wallet-signing/settlement critical path unless a measured design explicitly requires it.
 - Use PostgreSQL for durable projections and append-only evidence metadata. Redis is disposable cache/coordination only and is never authoritative. Use an event stream only for asynchronous work, never as the source of settlement truth.
@@ -63,6 +71,8 @@ The source of truth for money movement is Solana. The Tier-1 Tax Engine is an of
 - Do not use UUIDv7 as a secret, bearer token, password-reset token, signature, policy/rule digest, Solana public key, transaction signature, or content-addressed evidence identifier. Use CSPRNG tokens, cryptographic hashes, or native Solana identifiers for those purposes.
 - Use UTC `timestamptz` for business timestamps, atomic integer units for money, exact numeric/rational representations for tax rates, and never floating-point database columns for financial values.
 - Apply expand/contract migrations, bounded lock/statement timeouts, idempotent unique constraints, safe indexes, connection-pool limits, outbox semantics, backup/restore verification, and partitioning/retention plans for append-only evidence at scale.
+- Commit domain evidence and its first asynchronous publication record in one transaction. Replays must not emit duplicate creation events; outbox dispatch must be bounded, at-least-once, idempotent, observable, and never the authority for Solana funds.
+- Persist vault-release commands idempotently before returning a release artifact, fence proposer/approver transitions by expected state, and fail closed on unknown provider outcomes. Database release rows and UI state never authorize token movement; finalized Solana claim/event evidence remains authoritative.
 
 ### Frontend and UI/UX
 
@@ -166,6 +176,34 @@ Write tests in this order whenever applicable:
 - Use versioned transactions, explicit compute budgets, minimum required account metas, and measured priority fees.
 - Avoid ATA creation, swaps, large account fan-out, or external tax-provider calls in the settlement hot path unless the design proves they fit the budget.
 - Use fresh blockhashes, bounded retries, multiple RPC providers, commitment-aware status, and immutable signed transaction bytes.
+- Before enabling submission in any non-test environment, parse the signed
+  Solana message and prove it contains the compiled settlement instruction,
+  fixed program ID, canonical account order, expected intent/policy digest,
+  payer signature, and approved compute/blockhash policy. A digest supplied by
+  the client alone is not proof of message binding.
+- The browser wallet boundary must validate the prepared settlement envelope
+  before blockhash lookup or signing: fixed program ID, exact account count and
+  order, signer/writable flags, PDA-field consistency, supported token program,
+  distinct token accounts, canonical instruction bytes, and settle
+  discriminator. This is defense in depth; the API must repeat verification on
+  the actual signed message.
+- Quote-bound settlement compilation must resolve merchant, mint, tax-vault,
+  destination, and token-program accounts from an authenticated,
+  tenant-scoped, versioned settlement-route registry. The browser may provide
+  only a route ID and payer wallet key; it must never provide merchant-side
+  account addresses or a program ID. Derive the payer source associated-token
+  account locally and do not add ATA creation or an RPC lookup to the
+  settlement hot path. Route activation requires separate chain-verification
+  evidence; database configuration is not proof of on-chain account state.
+- Route activation must run through the dedicated bounded route-verifier
+  workflow: finalized `getMultipleAccounts`, fixed account order, exact
+  System/SPL/Token-2022 owner and layout checks, mint binding, deterministic
+  vault-authority verification, append-only evidence, and atomic activation.
+  All-provider failure, provider disagreement, weak commitment, null account,
+  malformed data, or uncertain state fails closed. The verifier is never called from
+  quote, compile, wallet-signing, or settlement-submit hot paths. A
+  `local_synthetic` evidence marker is permitted only in Docker fixtures and
+  must never activate production routes.
 - Shard writable accounts to reduce contention. Do not use global counters or shared hot PDAs for all merchants.
 - Prefer immutable versioned plans and policies over frequently mutated shared state.
 - Measure p50/p95/p99 quote, compile, submit, processed, confirmed, and finalized latency by region and provider.
@@ -181,6 +219,7 @@ The implementation must provide a Compose profile for:
 - pinned Agave/Solana local validator built from the selected stable release;
 - Rust API and Tax Engine service;
 - indexer/reconciliation worker;
+- bounded finalized settlement-route verifier;
 - PostgreSQL;
 - Redis cache/lease service;
 - NATS JetStream only if the outbox design uses it;
@@ -205,6 +244,12 @@ The implementation must provide a Compose profile for:
 - All services have health checks, startup ordering based on health, bounded restart policy, logs, and documented ports.
 - A one-command bootstrap creates schemas, seeds safe fixtures, starts localnet, runs migrations, and exposes the real UI.
 - A one-command test flow runs Rust, frontend, contract, localnet integration, accessibility, and API tests.
+- `make solana-conformance` is the explicit localnet release gate: it builds
+  the pinned SBF artifact, starts the pinned Agave validator with that artifact
+  under the fixed program ID, and runs real legacy-SPL, extension-free
+  Token-2022, duplicate-nonce, and unsupported-extension transactions. If the
+  artifact, validator, or RPC evidence is unavailable, the command fails; it
+  must not downgrade to a skipped or mocked result.
 - A one-command teardown removes only this project’s named volumes and networks; never use broad host deletion commands.
 
 ## Toolchain and dependency policy

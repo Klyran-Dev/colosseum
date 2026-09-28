@@ -5,9 +5,17 @@
 1. Merchant creates or selects a versioned split plan and requests a quote.
 2. API resolves a non-expired policy attestation for merchant, product, jurisdiction, and asset.
 3. API validates the asset registry, recipient accounts, amount bounds, client nonce, and policy digest.
-4. API compiles a versioned transaction with compute budget, optional Ed25519 verification instruction, and one `settle` instruction.
-5. Payer reviews and signs the transaction with a wallet or bounded token delegate.
-6. API or client submits the signed transaction to the selected RPC path.
+4. The authenticated API compiles a deterministic, wallet-reviewable
+   `prepared_unsubmitted` `settle` instruction with fixed account metas,
+   derived PDAs, and the server-owned versioned compute-budget policy. A later
+   coordinator adds the blockhash and legacy/v0 transaction wrapping.
+5. Payer reviews and signs the transaction with a wallet or bounded token delegate. A wallet may wrap the exact instruction in a legacy or governed v0 message; v0 lookup tables are resolved by the server at submission and never supplied as trusted client metadata.
+6. API accepts only the wallet-signed bytes, binds their digest and native
+   transaction signature to the durable UUIDv7 intent, and wins a `signed ->
+   submitting` compare-and-set before submitting immutable bytes to a bounded
+   RPC provider pool. A provider timeout is `unknown`, never an implicit
+   retry/new intent; a process crash leaves a visible `submitting` intent for
+   signature reconciliation.
 7. Solana executes the entire instruction atomically: policy checks, gross transfer, tax-vault transfer, net split transfers, receipt creation, and events.
 8. Indexer observes the signature, verifies the receipt and logs at the configured commitment, and updates projections.
 9. Reconciliation confirms chain balances and transitions the external status to `finalized`.
@@ -17,7 +25,6 @@
 ```text
 ComputeBudget::set_compute_unit_limit
 ComputeBudget::set_compute_unit_price
-[Ed25519Program::verify(policy_digest)]  # only for fresh attestation path
 settlement_program::settle(
   gross_amount,
   client_nonce,
@@ -38,6 +45,10 @@ match. Caller-supplied expected values are useful for slippage/quote UX but
 are not trusted accounting inputs. The current first vertical slice accepts
 bounded tax/net values only to prove token movement and conservation; it is
 explicitly not the policy-attested production path.
+
+An eventual inline Ed25519 attestation-verification profile would require its
+own instruction-shape ADR and wire/compute evidence; it is not silently added
+to the three-instruction settlement profile governed by ADR-0162.
 
 ## Policy attestation
 
@@ -75,14 +86,20 @@ Ed25519 verification, extension-by-extension Token-2022 support, and
 production multisig/timelock integration are still required before a deployed
 settlement path can claim production readiness.
 
+The deterministic compiler is intentionally non-custodial: it has no RPC,
+clock, database, wallet, or private-key dependency. It validates the same
+conservation and account-domain constraints before returning instruction bytes.
+The returned artifact is never described as signed, submitted, simulated,
+processed, confirmed, or finalized.
+
 ## State machine
 
 ```text
 Prepared -> Signed -> Submitted -> Processed -> Confirmed -> Finalized
     |         |          |            |            |
     +---------+----------+------------+------------+--> Rejected
-                                             |
-                                             +-------> ReconciliationRequired
+              |          |            |            |
+              +----------+------------+------------+--> Unknown -> reconciled evidence
 ```
 
 External states are projections. On-chain success is defined by a verified `SettlementReceipt` and transaction meta. A failed transaction may still consume network fees; retry uses the same client nonce only when the prior transaction is not known to have committed and the client can safely detect duplicate receipts.
@@ -94,3 +111,6 @@ External states are projections. On-chain success is defined by a verified `Sett
 - A second settlement with the same merchant and nonce fails with `AlreadySettled`.
 - The API stores an idempotency record before returning a transaction and never maps one idempotency key to two different intents.
 - Transaction signature, slot, blockhash, policy digest, and receipt address are persisted for audit.
+- The API lifecycle endpoints never accept private keys. `tax:settlement:submit`
+  and `tax:settlement:read` are separate scopes; durable intent creation and
+  expected-status event fencing are required before submission is enabled.

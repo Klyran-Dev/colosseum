@@ -1,0 +1,18 @@
+FROM rust:1.98.1-slim-bookworm@sha256:ff521445a372125ed4f76e1453a1f8098f2d05332d1601d30db1c1f62757e730
+
+RUN apt-get update \
+  && apt-get install --yes --no-install-recommends ca-certificates pkg-config libssl-dev build-essential \
+  && rm -rf /var/lib/apt/lists/* \
+  && cargo install --locked --version 4.3.0 cargo-build-sbf --root /opt/sbf-tools \
+  && mkdir --parents /opt/rustup \
+  && rustup toolchain link host-rust-1.98.1 /usr/local/rustup/toolchains/1.98.1-x86_64-unknown-linux-gnu \
+  && groupadd --system --gid 10001 sbf-builder \
+  && useradd --system --uid 10001 --gid 10001 --home-dir /home/sbf-builder --create-home --shell /usr/sbin/nologin sbf-builder \
+  && chown --recursive 10001:10001 /opt/sbf-tools /opt/rustup /home/sbf-builder
+
+ENV PATH="/opt/sbf-tools/bin:/usr/local/cargo/bin:/usr/local/rustup/toolchains/1.98.1-x86_64-unknown-linux-gnu/bin:${PATH}"
+ENV HOME="/home/sbf-builder"
+ENV RUSTUP_HOME="/opt/rustup"
+USER sbf-builder
+WORKDIR /workspace
+ENTRYPOINT ["cargo-build-sbf"]

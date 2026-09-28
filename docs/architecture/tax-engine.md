@@ -51,6 +51,12 @@ Raw checkout facts
 
 Every stage is pure with respect to its inputs. External facts such as exchange rates, customer evidence, registration thresholds, or policy snapshots are resolved before calculation and included by digest in the calculation input.
 
+ADR-0101 defines the deterministic jurisdiction-resolution bounded context;
+ADR-0102 binds its server-owned result into `TaxFacts` and
+`CalculationResult`. Historical facts may omit the envelope for replay
+compatibility, while new globally supported quotes must obtain and persist a
+verified resolution before rule selection and attestation issuance.
+
 ## Supported scenario families
 
 ### Simple percentage
@@ -96,7 +102,13 @@ The engine never assumes that a cap precedes a credit or that a floor applies be
 
 ### Thresholds and cumulative periods
 
-Threshold rules declare the measurement period, scope, currency, included transaction classes, and authoritative snapshot. Cumulative state is supplied as a signed evidence snapshot; the hot calculation remains deterministic and replayable.
+Threshold rules declare a per-transaction or cumulative basis and whether the
+threshold exempts only the amount up to the threshold or activates the full
+transaction at the trigger. Cumulative state is supplied as a signed evidence
+snapshot containing a period identifier, pre-transaction total, and evidence
+digest; missing snapshots fail closed. Exemption codes are declared by the
+rule and matched against evidence-bound fact codes. The hot calculation
+remains deterministic and replayable.
 
 ### Truncation and rounding
 
@@ -120,11 +132,17 @@ Draft -> Simulated -> Reviewed -> Approved -> Published -> Retired
 
 Published rules are immutable. Corrections create a new version with an effective window and supersession reference. A jurisdiction cannot have ambiguous active rules for the same tax regime, product category, and fact scope.
 
+Rule persistence uses the self-describing `RuleSetDocument` envelope
+`solana-tax-protocol/tax-rule/v1`. The envelope is transport compatibility
+metadata outside the financial `RuleSet`, so its introduction does not change
+the canonical rule digest. New publications use the envelope; replay has a
+bounded read-only adapter for historical bare documents and rejects unknown
+schemas.
+
 ## Calculation result
 
 ```text
 CalculationResult {
-  calculation_id
   engine_version
   rule_set_id
   rule_digest
@@ -141,13 +159,25 @@ CalculationResult {
   generated_at
   expires_at
 }
+
+The Rust result binds the current engine version and exposes
+`verify_replay(rule_set, facts)`. Replay recalculates and compares the complete
+result, including component trace, digests, totals, explanations, and version;
+it fails closed on a version mismatch or any tampering. Persistence adds the
+calculation UUID and evidence-reference envelope around this domain result.
+Persisted quotes also retain the bounded normalized `TaxFacts` document so the
+storage adapter can perform tenant-scoped replay without trusting a client,
+cache, or reconstructed request. Rows without that document are explicitly
+legacy and non-replayable.
 ```
 
 Each component includes its base, dependencies, rate/bracket, pre-clamp value, credits, min/max result, rounding mode, rounded amount, and human-readable explanation key.
 
 ## Low-latency implementation
 
-- Compile approved rules into an in-memory immutable rule graph.
+- Compile approved rules into an in-memory immutable rule graph. The Rust
+  domain exposes `CompiledRuleSet`; its canonical digest and dependency order
+  are computed once, while the uncached API remains the safe default.
 - Cache jurisdiction and merchant configuration with versioned invalidation.
 - Use a warm Rust service for authoritative calculations.
 - Precompute common product/jurisdiction paths without bypassing the rule digest.
@@ -157,6 +187,10 @@ Each component includes its base, dependencies, rate/bracket, pre-clamp value, c
 
 ## Test strategy
 
+- The versioned [`tax-engine-v1.json`](../../test-vectors/tax-engine-v1.json)
+  contract is executed by Rust and covers simple, progressive, cascading,
+  tax-on-tax, inclusive/exclusive, thresholds, cumulative snapshots,
+  exemptions, credits, min/max, truncation, and explicit rounding.
 - Golden vectors for every scenario family and boundary.
 - Property tests for monotonicity where a rule declares monotonic behavior.
 - Metamorphic tests: line reordering, equivalent aggregation, currency precision, and zero-rate components.
@@ -164,4 +198,3 @@ Each component includes its base, dependencies, rate/bracket, pre-clamp value, c
 - Differential tests between native Rust and WASM preview.
 - Replay tests from stored facts/rule/evidence bundles.
 - Security tests for unauthorized rule publication and attestation substitution.
-

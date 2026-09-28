@@ -1,0 +1,31 @@
+[package]
+name = "settlement"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+# The pinned Agave 4.3.0 / platform-tools v1.57 SBF compiler is rustc
+# 1.95.0-dev. Off-chain workspace crates remain on the Rust 1.98.1 baseline;
+# this narrower declaration makes the compiler compatibility boundary explicit
+# instead of bypassing Cargo's rust-version check.
+rust-version = "1.95"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "settlement"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang.workspace = true
+anchor-spl.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+proptest = "=1.11.0"

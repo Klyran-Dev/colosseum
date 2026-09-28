@@ -1,0 +1,341 @@
+{
+  "schema": "solana-tax-protocol/tax-engine/v1",
+  "vectors": [
+    {
+      "id": "simple-exclusive",
+      "rule_set": {
+        "id": "simple-exclusive",
+        "version": 1,
+        "components": [
+          {
+            "id": "sales-tax",
+            "label": "Sales tax",
+            "base": { "sources": ["Net"] },
+            "rate": { "Flat": { "numerator": "10", "denominator": "100" } },
+            "price_mode": "Exclusive",
+            "credit_atomic": "0",
+            "floor_atomic": null,
+            "cap_atomic": null,
+            "rounding": { "mode": "HalfUp" },
+            "threshold": null,
+            "exemption_codes": []
+          }
+        ]
+      },
+      "facts": {
+        "gross_atomic": "1100",
+        "net_atomic": "1000",
+        "currency": "USD",
+        "jurisdiction": "US-CA",
+        "exemption_codes": [],
+        "cumulative_period": null
+      },
+      "expected": {
+        "total_tax_atomic": "100",
+        "total_net_atomic": "1000",
+        "components": [{ "id": "sales-tax", "base_atomic": "1000", "effective_base_atomic": "1000", "tax_atomic": "100", "exemption_applied": false }]
+      }
+    },
+    {
+      "id": "progressive-marginal",
+      "rule_set": {
+        "id": "progressive-marginal",
+        "version": 1,
+        "components": [
+          {
+            "id": "income-tax",
+            "label": "Income tax",
+            "base": { "sources": ["Net"] },
+            "rate": {
+              "Progressive": [
+                { "lower_atomic": "0", "upper_atomic": "1000", "rate": { "numerator": "10", "denominator": "100" } },
+                { "lower_atomic": "1000", "upper_atomic": null, "rate": { "numerator": "20", "denominator": "100" } }
+              ]
+            },
+            "price_mode": "Exclusive",
+            "credit_atomic": "0",
+            "floor_atomic": null,
+            "cap_atomic": null,
+            "rounding": { "mode": "HalfUp" },
+            "threshold": null,
+            "exemption_codes": []
+          }
+        ]
+      },
+      "facts": {
+        "gross_atomic": "1700",
+        "net_atomic": "1500",
+        "currency": "USD",
+        "jurisdiction": "US-FED",
+        "exemption_codes": [],
+        "cumulative_period": null
+      },
+      "expected": {
+        "total_tax_atomic": "200",
+        "total_net_atomic": "1500",
+        "components": [{ "id": "income-tax", "base_atomic": "1500", "effective_base_atomic": "1500", "tax_atomic": "200", "exemption_applied": false }]
+      }
+    },
+    {
+      "id": "tax-on-tax-cascade",
+      "rule_set": {
+        "id": "tax-on-tax-cascade",
+        "version": 1,
+        "components": [
+          {
+            "id": "first",
+            "label": "First tax",
+            "base": { "sources": ["Net"] },
+            "rate": { "Flat": { "numerator": "10", "denominator": "100" } },
+            "price_mode": "Exclusive",
+            "credit_atomic": "0",
+            "floor_atomic": null,
+            "cap_atomic": null,
+            "rounding": { "mode": "HalfUp" },
+            "threshold": null,
+            "exemption_codes": []
+          },
+          {
+            "id": "second",
+            "label": "Second tax",
+            "base": { "sources": ["Net", { "Component": "first" }] },
+            "rate": { "Flat": { "numerator": "5", "denominator": "100" } },
+            "price_mode": "Exclusive",
+            "credit_atomic": "0",
+            "floor_atomic": null,
+            "cap_atomic": null,
+            "rounding": { "mode": "HalfUp" },
+            "threshold": null,
+            "exemption_codes": []
+          }
+        ]
+      },
+      "facts": {
+        "gross_atomic": "1155",
+        "net_atomic": "1000",
+        "currency": "USD",
+        "jurisdiction": "CA-BC",
+        "exemption_codes": [],
+        "cumulative_period": null
+      },
+      "expected": {
+        "total_tax_atomic": "155",
+        "total_net_atomic": "1000",
+        "components": [
+          { "id": "first", "base_atomic": "1000", "effective_base_atomic": "1000", "tax_atomic": "100", "exemption_applied": false },
+          { "id": "second", "base_atomic": "1100", "effective_base_atomic": "1100", "tax_atomic": "55", "exemption_applied": false }
+        ]
+      }
+    },
+    {
+      "id": "inclusive-price",
+      "rule_set": {
+        "id": "inclusive-price",
+        "version": 1,
+        "components": [
+          {
+            "id": "vat",
+            "label": "VAT",
+            "base": { "sources": ["Gross"] },
+            "rate": { "Flat": { "numerator": "10", "denominator": "100" } },
+            "price_mode": "Inclusive",
+            "credit_atomic": "0",
+            "floor_atomic": null,
+            "cap_atomic": null,
+            "rounding": { "mode": "HalfUp" },
+            "threshold": null,
+            "exemption_codes": []
+          }
+        ]
+      },
+      "facts": {
+        "gross_atomic": "1100",
+        "net_atomic": "1000",
+        "currency": "EUR",
+        "jurisdiction": "DE",
+        "exemption_codes": [],
+        "cumulative_period": null
+      },
+      "expected": {
+        "total_tax_atomic": "100",
+        "total_net_atomic": "1000",
+        "components": [{ "id": "vat", "base_atomic": "1100", "effective_base_atomic": "1100", "tax_atomic": "100", "exemption_applied": false }]
+      }
+    },
+    {
+      "id": "credit-floor-cap-truncation",
+      "rule_set": {
+        "id": "credit-floor-cap-truncation",
+        "version": 1,
+        "components": [
+          {
+            "id": "bounded",
+            "label": "Bounded tax",
+            "base": { "sources": ["Net"] },
+            "rate": { "Flat": { "numerator": "3", "denominator": "100" } },
+            "price_mode": "Exclusive",
+            "credit_atomic": "1",
+            "floor_atomic": "3",
+            "cap_atomic": "5",
+            "rounding": { "mode": "Floor" },
+            "threshold": null,
+            "exemption_codes": []
+          }
+        ]
+      },
+      "facts": {
+        "gross_atomic": "104",
+        "net_atomic": "101",
+        "currency": "USD",
+        "jurisdiction": "US-NY",
+        "exemption_codes": [],
+        "cumulative_period": null
+      },
+      "expected": {
+        "total_tax_atomic": "3",
+        "total_net_atomic": "101",
+        "components": [{ "id": "bounded", "base_atomic": "101", "effective_base_atomic": "101", "tax_atomic": "3", "exemption_applied": false }]
+      }
+    },
+    {
+      "id": "cumulative-threshold",
+      "rule_set": {
+        "id": "cumulative-threshold",
+        "version": 1,
+        "components": [
+          {
+            "id": "cumulative",
+            "label": "Cumulative tax",
+            "base": { "sources": ["Net"] },
+            "rate": { "Flat": { "numerator": "10", "denominator": "100" } },
+            "price_mode": "Exclusive",
+            "credit_atomic": "0",
+            "floor_atomic": null,
+            "cap_atomic": null,
+            "rounding": { "mode": "HalfUp" },
+            "threshold": { "amount_atomic": "1000", "basis": "CumulativePeriod", "mode": "ExemptUpTo" },
+            "exemption_codes": []
+          }
+        ]
+      },
+      "facts": {
+        "gross_atomic": "210",
+        "net_atomic": "200",
+        "currency": "USD",
+        "jurisdiction": "US-CA",
+        "exemption_codes": [],
+        "cumulative_period": { "period_id": "2026-Q3", "cumulative_base_atomic": "900", "evidence_digest": [7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7] }
+      },
+      "expected": {
+        "total_tax_atomic": "10",
+        "total_net_atomic": "200",
+        "components": [{ "id": "cumulative", "base_atomic": "200", "effective_base_atomic": "100", "tax_atomic": "10", "exemption_applied": false }]
+      }
+    },
+    {
+      "id": "exemption-and-rounding",
+      "rule_set": {
+        "id": "exemption-and-rounding",
+        "version": 1,
+        "components": [
+          {
+            "id": "exemptible",
+            "label": "Exemptible tax",
+            "base": { "sources": ["Net"] },
+            "rate": { "Flat": { "numerator": "10", "denominator": "100" } },
+            "price_mode": "Exclusive",
+            "credit_atomic": "0",
+            "floor_atomic": null,
+            "cap_atomic": null,
+            "rounding": { "mode": "HalfUp" },
+            "threshold": null,
+            "exemption_codes": ["RESALE"]
+          }
+        ]
+      },
+      "facts": {
+        "gross_atomic": "1000",
+        "net_atomic": "1000",
+        "currency": "USD",
+        "jurisdiction": "US-CA",
+        "exemption_codes": ["RESALE"],
+        "cumulative_period": null
+      },
+      "expected": {
+        "total_tax_atomic": "0",
+        "total_net_atomic": "1000",
+        "components": [{ "id": "exemptible", "base_atomic": "1000", "effective_base_atomic": "0", "tax_atomic": "0", "exemption_applied": true }]
+      }
+    },
+    {
+      "id": "minimum-and-maximum",
+      "rule_set": {
+        "id": "minimum-and-maximum",
+        "version": 1,
+        "components": [
+          {
+            "id": "bounded",
+            "label": "Minimum and maximum",
+            "base": { "sources": ["Net"] },
+            "rate": { "Flat": { "numerator": "1", "denominator": "2" } },
+            "price_mode": "Exclusive",
+            "credit_atomic": "0",
+            "floor_atomic": "10",
+            "cap_atomic": "40",
+            "rounding": { "mode": "HalfUp" },
+            "threshold": null,
+            "exemption_codes": []
+          }
+        ]
+      },
+      "facts": {
+        "gross_atomic": "140",
+        "net_atomic": "100",
+        "currency": "USD",
+        "jurisdiction": "AU-NSW",
+        "exemption_codes": [],
+        "cumulative_period": null
+      },
+      "expected": {
+        "total_tax_atomic": "40",
+        "total_net_atomic": "100",
+        "components": [{ "id": "bounded", "base_atomic": "100", "effective_base_atomic": "100", "tax_atomic": "40", "exemption_applied": false }]
+      }
+    },
+    {
+      "id": "ceil-rounding",
+      "rule_set": {
+        "id": "ceil-rounding",
+        "version": 1,
+        "components": [
+          {
+            "id": "rounding",
+            "label": "Ceiling rounding",
+            "base": { "sources": ["Net"] },
+            "rate": { "Flat": { "numerator": "1", "denominator": "3" } },
+            "price_mode": "Exclusive",
+            "credit_atomic": "0",
+            "floor_atomic": null,
+            "cap_atomic": null,
+            "rounding": { "mode": "Ceil" },
+            "threshold": null,
+            "exemption_codes": []
+          }
+        ]
+      },
+      "facts": {
+        "gross_atomic": "2",
+        "net_atomic": "1",
+        "currency": "USD",
+        "jurisdiction": "US-CA",
+        "exemption_codes": [],
+        "cumulative_period": null
+      },
+      "expected": {
+        "total_tax_atomic": "1",
+        "total_net_atomic": "1",
+        "components": [{ "id": "rounding", "base_atomic": "1", "effective_base_atomic": "1", "tax_atomic": "1", "exemption_applied": false }]
+      }
+    }
+  ]
+}
