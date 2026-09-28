@@ -306,6 +306,22 @@ pub fn spl_token_program_id() -> Pubkey {
     Pubkey::new_from_array(SPL_TOKEN_PROGRAM_BYTES)
 }
 
+/// Derives the canonical merchant/mint-scoped adjustment registry PDA and
+/// returns its bump. The API and RPC verifier use this server-owned helper so
+/// callers cannot substitute a registry account.
+pub fn adjustment_registry_pda(
+    merchant: &str,
+    mint: &str,
+) -> Result<(String, u8), SettlementCompileError> {
+    let merchant = parse_pubkey("merchant", merchant)?;
+    let mint = parse_pubkey("mint", mint)?;
+    let (address, bump) = Pubkey::find_program_address(
+        &[b"adjustment-registry", merchant.as_ref(), mint.as_ref()],
+        &settlement_program_id(),
+    );
+    Ok((address.to_string(), bump))
+}
+
 /// Derives the payer's canonical associated token account without an RPC
 /// lookup. The account must already exist; the settlement hot path never
 /// creates an ATA or silently substitutes another payer-owned token account.
@@ -1258,6 +1274,24 @@ mod tests {
             compiled.vault_authority,
             expected_vault_authority.to_string()
         );
+    }
+
+    #[test]
+    fn adjustment_registry_pda_is_derived_from_merchant_and_mint() {
+        let merchant = Pubkey::new_from_array([31; 32]).to_string();
+        let mint = Pubkey::new_from_array([32; 32]).to_string();
+        let (actual, bump) = adjustment_registry_pda(&merchant, &mint).unwrap();
+        let (expected, expected_bump) = Pubkey::find_program_address(
+            &[
+                b"adjustment-registry",
+                Pubkey::new_from_array([31; 32]).as_ref(),
+                Pubkey::new_from_array([32; 32]).as_ref(),
+            ],
+            &settlement_program_id(),
+        );
+        assert_eq!(actual, expected.to_string());
+        assert_eq!(bump, expected_bump);
+        assert!(adjustment_registry_pda(&merchant, "not-a-public-key").is_err());
     }
 
     #[test]

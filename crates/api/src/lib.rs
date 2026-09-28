@@ -14,6 +14,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use indexer::{FinalizedSignaturePageSource, FinalizedTransactionSource};
 use indexer_service::{
     IndexerServiceError, MAX_TARGETED_RECOVERY_PAGES, recover_targeted_signature,
@@ -26,20 +28,23 @@ use policy::{
 use serde::{Deserialize, Serialize};
 use settlement_adjustments::{AdjustmentDelta, AdjustmentKind};
 use settlement_client::{
-    CompiledSettlementInstruction, CompiledSplitSettlementInstruction, SETTLEMENT_PROGRAM_ID,
+    CompiledSettlementAdjustmentInstruction, CompiledSettlementInstruction,
+    CompiledSplitSettlementInstruction, SETTLEMENT_PROGRAM_ID,
+    SettlementAdjustmentCompileRequest as ClientSettlementAdjustmentCompileRequest,
     SettlementCompileError, SettlementCompileRequest, SplitSettlementCompileRequest,
-    compile_settlement_instruction, compile_split_settlement_instruction,
-    compiled_instruction_digest, derive_source_token_account,
+    compile_settlement_adjustment_instruction, compile_settlement_instruction,
+    compile_split_settlement_instruction, compiled_instruction_digest, derive_source_token_account,
 };
 use settlement_coordinator::{
-    CoordinatorError, SettlementCoordinator, SettlementProviderHealthSnapshot, SettlementStatus,
-    SignedTransaction, can_transition,
+    AdjustmentRegistryVerificationRequest, CoordinatorError, SettlementCoordinator,
+    SettlementProviderHealthSnapshot, SettlementStatus, SignedTransaction, can_transition,
 };
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use storage::{
-    CreateJurisdictionPolicyCommand, CreateSettlementAdjustmentCommand,
+    BindAdjustmentAuthority, CreateAdjustmentAuthorityChallenge, CreateJurisdictionPolicyCommand,
+    CreateSettlementAdjustmentCommand, CreateSettlementAdjustmentEvidenceIntent,
     CreateVaultReleaseClaimCommand, DatabasePoolStats, EvidenceAccessAuditCommand,
     JurisdictionPolicyGovernanceTransition, PgStore, QuoteCommand, QuoteOutcome, RuleCacheStats,
     RuleGovernanceTransition, SettlementAdjustmentTransition, SettlementTransition, StorageError,
@@ -186,6 +191,84 @@ pub struct SettlementAdjustmentCreateRequest {
 pub struct SettlementAdjustmentTransitionRequest {
     pub to_status: String,
     pub evidence: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdjustmentAuthorityRoleRequest {
+    pub role: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdjustmentAuthorityBindRequest {
+    pub role: String,
+    pub challenge_id: Uuid,
+    pub public_key: String,
+    pub signature: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdjustmentAuthorityChallengeResponse {
+    pub challenge_id: Uuid,
+    pub role: String,
+    pub message: String,
+    pub message_digest: Digest32,
+    pub expires_at_unix: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdjustmentAuthorityBindingResponse {
+    pub binding_id: Uuid,
+    pub role: String,
+    pub subject: String,
+    pub public_key: String,
+    pub challenge_id: Uuid,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SettlementAdjustmentEvidenceCompileRequest {
+    pub confirm: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CompiledSettlementAdjustmentResponse {
+    pub status: &'static str,
+    pub intent_id: Uuid,
+    pub request_digest: Digest32,
+    pub instruction_digest: Digest32,
+    pub registry: String,
+    pub registry_slot: u64,
+    pub registry_commitment: &'static str,
+    pub registry_account_digest: Digest32,
+    pub instruction: CompiledSettlementAdjustmentInstruction,
+}
+
+#[derive(Serialize)]
+struct AdjustmentCompilerDigestInput<'a> {
+    schema: &'static str,
+    adjustment_id: Uuid,
+    adjustment_digest: Digest32,
+    evidence_digest: Digest32,
+    source_calculation_id: Uuid,
+    replacement_calculation_id: Option<Uuid>,
+    kind: AdjustmentKind,
+    delta: AdjustmentDelta,
+    asset_id: [u8; 32],
+    settlement_id: Uuid,
+    signature: &'a str,
+    slot: u64,
+    receipt: [u8; 32],
+    merchant: [u8; 32],
+    mint: [u8; 32],
+    proposer: &'a [u8; 32],
+    approver: &'a [u8; 32],
+    token_program: &'a str,
+    registry: &'a str,
+    registry_slot: u64,
+    registry_commitment: &'a str,
+    registry_account_digest: Digest32,
 }
 
 #[derive(Debug, Serialize)]
@@ -615,6 +698,41 @@ impl From<StorageError> for ApiError {
                 "SETTLEMENT_RECEIPT_BINDING_UNAVAILABLE",
                 "finalized receipt evidence is incomplete or conflicting".to_string(),
             ),
+            StorageError::InvalidAdjustmentAuthorityChallenge(_) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_ADJUSTMENT_AUTHORITY_CHALLENGE",
+                "adjustment authority challenge evidence is invalid".to_string(),
+            ),
+            StorageError::AdjustmentAuthorityChallengeNotFound => (
+                StatusCode::CONFLICT,
+                "ADJUSTMENT_AUTHORITY_CHALLENGE_UNAVAILABLE",
+                "the wallet proof challenge is expired, consumed, or unavailable".to_string(),
+            ),
+            StorageError::AdjustmentAuthorityBindingNotFound => (
+                StatusCode::NOT_FOUND,
+                "ADJUSTMENT_AUTHORITY_BINDING_NOT_FOUND",
+                "no active wallet authority binding was found".to_string(),
+            ),
+            StorageError::AdjustmentAuthorityConflict => (
+                StatusCode::CONFLICT,
+                "ADJUSTMENT_AUTHORITY_CONFLICT",
+                "the wallet key is already actively bound or the binding is rotating".to_string(),
+            ),
+            StorageError::AdjustmentEvidenceIntentNotFound => (
+                StatusCode::NOT_FOUND,
+                "ADJUSTMENT_EVIDENCE_INTENT_NOT_FOUND",
+                "the adjustment evidence intent was not found".to_string(),
+            ),
+            StorageError::AdjustmentEvidenceIntentConflict => (
+                StatusCode::CONFLICT,
+                "ADJUSTMENT_EVIDENCE_INTENT_CONFLICT",
+                "the adjustment evidence intent is bound to different immutable input".to_string(),
+            ),
+            StorageError::InvalidAdjustmentEvidenceIntent(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INVALID_ADJUSTMENT_EVIDENCE_INTENT",
+                "stored adjustment evidence intent failed integrity validation".to_string(),
+            ),
             StorageError::Tax(tax_error) => {
                 return ApiError::from(tax_error);
             }
@@ -880,6 +998,19 @@ impl From<StorageError> for ApiError {
     }
 }
 
+fn log_adjustment_compile_storage_error(stage: &'static str, error: StorageError) -> ApiError {
+    tracing::error!(stage, error = %error, "settlement adjustment compilation storage operation failed");
+    ApiError::from(error)
+}
+
+fn log_adjustment_compile_coordinator_error(
+    stage: &'static str,
+    error: CoordinatorError,
+) -> ApiError {
+    tracing::error!(stage, error = %error, "settlement adjustment compilation coordinator operation failed");
+    ApiError::from(error)
+}
+
 impl From<jurisdiction::ProviderRegistryError> for ApiError {
     fn from(error: jurisdiction::ProviderRegistryError) -> Self {
         let (status, code) = match error {
@@ -913,6 +1044,7 @@ impl From<CoordinatorError> for ApiError {
             }
             CoordinatorError::AddressLookupTable(_) => StatusCode::SERVICE_UNAVAILABLE,
             CoordinatorError::InvalidProviderResponse(_)
+            | CoordinatorError::InvalidAdjustmentRegistry(_)
             | CoordinatorError::InvalidConfiguration(_)
             | CoordinatorError::ProviderAttemptsExhausted(_) => StatusCode::SERVICE_UNAVAILABLE,
         };
@@ -1093,6 +1225,18 @@ pub fn router() -> Router<AppState> {
         .route(
             "/v1/settlement/adjustments/{adjustment_id}/transition",
             post(transition_settlement_adjustment),
+        )
+        .route(
+            "/v1/settlement/adjustment-authority/challenges",
+            post(create_adjustment_authority_challenge),
+        )
+        .route(
+            "/v1/settlement/adjustment-authority/bindings",
+            post(bind_adjustment_authority),
+        )
+        .route(
+            "/v1/settlement/adjustments/{adjustment_id}/compile",
+            post(compile_settlement_adjustment),
         )
         .route(
             "/v1/vault/reconciliation/targets",
@@ -1940,6 +2084,474 @@ async fn transition_settlement_adjustment(
         to_status: result.to_status,
         approver_subject: result.approver_subject,
     }))
+}
+
+async fn create_adjustment_authority_challenge(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    payload: Result<Json<AdjustmentAuthorityRoleRequest>, JsonRejection>,
+) -> Result<Json<AdjustmentAuthorityChallengeResponse>, ApiError> {
+    let metrics = Arc::clone(&state.metrics);
+    let started = Instant::now();
+    let result = create_adjustment_authority_challenge_inner(state, headers, payload).await;
+    let _ = metrics.observe(
+        "adjustment_authority_challenge",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+async fn create_adjustment_authority_challenge_inner(
+    state: AppState,
+    headers: HeaderMap,
+    payload: Result<Json<AdjustmentAuthorityRoleRequest>, JsonRejection>,
+) -> Result<Json<AdjustmentAuthorityChallengeResponse>, ApiError> {
+    let Json(request) = payload.map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "INVALID_JSON",
+        message: "request body is invalid".to_string(),
+    })?;
+    let (scope, role) = adjustment_authority_requirements(&request.role)?;
+    let principal = authenticate_scope_role(&state, &headers, scope, role)?;
+    let store = state.storage.clone().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "ADJUSTMENT_AUTHORITY_STORAGE_UNAVAILABLE",
+        message: "adjustment authority storage is not configured".to_string(),
+    })?;
+    let challenge = store
+        .create_adjustment_authority_challenge(CreateAdjustmentAuthorityChallenge {
+            merchant_id: principal.merchant_id,
+            subject: principal.subject,
+            role: request.role,
+            now_unix: server_unix_now()?,
+            ttl_seconds: 300,
+        })
+        .await
+        .map_err(ApiError::from)?;
+    let message = String::from_utf8(challenge.message).map_err(|_| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        code: "ADJUSTMENT_AUTHORITY_CHALLENGE_CORRUPT",
+        message: "stored authority challenge is not valid UTF-8".to_string(),
+    })?;
+    Ok(Json(AdjustmentAuthorityChallengeResponse {
+        challenge_id: challenge.id,
+        role: challenge.role,
+        message,
+        message_digest: challenge.message_digest,
+        expires_at_unix: challenge.expires_at_unix,
+    }))
+}
+
+async fn bind_adjustment_authority(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    payload: Result<Json<AdjustmentAuthorityBindRequest>, JsonRejection>,
+) -> Result<Json<AdjustmentAuthorityBindingResponse>, ApiError> {
+    let metrics = Arc::clone(&state.metrics);
+    let started = Instant::now();
+    let result = bind_adjustment_authority_inner(state, headers, payload).await;
+    let _ = metrics.observe(
+        "adjustment_authority_bind",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+async fn bind_adjustment_authority_inner(
+    state: AppState,
+    headers: HeaderMap,
+    payload: Result<Json<AdjustmentAuthorityBindRequest>, JsonRejection>,
+) -> Result<Json<AdjustmentAuthorityBindingResponse>, ApiError> {
+    let Json(request) = payload.map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "INVALID_JSON",
+        message: "request body is invalid".to_string(),
+    })?;
+    let (scope, role) = adjustment_authority_requirements(&request.role)?;
+    let principal = authenticate_scope_role(&state, &headers, scope, role)?;
+    let store = state.storage.clone().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "ADJUSTMENT_AUTHORITY_STORAGE_UNAVAILABLE",
+        message: "adjustment authority storage is not configured".to_string(),
+    })?;
+    let challenge = store
+        .load_adjustment_authority_challenge(principal.merchant_id, request.challenge_id)
+        .await
+        .map_err(ApiError::from)?;
+    if challenge.subject != principal.subject || challenge.role != request.role {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "ADJUSTMENT_AUTHORITY_CHALLENGE_MISMATCH",
+            message: "the challenge is not bound to this subject and role".to_string(),
+        });
+    }
+    let public_key = Pubkey::from_str(&request.public_key).map_err(|_| ApiError {
+        status: StatusCode::UNPROCESSABLE_ENTITY,
+        code: "INVALID_SOLANA_PUBLIC_KEY",
+        message: "public key is not a valid Solana Ed25519 key".to_string(),
+    })?;
+    if public_key == Pubkey::default() {
+        return Err(ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "INVALID_SOLANA_PUBLIC_KEY",
+            message: "public key must not be the default key".to_string(),
+        });
+    }
+    let signature_bytes = URL_SAFE_NO_PAD
+        .decode(request.signature.as_bytes())
+        .map_err(|_| ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "INVALID_WALLET_PROOF",
+            message: "wallet proof signature is not base64url".to_string(),
+        })?;
+    let signature = verify_wallet_proof(&public_key, &challenge.message, &signature_bytes)?;
+    let binding = store
+        .bind_adjustment_authority(BindAdjustmentAuthority {
+            merchant_id: principal.merchant_id,
+            subject: principal.subject,
+            role: request.role,
+            challenge_id: request.challenge_id,
+            public_key: public_key.to_bytes(),
+            proof_signature: signature.to_bytes(),
+            now_unix: server_unix_now()?,
+        })
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(AdjustmentAuthorityBindingResponse {
+        binding_id: binding.id,
+        role: binding.role,
+        subject: binding.subject,
+        public_key: public_key.to_string(),
+        challenge_id: binding.challenge_id,
+    }))
+}
+
+async fn compile_settlement_adjustment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(adjustment_id): Path<Uuid>,
+    payload: Result<Json<SettlementAdjustmentEvidenceCompileRequest>, JsonRejection>,
+) -> Result<Json<CompiledSettlementAdjustmentResponse>, ApiError> {
+    let metrics = Arc::clone(&state.metrics);
+    let started = Instant::now();
+    let result = compile_settlement_adjustment_inner(state, headers, adjustment_id, payload).await;
+    let _ = metrics.observe(
+        "settlement_adjustment_compile",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+async fn compile_settlement_adjustment_inner(
+    state: AppState,
+    headers: HeaderMap,
+    adjustment_id: Uuid,
+    payload: Result<Json<SettlementAdjustmentEvidenceCompileRequest>, JsonRejection>,
+) -> Result<Json<CompiledSettlementAdjustmentResponse>, ApiError> {
+    let principal = authenticate_scope_role(
+        &state,
+        &headers,
+        "tax:adjustment:compile",
+        "settlement_adjustment_approver",
+    )?;
+    let Json(request) = payload.map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "INVALID_JSON",
+        message: "request body is invalid".to_string(),
+    })?;
+    if !request.confirm {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "ADJUSTMENT_COMPILE_CONFIRMATION_REQUIRED",
+            message: "explicit evidence-compilation confirmation is required".to_string(),
+        });
+    }
+    let store = state.storage.clone().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "SETTLEMENT_ADJUSTMENT_STORAGE_UNAVAILABLE",
+        message: "settlement adjustment storage is not configured".to_string(),
+    })?;
+    let adjustment = store
+        .load_settlement_adjustment(adjustment_id, principal.merchant_id)
+        .await
+        .map_err(|error| log_adjustment_compile_storage_error("load_adjustment", error))?;
+    if adjustment.status != "approved"
+        || adjustment.approver_subject.as_deref() != Some(principal.subject.as_str())
+    {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "SETTLEMENT_ADJUSTMENT_NOT_APPROVED",
+            message: "only the recorded approver may compile an approved adjustment".to_string(),
+        });
+    }
+    store
+        .ensure_calculation_evidence_exists(principal.merchant_id, adjustment.source_calculation_id)
+        .await
+        .map_err(|error| log_adjustment_compile_storage_error("source_calculation", error))?;
+    if let Some(replacement) = adjustment.replacement_calculation_id {
+        store
+            .ensure_calculation_evidence_exists(principal.merchant_id, replacement)
+            .await
+            .map_err(|error| {
+                log_adjustment_compile_storage_error("replacement_calculation", error)
+            })?;
+    }
+    let (receipt, proposer_binding, approver_binding) = tokio::try_join!(
+        store.load_finalized_settlement_receipt_binding(
+            principal.merchant_id,
+            adjustment.original_settlement_id,
+            adjustment.asset_id,
+        ),
+        store.load_active_adjustment_authority(
+            principal.merchant_id,
+            &adjustment.proposer_subject,
+            "proposer",
+        ),
+        store.load_active_adjustment_authority(
+            principal.merchant_id,
+            principal.subject.as_str(),
+            "approver",
+        ),
+    )
+    .map_err(|error| log_adjustment_compile_storage_error("receipt_and_authorities", error))?;
+    if approver_binding.subject != principal.subject
+        || approver_binding.role != "approver"
+        || proposer_binding.subject != adjustment.proposer_subject
+        || proposer_binding.role != "proposer"
+        || proposer_binding.public_key == approver_binding.public_key
+    {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "ADJUSTMENT_AUTHORITY_BINDING_CONFLICT",
+            message: "active proposer and approver wallet bindings are invalid".to_string(),
+        });
+    }
+    let merchant = Pubkey::new_from_array(receipt.merchant).to_string();
+    let mint = Pubkey::new_from_array(receipt.mint).to_string();
+    let route = store
+        .load_active_settlement_route_for_chain_identity(principal.merchant_id, &merchant, &mint)
+        .await
+        .map_err(|error| log_adjustment_compile_storage_error("settlement_route", error))?;
+    if route.mint != mint || route.merchant_account != merchant {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "SETTLEMENT_ROUTE_IDENTITY_CONFLICT",
+            message: "active route identity does not match the finalized receipt".to_string(),
+        });
+    }
+    let coordinator = state.settlement_coordinator.clone().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "ADJUSTMENT_REGISTRY_RPC_NOT_CONFIGURED",
+        message: "a settlement RPC coordinator is required to verify the finalized adjustment registry".to_string(),
+    })?;
+    let registry = coordinator
+        .verify_adjustment_registry(&AdjustmentRegistryVerificationRequest {
+            merchant: merchant.clone(),
+            mint: mint.clone(),
+            proposer: Pubkey::new_from_array(proposer_binding.public_key).to_string(),
+            approver: Pubkey::new_from_array(approver_binding.public_key).to_string(),
+        })
+        .await
+        .map_err(|error| log_adjustment_compile_coordinator_error("verify_registry", error))?;
+    let registry_address = Pubkey::from_str(&registry.registry).map_err(|_| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "ADJUSTMENT_REGISTRY_EVIDENCE_INVALID",
+        message: "verified registry address is not a valid Solana public key".to_string(),
+    })?;
+    let request_digest = adjustment_compiler_request_digest(
+        &adjustment,
+        &receipt,
+        &proposer_binding.public_key,
+        &approver_binding.public_key,
+        &route.token_program,
+        &registry,
+    )?;
+    let intent = store
+        .reserve_settlement_adjustment_evidence_intent(CreateSettlementAdjustmentEvidenceIntent {
+            adjustment_id,
+            merchant_id: principal.merchant_id,
+            proposer: proposer_binding.public_key,
+            approver: approver_binding.public_key,
+            original_receipt: receipt.receipt,
+            merchant: receipt.merchant,
+            mint: receipt.mint,
+            token_program: route.token_program.clone(),
+            registry_address: registry_address.to_bytes(),
+            registry_slot: registry.finalized_slot,
+            registry_commitment: registry.commitment.to_string(),
+            registry_account_digest: registry.account_digest,
+            request_digest,
+        })
+        .await
+        .map_err(|error| log_adjustment_compile_storage_error("reserve_evidence_intent", error))?;
+    let (gross_sign, gross_magnitude) = signed_magnitude(adjustment.delta.gross_atomic)?;
+    let (tax_sign, tax_magnitude) = signed_magnitude(adjustment.delta.tax_atomic)?;
+    let (net_sign, net_magnitude) = signed_magnitude(adjustment.delta.net_atomic)?;
+    let compiled =
+        compile_settlement_adjustment_instruction(&ClientSettlementAdjustmentCompileRequest {
+            program_id: SETTLEMENT_PROGRAM_ID.to_string(),
+            proposer: Pubkey::new_from_array(intent.proposer).to_string(),
+            approver: Pubkey::new_from_array(intent.approver).to_string(),
+            merchant: Pubkey::new_from_array(intent.merchant).to_string(),
+            mint: Pubkey::new_from_array(intent.mint).to_string(),
+            token_program: intent.token_program.clone(),
+            original_receipt: Pubkey::new_from_array(intent.original_receipt).to_string(),
+            adjustment_nonce: intent.nonce,
+            kind: adjustment_kind_tag(adjustment.kind),
+            gross_sign,
+            gross_magnitude,
+            tax_sign,
+            tax_magnitude,
+            net_sign,
+            net_magnitude,
+            adjustment_digest: adjustment.adjustment_digest,
+            evidence_digest: adjustment.evidence_digest,
+            source_calculation_digest: calculation_reference_digest(
+                adjustment.source_calculation_id,
+            ),
+            replacement_calculation_digest: adjustment
+                .replacement_calculation_id
+                .map(calculation_reference_digest)
+                .unwrap_or([0; 32]),
+        })
+        .map_err(ApiError::from)?;
+    let instruction_digest =
+        sha256_digest(&serde_json::to_vec(&compiled).map_err(|error| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "SETTLEMENT_DIGEST_FAILURE",
+            message: error.to_string(),
+        })?);
+    let intent = store
+        .bind_settlement_adjustment_evidence_intent_digest(
+            principal.merchant_id,
+            intent.id,
+            instruction_digest,
+        )
+        .await
+        .map_err(|error| log_adjustment_compile_storage_error("bind_instruction_digest", error))?;
+    Ok(Json(CompiledSettlementAdjustmentResponse {
+        status: "prepared_unsubmitted",
+        intent_id: intent.id,
+        request_digest: intent.request_digest,
+        instruction_digest,
+        registry: registry.registry,
+        registry_slot: registry.finalized_slot,
+        registry_commitment: registry.commitment,
+        registry_account_digest: registry.account_digest,
+        instruction: compiled,
+    }))
+}
+
+fn adjustment_authority_requirements(role: &str) -> Result<(&'static str, &'static str), ApiError> {
+    match role {
+        "proposer" => Ok((
+            "tax:adjustment:authority:bind",
+            "settlement_adjustment_proposer",
+        )),
+        "approver" => Ok((
+            "tax:adjustment:authority:bind",
+            "settlement_adjustment_approver",
+        )),
+        _ => Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_ADJUSTMENT_AUTHORITY_ROLE",
+            message: "role must be proposer or approver".to_string(),
+        }),
+    }
+}
+
+fn verify_wallet_proof(
+    public_key: &Pubkey,
+    message: &[u8],
+    signature_bytes: &[u8],
+) -> Result<Signature, ApiError> {
+    let signature = Signature::from_slice(signature_bytes).map_err(|_| ApiError {
+        status: StatusCode::UNPROCESSABLE_ENTITY,
+        code: "INVALID_WALLET_PROOF",
+        message: "wallet proof signature is not Ed25519".to_string(),
+    })?;
+    let verifying_key = VerifyingKey::from_bytes(&public_key.to_bytes()).map_err(|_| ApiError {
+        status: StatusCode::UNPROCESSABLE_ENTITY,
+        code: "INVALID_SOLANA_PUBLIC_KEY",
+        message: "public key is not a valid Ed25519 verifying key".to_string(),
+    })?;
+    verifying_key
+        .verify(message, &signature)
+        .map_err(|_| ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "INVALID_WALLET_PROOF",
+            message: "wallet proof does not match the server challenge".to_string(),
+        })?;
+    Ok(signature)
+}
+
+fn adjustment_kind_tag(kind: AdjustmentKind) -> u8 {
+    match kind {
+        AdjustmentKind::Refund => 1,
+        AdjustmentKind::Reversal => 2,
+        AdjustmentKind::Correction => 3,
+        AdjustmentKind::Chargeback => 4,
+        AdjustmentKind::RemittanceAdjustment => 5,
+    }
+}
+
+fn signed_magnitude(value: i128) -> Result<(u8, String), ApiError> {
+    let magnitude = value.unsigned_abs();
+    let magnitude = u64::try_from(magnitude).map_err(|_| ApiError {
+        status: StatusCode::UNPROCESSABLE_ENTITY,
+        code: "SETTLEMENT_ADJUSTMENT_AMOUNT_OUT_OF_RANGE",
+        message: "adjustment amount exceeds the unsigned atomic range".to_string(),
+    })?;
+    Ok((u8::from(value < 0), magnitude.to_string()))
+}
+
+fn calculation_reference_digest(calculation_id: Uuid) -> Digest32 {
+    let mut input = b"solana-tax-protocol/calculation-id/v1".to_vec();
+    input.extend_from_slice(calculation_id.as_bytes());
+    sha256_digest(&input)
+}
+
+fn adjustment_compiler_request_digest(
+    adjustment: &storage::SettlementAdjustmentRecord,
+    receipt: &storage::SettlementReceiptBinding,
+    proposer: &[u8; 32],
+    approver: &[u8; 32],
+    token_program: &str,
+    registry: &settlement_coordinator::AdjustmentRegistryVerification,
+) -> Result<Digest32, ApiError> {
+    let payload = serde_json::to_vec(&AdjustmentCompilerDigestInput {
+        schema: "solana-tax-protocol/adjustment-compile-request/v1",
+        adjustment_id: adjustment.id,
+        adjustment_digest: adjustment.adjustment_digest,
+        evidence_digest: adjustment.evidence_digest,
+        source_calculation_id: adjustment.source_calculation_id,
+        replacement_calculation_id: adjustment.replacement_calculation_id,
+        kind: adjustment.kind,
+        delta: adjustment.delta,
+        asset_id: adjustment.asset_id,
+        settlement_id: receipt.settlement_id,
+        signature: receipt.signature.as_str(),
+        slot: receipt.slot,
+        receipt: receipt.receipt,
+        merchant: receipt.merchant,
+        mint: receipt.mint,
+        proposer,
+        approver,
+        token_program,
+        registry: &registry.registry,
+        registry_slot: registry.finalized_slot,
+        registry_commitment: registry.commitment,
+        registry_account_digest: registry.account_digest,
+    })
+    .map_err(|error| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        code: "SETTLEMENT_DIGEST_FAILURE",
+        message: error.to_string(),
+    })?;
+    Ok(sha256_digest(&payload))
 }
 
 async fn create_vault_release_claim(
@@ -3253,6 +3865,7 @@ fn settlement_submission_error_code(error: &CoordinatorError) -> &'static str {
         CoordinatorError::InvalidConfiguration(_) => "invalid_coordinator_configuration",
         CoordinatorError::ProviderAttemptsExhausted(_) => "provider_attempts_exhausted",
         CoordinatorError::InvalidProviderResponse(_) => "invalid_provider_response",
+        CoordinatorError::InvalidAdjustmentRegistry(_) => "invalid_adjustment_registry",
         CoordinatorError::InvalidSignature => "invalid_signature",
     }
 }
@@ -3557,7 +4170,7 @@ mod tests {
         body::Body,
         http::{HeaderValue, Request},
     };
-    use ed25519_dalek::SigningKey;
+    use ed25519_dalek::{Signer, SigningKey};
     use policy::{ATTESTATION_SCHEMA_VERSION, CalculationAttestation, UnsignedAttestation};
     use settlement_client::{SETTLEMENT_PROGRAM_ID, SPL_TOKEN_PROGRAM_ID};
     use std::time::Duration;
@@ -3583,6 +4196,9 @@ mod tests {
                     "settlement_adjustment_create",
                     "settlement_adjustment_read",
                     "settlement_adjustment_transition",
+                    "adjustment_authority_challenge",
+                    "adjustment_authority_bind",
+                    "settlement_adjustment_compile",
                     "vault_reconciliation_read",
                     "indexer_replay_operator",
                     "indexer_targeted_recovery",
@@ -3784,6 +4400,35 @@ mod tests {
         assert!(!rendered.contains("endpoint"));
         assert!(!rendered.contains("merchant_id"));
         assert!(!rendered.contains("request_id"));
+    }
+
+    #[test]
+    fn wallet_proof_verification_binds_the_exact_server_message() {
+        let signing_key = SigningKey::from_bytes(&[41; 32]);
+        let public_key = Pubkey::new_from_array(signing_key.verifying_key().to_bytes());
+        let message = b"solana-tax-protocol/adjustment-authority/v1/challenge";
+        let signature = signing_key.sign(message);
+
+        assert!(verify_wallet_proof(&public_key, message, &signature.to_bytes()).is_ok());
+
+        let mut tampered_message = message.to_vec();
+        tampered_message[0] ^= 1;
+        let error = verify_wallet_proof(&public_key, &tampered_message, &signature.to_bytes())
+            .expect_err("a proof must not verify against a changed challenge");
+        assert_eq!(error.code, "INVALID_WALLET_PROOF");
+    }
+
+    #[test]
+    fn wallet_proof_verification_rejects_a_different_wallet() {
+        let signer = SigningKey::from_bytes(&[42; 32]);
+        let other_wallet =
+            Pubkey::new_from_array(SigningKey::from_bytes(&[43; 32]).verifying_key().to_bytes());
+        let message = b"solana-tax-protocol/adjustment-authority/v1/challenge";
+        let signature = signer.sign(message);
+
+        let error = verify_wallet_proof(&other_wallet, message, &signature.to_bytes())
+            .expect_err("a proof must be bound to the claimed wallet");
+        assert_eq!(error.code, "INVALID_WALLET_PROOF");
     }
 
     #[tokio::test]

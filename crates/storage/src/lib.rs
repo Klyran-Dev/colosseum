@@ -15,11 +15,12 @@ use deadpool_postgres::{
 };
 use indexer::{
     BalanceExpectation, BalanceSnapshot, Checkpoint, FinalizedPage,
-    IndexedAdjustmentRefundExecution, IndexedReceipt, IndexedSplitSettlement, MAX_REPLAY_ATTEMPTS,
-    MAX_SCAN_RANGE_SLOTS, ProtocolPauseChangedEvent, RawChainEvidence, RawChainTransaction,
-    Reconciliation, ReplayGap, ReplayGapReason, ReplayWork, VaultBalanceExpectation,
-    merge_adjustment_refund_execution, merge_raw_evidence, merge_receipt,
-    rebuild_receipt_from_raw_evidence, rebuild_split_settlement_from_raw_evidence, reconcile,
+    IndexedAdjustmentRefundExecution, IndexedReceipt, IndexedSettlementAdjustment,
+    IndexedSplitSettlement, MAX_REPLAY_ATTEMPTS, MAX_SCAN_RANGE_SLOTS, ProtocolPauseChangedEvent,
+    RawChainEvidence, RawChainTransaction, Reconciliation, ReplayGap, ReplayGapReason, ReplayWork,
+    VaultBalanceExpectation, merge_adjustment_refund_execution, merge_raw_evidence, merge_receipt,
+    merge_settlement_adjustment, rebuild_receipt_from_raw_evidence,
+    rebuild_split_settlement_from_raw_evidence, reconcile,
 };
 use jurisdiction::{JurisdictionCandidate, ResolutionPolicy, candidate_set_digest};
 use policy::CalculationAttestation;
@@ -27,7 +28,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settlement_adjustments::{
     Adjustment, AdjustmentDelta, AdjustmentKind, AdjustmentProposal, AdjustmentStatus,
-    RefundBalanceProof, validate_transition,
+    RefundBalanceProof, authority_challenge_digest, authority_challenge_message,
+    validate_transition,
 };
 use settlement_coordinator::{SettlementStatus, can_transition};
 use sha2::{Digest, Sha256};
@@ -66,6 +68,8 @@ pub const DEFAULT_QUOTE_TTL: Duration = Duration::from_secs(15 * 60);
 pub const ATTESTED_CALCULATION_STATUS: &str = "attested";
 pub const MAX_QUOTE_RETRY_ATTEMPTS: usize = 3;
 const QUOTE_RETRY_BACKOFF: Duration = Duration::from_millis(2);
+const MAX_EVIDENCE_LOOKUP_ATTEMPTS: usize = 3;
+const EVIDENCE_LOOKUP_BACKOFF: Duration = Duration::from_millis(2);
 pub const MAX_RULE_GOVERNANCE_EVIDENCE_BYTES: usize = 16 * 1024;
 pub const MAX_RULE_DRAFT_PROVENANCE_BYTES: usize = 16 * 1024;
 pub const MAX_JURISDICTION_POLICY_PROVENANCE_BYTES: usize = 16 * 1024;
@@ -191,6 +195,20 @@ pub enum StorageError {
     SettlementReceiptBindingNotFound,
     #[error("finalized settlement receipt binding is ambiguous or incomplete: {0}")]
     InvalidSettlementReceiptBinding(String),
+    #[error("adjustment authority challenge is invalid: {0}")]
+    InvalidAdjustmentAuthorityChallenge(String),
+    #[error("adjustment authority challenge was not found or is no longer usable")]
+    AdjustmentAuthorityChallengeNotFound,
+    #[error("adjustment authority binding was not found")]
+    AdjustmentAuthorityBindingNotFound,
+    #[error("adjustment authority binding conflicts with an active proof")]
+    AdjustmentAuthorityConflict,
+    #[error("adjustment evidence intent was not found")]
+    AdjustmentEvidenceIntentNotFound,
+    #[error("adjustment evidence intent conflicts with immutable input")]
+    AdjustmentEvidenceIntentConflict,
+    #[error("adjustment evidence intent is invalid: {0}")]
+    InvalidAdjustmentEvidenceIntent(String),
     #[error("settlement evidence exceeds the bounded size")]
     SettlementEvidenceTooLarge,
     #[error("invalid tax-rule governance transition")]
@@ -663,6 +681,19 @@ fn is_retryable_quote_error(error: &StorageError) -> bool {
 
 fn is_retryable_quote_sql_state(code: &str) -> bool {
     matches!(code, "40001" | "40P01")
+}
+
+fn is_retryable_evidence_lookup_error(error: &StorageError) -> bool {
+    match error {
+        StorageError::Pool(_) => true,
+        StorageError::Database(database_error) => {
+            database_error.is_closed()
+                || database_error
+                    .code()
+                    .is_some_and(|code| is_retryable_quote_sql_state(code.code()))
+        }
+        _ => false,
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1242,6 +1273,86 @@ pub struct SettlementReceiptBinding {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdjustmentAuthorityChallenge {
+    pub id: Uuid,
+    pub merchant_id: Uuid,
+    pub subject: String,
+    pub role: String,
+    pub message: Vec<u8>,
+    pub message_digest: [u8; 32],
+    pub expires_at_unix: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdjustmentAuthorityBinding {
+    pub id: Uuid,
+    pub merchant_id: Uuid,
+    pub subject: String,
+    pub role: String,
+    pub public_key: [u8; 32],
+    pub challenge_id: Uuid,
+    pub proof_signature: [u8; 64],
+}
+
+#[derive(Clone, Debug)]
+pub struct CreateAdjustmentAuthorityChallenge {
+    pub merchant_id: Uuid,
+    pub subject: String,
+    pub role: String,
+    pub now_unix: i64,
+    pub ttl_seconds: i64,
+}
+
+#[derive(Clone, Debug)]
+pub struct BindAdjustmentAuthority {
+    pub merchant_id: Uuid,
+    pub subject: String,
+    pub role: String,
+    pub challenge_id: Uuid,
+    pub public_key: [u8; 32],
+    pub proof_signature: [u8; 64],
+    pub now_unix: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SettlementAdjustmentEvidenceIntent {
+    pub id: Uuid,
+    pub adjustment_id: Uuid,
+    pub merchant_id: Uuid,
+    pub nonce: u64,
+    pub proposer: [u8; 32],
+    pub approver: [u8; 32],
+    pub original_receipt: [u8; 32],
+    pub merchant: [u8; 32],
+    pub mint: [u8; 32],
+    pub token_program: String,
+    pub registry_address: [u8; 32],
+    pub registry_slot: u64,
+    pub registry_commitment: String,
+    pub registry_account_digest: [u8; 32],
+    pub request_digest: [u8; 32],
+    pub instruction_digest: Option<[u8; 32]>,
+    pub status: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct CreateSettlementAdjustmentEvidenceIntent {
+    pub adjustment_id: Uuid,
+    pub merchant_id: Uuid,
+    pub proposer: [u8; 32],
+    pub approver: [u8; 32],
+    pub original_receipt: [u8; 32],
+    pub merchant: [u8; 32],
+    pub mint: [u8; 32],
+    pub token_program: String,
+    pub registry_address: [u8; 32],
+    pub registry_slot: u64,
+    pub registry_commitment: String,
+    pub registry_account_digest: [u8; 32],
+    pub request_digest: [u8; 32],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SettlementIntentOutcome {
     Created(SettlementIntent),
     Replay(SettlementIntent),
@@ -1765,6 +1876,8 @@ impl PgStore {
             &page.refund_executions,
         )
         .await?;
+        persist_indexed_settlement_adjustments(&transaction, stream_key, &page.adjustment_records)
+            .await?;
         for evidence in &page.raw_evidence {
             merge_raw_evidence(None, evidence.clone())?;
             let existing = transaction
@@ -2917,7 +3030,12 @@ impl PgStore {
                     && execution.event_index == evidence.event_index
                     && execution.evidence_digest == evidence.evidence_digest
             });
-            if !receipt_match && !refund_match {
+            let adjustment_match = page.adjustment_records.iter().any(|record| {
+                record.signature == evidence.signature
+                    && record.event_index == evidence.event_index
+                    && record.evidence_digest == evidence.evidence_digest
+            });
+            if !receipt_match && !refund_match && !adjustment_match {
                 return Err(StorageError::Indexer(
                     indexer::IndexerError::InvalidEvidence,
                 ));
@@ -3080,6 +3198,8 @@ impl PgStore {
             &page.refund_executions,
         )
         .await?;
+        persist_indexed_settlement_adjustments(&transaction, stream_key, &page.adjustment_records)
+            .await?;
         for evidence in &page.raw_evidence {
             merge_raw_evidence(None, evidence.clone())?;
             let existing = transaction
@@ -3700,6 +3820,433 @@ impl PgStore {
                 "multiple conflicting finalized receipt projections matched the settlement".into(),
             )),
         }
+    }
+
+    /// Creates a short-lived, single-use wallet proof challenge. The message
+    /// bytes are returned to the wallet caller but only their digest is
+    /// persisted; the binding operation reconstructs and verifies the exact
+    /// canonical message before consuming the challenge.
+    pub async fn create_adjustment_authority_challenge(
+        &self,
+        command: CreateAdjustmentAuthorityChallenge,
+    ) -> Result<AdjustmentAuthorityChallenge, StorageError> {
+        validate_adjustment_authority_challenge_command(&command)?;
+        let id = Uuid::now_v7();
+        let expires_at_unix = command
+            .now_unix
+            .checked_add(command.ttl_seconds)
+            .ok_or_else(|| {
+                StorageError::InvalidAdjustmentAuthorityChallenge(
+                    "challenge expiry overflows the supported clock range".into(),
+                )
+            })?;
+        let message = authority_challenge_message(
+            command.merchant_id,
+            id,
+            &command.subject,
+            &command.role,
+            expires_at_unix,
+        )
+        .map_err(|error| StorageError::InvalidAdjustmentAuthorityChallenge(error.to_string()))?;
+        let message_digest = authority_challenge_digest(&message);
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        client
+            .execute(
+                "INSERT INTO settlement_adjustment_authority_challenges
+                    (id, merchant_id, subject, role, message_digest,
+                     expires_at, created_at)
+                 VALUES ($1, $2, $3, $4, $5,
+                         to_timestamp($6::double precision),
+                         to_timestamp($7::double precision))",
+                &[
+                    &id,
+                    &command.merchant_id,
+                    &command.subject,
+                    &command.role,
+                    &&message_digest[..],
+                    &(expires_at_unix as f64),
+                    &(command.now_unix as f64),
+                ],
+            )
+            .await?;
+        Ok(AdjustmentAuthorityChallenge {
+            id,
+            merchant_id: command.merchant_id,
+            subject: command.subject,
+            role: command.role,
+            message,
+            message_digest,
+            expires_at_unix,
+        })
+    }
+
+    pub async fn load_adjustment_authority_challenge(
+        &self,
+        merchant_id: Uuid,
+        challenge_id: Uuid,
+    ) -> Result<AdjustmentAuthorityChallenge, StorageError> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let row = client
+            .query_opt(
+                "SELECT subject, role, message_digest,
+                        floor(extract(epoch FROM expires_at))::bigint
+                 FROM settlement_adjustment_authority_challenges
+                 WHERE id = $1 AND merchant_id = $2",
+                &[&challenge_id, &merchant_id],
+            )
+            .await?
+            .ok_or(StorageError::AdjustmentAuthorityChallengeNotFound)?;
+        let subject: String = row.get(0);
+        let role: String = row.get(1);
+        let expires_at_unix: i64 = row.get(3);
+        let message = authority_challenge_message(
+            merchant_id,
+            challenge_id,
+            &subject,
+            &role,
+            expires_at_unix,
+        )
+        .map_err(|error| StorageError::InvalidAdjustmentAuthorityChallenge(error.to_string()))?;
+        let message_digest = authority_challenge_digest(&message);
+        let stored_digest: [u8; 32] = parse_digest(row.get(2)).map_err(|_| {
+            StorageError::InvalidAdjustmentAuthorityChallenge(
+                "stored challenge digest is not 32 bytes".into(),
+            )
+        })?;
+        if message_digest != stored_digest {
+            return Err(StorageError::InvalidAdjustmentAuthorityChallenge(
+                "stored challenge message digest does not match canonical bytes".into(),
+            ));
+        }
+        Ok(AdjustmentAuthorityChallenge {
+            id: challenge_id,
+            merchant_id,
+            subject,
+            role,
+            message,
+            message_digest,
+            expires_at_unix,
+        })
+    }
+
+    /// Verifies and consumes one wallet challenge, then atomically rotates the
+    /// active subject/role binding. Signature verification itself lives at the
+    /// API boundary; this method enforces the durable replay and uniqueness
+    /// fences inside PostgreSQL.
+    pub async fn bind_adjustment_authority(
+        &self,
+        command: BindAdjustmentAuthority,
+    ) -> Result<AdjustmentAuthorityBinding, StorageError> {
+        validate_adjustment_authority_binding_command(&command)?;
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let challenge = transaction
+            .query_opt(
+                "SELECT subject, role, message_digest,
+                        floor(extract(epoch FROM expires_at))::bigint,
+                        consumed_at IS NOT NULL,
+                        expires_at <= to_timestamp($3::double precision)
+                 FROM settlement_adjustment_authority_challenges
+                 WHERE id = $1 AND merchant_id = $2
+                 FOR UPDATE",
+                &[
+                    &command.challenge_id,
+                    &command.merchant_id,
+                    &(command.now_unix as f64),
+                ],
+            )
+            .await?
+            .ok_or(StorageError::AdjustmentAuthorityChallengeNotFound)?;
+        let subject: String = challenge.get(0);
+        let role: String = challenge.get(1);
+        let stored_digest: Vec<u8> = challenge.get(2);
+        let expires_at_unix: i64 = challenge.get(3);
+        let consumed: bool = challenge.get(4);
+        let expired: bool = challenge.get(5);
+        if consumed
+            || expired
+            || subject != command.subject
+            || role != command.role
+            || authority_challenge_digest(
+                &authority_challenge_message(
+                    command.merchant_id,
+                    command.challenge_id,
+                    &subject,
+                    &role,
+                    expires_at_unix,
+                )
+                .map_err(|error| {
+                    StorageError::InvalidAdjustmentAuthorityChallenge(error.to_string())
+                })?,
+            ) != parse_digest(stored_digest).map_err(|_| {
+                StorageError::InvalidAdjustmentAuthorityChallenge(
+                    "stored challenge digest is not 32 bytes".into(),
+                )
+            })?
+        {
+            return Err(StorageError::AdjustmentAuthorityChallengeNotFound);
+        }
+        let active_key_conflict = transaction
+            .query_opt(
+                "SELECT 1
+                 FROM settlement_adjustment_authority_bindings
+                 WHERE merchant_id = $1 AND public_key = $2 AND status = 'active'
+                 FOR UPDATE",
+                &[&command.merchant_id, &&command.public_key[..]],
+            )
+            .await?
+            .is_some();
+        if active_key_conflict {
+            return Err(StorageError::AdjustmentAuthorityConflict);
+        }
+        transaction
+            .execute(
+                "UPDATE settlement_adjustment_authority_bindings
+                 SET status = 'revoked', revoked_at = now()
+                 WHERE merchant_id = $1 AND subject = $2 AND role = $3
+                   AND status = 'active'",
+                &[&command.merchant_id, &command.subject, &command.role],
+            )
+            .await?;
+        let id = Uuid::now_v7();
+        let row = transaction
+            .query_one(
+                "INSERT INTO settlement_adjustment_authority_bindings
+                    (id, merchant_id, subject, role, public_key, challenge_id,
+                     proof_signature)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)
+                 RETURNING id, merchant_id, subject, role, public_key,
+                           challenge_id, proof_signature",
+                &[
+                    &id,
+                    &command.merchant_id,
+                    &command.subject,
+                    &command.role,
+                    &&command.public_key[..],
+                    &command.challenge_id,
+                    &&command.proof_signature[..],
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "UPDATE settlement_adjustment_authority_challenges
+                 SET consumed_at = now()
+                 WHERE id = $1 AND merchant_id = $2 AND consumed_at IS NULL",
+                &[&command.challenge_id, &command.merchant_id],
+            )
+            .await?;
+        let binding = parse_adjustment_authority_binding_row(row)?;
+        transaction.commit().await?;
+        Ok(binding)
+    }
+
+    pub async fn load_active_adjustment_authority(
+        &self,
+        merchant_id: Uuid,
+        subject: &str,
+        role: &str,
+    ) -> Result<AdjustmentAuthorityBinding, StorageError> {
+        if !valid_adjustment_authority_role(role) || subject.trim().is_empty() {
+            return Err(StorageError::AdjustmentAuthorityBindingNotFound);
+        }
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let row = client
+            .query_opt(
+                "SELECT id, merchant_id, subject, role, public_key,
+                        challenge_id, proof_signature
+                 FROM settlement_adjustment_authority_bindings
+                 WHERE merchant_id = $1 AND subject = $2 AND role = $3
+                   AND status = 'active'",
+                &[&merchant_id, &subject, &role],
+            )
+            .await?
+            .ok_or(StorageError::AdjustmentAuthorityBindingNotFound)?;
+        parse_adjustment_authority_binding_row(row)
+    }
+
+    /// Reserves one server-generated chain nonce for an approved adjustment.
+    /// Retries converge on the immutable existing intent and cannot change
+    /// authority or receipt identity snapshots.
+    pub async fn reserve_settlement_adjustment_evidence_intent(
+        &self,
+        command: CreateSettlementAdjustmentEvidenceIntent,
+    ) -> Result<SettlementAdjustmentEvidenceIntent, StorageError> {
+        validate_adjustment_evidence_intent_command(&command)?;
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let registry_slot = command.registry_slot.to_string();
+        let inserted = transaction
+            .query_opt(
+                "INSERT INTO settlement_adjustment_evidence_intents
+                    (adjustment_id, merchant_id, proposer, approver,
+                     original_receipt, merchant, mint, token_program,
+                     registry_address, registry_slot, registry_commitment,
+                     registry_account_digest, request_digest)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text::numeric, $11,
+                         $12, $13)
+                 ON CONFLICT (adjustment_id, merchant_id) DO NOTHING
+                 RETURNING id, adjustment_id, merchant_id, nonce::text,
+                           proposer, approver, original_receipt, merchant,
+                           mint, token_program, registry_address,
+                           registry_slot::text, registry_commitment,
+                           registry_account_digest, request_digest,
+                           instruction_digest, status",
+                &[
+                    &command.adjustment_id,
+                    &command.merchant_id,
+                    &&command.proposer[..],
+                    &&command.approver[..],
+                    &&command.original_receipt[..],
+                    &&command.merchant[..],
+                    &&command.mint[..],
+                    &command.token_program,
+                    &&command.registry_address[..],
+                    &registry_slot,
+                    &command.registry_commitment,
+                    &&command.registry_account_digest[..],
+                    &&command.request_digest[..],
+                ],
+            )
+            .await?;
+        let row = if let Some(row) = inserted {
+            row
+        } else {
+            transaction
+                .query_one(
+                    "SELECT id, adjustment_id, merchant_id, nonce::text,
+                            proposer, approver, original_receipt, merchant,
+                            mint, token_program, registry_address,
+                            registry_slot::text, registry_commitment,
+                            registry_account_digest, request_digest,
+                            instruction_digest, status
+                     FROM settlement_adjustment_evidence_intents
+                     WHERE adjustment_id = $1 AND merchant_id = $2
+                     FOR UPDATE",
+                    &[&command.adjustment_id, &command.merchant_id],
+                )
+                .await?
+        };
+        let intent = parse_settlement_adjustment_evidence_intent_row(row)?;
+        if intent.request_digest != command.request_digest
+            || intent.proposer != command.proposer
+            || intent.approver != command.approver
+            || intent.original_receipt != command.original_receipt
+            || intent.merchant != command.merchant
+            || intent.mint != command.mint
+            || intent.token_program != command.token_program
+            || intent.registry_address != command.registry_address
+            || intent.registry_slot != command.registry_slot
+            || intent.registry_commitment != command.registry_commitment
+            || intent.registry_account_digest != command.registry_account_digest
+        {
+            return Err(StorageError::AdjustmentEvidenceIntentConflict);
+        }
+        transaction.commit().await?;
+        Ok(intent)
+    }
+
+    pub async fn bind_settlement_adjustment_evidence_intent_digest(
+        &self,
+        merchant_id: Uuid,
+        intent_id: Uuid,
+        instruction_digest: [u8; 32],
+    ) -> Result<SettlementAdjustmentEvidenceIntent, StorageError> {
+        if instruction_digest == [0; 32] {
+            return Err(StorageError::InvalidAdjustmentEvidenceIntent(
+                "instruction digest must be non-zero".into(),
+            ));
+        }
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let updated = client
+            .execute(
+                "UPDATE settlement_adjustment_evidence_intents
+                 SET instruction_digest = $3
+                 WHERE id = $1 AND merchant_id = $2
+                   AND (instruction_digest IS NULL OR instruction_digest = $3)",
+                &[&intent_id, &merchant_id, &&instruction_digest[..]],
+            )
+            .await?;
+        if updated != 1 {
+            let existing = client
+                .query_opt(
+                    "SELECT id, adjustment_id, merchant_id, nonce::text,
+                            proposer, approver, original_receipt, merchant,
+                            mint, token_program, registry_address,
+                            registry_slot::text, registry_commitment,
+                            registry_account_digest, request_digest,
+                            instruction_digest, status
+                     FROM settlement_adjustment_evidence_intents
+                     WHERE id = $1 AND merchant_id = $2",
+                    &[&intent_id, &merchant_id],
+                )
+                .await?
+                .ok_or(StorageError::AdjustmentEvidenceIntentNotFound)?;
+            let intent = parse_settlement_adjustment_evidence_intent_row(existing)?;
+            if intent.instruction_digest != Some(instruction_digest) {
+                return Err(StorageError::AdjustmentEvidenceIntentConflict);
+            }
+        }
+        let row = client
+            .query_one(
+                "SELECT id, adjustment_id, merchant_id, nonce::text,
+                        proposer, approver, original_receipt, merchant,
+                        mint, token_program, registry_address,
+                        registry_slot::text, registry_commitment,
+                        registry_account_digest, request_digest,
+                        instruction_digest, status
+                 FROM settlement_adjustment_evidence_intents
+                 WHERE id = $1 AND merchant_id = $2",
+                &[&intent_id, &merchant_id],
+            )
+            .await?;
+        parse_settlement_adjustment_evidence_intent_row(row)
     }
 
     /// Applies one authenticated tax-rule governance transition and records
@@ -5325,6 +5872,76 @@ impl PgStore {
         })
     }
 
+    /// Confirms that a calculation referenced by an approved adjustment has a
+    /// durable non-simulation evidence row. Expiry is intentionally ignored:
+    /// historical adjustment work may occur after a checkout quote expires,
+    /// but it may never reference an unknown or simulation-only calculation.
+    pub async fn ensure_calculation_evidence_exists(
+        &self,
+        merchant_id: Uuid,
+        calculation_id: Uuid,
+    ) -> Result<(), StorageError> {
+        for attempt in 0..MAX_EVIDENCE_LOOKUP_ATTEMPTS {
+            match self
+                .ensure_calculation_evidence_exists_once(merchant_id, calculation_id)
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(error)
+                    if attempt + 1 < MAX_EVIDENCE_LOOKUP_ATTEMPTS
+                        && is_retryable_evidence_lookup_error(&error) =>
+                {
+                    tracing::warn!(
+                        attempt = attempt + 1,
+                        max_attempts = MAX_EVIDENCE_LOOKUP_ATTEMPTS,
+                        error = %error,
+                        "retrying calculation evidence lookup after a transient database error"
+                    );
+                    tokio::time::sleep(EVIDENCE_LOOKUP_BACKOFF * (attempt as u32 + 1)).await;
+                }
+                Err(error) => {
+                    tracing::error!(
+                        merchant_id = %merchant_id,
+                        calculation_id = %calculation_id,
+                        error = %error,
+                        "calculation evidence lookup failed"
+                    );
+                    return Err(error);
+                }
+            }
+        }
+        Err(StorageError::InvalidConfiguration(
+            "calculation evidence lookup retry attempt budget must be positive".to_string(),
+        ))
+    }
+
+    async fn ensure_calculation_evidence_exists_once(
+        &self,
+        merchant_id: Uuid,
+        calculation_id: Uuid,
+    ) -> Result<(), StorageError> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let exists = client
+            .query_opt(
+                "SELECT 1
+                 FROM tax_calculations
+                 WHERE id = $1 AND merchant_id = $2
+                   AND status IN ('calculated_unattested', 'attested')",
+                &[&calculation_id, &merchant_id],
+            )
+            .await?
+            .is_some();
+        if exists {
+            Ok(())
+        } else {
+            Err(StorageError::QuoteNotFound)
+        }
+    }
+
     /// Persists one externally signed, server-bound calculation attestation.
     /// The evidence, attested calculation status, and first outbox event are
     /// committed atomically. Issuer private keys never enter this adapter.
@@ -5843,6 +6460,63 @@ impl PgStore {
             net_destination: row.get(6),
             token_program: row.get(7),
         })
+    }
+
+    /// Resolves the one active verified route matching finalized receipt
+    /// identity. An adjustment compiler must not accept a route ID or token
+    /// program from the browser because the original settlement proposal does
+    /// not carry a route authority.
+    pub async fn load_active_settlement_route_for_chain_identity(
+        &self,
+        merchant_id: Uuid,
+        merchant_account: &str,
+        mint: &str,
+    ) -> Result<SettlementRoute, StorageError> {
+        if merchant_account.len() < 32
+            || merchant_account.len() > 44
+            || mint.len() < 32
+            || mint.len() > 44
+        {
+            return Err(StorageError::SettlementRouteUnavailable);
+        }
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let rows = client
+            .query(
+                "SELECT id, route_key, version, merchant_account, mint,
+                        tax_vault, net_destination, token_program
+                 FROM settlement_routes
+                 WHERE merchant_id = $1
+                   AND status = 'active'
+                   AND effective_from <= now()
+                   AND (effective_until IS NULL OR now() < effective_until)
+                   AND merchant_account = $2
+                   AND mint = $3
+                 ORDER BY version DESC, id
+                 LIMIT 2",
+                &[&merchant_id, &merchant_account, &mint],
+            )
+            .await?;
+        match rows.len() {
+            0 => Err(StorageError::SettlementRouteNotFound),
+            1 => match rows.into_iter().next() {
+                Some(row) => Ok(SettlementRoute {
+                    id: row.get(0),
+                    route_key: row.get(1),
+                    version: row.get(2),
+                    merchant_account: row.get(3),
+                    mint: row.get(4),
+                    tax_vault: row.get(5),
+                    net_destination: row.get(6),
+                    token_program: row.get(7),
+                }),
+                None => Err(StorageError::SettlementRouteUnavailable),
+            },
+            _ => Err(StorageError::SettlementRouteUnavailable),
+        }
     }
 
     /// Lists only currently active routes for the authenticated merchant.
@@ -7203,6 +7877,107 @@ fn parse_settlement_receipt_binding_row(
     })
 }
 
+fn parse_adjustment_authority_binding_row(
+    row: deadpool_postgres::tokio_postgres::Row,
+) -> Result<AdjustmentAuthorityBinding, StorageError> {
+    let public_key: [u8; 32] = row.get::<_, Vec<u8>>(4).try_into().map_err(|_| {
+        StorageError::InvalidAdjustmentAuthorityChallenge(
+            "stored authority public key is not 32 bytes".into(),
+        )
+    })?;
+    let proof_signature: [u8; 64] = row.get::<_, Vec<u8>>(6).try_into().map_err(|_| {
+        StorageError::InvalidAdjustmentAuthorityChallenge(
+            "stored authority proof signature is not 64 bytes".into(),
+        )
+    })?;
+    if public_key == [0; 32] {
+        return Err(StorageError::InvalidAdjustmentAuthorityChallenge(
+            "stored authority public key is zero".into(),
+        ));
+    }
+    Ok(AdjustmentAuthorityBinding {
+        id: row.get(0),
+        merchant_id: row.get(1),
+        subject: row.get(2),
+        role: row.get(3),
+        public_key,
+        challenge_id: row.get(5),
+        proof_signature,
+    })
+}
+
+fn parse_settlement_adjustment_evidence_intent_row(
+    row: deadpool_postgres::tokio_postgres::Row,
+) -> Result<SettlementAdjustmentEvidenceIntent, StorageError> {
+    let digest = |index: usize, field: &str| -> Result<[u8; 32], StorageError> {
+        row.get::<_, Vec<u8>>(index).try_into().map_err(|_| {
+            StorageError::InvalidAdjustmentEvidenceIntent(format!("stored {field} is not 32 bytes"))
+        })
+    };
+    let proposer = digest(4, "proposer")?;
+    let approver = digest(5, "approver")?;
+    let original_receipt = digest(6, "original receipt")?;
+    let merchant = digest(7, "merchant")?;
+    let mint = digest(8, "mint")?;
+    let registry_address = digest(10, "registry address")?;
+    let registry_slot = parse_u64(row.get(11), "adjustment registry slot")?;
+    let registry_commitment: String = row.get(12);
+    let registry_account_digest = digest(13, "registry account digest")?;
+    let request_digest = digest(14, "request digest")?;
+    let instruction_digest: Option<Vec<u8>> = row.get(15);
+    let instruction_digest = instruction_digest
+        .map(|value| {
+            value.try_into().map_err(|_| {
+                StorageError::InvalidAdjustmentEvidenceIntent(
+                    "stored instruction digest is not 32 bytes".into(),
+                )
+            })
+        })
+        .transpose()?;
+    let nonce = parse_u64(row.get(3), "adjustment evidence nonce")?;
+    let token_program: String = row.get(9);
+    let status: String = row.get(16);
+    if nonce == 0
+        || proposer == [0; 32]
+        || approver == [0; 32]
+        || proposer == approver
+        || original_receipt == [0; 32]
+        || merchant == [0; 32]
+        || mint == [0; 32]
+        || registry_address == [0; 32]
+        || registry_slot == 0
+        || registry_account_digest == [0; 32]
+        || request_digest == [0; 32]
+        || token_program.len() < 32
+        || token_program.len() > 44
+        || registry_commitment != "finalized"
+        || status != "prepared_unsubmitted"
+    {
+        return Err(StorageError::InvalidAdjustmentEvidenceIntent(
+            "stored adjustment evidence intent failed identity validation".into(),
+        ));
+    }
+    Ok(SettlementAdjustmentEvidenceIntent {
+        id: row.get(0),
+        adjustment_id: row.get(1),
+        merchant_id: row.get(2),
+        nonce,
+        proposer,
+        approver,
+        original_receipt,
+        merchant,
+        mint,
+        token_program,
+        registry_address,
+        registry_slot,
+        registry_commitment,
+        registry_account_digest,
+        request_digest,
+        instruction_digest,
+        status,
+    })
+}
+
 fn parse_optional_binding_digest(
     value: Option<Vec<u8>>,
     field: &str,
@@ -7370,6 +8145,85 @@ fn parse_u64(value: &str, field: &str) -> Result<u64, StorageError> {
         .map_err(|_| StorageError::InvalidIndexerState(format!("{field} is not a u64")))
 }
 
+fn valid_adjustment_authority_role(role: &str) -> bool {
+    matches!(role, "proposer" | "approver")
+}
+
+fn validate_adjustment_authority_challenge_command(
+    command: &CreateAdjustmentAuthorityChallenge,
+) -> Result<(), StorageError> {
+    if command.merchant_id.get_version_num() != 7 {
+        return Err(StorageError::InvalidAdjustmentAuthorityChallenge(
+            "merchant ID must be UUIDv7".into(),
+        ));
+    }
+    if command.subject.trim().is_empty()
+        || command.subject.len() > 256
+        || command.subject.bytes().any(|byte| byte.is_ascii_control())
+    {
+        return Err(StorageError::InvalidAdjustmentAuthorityChallenge(
+            "authority subject is invalid".into(),
+        ));
+    }
+    if !valid_adjustment_authority_role(&command.role) {
+        return Err(StorageError::InvalidAdjustmentAuthorityChallenge(
+            "authority role is invalid".into(),
+        ));
+    }
+    if command.now_unix <= 0 || !(60..=300).contains(&command.ttl_seconds) {
+        return Err(StorageError::InvalidAdjustmentAuthorityChallenge(
+            "challenge clock or TTL is outside the bounded range".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_adjustment_authority_binding_command(
+    command: &BindAdjustmentAuthority,
+) -> Result<(), StorageError> {
+    if command.merchant_id.get_version_num() != 7
+        || command.challenge_id.get_version_num() != 7
+        || command.public_key == [0; 32]
+        || command.proof_signature == [0; 64]
+        || command.now_unix <= 0
+        || !valid_adjustment_authority_role(&command.role)
+        || command.subject.trim().is_empty()
+        || command.subject.len() > 256
+        || command.subject.bytes().any(|byte| byte.is_ascii_control())
+    {
+        return Err(StorageError::InvalidAdjustmentAuthorityChallenge(
+            "authority proof input is invalid".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_adjustment_evidence_intent_command(
+    command: &CreateSettlementAdjustmentEvidenceIntent,
+) -> Result<(), StorageError> {
+    if command.adjustment_id.get_version_num() != 7
+        || command.merchant_id.get_version_num() != 7
+        || command.proposer == [0; 32]
+        || command.approver == [0; 32]
+        || command.proposer == command.approver
+        || command.original_receipt == [0; 32]
+        || command.merchant == [0; 32]
+        || command.mint == [0; 32]
+        || command.registry_address == [0; 32]
+        || command.registry_slot == 0
+        || command.registry_commitment != "finalized"
+        || command.registry_account_digest == [0; 32]
+        || command.request_digest == [0; 32]
+        || command.token_program.len() < 32
+        || command.token_program.len() > 44
+    {
+        return Err(StorageError::InvalidAdjustmentEvidenceIntent(
+            "adjustment evidence intent input is invalid".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn parse_i128(value: &str, field: &str) -> Result<i128, StorageError> {
     value
         .parse()
@@ -7450,6 +8304,129 @@ fn parse_split_settlement_row(
         split_plan_digest: to_digest(11, "split_plan_digest")?,
         policy_digest: to_digest(12, "policy_digest")?,
         evidence_digest: to_digest(13, "split evidence_digest")?,
+    })
+}
+
+async fn persist_indexed_settlement_adjustments(
+    transaction: &deadpool_postgres::tokio_postgres::Transaction<'_>,
+    stream_key: &str,
+    records: &[IndexedSettlementAdjustment],
+) -> Result<(), StorageError> {
+    for record in records {
+        let existing = transaction
+            .query_opt(
+                "SELECT signature, slot::text, event_index::text, adjustment,
+                        original_receipt, merchant, mint, nonce::text, kind::text,
+                        gross_sign::text, gross_magnitude::text, tax_sign::text,
+                        tax_magnitude::text, net_sign::text, net_magnitude::text,
+                        adjustment_digest, evidence_digest, approver
+                 FROM indexed_settlement_adjustments
+                 WHERE stream_key = $1 AND signature = $2
+                   AND event_index = $3::text::smallint
+                 FOR UPDATE",
+                &[
+                    &stream_key,
+                    &record.signature,
+                    &record.event_index.to_string(),
+                ],
+            )
+            .await?;
+        if let Some(row) = existing {
+            let existing_record = parse_indexed_settlement_adjustment_row(row)?;
+            merge_settlement_adjustment(Some(existing_record), record.clone())?;
+            continue;
+        }
+        let identity_conflict = transaction
+            .query_opt(
+                "SELECT 1 FROM indexed_settlement_adjustments
+                 WHERE stream_key = $1 AND adjustment = $2
+                 LIMIT 1",
+                &[&stream_key, &&record.adjustment[..]],
+            )
+            .await?
+            .is_some();
+        if identity_conflict {
+            return Err(StorageError::Indexer(
+                indexer::IndexerError::ConflictingEvidence,
+            ));
+        }
+        transaction
+            .execute(
+                "INSERT INTO indexed_settlement_adjustments
+                    (stream_key, signature, slot, event_index, adjustment,
+                     original_receipt, merchant, mint, nonce, kind, gross_sign,
+                     gross_magnitude, tax_sign, tax_magnitude, net_sign,
+                     net_magnitude, adjustment_digest, evidence_digest, approver)
+                 VALUES ($1, $2, $3::text::numeric, $4::text::smallint, $5,
+                         $6, $7, $8, $9::text::numeric, $10::text::smallint,
+                         $11::text::smallint, $12::text::numeric,
+                         $13::text::smallint, $14::text::numeric,
+                         $15::text::smallint, $16::text::numeric, $17, $18, $19)",
+                &[
+                    &stream_key,
+                    &record.signature,
+                    &record.slot.to_string(),
+                    &record.event_index.to_string(),
+                    &&record.adjustment[..],
+                    &&record.original_receipt[..],
+                    &&record.merchant[..],
+                    &&record.mint[..],
+                    &record.nonce.to_string(),
+                    &record.kind.to_string(),
+                    &record.gross_sign.to_string(),
+                    &record.gross_magnitude.to_string(),
+                    &record.tax_sign.to_string(),
+                    &record.tax_magnitude.to_string(),
+                    &record.net_sign.to_string(),
+                    &record.net_magnitude.to_string(),
+                    &&record.adjustment_digest[..],
+                    &&record.evidence_digest[..],
+                    &&record.approver[..],
+                ],
+            )
+            .await?;
+    }
+    Ok(())
+}
+
+fn parse_indexed_settlement_adjustment_row(
+    row: deadpool_postgres::tokio_postgres::Row,
+) -> Result<IndexedSettlementAdjustment, StorageError> {
+    let to_digest = |index: usize, field: &str| -> Result<[u8; 32], StorageError> {
+        let value: Vec<u8> = row.get(index);
+        value
+            .try_into()
+            .map_err(|_| StorageError::InvalidIndexerState(format!("{field} is not 32 bytes")))
+    };
+    let to_u8 = |index: usize, field: &str| -> Result<u8, StorageError> {
+        parse_u64(row.get(index), field)?
+            .try_into()
+            .map_err(|_| StorageError::InvalidIndexerState(format!("{field} is not a u8")))
+    };
+    let event_index = parse_u64(row.get(2), "adjustment event_index")?
+        .try_into()
+        .map_err(|_| {
+            StorageError::InvalidIndexerState("adjustment event_index is not u16".into())
+        })?;
+    Ok(IndexedSettlementAdjustment {
+        signature: row.get(0),
+        slot: parse_u64(row.get(1), "adjustment slot")?,
+        event_index,
+        adjustment: to_digest(3, "adjustment PDA")?,
+        original_receipt: to_digest(4, "adjustment receipt")?,
+        merchant: to_digest(5, "adjustment merchant")?,
+        mint: to_digest(6, "adjustment mint")?,
+        nonce: parse_u64(row.get(7), "adjustment nonce")?,
+        kind: to_u8(8, "adjustment kind")?,
+        gross_sign: to_u8(9, "gross sign")?,
+        gross_magnitude: parse_u64(row.get(10), "gross magnitude")?,
+        tax_sign: to_u8(11, "tax sign")?,
+        tax_magnitude: parse_u64(row.get(12), "tax magnitude")?,
+        net_sign: to_u8(13, "net sign")?,
+        net_magnitude: parse_u64(row.get(14), "net magnitude")?,
+        adjustment_digest: to_digest(15, "adjustment digest")?,
+        evidence_digest: to_digest(16, "adjustment evidence digest")?,
+        approver: to_digest(17, "adjustment approver")?,
     })
 }
 
@@ -8189,6 +9166,17 @@ mod tests {
         assert!(is_retryable_quote_sql_state("40P01"));
         assert!(!is_retryable_quote_sql_state("57014"));
         assert!(!is_retryable_quote_sql_state("23505"));
+    }
+
+    #[test]
+    fn evidence_lookup_retries_only_transient_storage_failures() {
+        assert_eq!(MAX_EVIDENCE_LOOKUP_ATTEMPTS, 3);
+        assert!(is_retryable_evidence_lookup_error(&StorageError::Pool(
+            "connection pool exhausted".to_string()
+        )));
+        assert!(!is_retryable_evidence_lookup_error(
+            &StorageError::QuoteNotFound
+        ));
     }
 
     fn rule_set() -> RuleSet {

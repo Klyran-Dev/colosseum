@@ -6,9 +6,30 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 output_dir="${repo_root}/target/deploy"
 mkdir -p "$output_dir"
 
+run_sbf_build_and_reject_stack_overflow() {
+    sbf_build_log="$(mktemp)"
+    if "$@" >"$sbf_build_log" 2>&1; then
+        sbf_build_status=0
+    else
+        sbf_build_status=$?
+    fi
+    cat "$sbf_build_log"
+    if [ "$sbf_build_status" -ne 0 ]; then
+        rm -f "$sbf_build_log"
+        return "$sbf_build_status"
+    fi
+    if grep -Eq 'overwrites values in the frame|overflows the maximum allowed frame space|exceeds the maximum stack offset' "$sbf_build_log"; then
+        echo "SBF build emitted a stack-frame safety diagnostic; refusing the artifact" >&2
+        rm -f "$sbf_build_log"
+        return 1
+    fi
+    rm -f "$sbf_build_log"
+}
+
 if command -v cargo-build-sbf >/dev/null 2>&1 \
     && [ "${SOLANA_USE_DOCKER_BUILDER:-false}" != "true" ]; then
-    cargo-build-sbf --sbf-out-dir "$output_dir" --manifest-path "$repo_root/programs/settlement/Cargo.toml" -- --locked
+    run_sbf_build_and_reject_stack_overflow \
+        cargo-build-sbf --sbf-out-dir "$output_dir" --manifest-path "$repo_root/programs/settlement/Cargo.toml" -- --locked
     exit 0
 fi
 
@@ -74,6 +95,7 @@ if [ ! -x "$platform_tools_dir/rust/bin/rustc" ] || [ ! -x "$platform_tools_dir/
     exit 1
 fi
 
+run_sbf_build_and_reject_stack_overflow \
 docker run --rm --platform linux/amd64 \
     --env HOME=/home/sbf-builder \
     --env CARGO_HOME=/tmp/cargo-home \

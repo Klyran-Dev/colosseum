@@ -8,12 +8,15 @@ ON CONFLICT (stream_key) DO NOTHING;
 
 INSERT INTO indexed_receipts (
     stream_key, signature, slot, gross_atomic, tax_atomic, net_atomic,
-    evidence_digest
+    evidence_digest, receipt, payer, merchant, mint, nonce, policy_digest
 )
 VALUES (
     'verification/vault-reconciliation',
     'vault-reconciliation-synthetic-receipt',
-    10, 250, 100, 150, decode(repeat('11', 32), 'hex')
+    10, 250, 100, 150, decode(repeat('11', 32), 'hex'),
+    decode(repeat('21', 32), 'hex'), decode(repeat('22', 32), 'hex'),
+    decode(repeat('23', 32), 'hex'), decode(repeat('24', 32), 'hex'),
+    10, decode(repeat('25', 32), 'hex')
 )
 ON CONFLICT (stream_key, signature) DO NOTHING;
 

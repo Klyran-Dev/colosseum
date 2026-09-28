@@ -1,0 +1,18 @@
+FROM node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6
+
+WORKDIR /workspace
+ENV COREPACK_HOME=/opt/corepack
+ENV HOME=/tmp/conformance-home
+
+RUN mkdir -p /opt/corepack /tmp/conformance-home \
+  && chown -R node:node /tmp/conformance-home
+
+RUN corepack enable && corepack prepare pnpm@12.3.4 --activate
+
+COPY --chown=node:node apps/web/package.json apps/web/pnpm-lock.yaml apps/web/pnpm-workspace.yaml ./apps/web/
+RUN pnpm --dir apps/web install --frozen-lockfile
+
+COPY --chown=node:node apps/web ./apps/web
+
+USER node
+ENTRYPOINT ["/workspace/apps/web/node_modules/.bin/vitest", "run", "src/solana.localnet.test.ts"]

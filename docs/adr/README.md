@@ -166,3 +166,8 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0163: Pinned toolchain compatibility matrix](0163-pinned-toolchain-compatibility-matrix.md)
 - [ADR-0164: Canonical settlement-receipt identity projection](0164-canonical-settlement-receipt-identity-projection.md)
 - [ADR-0165: Server-owned settlement-intent receipt binding](0165-server-owned-settlement-receipt-binding.md)
+- [ADR-0166: Wallet-bound adjustment authorities and durable compiler intents](0166-wallet-bound-adjustment-authorities.md)
+- [ADR-0167: Finalized server-owned adjustment-registry verification](0167-finalized-adjustment-registry-verification.md)
+- [ADR-0168: Dockerized Solana conformance runner](0168-dockerized-solana-conformance-runner.md)
+- [ADR-0169: SBF stack-frame safety boundary](0169-sbf-stack-frame-safety.md)
+- [ADR-0170: Wallet-bound adjustment submission and finalized recording evidence](0170-adjustment-submission-and-finalized-recording.md)

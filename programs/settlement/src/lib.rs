@@ -1458,23 +1458,23 @@ pub struct CreateAdjustmentRefundClaim<'info> {
     pub proposer: Signer<'info>,
     pub refund_funder: Signer<'info>,
     pub merchant: SystemAccount<'info>,
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
     pub token_program: Interface<'info, TokenInterface>,
     #[account(
         seeds = [b"protocol-config"],
         bump = protocol_config.bump,
     )]
-    pub protocol_config: Account<'info, ProtocolConfig>,
+    pub protocol_config: Box<Account<'info, ProtocolConfig>>,
     #[account(
         seeds = [b"adjustment-registry", merchant.key().as_ref(), mint.key().as_ref()],
         bump = registry.bump,
     )]
-    pub registry: Account<'info, SettlementAdjustmentRegistry>,
+    pub registry: Box<Account<'info, SettlementAdjustmentRegistry>>,
     #[account(
         seeds = [b"adjustment", original_receipt.key().as_ref(), &adjustment.nonce.to_le_bytes()],
         bump = adjustment.bump,
     )]
-    pub adjustment: Account<'info, SettlementAdjustment>,
+    pub adjustment: Box<Account<'info, SettlementAdjustment>>,
     #[account(
         seeds = [
             b"receipt",
@@ -1484,17 +1484,17 @@ pub struct CreateAdjustmentRefundClaim<'info> {
         ],
         bump = original_receipt.bump,
     )]
-    pub original_receipt: Account<'info, SettlementReceipt>,
+    pub original_receipt: Box<Account<'info, SettlementReceipt>>,
     #[account(mut)]
-    pub tax_vault: InterfaceAccount<'info, TokenAccount>,
+    pub tax_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     /// CHECK: constrained by the deterministic vault-authority PDA and only used as a token signer.
     #[account(
         seeds = [b"vault-authority", merchant.key().as_ref(), mint.key().as_ref()],
         bump,
     )]
     pub vault_authority: UncheckedAccount<'info>,
-    pub net_source: InterfaceAccount<'info, TokenAccount>,
-    pub refund_destination: InterfaceAccount<'info, TokenAccount>,
+    pub net_source: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub refund_destination: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(
         init,
         payer = proposer,
@@ -1502,7 +1502,7 @@ pub struct CreateAdjustmentRefundClaim<'info> {
         seeds = [b"refund-claim", adjustment.key().as_ref(), &claim_nonce.to_le_bytes()],
         bump,
     )]
-    pub claim: Account<'info, AdjustmentRefundClaim>,
+    pub claim: Box<Account<'info, AdjustmentRefundClaim>>,
     pub system_program: Program<'info, System>,
 }
 
@@ -1512,23 +1512,23 @@ pub struct ExecuteAdjustmentRefund<'info> {
     pub approver: Signer<'info>,
     pub refund_funder: Signer<'info>,
     pub merchant: SystemAccount<'info>,
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
     pub token_program: Interface<'info, TokenInterface>,
     #[account(
         seeds = [b"protocol-config"],
         bump = protocol_config.bump,
     )]
-    pub protocol_config: Account<'info, ProtocolConfig>,
+    pub protocol_config: Box<Account<'info, ProtocolConfig>>,
     #[account(
         seeds = [b"adjustment-registry", merchant.key().as_ref(), mint.key().as_ref()],
         bump = registry.bump,
     )]
-    pub registry: Account<'info, SettlementAdjustmentRegistry>,
+    pub registry: Box<Account<'info, SettlementAdjustmentRegistry>>,
     #[account(
         seeds = [b"adjustment", original_receipt.key().as_ref(), &adjustment.nonce.to_le_bytes()],
         bump = adjustment.bump,
     )]
-    pub adjustment: Account<'info, SettlementAdjustment>,
+    pub adjustment: Box<Account<'info, SettlementAdjustment>>,
     #[account(
         seeds = [
             b"receipt",
@@ -1538,9 +1538,9 @@ pub struct ExecuteAdjustmentRefund<'info> {
         ],
         bump = original_receipt.bump,
     )]
-    pub original_receipt: Account<'info, SettlementReceipt>,
+    pub original_receipt: Box<Account<'info, SettlementReceipt>>,
     #[account(mut)]
-    pub tax_vault: InterfaceAccount<'info, TokenAccount>,
+    pub tax_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     /// CHECK: constrained by the deterministic vault-authority PDA and only used as a token signer.
     #[account(
         seeds = [b"vault-authority", merchant.key().as_ref(), mint.key().as_ref()],
@@ -1548,15 +1548,15 @@ pub struct ExecuteAdjustmentRefund<'info> {
     )]
     pub vault_authority: UncheckedAccount<'info>,
     #[account(mut)]
-    pub net_source: InterfaceAccount<'info, TokenAccount>,
+    pub net_source: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut)]
-    pub refund_destination: InterfaceAccount<'info, TokenAccount>,
+    pub refund_destination: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(
         mut,
         seeds = [b"refund-claim", adjustment.key().as_ref(), &claim_nonce.to_le_bytes()],
         bump = claim.bump,
     )]
-    pub claim: Account<'info, AdjustmentRefundClaim>,
+    pub claim: Box<Account<'info, AdjustmentRefundClaim>>,
 }
 
 #[derive(Accounts)]

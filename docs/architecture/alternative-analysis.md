@@ -261,6 +261,12 @@ This document records the comparison baseline required before implementation. It
 | **Pinned external validator plus TypeScript transaction client** | Exercises the deployed SBF artifact, exact client envelope, legacy SPL, Token-2022, PDA initialization, and RPC confirmation | Slower and requires a pinned SBF build with external tool downloads | **Selected** for localnet release evidence |
 | Mocked token programs or fabricated account data | Easy to run | Can produce false compatibility claims | Rejected |
 
+The conformance client is run in the dedicated pinned Docker image defined by
+ADR-0168. Host-installed Node.js and pnpm were rejected because they violate
+the clean-checkout Docker contract and can diverge from the locked CI runtime.
+The Playwright browser image was also rejected because chain conformance does
+not need a browser and should keep its runtime surface minimal.
+
 ### Refund-proof operational observability
 
 | Alternative | Strengths | Risks / costs | Decision |
@@ -919,6 +925,8 @@ deployment approvals, provider health, or live staging evidence.
 | --- | --- | --- | --- |
 | Original receipt binding | Tenant-scoped finalized settlement-intent join to the canonical receipt projection | Caller-supplied receipt; mutable adjustment copy; signature-only join | Preserves server ownership, finalized-slot binding, asset binding, duplicate-stream tolerance, and fail-closed conflict handling |
 
+| Adjustment authority binding | Wallet-proof-backed subject-to-Solana-key binding plus durable compiler intent | OIDC subject as key; caller-supplied keys; server-held signer | Provides cryptographic actor binding, non-custodial signing, rotation evidence, and deterministic retry convergence |
+
 ### Canonical settlement-receipt identity projection
 
 | Alternative | Strengths | Risks / costs | Decision |
@@ -980,6 +988,25 @@ avoid introducing a second financial implementation.
 | Transfer directly from the tax vault or original payer source | Appears to complete refunds quickly | No universal lawful funder/beneficiary; unsafe across tax, chargeback, and remittance semantics | Rejected |
 | Off-chain `posted` state only | Simple API and database implementation | No independently verifiable finalized chain evidence and easy to overstate payment | Rejected |
 | **Separate bounded `record_adjustment` PDA with active merchant/mint authority registry and no token CPI** | Immutable chain evidence, deterministic replay identity, fixed account/compute shape, and fail-closed authority boundary | Does not itself pay a refund; requires registry governance and a later movement contract | **Selected in ADR-0153** |
+
+### Finalized adjustment-registry verification
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Trust the database route and wallet bindings | No extra RPC call | Does not prove the active on-chain authority or program ownership | Rejected |
+| Accept a registry account from the browser | Flexible integration | Allows PDA/account substitution | Rejected |
+| Read at processed or confirmed commitment | Lower latency | Can admit stale or reorged authority state | Rejected |
+| Read once and cache indefinitely | Low steady-state RPC cost | Hides registry rotation and makes cache an authority | Rejected |
+| **Derive the PDA, read finalized account data, require provider agreement, and snapshot evidence in the intent** | Chain-bound, replayable, provider-aware, and fail closed | Adds bounded RPC admission and evidence columns | **Selected in ADR-0167** |
+
+### Adjustment submission and finalized recording
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Mutate the immutable evidence intent with transport status | Fewer tables | Blends immutable compiler evidence with retryable transport state | Rejected |
+| Reuse generic settlement intents | Existing lifecycle and routes | Settlement-specific message verification cannot prove adjustment accounts or event identity | Rejected |
+| Trust client digest/signature or RPC acknowledgement | Lowest implementation cost | Does not prove message binding, finality, or emitted adjustment evidence | Rejected |
+| **Separate wallet-bound chain-intent lifecycle plus typed finalized event projection** | Immutable audit boundary, bounded retries, exact message proof, and independent finalized evidence | Adds migration, decoder, and reconciliation work | **Selected in ADR-0170** |
 
 ### Governed adjustment refund movement
 

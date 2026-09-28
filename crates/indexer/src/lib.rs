@@ -31,6 +31,8 @@ pub const SPLIT_SETTLEMENT_EVENT_DISCRIMINATOR: [u8; 8] = [50, 129, 102, 109, 24
 pub const PROTOCOL_PAUSE_EVENT_DISCRIMINATOR: [u8; 8] = [67, 33, 235, 73, 71, 124, 172, 110];
 pub const ADJUSTMENT_REFUND_EXECUTED_EVENT_DISCRIMINATOR: [u8; 8] =
     [112, 130, 243, 73, 61, 70, 35, 70];
+pub const SETTLEMENT_ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR: [u8; 8] =
+    [208, 86, 69, 183, 44, 203, 236, 75];
 pub const MAX_ROUTE_RPC_RESULT_BYTES: usize = 256 * 1024;
 pub const MAX_ROUTE_ACCOUNT_DATA_BYTES: usize = 256;
 pub const MAX_REFUND_CLAIM_ACCOUNT_DATA_BYTES: usize = 512;
@@ -42,6 +44,7 @@ pub struct FinalizedPage {
     pub observed_finalized_slot: u64,
     pub receipts: Vec<IndexedReceipt>,
     pub split_settlements: Vec<IndexedSplitSettlement>,
+    pub adjustment_records: Vec<IndexedSettlementAdjustment>,
     pub refund_executions: Vec<IndexedAdjustmentRefundExecution>,
     pub raw_evidence: Vec<RawChainEvidence>,
     pub raw_transactions: Vec<RawChainTransaction>,
@@ -98,6 +101,14 @@ impl FinalizedPage {
                 return Err(IndexerError::ConflictingEvidence);
             }
         }
+        let mut adjustment_record_keys =
+            std::collections::HashSet::with_capacity(self.adjustment_records.len());
+        for record in &self.adjustment_records {
+            record.validate(self.range, self.observed_finalized_slot)?;
+            if !adjustment_record_keys.insert((&record.signature, record.event_index)) {
+                return Err(IndexerError::ConflictingEvidence);
+            }
+        }
         let mut evidence_keys = std::collections::HashSet::with_capacity(self.raw_evidence.len());
         for evidence in &self.raw_evidence {
             evidence.validate(self.range, self.observed_finalized_slot)?;
@@ -114,6 +125,18 @@ impl FinalizedPage {
             };
             if evidence.event_discriminator != ADJUSTMENT_REFUND_EXECUTED_EVENT_DISCRIMINATOR
                 || evidence.evidence_digest != execution.evidence_digest
+            {
+                return Err(IndexerError::ConflictingEvidence);
+            }
+        }
+        for record in &self.adjustment_records {
+            let Some(evidence) = self.raw_evidence.iter().find(|evidence| {
+                evidence.signature == record.signature && evidence.event_index == record.event_index
+            }) else {
+                return Err(IndexerError::InvalidEvidence);
+            };
+            if evidence.event_discriminator != SETTLEMENT_ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR
+                || evidence.evidence_digest != record.evidence_digest
             {
                 return Err(IndexerError::ConflictingEvidence);
             }
@@ -2983,6 +3006,7 @@ pub trait ReceiptDecoder: Send + Sync {
 pub struct DecodedBlock {
     pub receipts: Vec<IndexedReceipt>,
     pub split_settlements: Vec<IndexedSplitSettlement>,
+    pub adjustment_records: Vec<IndexedSettlementAdjustment>,
     pub refund_executions: Vec<IndexedAdjustmentRefundExecution>,
     pub raw_evidence: Vec<RawChainEvidence>,
     pub raw_transactions: Vec<RawChainTransaction>,
@@ -3288,6 +3312,174 @@ impl SplitSettlementExecutedEvent {
             split_plan_digest,
             policy_digest,
         })
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct IndexedSettlementAdjustment {
+    pub signature: String,
+    pub slot: u64,
+    pub event_index: u16,
+    pub adjustment: [u8; 32],
+    pub original_receipt: [u8; 32],
+    pub merchant: [u8; 32],
+    pub mint: [u8; 32],
+    pub nonce: u64,
+    pub kind: u8,
+    pub gross_sign: u8,
+    pub gross_magnitude: u64,
+    pub tax_sign: u8,
+    pub tax_magnitude: u64,
+    pub net_sign: u8,
+    pub net_magnitude: u64,
+    pub adjustment_digest: [u8; 32],
+    pub evidence_digest: [u8; 32],
+    pub approver: [u8; 32],
+}
+
+impl IndexedSettlementAdjustment {
+    fn validate_identity(&self) -> Result<(), IndexerError> {
+        if self.signature.trim().is_empty()
+            || self.signature.len() > 128
+            || self.adjustment == [0; 32]
+            || self.original_receipt == [0; 32]
+            || self.merchant == [0; 32]
+            || self.mint == [0; 32]
+            || self.nonce == 0
+            || !(1..=5).contains(&self.kind)
+            || self.adjustment_digest == [0; 32]
+            || self.evidence_digest == [0; 32]
+            || self.approver == [0; 32]
+        {
+            return Err(IndexerError::InvalidSettlementAdjustment);
+        }
+        for (sign, magnitude) in [
+            (self.gross_sign, self.gross_magnitude),
+            (self.tax_sign, self.tax_magnitude),
+            (self.net_sign, self.net_magnitude),
+        ] {
+            if sign > 1 || (magnitude == 0 && sign == 1) {
+                return Err(IndexerError::InvalidSettlementAdjustment);
+            }
+        }
+        if self.gross_magnitude == 0 && self.tax_magnitude == 0 && self.net_magnitude == 0 {
+            return Err(IndexerError::InvalidSettlementAdjustment);
+        }
+        if matches!(self.kind, 1 | 2 | 4)
+            && (self.gross_sign != 1
+                || (self.tax_magnitude != 0 && self.tax_sign != 1)
+                || (self.net_magnitude != 0 && self.net_sign != 1))
+        {
+            return Err(IndexerError::InvalidSettlementAdjustment);
+        }
+        let (result_sign, result_magnitude) = if self.tax_sign == self.net_sign {
+            (
+                self.tax_sign,
+                self.tax_magnitude
+                    .checked_add(self.net_magnitude)
+                    .ok_or(IndexerError::InvalidSettlementAdjustment)?,
+            )
+        } else if self.tax_magnitude >= self.net_magnitude {
+            (self.tax_sign, self.tax_magnitude - self.net_magnitude)
+        } else {
+            (self.net_sign, self.net_magnitude - self.tax_magnitude)
+        };
+        if result_sign != self.gross_sign || result_magnitude != self.gross_magnitude {
+            return Err(IndexerError::InvalidSettlementAdjustment);
+        }
+        Ok(())
+    }
+
+    fn validate(&self, range: ScanRange, observed_finalized_slot: u64) -> Result<(), IndexerError> {
+        self.validate_identity()?;
+        if self.slot < range.start_slot
+            || self.slot > range.end_slot
+            || self.slot > observed_finalized_slot
+        {
+            return Err(IndexerError::SettlementAdjustmentOutsideRange);
+        }
+        Ok(())
+    }
+}
+
+struct SettlementAdjustmentRecordedEvent {
+    adjustment: [u8; 32],
+    original_receipt: [u8; 32],
+    merchant: [u8; 32],
+    mint: [u8; 32],
+    nonce: u64,
+    kind: u8,
+    gross_sign: u8,
+    gross_magnitude: u64,
+    tax_sign: u8,
+    tax_magnitude: u64,
+    net_sign: u8,
+    net_magnitude: u64,
+    adjustment_digest: [u8; 32],
+    evidence_digest: [u8; 32],
+    approver: [u8; 32],
+}
+
+impl SettlementAdjustmentRecordedEvent {
+    fn decode(data: &[u8]) -> Result<Self, ProviderError> {
+        const EVENT_BYTES: usize = 8 + (32 * 5) + 8 + (3 * 9) + (32 * 3);
+        if data.len() != EVENT_BYTES
+            || data[..8] != SETTLEMENT_ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR
+        {
+            return Err(ProviderError::InvalidResponse(
+                "settlement adjustment event has an unexpected discriminator or length".to_string(),
+            ));
+        }
+        let mut offset = 8;
+        let event = Self {
+            adjustment: read_array::<32>(data, &mut offset)?,
+            original_receipt: read_array::<32>(data, &mut offset)?,
+            merchant: read_array::<32>(data, &mut offset)?,
+            mint: read_array::<32>(data, &mut offset)?,
+            nonce: read_u64_le(data, &mut offset)?,
+            kind: read_u8(data, &mut offset)?,
+            gross_sign: read_u8(data, &mut offset)?,
+            gross_magnitude: read_u64_le(data, &mut offset)?,
+            tax_sign: read_u8(data, &mut offset)?,
+            tax_magnitude: read_u64_le(data, &mut offset)?,
+            net_sign: read_u8(data, &mut offset)?,
+            net_magnitude: read_u64_le(data, &mut offset)?,
+            adjustment_digest: read_array::<32>(data, &mut offset)?,
+            evidence_digest: read_array::<32>(data, &mut offset)?,
+            approver: read_array::<32>(data, &mut offset)?,
+        };
+        if offset != data.len() {
+            return Err(ProviderError::InvalidResponse(
+                "settlement adjustment event has trailing bytes".to_string(),
+            ));
+        }
+        let indexed = IndexedSettlementAdjustment {
+            signature: "adjustment-event-validation".to_string(),
+            slot: 0,
+            event_index: 0,
+            adjustment: event.adjustment,
+            original_receipt: event.original_receipt,
+            merchant: event.merchant,
+            mint: event.mint,
+            nonce: event.nonce,
+            kind: event.kind,
+            gross_sign: event.gross_sign,
+            gross_magnitude: event.gross_magnitude,
+            tax_sign: event.tax_sign,
+            tax_magnitude: event.tax_magnitude,
+            net_sign: event.net_sign,
+            net_magnitude: event.net_magnitude,
+            adjustment_digest: event.adjustment_digest,
+            evidence_digest: event.evidence_digest,
+            approver: event.approver,
+        };
+        indexed.validate_identity().map_err(|_| {
+            ProviderError::InvalidResponse(
+                "settlement adjustment event violates identity or conservation invariants"
+                    .to_string(),
+            )
+        })?;
+        Ok(event)
     }
 }
 
@@ -3688,6 +3880,7 @@ impl ReceiptDecoder for SettlementExecutedDecoder {
                 })?;
                 if discriminator != SETTLEMENT_EVENT_DISCRIMINATOR
                     && discriminator != SPLIT_SETTLEMENT_EVENT_DISCRIMINATOR
+                    && discriminator != SETTLEMENT_ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR
                     && discriminator != ADJUSTMENT_REFUND_EXECUTED_EVENT_DISCRIMINATOR
                     && discriminator != PROTOCOL_PAUSE_EVENT_DISCRIMINATOR
                 {
@@ -3695,6 +3888,7 @@ impl ReceiptDecoder for SettlementExecutedDecoder {
                 }
                 let is_movement_event = discriminator == SETTLEMENT_EVENT_DISCRIMINATOR
                     || discriminator == SPLIT_SETTLEMENT_EVENT_DISCRIMINATOR
+                    || discriminator == SETTLEMENT_ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR
                     || discriminator == ADJUSTMENT_REFUND_EXECUTED_EVENT_DISCRIMINATOR;
                 if saw_movement_event && is_movement_event {
                     return Err(ProviderError::InvalidResponse(
@@ -3726,6 +3920,45 @@ impl ReceiptDecoder for SettlementExecutedDecoder {
                 saw_movement_event = true;
                 let evidence_digest =
                     settlement_evidence_digest(signature, slot, event_index, &event_data);
+                if discriminator == SETTLEMENT_ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR {
+                    let event = SettlementAdjustmentRecordedEvent::decode(&event_data)?;
+                    decoded
+                        .adjustment_records
+                        .push(IndexedSettlementAdjustment {
+                            signature: signature.to_string(),
+                            slot,
+                            event_index,
+                            adjustment: event.adjustment,
+                            original_receipt: event.original_receipt,
+                            merchant: event.merchant,
+                            mint: event.mint,
+                            nonce: event.nonce,
+                            kind: event.kind,
+                            gross_sign: event.gross_sign,
+                            gross_magnitude: event.gross_magnitude,
+                            tax_sign: event.tax_sign,
+                            tax_magnitude: event.tax_magnitude,
+                            net_sign: event.net_sign,
+                            net_magnitude: event.net_magnitude,
+                            adjustment_digest: event.adjustment_digest,
+                            evidence_digest: event.evidence_digest,
+                            approver: event.approver,
+                        });
+                    decoded.raw_evidence.push(RawChainEvidence {
+                        signature: signature.to_string(),
+                        slot,
+                        event_index,
+                        event_discriminator: discriminator,
+                        event_data,
+                        evidence_digest,
+                    });
+                    event_index = event_index.checked_add(1).ok_or_else(|| {
+                        ProviderError::InvalidResponse(
+                            "too many supported events in one transaction".to_string(),
+                        )
+                    })?;
+                    continue;
+                }
                 if discriminator == ADJUSTMENT_REFUND_EXECUTED_EVENT_DISCRIMINATOR {
                     let event = AdjustmentRefundExecutedEvent::decode(&event_data)?;
                     decoded
@@ -3914,6 +4147,16 @@ fn read_u64_le(data: &[u8], offset: &mut usize) -> Result<u64, ProviderError> {
     Ok(u64::from_le_bytes(read_array::<8>(data, offset)?))
 }
 
+fn read_u8(data: &[u8], offset: &mut usize) -> Result<u8, ProviderError> {
+    let value = *data
+        .get(*offset)
+        .ok_or_else(|| ProviderError::InvalidResponse("event payload is truncated".to_string()))?;
+    *offset = (*offset)
+        .checked_add(1)
+        .ok_or_else(|| ProviderError::InvalidResponse("event offset overflowed".to_string()))?;
+    Ok(value)
+}
+
 pub struct SolanaRpcPageSource<T, D> {
     transport: T,
     decoder: D,
@@ -3958,6 +4201,7 @@ where
         })?;
         let mut receipts = Vec::new();
         let mut split_settlements = Vec::new();
+        let mut adjustment_records = Vec::new();
         let mut refund_executions = Vec::new();
         let mut raw_evidence = Vec::new();
         let mut raw_transactions = Vec::new();
@@ -3995,6 +4239,7 @@ where
             let decoded = self.decoder.decode_block(slot, block).await?;
             receipts.extend(decoded.receipts);
             split_settlements.extend(decoded.split_settlements);
+            adjustment_records.extend(decoded.adjustment_records);
             refund_executions.extend(decoded.refund_executions);
             raw_evidence.extend(decoded.raw_evidence);
             raw_transactions.extend(decoded.raw_transactions);
@@ -4005,6 +4250,7 @@ where
             observed_finalized_slot: finalized_slot,
             receipts,
             split_settlements,
+            adjustment_records,
             refund_executions,
             raw_evidence,
             raw_transactions,
@@ -4415,6 +4661,18 @@ pub fn merge_adjustment_refund_execution(
     }
 }
 
+pub fn merge_settlement_adjustment(
+    existing: Option<IndexedSettlementAdjustment>,
+    incoming: IndexedSettlementAdjustment,
+) -> Result<MergeOutcome, IndexerError> {
+    incoming.validate_identity()?;
+    match existing {
+        None => Ok(MergeOutcome::Inserted),
+        Some(existing) if existing == incoming => Ok(MergeOutcome::Duplicate),
+        Some(_) => Err(IndexerError::ConflictingEvidence),
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BalanceExpectation {
     pub gross_atomic: u64,
@@ -4567,6 +4825,10 @@ pub enum IndexerError {
     InvalidAdjustmentRefundExecution,
     #[error("indexed adjustment refund execution lies outside the scanned range")]
     AdjustmentRefundExecutionOutsideRange,
+    #[error("indexed settlement adjustment is invalid")]
+    InvalidSettlementAdjustment,
+    #[error("indexed settlement adjustment lies outside the scanned range")]
+    SettlementAdjustmentOutsideRange,
     #[error("raw chain evidence is invalid")]
     InvalidEvidence,
     #[error("raw chain evidence lies outside the scanned range")]
@@ -5974,6 +6236,7 @@ mod tests {
                 observed_finalized_slot: 109,
                 receipts: Vec::new(),
                 split_settlements: Vec::new(),
+                adjustment_records: Vec::new(),
                 refund_executions: Vec::new(),
                 raw_evidence: Vec::new(),
                 raw_transactions: Vec::new(),
@@ -5999,6 +6262,7 @@ mod tests {
                 observed_finalized_slot: 120,
                 receipts: Vec::new(),
                 split_settlements: Vec::new(),
+                adjustment_records: Vec::new(),
                 refund_executions: Vec::new(),
                 raw_evidence: Vec::new(),
                 raw_transactions: Vec::new(),
@@ -6184,6 +6448,7 @@ mod tests {
                 observed_finalized_slot: 120,
                 receipts: Vec::new(),
                 split_settlements: Vec::new(),
+                adjustment_records: Vec::new(),
                 refund_executions: Vec::new(),
                 raw_evidence: Vec::new(),
                 raw_transactions: Vec::new(),
@@ -6213,6 +6478,7 @@ mod tests {
             observed_finalized_slot: 120,
             receipts: Vec::new(),
             split_settlements: Vec::new(),
+            adjustment_records: Vec::new(),
             refund_executions: Vec::new(),
             raw_evidence: Vec::new(),
             raw_transactions: Vec::new(),

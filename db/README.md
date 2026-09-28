@@ -232,8 +232,14 @@ fail closed on incomplete legacy identity rather than accepting caller data.
 
 Migration `0035` adds partial/indexed lookup paths for the tenant-scoped,
 finalized settlement-intent to receipt-projection binding described by
-ADR-0165. It adds no mutable receipt authority and is safe to apply before the
-future adjustment compiler is exposed.
+ADR-0165. It adds no mutable receipt authority; the adjustment compiler now
+consumes this binding together with ADR-0167 registry evidence.
+
+Migration `0036` adds one-time adjustment-authority challenges, immutable
+wallet-proof bindings, a bounded adjustment nonce sequence, and durable
+record-adjustment evidence intents. Each intent snapshots the derived
+finalized registry address, slot, commitment, and account digest. The intent is
+an unsigned compiler artifact; it is not a chain submission or funds ledger.
 
 Migration requirements:
 

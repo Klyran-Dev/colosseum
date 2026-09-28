@@ -344,6 +344,24 @@ services:
           cpus: "4"
           memory: 4G
 
+  solana-conformance:
+    profiles: ["solana"]
+    build:
+      context: .
+      dockerfile: ops/docker/Dockerfile.solana-conformance
+    environment:
+      SOLANA_LOCALNET_TESTS: "true"
+      SOLANA_RPC_URL: http://validator:8899
+      HOME: /tmp/conformance-home
+    depends_on:
+      validator:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+
   rpc-fixture:
     profiles: ["settlement-submit-drill"]
     build:
@@ -352,6 +370,11 @@ services:
     environment:
       RPC_FIXTURE_BIND_ADDRESS: 0.0.0.0:8899
       RPC_FIXTURE_SEND_DELAY_MS: ${RPC_FIXTURE_SEND_DELAY_MS:-75}
+      RPC_FIXTURE_REGISTRY_MERCHANT: ${RPC_FIXTURE_REGISTRY_MERCHANT:-}
+      RPC_FIXTURE_REGISTRY_MINT: ${RPC_FIXTURE_REGISTRY_MINT:-}
+      RPC_FIXTURE_REGISTRY_PROPOSER: ${RPC_FIXTURE_REGISTRY_PROPOSER:-}
+      RPC_FIXTURE_REGISTRY_APPROVER: ${RPC_FIXTURE_REGISTRY_APPROVER:-}
+      RPC_FIXTURE_REGISTRY_SLOT: ${RPC_FIXTURE_REGISTRY_SLOT:-777}
     ports:
       - "${RPC_FIXTURE_PORT:-28899}:8899"
     cap_drop: ["ALL"]

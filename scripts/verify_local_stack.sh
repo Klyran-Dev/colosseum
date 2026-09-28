@@ -13,6 +13,11 @@ export API_SIMULATION_MODE="false"
 export API_ENV="local"
 export API_ALLOW_INSECURE_LOCAL_RPC="true"
 export API_SETTLEMENT_RPC_ENDPOINTS="http://rpc-fixture:8899"
+export RPC_FIXTURE_REGISTRY_MERCHANT="11111111111111111111111111111114"
+export RPC_FIXTURE_REGISTRY_MINT="SysvarC1ock11111111111111111111111111111111"
+export RPC_FIXTURE_REGISTRY_PROPOSER="AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9"
+export RPC_FIXTURE_REGISTRY_APPROVER="9hSR6S7WPtxmTojgo6GG3k4yDPecgJY292j7xrsUGWBu"
+export RPC_FIXTURE_REGISTRY_SLOT="777"
 export RUST_LOG="info"
 integration_dir="$(mktemp -d)"
 openssl genpkey -algorithm ED25519 -out "$integration_dir/signing-key.pem" >/dev/null 2>&1
@@ -1469,16 +1474,57 @@ if [ "$governance_event_count" != "6" ]; then
     exit 1
 fi
 
-# Exercise the durable settlement-adjustment proposal boundary. This records
-# an immutable signed refund delta and governance evidence; it deliberately
-# does not submit a token transaction or mark the refund as paid.
-adjustment_proposer_authorization="$(make_authorization adjustment-proposer 'tax:adjustment:propose tax:adjustment:read' '["settlement_adjustment_proposer"]')"
-adjustment_approver_authorization="$(make_authorization adjustment-approver 'tax:adjustment:approve tax:adjustment:read' '["settlement_adjustment_approver"]')"
+# Exercise the durable settlement-adjustment proposal and evidence compiler
+# boundary. This records an immutable signed refund delta and server-verified
+# finalized registry evidence; it deliberately does not submit a token
+# transaction or mark the refund as paid.
+adjustment_proposer_authorization="$(make_authorization adjustment-proposer 'tax:adjustment:propose tax:adjustment:read tax:adjustment:authority:bind' '["settlement_adjustment_proposer"]')"
+adjustment_approver_authorization="$(make_authorization adjustment-approver 'tax:adjustment:approve tax:adjustment:read tax:adjustment:authority:bind tax:adjustment:compile' '["settlement_adjustment_approver"]')"
 adjustment_reviewer_authorization="$(make_authorization adjustment-reviewer 'tax:adjustment:reject tax:adjustment:read' '["settlement_adjustment_reviewer"]')"
 adjustment_original_settlement_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d13"
-adjustment_source_calculation_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d14"
-adjustment_asset_id='[4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4]'
+adjustment_source_calculation_id="$calculation_id"
+adjustment_asset_id='[6,167,213,23,24,199,116,201,40,86,99,152,105,29,94,182,139,94,184,163,155,75,109,92,115,85,91,33,0,0,0,0]'
 adjustment_evidence_digest='[5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5]'
+authority_binding_output=$(API_BASE="$base_url" \
+    PROPOSER_AUTHORIZATION="$adjustment_proposer_authorization" \
+    APPROVER_AUTHORIZATION="$adjustment_approver_authorization" \
+    pnpm --dir apps/web exec node scripts/adjustment_authority_integration.mjs)
+if ! printf '%s' "$authority_binding_output" | grep -q '"status":"wallet_proofs_bound"'; then
+    echo "adjustment wallet-proof binding integration failed: $authority_binding_output" >&2
+    exit 1
+fi
+
+# Bind the server-owned finalized receipt projection to the approved
+# adjustment's original settlement intent. The bytes below are the canonical
+# decoded values of the synthetic local route and are intentionally isolated
+# from production migrations.
+docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -v ON_ERROR_STOP=1 -Atc \
+    "INSERT INTO chain_checkpoints (stream_key, next_slot, finalized_slot, generation)
+     VALUES ('integration/settlement-adjustment', 78, 77, 0)
+     ON CONFLICT (stream_key) DO NOTHING;
+     INSERT INTO settlement_intents
+        (id, merchant_id, idempotency_key, request_digest, instruction_digest,
+         status, signature, slot, commitment)
+     VALUES
+        ('$adjustment_original_settlement_id', '$merchant_id',
+         'integration-adjustment-original-settlement', decode(repeat('31', 32), 'hex'),
+         decode(repeat('32', 32), 'hex'), 'finalized',
+         'integration-adjustment-finalized-signature', 77, 'finalized')
+     ON CONFLICT (id) DO NOTHING;
+     INSERT INTO indexed_receipts
+        (stream_key, signature, slot, gross_atomic, tax_atomic, net_atomic,
+         evidence_digest, receipt, payer, merchant, mint, nonce, policy_digest)
+     VALUES
+        ('integration/settlement-adjustment',
+         'integration-adjustment-finalized-signature', 77, 250, 25, 225,
+         decode(repeat('44', 32), 'hex'),
+         decode('06a7d517192c568ee08a845f73d29788cf035c3145b21ab344d8062ea9400000', 'hex'),
+         decode(repeat('09', 32), 'hex'),
+         decode('0000000000000000000000000000000000000000000000000000000000000003', 'hex'),
+         decode('06a7d51718c774c928566398691d5eb68b5eb8a39b4b6d5c73555b2100000000', 'hex'),
+         42, decode(repeat('33', 32), 'hex'))
+     ON CONFLICT (stream_key, signature) DO NOTHING;"
 adjustment_body="{\"idempotency_key\":\"integration-adjustment-01\",\"original_settlement_id\":\"$adjustment_original_settlement_id\",\"asset_id\":$adjustment_asset_id,\"kind\":\"Refund\",\"delta\":{\"gross_atomic\":\"-250\",\"tax_atomic\":\"-25\",\"net_atomic\":\"-225\"},\"reason_code\":\"customer_refund\",\"evidence_digest\":$adjustment_evidence_digest,\"source_calculation_id\":\"$adjustment_source_calculation_id\",\"replacement_calculation_id\":null}"
 adjustment_response_file="$integration_dir/adjustment-response"
 adjustment_status=$(printf '%s' "$adjustment_body" | curl --silent --show-error \
@@ -1527,6 +1573,38 @@ adjustment_read=$(curl --fail --silent --show-error \
     "$base_url/v1/settlement/adjustments/$adjustment_id")
 if ! printf '%s' "$adjustment_read" | grep -q '"status":"approved"'; then
     echo "settlement adjustment read did not return approved state" >&2
+    exit 1
+fi
+
+adjustment_compile_response_file="$integration_dir/adjustment-compile-response"
+adjustment_compile_status=$(printf '%s' '{"confirm":true}' | curl --silent --show-error \
+    --output "$adjustment_compile_response_file" --write-out '%{http_code}' \
+    --header 'content-type: application/json' \
+    --header "authorization: $adjustment_approver_authorization" \
+    --data-binary @- "$base_url/v1/settlement/adjustments/$adjustment_id/compile")
+adjustment_compile_response=$(sed -n '1p' "$adjustment_compile_response_file")
+if [ "$adjustment_compile_status" != "200" ] || \
+    ! printf '%s' "$adjustment_compile_response" | grep -q '"status":"prepared_unsubmitted"' || \
+    ! printf '%s' "$adjustment_compile_response" | grep -q '"registry_commitment":"finalized"'; then
+    echo "finalized adjustment evidence compilation failed (HTTP $adjustment_compile_status): $adjustment_compile_response" >&2
+    exit 1
+fi
+adjustment_compile_replay=$(printf '%s' '{"confirm":true}' | curl --fail --silent --show-error \
+    --header 'content-type: application/json' \
+    --header "authorization: $adjustment_approver_authorization" \
+    --data-binary @- "$base_url/v1/settlement/adjustments/$adjustment_id/compile")
+if [ "$adjustment_compile_response" != "$adjustment_compile_replay" ]; then
+    echo "adjustment evidence compiler did not return a retry-stable response" >&2
+    exit 1
+fi
+adjustment_intent_evidence_count=$(docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -Atc \
+    "select count(*) from settlement_adjustment_evidence_intents
+      where adjustment_id = '$adjustment_id' and merchant_id = '$merchant_id'
+        and registry_commitment = 'finalized' and registry_slot = 777
+        and instruction_digest is not null;")
+if [ "$adjustment_intent_evidence_count" != "1" ]; then
+    echo "expected one immutable finalized adjustment evidence intent, found $adjustment_intent_evidence_count" >&2
     exit 1
 fi
 adjustment_event_count=$(docker compose -p "$project_name" exec -T postgres \

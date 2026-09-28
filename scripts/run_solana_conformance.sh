@@ -90,8 +90,7 @@ if [ "$ready" != "true" ]; then
 fi
 
 phase="localnet_tests"
-if SOLANA_LOCALNET_TESTS=true SOLANA_RPC_URL=http://127.0.0.1:8899 \
-    pnpm --dir "$repo_root/apps/web" exec vitest run src/solana.localnet.test.ts \
+if docker compose --profile solana run --build --rm --no-deps solana-conformance \
     > "$evidence_dir/localnet-tests.log" 2>&1; then
     run_status=0
 else

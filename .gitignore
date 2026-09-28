@@ -22,6 +22,8 @@ pnpm-debug.log*
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+.pnpm-store/
+**/.pnpm-store/
 
 # Test, coverage, and profiling output
 coverage/
@@ -97,3 +99,8 @@ sbom.*
 *.dump
 *.sql.gz
 *.bak
+*.sqlite
+*.sqlite3
+*.db
+*.trace
+*.har

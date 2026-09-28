@@ -8,9 +8,11 @@ use settlement_client::{
     COMPUTE_BUDGET_PROGRAM_ID, CompiledSettlementInstruction, ComputeBudgetPolicy,
     MAX_SETTLEMENT_SIGNED_BYTES, estimate_legacy_settlement_wire_bytes_with_compute_budget,
 };
+use sha2::{Digest, Sha256};
 use solana_address_lookup_table_interface::{
     program as address_lookup_program, state::AddressLookupTable,
 };
+use solana_transaction::Address;
 use std::{sync::Arc, time::Duration};
 use thiserror::Error;
 
@@ -21,6 +23,28 @@ pub const MAX_SIGNATURE_BYTES: usize = 128;
 pub const MAX_ADDRESS_LOOKUP_TABLES: usize = 2;
 pub const MAX_LOADED_ADDRESSES_PER_TABLE: usize = 32;
 pub const MAX_ADDRESS_LOOKUP_TABLE_ADDRESSES: usize = 256;
+pub const ADJUSTMENT_REGISTRY_ACCOUNT_DATA_LEN: usize = 8 + (5 * 32) + 2;
+pub const MAX_ADJUSTMENT_REGISTRY_RPC_RESULT_BYTES: usize = 16 * 1024;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdjustmentRegistryVerificationRequest {
+    pub merchant: String,
+    pub mint: String,
+    pub proposer: String,
+    pub approver: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdjustmentRegistryVerification {
+    pub registry: String,
+    pub merchant: String,
+    pub mint: String,
+    pub proposer: String,
+    pub approver: String,
+    pub finalized_slot: u64,
+    pub account_digest: [u8; 32],
+    pub commitment: &'static str,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolvedAddressLookupTable {
@@ -579,6 +603,8 @@ pub enum CoordinatorError {
     ProviderAttemptsExhausted(String),
     #[error("provider response is invalid: {0}")]
     InvalidProviderResponse(String),
+    #[error("adjustment registry verification failed: {0}")]
+    InvalidAdjustmentRegistry(String),
     #[error("signature is invalid")]
     InvalidSignature,
 }
@@ -661,6 +687,99 @@ impl SettlementCoordinator {
                 },
             )
             .collect()
+    }
+
+    /// Verifies the server-derived adjustment registry at finalized
+    /// commitment. Successful providers must return byte-identical account
+    /// data; a transport failure may fail over, but conflicting valid state
+    /// is never selected.
+    pub async fn verify_adjustment_registry(
+        &self,
+        request: &AdjustmentRegistryVerificationRequest,
+    ) -> Result<AdjustmentRegistryVerification, CoordinatorError> {
+        let (registry, expected_bump) =
+            settlement_client::adjustment_registry_pda(&request.merchant, &request.mint)
+                .map_err(|error| CoordinatorError::InvalidAdjustmentRegistry(error.to_string()))?;
+        let expected = parse_registry_keys(request)?;
+        let mut observations = Vec::new();
+        let mut last_error = None;
+
+        for provider_index in self.provider_order() {
+            let provider = &self.providers[provider_index];
+            let result = tokio::time::timeout(
+                self.attempt_timeout,
+                provider.transport.call(
+                    "getAccountInfo",
+                    json!([
+                        registry,
+                        { "commitment": "finalized", "encoding": "base64" }
+                    ]),
+                ),
+            )
+            .await;
+            match result {
+                Ok(Ok(value)) => match parse_adjustment_registry_response(
+                    &registry,
+                    expected_bump,
+                    &expected,
+                    &value,
+                ) {
+                    Ok(observation) => {
+                        provider.health.record_success();
+                        if let Some((_, first_data)) = observations.first()
+                            && first_data != &observation.data
+                        {
+                            return Err(CoordinatorError::InvalidAdjustmentRegistry(
+                                "configured finalized providers returned conflicting registry bytes"
+                                    .into(),
+                            ));
+                        }
+                        observations.push((observation.slot, observation.data));
+                    }
+                    Err(error) => {
+                        provider.health.record_failure();
+                        last_error = Some(error);
+                    }
+                },
+                Ok(Err(error)) => {
+                    provider.health.record_failure();
+                    last_error = Some(CoordinatorError::from(error));
+                }
+                Err(_) => {
+                    provider.health.record_failure();
+                    last_error = Some(CoordinatorError::ProviderAttemptsExhausted(
+                        "adjustment registry verification deadline exceeded".into(),
+                    ));
+                }
+            }
+        }
+
+        let (finalized_slot, data) = observations
+            .into_iter()
+            .min_by_key(|(slot, _)| *slot)
+            .ok_or_else(|| {
+                last_error.unwrap_or_else(|| {
+                    CoordinatorError::InvalidAdjustmentRegistry(
+                        "no finalized adjustment registry evidence was returned".into(),
+                    )
+                })
+            })?;
+        let mut digest = Sha256::new();
+        digest.update(b"solana-tax-protocol/adjustment-registry-account/v1");
+        digest.update([0]);
+        digest.update(registry.as_bytes());
+        digest.update([0]);
+        digest.update(&data);
+        Ok(AdjustmentRegistryVerification {
+            registry,
+            merchant: request.merchant.clone(),
+            mint: request.mint.clone(),
+            proposer: request.proposer.clone(),
+            approver: request.approver.clone(),
+            finalized_slot,
+            account_digest: digest.finalize().into(),
+            commitment: "finalized",
+        })
     }
 
     pub async fn submit(
@@ -863,6 +982,149 @@ impl AddressLookupTableResolver for SettlementCoordinator {
             )
         }))
     }
+}
+
+#[derive(Clone, Debug)]
+struct AdjustmentRegistryObservation {
+    slot: u64,
+    data: Vec<u8>,
+}
+
+fn parse_registry_keys(
+    request: &AdjustmentRegistryVerificationRequest,
+) -> Result<[Address; 4], CoordinatorError> {
+    let keys = [
+        ("merchant", request.merchant.as_str()),
+        ("mint", request.mint.as_str()),
+        ("proposer", request.proposer.as_str()),
+        ("approver", request.approver.as_str()),
+    ]
+    .map(|(field, value)| {
+        value.parse::<Address>().map_err(|_| {
+            CoordinatorError::InvalidAdjustmentRegistry(format!(
+                "{field} is not a valid Solana public key"
+            ))
+        })
+    });
+    let keys = keys.into_iter().collect::<Result<Vec<_>, _>>()?;
+    let keys: [Address; 4] = keys.try_into().map_err(|_| {
+        CoordinatorError::InvalidAdjustmentRegistry("registry key cardinality changed".into())
+    })?;
+    if keys[2] == keys[3] {
+        return Err(CoordinatorError::InvalidAdjustmentRegistry(
+            "registry proposer and approver must be distinct".into(),
+        ));
+    }
+    Ok(keys)
+}
+
+fn parse_adjustment_registry_response(
+    registry: &str,
+    expected_bump: u8,
+    expected: &[Address; 4],
+    response: &Value,
+) -> Result<AdjustmentRegistryObservation, CoordinatorError> {
+    let encoded_response = serde_json::to_vec(response)
+        .map_err(|error| CoordinatorError::InvalidAdjustmentRegistry(error.to_string()))?;
+    if encoded_response.len() > MAX_ADJUSTMENT_REGISTRY_RPC_RESULT_BYTES {
+        return Err(CoordinatorError::InvalidAdjustmentRegistry(
+            "registry account response exceeds the bounded size".into(),
+        ));
+    }
+    let slot = response
+        .get("context")
+        .and_then(|context| context.get("slot"))
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            CoordinatorError::InvalidAdjustmentRegistry(
+                "registry response context.slot is invalid".into(),
+            )
+        })?;
+    let account = response
+        .get("value")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            CoordinatorError::InvalidAdjustmentRegistry(format!(
+                "derived registry {registry} is absent at finalized commitment"
+            ))
+        })?;
+    if account.get("owner").and_then(Value::as_str)
+        != Some(settlement_client::SETTLEMENT_PROGRAM_ID)
+    {
+        return Err(CoordinatorError::InvalidAdjustmentRegistry(
+            "registry account is not owned by the settlement program".into(),
+        ));
+    }
+    if account.get("executable").and_then(Value::as_bool) != Some(false) {
+        return Err(CoordinatorError::InvalidAdjustmentRegistry(
+            "registry account executable flag is invalid".into(),
+        ));
+    }
+    let encoded_data = account
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            CoordinatorError::InvalidAdjustmentRegistry(
+                "registry account data is not an encoded array".into(),
+            )
+        })?;
+    if encoded_data.len() != 2 || encoded_data[1].as_str() != Some("base64") {
+        return Err(CoordinatorError::InvalidAdjustmentRegistry(
+            "registry account data is not base64".into(),
+        ));
+    }
+    let data = BASE64
+        .decode(encoded_data[0].as_str().ok_or_else(|| {
+            CoordinatorError::InvalidAdjustmentRegistry(
+                "registry account base64 payload is not a string".into(),
+            )
+        })?)
+        .map_err(|_| {
+            CoordinatorError::InvalidAdjustmentRegistry(
+                "registry account base64 payload is invalid".into(),
+            )
+        })?;
+    if data.len() != ADJUSTMENT_REGISTRY_ACCOUNT_DATA_LEN {
+        return Err(CoordinatorError::InvalidAdjustmentRegistry(
+            "registry account layout is unsupported".into(),
+        ));
+    }
+    let mut discriminator = Sha256::new();
+    discriminator.update(b"account:SettlementAdjustmentRegistry");
+    if data[..8] != discriminator.finalize()[..8] {
+        return Err(CoordinatorError::InvalidAdjustmentRegistry(
+            "registry account discriminator is invalid".into(),
+        ));
+    }
+    let read_address = |offset: usize| -> Address {
+        let mut bytes = [0; 32];
+        bytes.copy_from_slice(&data[offset..offset + 32]);
+        Address::new_from_array(bytes)
+    };
+    let merchant = read_address(8);
+    let mint = read_address(40);
+    let proposer = read_address(104);
+    let approver = read_address(136);
+    if merchant != expected[0]
+        || mint != expected[1]
+        || proposer != expected[2]
+        || approver != expected[3]
+    {
+        return Err(CoordinatorError::InvalidAdjustmentRegistry(
+            "registry account authority or scope fields do not match".into(),
+        ));
+    }
+    if data[168] != 1 {
+        return Err(CoordinatorError::InvalidAdjustmentRegistry(
+            "registry account is inactive".into(),
+        ));
+    }
+    if data[169] != expected_bump {
+        return Err(CoordinatorError::InvalidAdjustmentRegistry(
+            "registry account bump does not match the derived PDA".into(),
+        ));
+    }
+    Ok(AdjustmentRegistryObservation { slot, data })
 }
 
 fn parse_lookup_table_response(
@@ -1084,6 +1346,39 @@ mod tests {
             net_atomic: "900".into(),
             policy_digest: [1; 32],
         }
+    }
+
+    fn adjustment_registry_response(
+        merchant: Address,
+        mint: Address,
+        proposer: Address,
+        approver: Address,
+        governance_byte: u8,
+        slot: u64,
+    ) -> Value {
+        let (registry, bump) =
+            settlement_client::adjustment_registry_pda(&merchant.to_string(), &mint.to_string())
+                .expect("registry PDA");
+        let mut data = vec![0; ADJUSTMENT_REGISTRY_ACCOUNT_DATA_LEN];
+        let mut discriminator = Sha256::new();
+        discriminator.update(b"account:SettlementAdjustmentRegistry");
+        data[..8].copy_from_slice(&discriminator.finalize()[..8]);
+        data[8..40].copy_from_slice(merchant.as_ref());
+        data[40..72].copy_from_slice(mint.as_ref());
+        data[72..104].fill(governance_byte);
+        data[104..136].copy_from_slice(proposer.as_ref());
+        data[136..168].copy_from_slice(approver.as_ref());
+        data[168] = 1;
+        data[169] = bump;
+        json!({
+            "context": { "slot": slot },
+            "value": {
+                "owner": settlement_client::SETTLEMENT_PROGRAM_ID,
+                "executable": false,
+                "data": [BASE64.encode(data), "base64"],
+                "address": registry
+            }
+        })
     }
 
     fn signed_settlement(
@@ -1568,6 +1863,128 @@ mod tests {
         assert_eq!(requests[0].0, "getAccountInfo");
         assert_eq!(requests[0].1[1]["commitment"], "finalized");
         assert_eq!(requests[0].1[1]["encoding"], "base64");
+    }
+
+    #[tokio::test]
+    async fn adjustment_registry_verification_requires_finalized_provider_agreement() {
+        let merchant = Address::new_unique();
+        let mint = Address::new_unique();
+        let proposer = Address::new_unique();
+        let approver = Address::new_unique();
+        let request = AdjustmentRegistryVerificationRequest {
+            merchant: merchant.to_string(),
+            mint: mint.to_string(),
+            proposer: proposer.to_string(),
+            approver: approver.to_string(),
+        };
+        let first = Arc::new(FakeTransport {
+            responses: Mutex::new(vec![Ok(adjustment_registry_response(
+                merchant, mint, proposer, approver, 7, 120,
+            ))]),
+            ..Default::default()
+        });
+        let second = Arc::new(FakeTransport {
+            responses: Mutex::new(vec![Ok(adjustment_registry_response(
+                merchant, mint, proposer, approver, 7, 121,
+            ))]),
+            ..Default::default()
+        });
+        let coordinator = SettlementCoordinator::new(
+            vec![first.clone(), second.clone()],
+            DEFAULT_ATTEMPT_TIMEOUT,
+        )
+        .expect("coordinator");
+
+        let verification = coordinator
+            .verify_adjustment_registry(&request)
+            .await
+            .expect("matching finalized registries must verify");
+        assert_eq!(verification.finalized_slot, 120);
+        assert_eq!(verification.commitment, "finalized");
+        assert_ne!(verification.account_digest, [0; 32]);
+        let requests = first.requests.lock().unwrap();
+        assert_eq!(requests[0].0, "getAccountInfo");
+        assert_eq!(requests[0].1[1]["commitment"], "finalized");
+        assert_eq!(requests[0].1[1]["encoding"], "base64");
+    }
+
+    #[tokio::test]
+    async fn adjustment_registry_verification_rejects_valid_provider_disagreement() {
+        let merchant = Address::new_unique();
+        let mint = Address::new_unique();
+        let proposer = Address::new_unique();
+        let approver = Address::new_unique();
+        let request = AdjustmentRegistryVerificationRequest {
+            merchant: merchant.to_string(),
+            mint: mint.to_string(),
+            proposer: proposer.to_string(),
+            approver: approver.to_string(),
+        };
+        let first = Arc::new(FakeTransport {
+            responses: Mutex::new(vec![Ok(adjustment_registry_response(
+                merchant, mint, proposer, approver, 7, 120,
+            ))]),
+            ..Default::default()
+        });
+        let second = Arc::new(FakeTransport {
+            responses: Mutex::new(vec![Ok(adjustment_registry_response(
+                merchant, mint, proposer, approver, 8, 120,
+            ))]),
+            ..Default::default()
+        });
+        let coordinator = SettlementCoordinator::new(vec![first, second], DEFAULT_ATTEMPT_TIMEOUT)
+            .expect("coordinator");
+
+        let error = coordinator
+            .verify_adjustment_registry(&request)
+            .await
+            .expect_err("conflicting valid registry bytes must fail closed");
+        assert!(error.to_string().contains("conflicting registry bytes"));
+    }
+
+    #[test]
+    fn adjustment_registry_parser_rejects_wrong_owner_inactive_and_layout() {
+        let merchant = Address::new_unique();
+        let mint = Address::new_unique();
+        let proposer = Address::new_unique();
+        let approver = Address::new_unique();
+        let (registry, bump) =
+            settlement_client::adjustment_registry_pda(&merchant.to_string(), &mint.to_string())
+                .expect("registry PDA");
+        let expected = [merchant, mint, proposer, approver];
+        let valid = adjustment_registry_response(merchant, mint, proposer, approver, 7, 120);
+        let wrong_owner = json!({
+            "context": { "slot": 120 },
+            "value": {
+                "owner": settlement_client::SYSTEM_PROGRAM_ID,
+                "executable": false,
+                "data": valid["value"]["data"].clone()
+            }
+        });
+        assert!(
+            parse_adjustment_registry_response(&registry, bump, &expected, &wrong_owner).is_err()
+        );
+
+        let mut inactive = valid.clone();
+        let inactive_data = BASE64
+            .decode(inactive["value"]["data"][0].as_str().unwrap())
+            .unwrap();
+        let mut inactive_bytes = inactive_data;
+        inactive_bytes[168] = 0;
+        inactive["value"]["data"][0] = Value::String(BASE64.encode(inactive_bytes));
+        assert!(parse_adjustment_registry_response(&registry, bump, &expected, &inactive).is_err());
+
+        let malformed = json!({
+            "context": { "slot": 120 },
+            "value": {
+                "owner": settlement_client::SETTLEMENT_PROGRAM_ID,
+                "executable": false,
+                "data": [BASE64.encode([0_u8; 8]), "base64"]
+            }
+        });
+        assert!(
+            parse_adjustment_registry_response(&registry, bump, &expected, &malformed).is_err()
+        );
     }
 
     #[tokio::test]

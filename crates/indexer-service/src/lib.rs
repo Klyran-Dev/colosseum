@@ -853,6 +853,7 @@ where
         observed_finalized_slot: slot,
         receipts: decoded.receipts,
         split_settlements: decoded.split_settlements,
+        adjustment_records: decoded.adjustment_records,
         refund_executions: decoded.refund_executions,
         raw_evidence: decoded.raw_evidence,
         raw_transactions: decoded.raw_transactions,

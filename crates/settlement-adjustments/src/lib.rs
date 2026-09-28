@@ -8,9 +8,52 @@ use uuid::Uuid;
 
 pub const ADJUSTMENT_SCHEMA_V1: &[u8] = b"solana-tax-protocol/settlement-adjustment/v1";
 pub const REFUND_BALANCE_PROOF_SCHEMA_V1: &[u8] = b"solana-tax-protocol/refund-balance-proof/v1";
+pub const AUTHORITY_CHALLENGE_SCHEMA_V1: &[u8] =
+    b"solana-tax-protocol/adjustment-authority-binding/v1";
 pub const MAX_REASON_BYTES: usize = 256;
 pub const MAX_SUBJECT_BYTES: usize = 256;
 pub const MAX_ATOMIC_AMOUNT: i128 = u64::MAX as i128;
+
+/// Returns the canonical wallet-authority challenge bytes. The exact message
+/// is shared by the API and wallet clients; it is deliberately explicit and
+/// versioned so a signature cannot be replayed for another tenant, role, or
+/// expiry window.
+pub fn authority_challenge_message(
+    merchant_id: Uuid,
+    challenge_id: Uuid,
+    subject: &str,
+    role: &str,
+    expires_at_unix: i64,
+) -> Result<Vec<u8>, AdjustmentError> {
+    if merchant_id.get_version_num() != 7 {
+        return Err(AdjustmentError::InvalidUuid("merchant ID"));
+    }
+    if challenge_id.get_version_num() != 7 {
+        return Err(AdjustmentError::InvalidUuid("challenge ID"));
+    }
+    validate_subject(subject, "authority subject")?;
+    if !matches!(role, "proposer" | "approver") {
+        return Err(AdjustmentError::InvalidAuthorityRole);
+    }
+    if expires_at_unix <= 0 {
+        return Err(AdjustmentError::InvalidAuthorityChallenge);
+    }
+    Ok(format!(
+        "{}\nmerchant_id={}\nchallenge_id={}\nsubject={}\nrole={}\nexpires_at_unix={}\n",
+        std::str::from_utf8(AUTHORITY_CHALLENGE_SCHEMA_V1)
+            .map_err(|_| AdjustmentError::InvalidAuthorityChallenge)?,
+        merchant_id,
+        challenge_id,
+        subject,
+        role,
+        expires_at_unix
+    )
+    .into_bytes())
+}
+
+pub fn authority_challenge_digest(message: &[u8]) -> [u8; 32] {
+    Sha256::digest(message).into()
+}
 
 pub mod serde_i128_string {
     use serde::{Deserialize, Deserializer, Serializer};
@@ -353,6 +396,10 @@ pub enum AdjustmentError {
     AdjustmentExceedsOriginal,
     #[error("same adjustment ID was reused with different evidence")]
     IdempotencyConflict,
+    #[error("adjustment authority role is invalid")]
+    InvalidAuthorityRole,
+    #[error("adjustment authority challenge is invalid")]
+    InvalidAuthorityChallenge,
     #[error("refund balance proof requires a negative conserving delta")]
     RefundBalanceDeltaMustBeNegative,
     #[error("refund balance snapshots must share a non-zero finalized slot")]
@@ -688,6 +735,48 @@ mod tests {
             tax_atomic: 0,
             net_atomic: -amount,
         }
+    }
+
+    #[test]
+    fn authority_challenge_message_binds_all_replay_sensitive_fields() {
+        let merchant = id(20);
+        let challenge = id(21);
+        let message = authority_challenge_message(
+            merchant,
+            challenge,
+            "approver-subject",
+            "approver",
+            1_800_000_000,
+        )
+        .expect("valid authority challenge");
+        assert!(
+            String::from_utf8(message.clone())
+                .expect("utf8 challenge")
+                .contains("role=approver")
+        );
+        assert_ne!(
+            authority_challenge_digest(&message),
+            authority_challenge_digest(
+                &authority_challenge_message(
+                    merchant,
+                    challenge,
+                    "approver-subject",
+                    "approver",
+                    1_800_000_001,
+                )
+                .expect("changed challenge")
+            )
+        );
+    }
+
+    #[test]
+    fn authority_challenge_rejects_invalid_role_and_subject() {
+        let error = authority_challenge_message(id(20), id(21), "subject", "reviewer", 10)
+            .expect_err("unsupported authority role");
+        assert_eq!(error, AdjustmentError::InvalidAuthorityRole);
+        let error = authority_challenge_message(id(20), id(21), "", "proposer", 10)
+            .expect_err("empty subject");
+        assert_eq!(error, AdjustmentError::InvalidSubject("authority subject"));
     }
 
     #[test]

@@ -61,11 +61,21 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [ADR-0159: Fixed-cardinality refund-proof operational observability](adr/0159-refund-proof-operational-observability.md)
 - [ADR-0164: Canonical settlement-receipt identity projection](adr/0164-canonical-settlement-receipt-identity-projection.md)
 - [ADR-0165: Server-owned settlement-intent receipt binding](adr/0165-server-owned-settlement-receipt-binding.md)
+- [ADR-0166: Wallet-bound adjustment authorities and durable compiler intents](adr/0166-wallet-bound-adjustment-authorities.md)
+- [ADR-0167: Finalized server-owned adjustment-registry verification](adr/0167-finalized-adjustment-registry-verification.md)
+- [ADR-0168: Dockerized Solana conformance runner](adr/0168-dockerized-solana-conformance-runner.md)
+- [ADR-0169: SBF stack-frame safety boundary](adr/0169-sbf-stack-frame-safety.md)
 - [Operations runbooks](runbooks/README.md)
 
 ## Status and scope
 
 This is the architecture and implementation baseline for a system still in its foundation phase. It does not claim that tax treatment is legally correct for every jurisdiction, that an oracle is a tax authority, or that escrow funds can be withdrawn without the configured governance and release controls. Legal, tax, custody, and licensing review are release gates. The current executable foundation is deliberately limited to the deterministic tax engine, authenticated persisted published-rule quote path with an atomic outbox event, server-owned persisted-rule simulation with tenant, jurisdiction, digest, and retirement checks, server-owned quote-bound calculation-attestation ingestion, authenticated tax-rule author/reviewer/approver workflow with append-only governance evidence, repeatable-read governance projection and operator workspace, authenticated replay-gap operations and their typed operator workspace, bounded NATS JetStream dispatcher, finalized-indexer/reconciliation domain and coordinator plus PostgreSQL persistence slice, isolated preview API, authenticated quote UI, governed vault-release API/UI and append-only evidence projection, PostgreSQL migrations, product shell, and a governed token-interface settlement contract with cached policy-attestation binding. It is not yet a production settlement deployment.
+
+The current foundation additionally includes wallet-bound adjustment authority
+proofs and the finalized server-owned adjustment evidence compiler. The
+authenticated Docker path is covered by `make integration-check`; validator
+registry lifecycle, wallet submission, and finalized reconciliation remain
+release gates.
 
 The current foundation also includes ADR-0145's facts-only, two-replica
 persisted-rule simulation latency harness. The 2026-09-27 Docker run measured
@@ -111,8 +121,10 @@ builds the pinned SBF artifact, loads the fixed settlement program ID, and
 executes real legacy SPL, extension-free Token-2022, Split Plan fan-out,
 policy revocation, duplicate-nonce, wrong-recipient-order, and
 unsupported-extension cases.
-Missing build, validator, or RPC evidence fails the command; it is not
-downgraded to a mock or skipped release result.
+The TypeScript client runs inside a pinned non-root Docker image, so the gate
+does not require host Node.js or pnpm. Missing build, validator, or RPC
+evidence fails the command; it is not downgraded to a mock or skipped release
+result.
 
 Run `make integration-check` for the authenticated Docker quote and delivery
 path. The harness builds an isolated, non-root synthetic external issuer
@@ -123,6 +135,12 @@ tenant rejection, non-simulation single/Split Plan compilation, the governed
 vault-release lifecycle and database immutability guards, and that the outbox
 worker publishes transactional events only after PostgreSQL commit.
 It also runs the rollback-only PostgreSQL 18 refund-proof backlog contract.
+
+The adjustment evidence compiler requires a configured finalized Solana RPC
+coordinator. It derives and verifies the active adjustment registry, snapshots
+that evidence in the immutable compiler intent, and never treats simulation
+configuration as chain evidence. Validator-backed registry initialization,
+rotation, wallet submission, and finalized reconciliation remain release gates.
 
 The settlement submission boundary also contains the governed v0+ALT path
 from [ADR-0161](adr/0161-governed-v0-alt-settlement-path.md). Rust tests prove

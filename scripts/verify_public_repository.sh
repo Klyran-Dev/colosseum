@@ -60,6 +60,8 @@ for file in \
   docs/adr/0156-finalized-refund-balance-proof.md \
   docs/adr/0157-transaction-bound-refund-balance-proof.md \
   docs/adr/0158-server-owned-refund-proof-orchestration.md \
+  docs/adr/0168-dockerized-solana-conformance-runner.md \
+  docs/adr/0169-sbf-stack-frame-safety.md \
   test-vectors/settlement-adjustment-evidence-v1.json \
   test-vectors/settlement-refund-claim-v1.json \
   docs/operations/slo-error-budget-policy.md \
@@ -69,6 +71,7 @@ for file in \
   .github/dependabot.yml \
   .github/workflows/release-candidate.yml \
   scripts/create_release_bundle.sh \
+  ops/docker/Dockerfile.solana-conformance \
   scripts/generate_release_sbom.sh \
   scripts/vault_reconciliation_drill.sh \
   scripts/benchmark_rule_simulation.sh \

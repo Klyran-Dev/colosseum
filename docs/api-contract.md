@@ -720,8 +720,8 @@ of settlement truth.
 ### On-chain adjustment evidence compiler boundary
 
 ADR-0153 adds an internal Rust `settlement-client` compiler contract for the
-Anchor-compatible `record_adjustment` instruction. It is not exposed as a
-browser/API command yet. The compiler accepts the server-owned approved
+Anchor-compatible `record_adjustment` instruction. The authenticated API
+boundary is exposed below. The compiler accepts the server-owned approved
 adjustment envelope, distinct proposer/approver keys, the original receipt
 address, a positive adjustment nonce, kind code, signed-magnitude deltas, and
 non-zero adjustment/evidence/calculation digests. It emits a fixed ten-account
@@ -749,13 +749,58 @@ any `posted` or `paid` status can be added to this HTTP contract.
 The original receipt account is not supplied by the browser or an operator.
 ADR-0164 enriches the finalized `indexed_receipts` projection from the raw
 `SettlementExecuted` event with the receipt PDA, payer, merchant, mint, nonce,
-and policy digest. Any future server-side compiler endpoint must resolve and
-validate that identity through this projection and fail closed on incomplete
+and policy digest. The server-side compiler endpoint resolves and validates that
+identity through this projection and fails closed on incomplete
 legacy rows. ADR-0165 additionally requires the server to resolve
 `original_settlement_id` through the authenticated tenant's finalized
 settlement intent, matching transaction signature, finalized slot, and asset
 mint. Identical multi-stream projections may collapse; conflicting rows are
-unavailable. No browser or operator may override this binding.
+unavailable. No browser or operator may override this binding. The Docker
+integration harness proves the complete authenticated path with a synthetic
+finalized receipt projection; validator-backed registry lifecycle, wallet
+submission, and finalized on-chain reconciliation remain separate release
+gates.
+
+### Wallet-bound adjustment authority and evidence compilation
+
+`POST /v1/settlement/adjustment-authority/challenges` accepts only
+`{"role":"proposer"}` or `{"role":"approver"}` with the exact
+`tax:adjustment:authority:bind` scope and matching adjustment role. The API
+returns a five-minute, tenant/subject/role/expiry-bound UTF-8 challenge. The
+wallet must sign those exact bytes with Ed25519; a signature is encoded as
+unpadded base64url.
+
+`POST /v1/settlement/adjustment-authority/bindings` accepts the challenge ID,
+role, Solana public key, and wallet signature. The service verifies the
+signature before consuming the one-time challenge. Active keys are unique per
+tenant, subject/role rotation revokes the prior proof, and the API never
+receives or stores the private key.
+
+`POST /v1/settlement/adjustments/{adjustment_id}/compile` requires
+`tax:adjustment:compile`, the `settlement_adjustment_approver` role, the
+recorded approver subject, an approved adjustment, complete source/replacement
+calculation evidence, the ADR-0165 finalized receipt binding, both active
+wallet proofs, and one active route matching the finalized merchant and mint.
+The only request field is `{"confirm":true}`. The server allocates one
+durable UUIDv7 evidence intent and monotonic nonce, then returns a
+`prepared_unsubmitted` `record_adjustment` instruction. Before creating the
+intent, the server derives and reads the merchant/mint adjustment-registry PDA
+at finalized commitment, validates its owner, Anchor layout, active state,
+authority keys, and provider agreement, and snapshots the registry address,
+slot, commitment, and account digest into the intent. Retries reuse the same
+nonce and reject changed registry or other immutable input. Receipt, merchant,
+mint, token program, authority keys, deltas, registry address, and nonce are
+never accepted from the browser.
+
+The response includes `intent_id`, `request_digest`, `instruction_digest`,
+`registry`, `registry_slot`, `registry_commitment`, and
+`registry_account_digest` so operators can correlate the compiled artifact to
+the exact finalized authority evidence.
+
+The endpoint requires a configured settlement RPC coordinator even in local
+simulation; simulation does not manufacture chain authority evidence. It never
+signs, submits, marks an adjustment posted, or claims that tokens moved. Those
+are separate finalized chain-evidence and movement contracts.
 
 ### Governed Refund movement boundary
 

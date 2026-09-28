@@ -9,6 +9,7 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use solana_pubkey::Pubkey;
 use solana_transaction::versioned::VersionedTransaction;
 use std::{
@@ -32,6 +33,8 @@ const DEFAULT_BLOCKHASH: &str = "11111111111111111111111111111111";
 const DEFAULT_VAULT_ADDRESS: &str = "Sysvar1nstructions1111111111111111111111111";
 const DEFAULT_VAULT_MINT: &str = "So11111111111111111111111111111111111111112";
 const SPL_TOKEN_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const SETTLEMENT_PROGRAM_ID: &str = "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi";
+const ADJUSTMENT_REGISTRY_ACCOUNT_DATA_LEN: usize = 8 + (5 * 32) + 2;
 const MAX_FAIL_METHODS: usize = 8;
 const MAX_FAIL_METHOD_CONFIG_BYTES: usize = 256;
 const MAX_TRANSACTION_BYTES: usize = 1_232;
@@ -61,6 +64,7 @@ struct FixtureState {
     vault_amount: Arc<AtomicU64>,
     vault_slot: Arc<AtomicU64>,
     vault_read_count: Arc<AtomicU64>,
+    adjustment_registry: Option<AdjustmentRegistryFixture>,
     send_delay: Duration,
     send_count: Arc<AtomicU64>,
     send_outcome: Arc<RwLock<SendOutcome>>,
@@ -68,6 +72,13 @@ struct FixtureState {
     last_signature: Arc<RwLock<Option<String>>>,
     hold_send: Arc<RwLock<bool>>,
     release_send: Arc<Notify>,
+}
+
+#[derive(Clone)]
+struct AdjustmentRegistryFixture {
+    address: String,
+    slot: u64,
+    data: Vec<u8>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -135,6 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let vault_slot = env::var("RPC_FIXTURE_VAULT_SLOT")
         .unwrap_or_else(|_| "42".to_string())
         .parse::<u64>()?;
+    let adjustment_registry = load_adjustment_registry_fixture()?;
     let fail_method_config = env::var("RPC_FIXTURE_FAIL_METHODS").ok();
     let fail_methods = parse_fail_methods(fail_method_config.as_deref())
         .map_err(|error| format!("RPC_FIXTURE_FAIL_METHODS is invalid: {error}"))?;
@@ -146,6 +158,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         vault_amount: Arc::new(AtomicU64::new(vault_amount)),
         vault_slot: Arc::new(AtomicU64::new(vault_slot)),
         vault_read_count: Arc::new(AtomicU64::new(0)),
+        adjustment_registry,
         send_delay: Duration::from_millis(send_delay_ms),
         send_count: Arc::new(AtomicU64::new(0)),
         send_outcome: Arc::new(RwLock::new(SendOutcome::Success)),
@@ -288,10 +301,84 @@ async fn handle_method(
         "getBlocks" => Ok(json!([])),
         "isBlockhashValid" => Ok(json!({"context": {"slot": 1}, "value": true})),
         "getMultipleAccounts" => get_multiple_accounts(state, params),
+        "getAccountInfo" => get_account_info(state, params),
         "sendTransaction" => send_transaction(state, params).await,
         "getSignatureStatuses" => signature_statuses(state, params).await,
         _ => Err((-32601, format!("unsupported fixture RPC method: {method}"))),
     }
+}
+
+fn load_adjustment_registry_fixture()
+-> Result<Option<AdjustmentRegistryFixture>, Box<dyn std::error::Error>> {
+    let names = [
+        "RPC_FIXTURE_REGISTRY_MERCHANT",
+        "RPC_FIXTURE_REGISTRY_MINT",
+        "RPC_FIXTURE_REGISTRY_PROPOSER",
+        "RPC_FIXTURE_REGISTRY_APPROVER",
+    ];
+    let values = names
+        .iter()
+        .map(|name| env::var(name).ok())
+        .collect::<Vec<_>>();
+    if values.iter().all(Option::is_none) {
+        return Ok(None);
+    }
+    if values.iter().any(Option::is_none) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "all RPC_FIXTURE_REGISTRY_* public keys are required together",
+        )
+        .into());
+    }
+    let parse_key = |index: usize| -> Result<Pubkey, Box<dyn std::error::Error>> {
+        let value = values[index].as_deref().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "registry key is missing")
+        })?;
+        Pubkey::from_str(value).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("registry key {value} is not a valid Solana public key"),
+            )
+            .into()
+        })
+    };
+    let merchant = parse_key(0)?;
+    let mint = parse_key(1)?;
+    let proposer = parse_key(2)?;
+    let approver = parse_key(3)?;
+    if proposer == approver {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "registry proposer and approver must be distinct",
+        )
+        .into());
+    }
+    let program = Pubkey::from_str(SETTLEMENT_PROGRAM_ID)?;
+    let (address, bump) = Pubkey::find_program_address(
+        &[b"adjustment-registry", merchant.as_ref(), mint.as_ref()],
+        &program,
+    );
+    let mut discriminator = Sha256::new();
+    discriminator.update(b"account:SettlementAdjustmentRegistry");
+    let discriminator = discriminator.finalize();
+    let mut data = Vec::with_capacity(ADJUSTMENT_REGISTRY_ACCOUNT_DATA_LEN);
+    data.extend_from_slice(&discriminator[..8]);
+    data.extend_from_slice(merchant.as_ref());
+    data.extend_from_slice(mint.as_ref());
+    data.extend_from_slice(&[9; 32]);
+    data.extend_from_slice(proposer.as_ref());
+    data.extend_from_slice(approver.as_ref());
+    data.push(1);
+    data.push(bump);
+    debug_assert_eq!(data.len(), ADJUSTMENT_REGISTRY_ACCOUNT_DATA_LEN);
+    let slot = env::var("RPC_FIXTURE_REGISTRY_SLOT")
+        .unwrap_or_else(|_| "777".to_string())
+        .parse::<u64>()?;
+    Ok(Some(AdjustmentRegistryFixture {
+        address: address.to_string(),
+        slot,
+        data,
+    }))
 }
 
 fn parse_fail_methods(value: Option<&str>) -> Result<Vec<String>, &'static str> {
@@ -372,6 +459,49 @@ fn get_multiple_accounts(state: &FixtureState, params: &Value) -> Result<Value, 
             "owner": SPL_TOKEN_PROGRAM_ID,
             "rentEpoch": u64::MAX
         }]
+    }))
+}
+
+fn get_account_info(state: &FixtureState, params: &Value) -> Result<Value, (i64, String)> {
+    let values = params.as_array().ok_or((
+        -32602,
+        "getAccountInfo requires an array of parameters".to_string(),
+    ))?;
+    let address = values
+        .first()
+        .and_then(Value::as_str)
+        .ok_or((-32602, "account address must be a string".to_string()))?;
+    let options = values
+        .get(1)
+        .and_then(Value::as_object)
+        .ok_or((-32602, "account options are required".to_string()))?;
+    if options.get("commitment").and_then(Value::as_str) != Some("finalized")
+        || options.get("encoding").and_then(Value::as_str) != Some("base64")
+    {
+        return Err((
+            -32602,
+            "fixture requires finalized base64 account reads".to_string(),
+        ));
+    }
+    let registry = state.adjustment_registry.as_ref().ok_or((
+        -32602,
+        "adjustment registry fixture is not configured".to_string(),
+    ))?;
+    if address != registry.address {
+        return Err((
+            -32602,
+            "fixture account address is not the configured adjustment registry".to_string(),
+        ));
+    }
+    Ok(json!({
+        "context": {"slot": registry.slot},
+        "value": {
+            "data": [BASE64.encode(&registry.data), "base64"],
+            "executable": false,
+            "lamports": 1_000_000u64,
+            "owner": SETTLEMENT_PROGRAM_ID,
+            "rentEpoch": u64::MAX
+        }
     }))
 }
 
@@ -538,6 +668,7 @@ mod tests {
             vault_amount: Arc::new(AtomicU64::new(1000)),
             vault_slot: Arc::new(AtomicU64::new(42)),
             vault_read_count: Arc::new(AtomicU64::new(0)),
+            adjustment_registry: None,
             send_delay: Duration::ZERO,
             send_count: Arc::new(AtomicU64::new(0)),
             send_outcome: Arc::new(RwLock::new(SendOutcome::Success)),

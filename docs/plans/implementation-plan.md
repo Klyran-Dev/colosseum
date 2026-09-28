@@ -31,6 +31,48 @@ duplicates and reject missing, incomplete, stale, or conflicting evidence.
 The lookup is the required server boundary before exposing an adjustment
 evidence compiler; it does not authorize token movement or a posted state.
 
+## ADR-0166 — wallet-bound adjustment authorities and durable compiler intents
+
+Bind authenticated proposer and approver subjects to Solana public keys only
+through one-time Ed25519 wallet proofs over tenant/role/expiry-bound challenge
+messages. Persist a server-generated adjustment-evidence intent before
+compilation so retries reuse one nonce, one receipt identity snapshot, and one
+canonical request digest. The compiler remains unsigned and unsubmitted until
+on-chain adjustment-registry verification and validator-backed finality gates
+are complete.
+
+## ADR-0170 — wallet-bound adjustment submission and finalized recording
+
+- [ ] Add a separate mutable chain-intent lifecycle for wallet submission;
+  keep the compiler/evidence intent immutable.
+- [ ] Verify canonical signed `record_adjustment` bytes, exact account metas,
+  authority, and server-bound instruction digest before submission.
+- [ ] Project `SettlementAdjustmentRecorded` from finalized raw event evidence
+  and advance only after an exact intent/event match. Submission acknowledgement
+  must never imply recording, payment, filing, or legal compliance.
+
+## ADR-0167 — finalized server-owned adjustment-registry verification
+
+Add a bounded finalized `getAccountInfo` verifier to the settlement RPC
+coordinator. It derives the adjustment-registry PDA from the fixed program and
+server-owned merchant/mint, validates owner, discriminator, exact layout,
+active state, bump, and both wallet-bound authority keys, and fails closed on
+successful-provider disagreement. Persist the registry address, finalized
+slot, commitment, and account digest in the immutable compiler intent so a
+registry rotation cannot change a retry. Only after parser/coordinator/API
+tests and validator-backed registry rotation evidence pass may non-simulation
+adjustment compilation be enabled.
+
+## ADR-0168/0169 — reproducible conformance and SBF stack safety
+
+The validator conformance client runs inside a pinned non-root Docker image,
+so `make solana-conformance` no longer requires host Node.js or pnpm. The
+adjustment-refund Anchor contexts box their large account values, and the
+Docker/local SBF build wrapper fails closed on compiler stack-frame safety
+diagnostics. The program artifact now builds without the previously observed
+4 KiB frame overflows; Linux validator execution remains an independent
+release gate.
+
 ## ADR-0154 — governed adjustment refund movement
 
 Implement only the first explicit movement contract: a negative `Refund` claim

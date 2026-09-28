@@ -31,6 +31,17 @@ captured the validator failure before RPC readiness: Agave logged
 a validator conformance pass; the required Linux CI/runner execution remains
 open.
 
+The current guarded Docker SBF build after ADR-0169 produced artifact
+SHA-256 `412a2d66c3edcc25c316377cc85a3bea85c8079d69bb4338d69119136e91457b`
+without the prior 4 KiB stack-frame diagnostics. This is build evidence only;
+the Linux validator and transaction evidence gates remain open.
+
+ADR-0168 closes the local runner reproducibility gap: `make
+solana-conformance` now executes the Vitest RPC client inside a pinned,
+non-root Docker image and no longer depends on host Node.js or pnpm. This
+improves bootstrap fidelity but does not close the independent Linux Agave
+validator gate.
+
 ## Correctness
 
 - [x] Canonical settlement serialization has a shared versioned golden vector
@@ -533,6 +544,26 @@ and operational gates are intentionally not marked complete by unit tests.
   binding port, requiring tenant, finalized lifecycle, signature, slot, and
   asset/mint agreement. Migration `0035` adds the bounded lookup indexes;
   compiler integration and conflict-contract evidence remain open.
+- [x] ADR-0166 adds one-time Ed25519 wallet-proof challenges, immutable active
+  proposer/approver bindings, source-calculation evidence checks, and a
+  durable server-generated adjustment-evidence intent with retry-stable nonce.
+  Migration `0036` is additive. ADR-0167 now implements the bounded finalized
+  registry verifier and immutable registry snapshot; validator execution,
+  wallet submission, and finalized reconciliation remain open.
+- [x] The ADR-0166 PostgreSQL authority and evidence-intent contract drill is
+  executable with `make adjustment-authority-drill`; it verifies active-key
+  uniqueness, explicit rotation, immutable proof evidence, and one-time
+  instruction-digest binding.
+- [x] ADR-0167 implements finalized adjustment-registry verification: the
+  derived PDA, owner, discriminator, exact layout, active state, authority
+  keys, finalized commitment, provider agreement, and immutable compiler-intent
+  evidence are enforced. The authenticated Docker endpoint integration is
+  proven by `make integration-check`; validator-backed conformance, wallet
+  submission, and finalized reconciliation remain release gates.
+- [ ] ADR-0170 wallet-bound submission and finalized recording gate: canonical
+  signed `record_adjustment` bytes, bounded retry lifecycle, typed finalized
+  event projection, exact intent/event matching, indexer-lag handling, and
+  operator-visible unknown/conflict states must pass before production enablement.
 - [ ] ADR-0154 governed refund movement is implemented and proven against the
   pinned Linux validator for the published Refund scope; tax-vault and
   merchant-funder sources, payer-bound destination, claim cancellation,
