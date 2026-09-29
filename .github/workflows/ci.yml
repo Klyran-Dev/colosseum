@@ -94,14 +94,6 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 24.21.0
-      - name: Activate pinned pnpm
-        run: corepack enable && corepack prepare pnpm@12.3.4 --activate
-      - name: Install locked web dependencies
-        run: pnpm --dir apps/web install --frozen-lockfile
       - name: Run validator-backed conformance
         env:
           SOLANA_USE_DOCKER_BUILDER: true
@@ -141,6 +133,26 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Run isolated Docker integration checks
         run: ./scripts/verify_local_stack.sh
+
+  refund-funding-verifier:
+    name: Lease-fenced refund-funding verifier drill
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Run two-replica contention and crash-reclaim drill
+        env:
+          REFUND_FUNDING_VERIFIER_EVIDENCE_DIR: test-results/refund-funding-verifier
+        run: make refund-funding-verifier-drill
+      - name: Upload verifier evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: refund-funding-verifier-${{ github.run_id }}
+          path: test-results/refund-funding-verifier/
+          if-no-files-found: warn
+          retention-days: 14
 
   quote-load:
     name: Bounded quote-service load evidence
@@ -191,6 +203,27 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Run isolated PostgreSQL recovery drill
         run: make backup-restore-drill
+
+  postgres-encrypted-recovery:
+    name: PostgreSQL encrypted backup artifact drill
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Run encrypted backup and integrity restore drill
+        run: |
+          set -o pipefail
+          mkdir -p test-results/encrypted-backup
+          make encrypted-backup-restore-drill | tee test-results/encrypted-backup/evidence.txt
+      - name: Upload encrypted backup evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: encrypted-backup-${{ github.run_id }}
+          path: test-results/encrypted-backup/
+          if-no-files-found: warn
+          retention-days: 14
 
   projection-recovery:
     name: Indexer projection rebuild drill
@@ -273,3 +306,24 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Run checksum and advisory-lock migration drill
         run: make migration-integrity-drill
+
+  migration-rollback:
+    name: Expand/contract migration rollback rehearsal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Run pre-deploy restore and forward-recovery rehearsal
+        run: |
+          set -o pipefail
+          mkdir -p test-results/migration-rollback
+          make migration-rollback-rehearsal | tee test-results/migration-rollback/evidence.txt
+      - name: Upload migration rollback evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: migration-rollback-${{ github.run_id }}
+          path: test-results/migration-rollback/
+          if-no-files-found: warn
+          retention-days: 14

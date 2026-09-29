@@ -145,6 +145,9 @@ if [ "$ledger_count" != "$expected_migration_count" ]; then
     exit 1
 fi
 
+docker exec -i "$postgres_container" psql -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
+    < db/verification/refund_funding_verification_leases.sql >/dev/null
+
 echo "migration-integrity-drill"
 echo "concurrent_run_a=$concurrent_a"
 echo "concurrent_run_b=$concurrent_b"
@@ -152,3 +155,4 @@ echo "second_run=$second_run"
 echo "failed_migration=rolled_back"
 echo "checksum_drift=failed_closed"
 echo "ledger_count=$ledger_count"
+echo "refund_funding_verification_lease_contract=passed"

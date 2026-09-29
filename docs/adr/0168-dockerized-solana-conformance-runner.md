@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Accepted — bounded startup diagnostics implemented; successful Linux validator
+execution remains a release gate.
 
 ## Context
 
@@ -27,6 +28,10 @@ only `src/solana.localnet.test.ts` against the Compose `validator` hostname.
 health endpoint, and then runs the client through this container with
 `--no-deps`. The runner shares the validator's Compose network but cannot
 change validator state, mount the host Docker socket, or access private keys.
+Health probes use bounded connect and total timeouts and inspect the validator
+container state after each attempt. A failed validator is therefore classified
+as a retained environment/startup failure rather than leaving CI waiting on an
+unbounded socket operation.
 
 The conformance command therefore requires Docker/Compose and the pinned
 images, but no host Rust, Node.js, pnpm, Solana CLI, or NGINX installation.
@@ -47,6 +52,9 @@ images, but no host Rust, Node.js, pnpm, Solana CLI, or NGINX installation.
   `SOLANA_LOCALNET_TESTS=true`;
 - a missing image, failed dependency install, Vitest failure, RPC failure, or
   validator failure returns non-zero and retains evidence;
+- each health probe has a bounded timeout, and `result.env` records the
+  failure phase/reason so an unavailable Linux capability is distinguishable
+  from a test assertion failure;
 - the runner is read-only, uses a temporary writable home, drops capabilities,
   and runs as a non-root user; and
 - local Docker success remains localnet evidence only; Linux CI or an
@@ -58,8 +66,11 @@ images, but no host Rust, Node.js, pnpm, Solana CLI, or NGINX installation.
 - `docker compose --profile solana config --quiet` validates the service;
 - `make compose-config` covers all profiles and pinned image references;
 - `make solana-conformance` runs the test client inside the image;
-- CI's Ubuntu `solana-conformance` job uses the same script and retains the
-  validator, SBF, Compose, and Vitest evidence bundle; and
+- a crashed validator must cause the health phase to terminate within the
+  documented bounded probe window rather than hanging the caller; and
+- CI's Ubuntu `solana-conformance` job uses the same script without a host
+  Node.js/pnpm bootstrap and retains the validator, SBF, Compose, and Vitest
+  evidence bundle; and
 - the existing localnet test remains the real transaction contract for legacy
   SPL, extension-free Token-2022, duplicate receipts, Split Plan, policy
   revocation, and unsupported extensions.

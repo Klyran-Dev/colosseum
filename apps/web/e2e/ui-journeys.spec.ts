@@ -1,4 +1,42 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+import axe from "axe-core";
+
+async function expectNoBrowserAxeViolations(
+  page: Page,
+  surface: string,
+): Promise<void> {
+  const violations = await page.evaluate(async (axeSource) => {
+    if (!("axe" in window)) {
+      const script = document.createElement("script");
+      script.textContent = axeSource;
+      document.head.appendChild(script);
+    }
+    const browserAxe = (window as unknown as {
+      axe?: {
+        run: (context: Document, options: { runOnly: { type: "tag"; values: string[] } }) => Promise<{
+          violations: Array<{
+            id: string;
+            impact: string | null;
+            help: string;
+            nodes: Array<{ target: string[]; html: string }>;
+          }>;
+        }>;
+      };
+    }).axe;
+    if (!browserAxe) throw new Error("axe-core did not initialize in the real browser");
+    const result = await browserAxe.run(document, {
+      runOnly: { type: "tag", values: ["wcag2a", "wcag2aa"] },
+    });
+    return result.violations.map(({ id, impact, help, nodes }) => ({
+      id,
+      impact,
+      help,
+      nodes: nodes.map(({ target, html }) => ({ target, html })),
+    }));
+  }, axe.source);
+
+  expect(violations, `${surface} has real-browser axe violations`).toEqual([]);
+}
 
 test.describe("real-browser SPA journeys", () => {
   test("supports keyboard context and real lazy workspace loading", async ({ page }) => {
@@ -24,6 +62,27 @@ test.describe("real-browser SPA journeys", () => {
       await page.getByRole("button", { name: buttonName, exact: true }).click();
       await expect(page.getByRole("heading", { name: headingName, exact: true })).toBeVisible();
       await expect(page.locator("#workspace-content")).toBeFocused();
+    }
+  });
+
+  test("has no rendered WCAG A/AA violations across the real SPA workspaces", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByText("Calculation service online")).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "production quote");
+
+    const workspaces = [
+      ["Rule governance", "Review and promote a rule"],
+      ["Replay operations", "Review replay gaps"],
+      ["Vault releases", "Propose a vault release claim"],
+      ["Vault reconciliation", "Vault reconciliation"],
+      ["Settlement adjustments", "Propose an adjustment"],
+      ["Checkout authorization", "Review and authorize settlement"],
+    ] as const;
+
+    for (const [buttonName, headingName] of workspaces) {
+      await page.getByRole("button", { name: buttonName, exact: true }).click();
+      await expect(page.getByRole("heading", { name: headingName, exact: true })).toBeVisible();
+      await expectNoBrowserAxeViolations(page, buttonName);
     }
   });
 

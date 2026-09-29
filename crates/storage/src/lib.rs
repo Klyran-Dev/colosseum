@@ -1188,6 +1188,13 @@ pub struct RefundFundingVerificationCandidate {
     pub token_program: String,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RefundFundingVerificationMetricsSnapshot {
+    pub pending: u64,
+    pub leases_active: u64,
+    pub leases_expired: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RefundClaimIntent {
     pub id: Uuid,
@@ -1750,6 +1757,8 @@ pub struct SettlementAdjustmentChainIntent {
     pub slot: Option<u64>,
     pub commitment: Option<String>,
     pub last_error_code: Option<String>,
+    pub finalized_event_index: Option<u16>,
+    pub finalized_event_evidence_digest: Option<[u8; 32]>,
 }
 
 #[derive(Clone, Debug)]
@@ -1770,6 +1779,8 @@ pub struct SettlementAdjustmentChainTransition {
     pub signature: Option<String>,
     pub slot: Option<u64>,
     pub last_error_code: Option<String>,
+    pub finalized_event_index: Option<u16>,
+    pub finalized_event_evidence_digest: Option<[u8; 32]>,
     pub evidence: Value,
 }
 
@@ -1960,12 +1971,24 @@ impl PgStore {
         event_id: Uuid,
         claim_token: Uuid,
     ) -> Result<bool, StorageError> {
-        let client = self
+        let mut client = self
             .pool
             .get()
             .await
             .map_err(|error| StorageError::Pool(error.to_string()))?;
-        let updated = client
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::ReadCommitted)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let updated = transaction
             .execute(
                 "UPDATE outbox_events
                  SET published_at = now(), claimed_at = NULL, claim_token = NULL
@@ -1973,6 +1996,7 @@ impl PgStore {
                 &[&event_id, &claim_token],
             )
             .await?;
+        transaction.commit().await?;
         Ok(updated == 1)
     }
 
@@ -1987,12 +2011,24 @@ impl PgStore {
                 "outbox error code must contain 1 to 128 bytes".to_string(),
             ));
         }
-        let client = self
+        let mut client = self
             .pool
             .get()
             .await
             .map_err(|error| StorageError::Pool(error.to_string()))?;
-        let updated = client
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::ReadCommitted)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let updated = transaction
             .execute(
                 "UPDATE outbox_events
                  SET claimed_at = NULL,
@@ -2006,6 +2042,7 @@ impl PgStore {
                 &[&event_id, &claim_token, &error_code, &MAX_OUTBOX_ATTEMPTS],
             )
             .await?;
+        transaction.commit().await?;
         Ok(updated == 1)
     }
 
@@ -4752,7 +4789,8 @@ impl PgStore {
                  ON CONFLICT (evidence_intent_id, merchant_id) DO NOTHING
                  RETURNING id, evidence_intent_id, adjustment_id, merchant_id,
                            instruction_digest, status, signed_transaction_digest,
-                           signature, slot::text, commitment, last_error_code",
+                           signature, slot::text, commitment, last_error_code,
+                           finalized_event_index, finalized_event_evidence_digest",
                 &[
                     &command.evidence_intent_id,
                     &command.adjustment_id,
@@ -4767,7 +4805,8 @@ impl PgStore {
                 .query_opt(
                     "SELECT id, evidence_intent_id, adjustment_id, merchant_id,
                             instruction_digest, status, signed_transaction_digest,
-                            signature, slot::text, commitment, last_error_code
+                            signature, slot::text, commitment, last_error_code,
+                            finalized_event_index, finalized_event_evidence_digest
                      FROM settlement_adjustment_chain_intents
                      WHERE evidence_intent_id = $1 AND merchant_id = $2
                      FOR UPDATE",
@@ -4810,6 +4849,21 @@ impl PgStore {
         if matches!(next, SettlementStatus::Unknown) && command.last_error_code.is_none() {
             return Err(StorageError::InvalidAdjustmentChainTransition);
         }
+        let has_finalized_proof = command.finalized_event_index.is_some()
+            || command.finalized_event_evidence_digest.is_some();
+        if next == SettlementStatus::Finalized {
+            if command.signature.is_none()
+                || command.slot.is_none()
+                || command.finalized_event_index.is_none()
+                || command
+                    .finalized_event_evidence_digest
+                    .is_none_or(|digest| digest == [0; 32])
+            {
+                return Err(StorageError::InvalidAdjustmentChainTransition);
+            }
+        } else if has_finalized_proof {
+            return Err(StorageError::InvalidAdjustmentChainTransition);
+        }
         let commitment = match next {
             SettlementStatus::Processed => Some("processed"),
             SettlementStatus::Confirmed => Some("confirmed"),
@@ -4817,6 +4871,14 @@ impl PgStore {
             _ => None,
         };
         let slot_text = command.slot.map(|value| value.to_string());
+        let finalized_event_index = command
+            .finalized_event_index
+            .map(i16::try_from)
+            .transpose()
+            .map_err(|_| StorageError::InvalidAdjustmentChainTransition)?;
+        let finalized_event_evidence_digest = command
+            .finalized_event_evidence_digest
+            .map(|value| value.to_vec());
         let signed_digest = command
             .signed_transaction_digest
             .map(|value| value.to_vec());
@@ -4842,8 +4904,10 @@ impl PgStore {
                 "UPDATE settlement_adjustment_chain_intents
                  SET status = $3, signed_transaction_digest = COALESCE($4, signed_transaction_digest),
                      signature = COALESCE($5, signature), slot = COALESCE($6::text::numeric, slot),
-                     commitment = COALESCE($7, commitment), last_error_code = $8
-                 WHERE id = $1 AND merchant_id = $2 AND status = $9",
+                     commitment = COALESCE($7, commitment), last_error_code = $8,
+                     finalized_event_index = COALESCE($9, finalized_event_index),
+                     finalized_event_evidence_digest = COALESCE($10, finalized_event_evidence_digest)
+                 WHERE id = $1 AND merchant_id = $2 AND status = $11",
                 &[
                     &command.intent_id,
                     &command.merchant_id,
@@ -4853,6 +4917,8 @@ impl PgStore {
                     &slot_text,
                     &commitment,
                     &command.last_error_code,
+                    &finalized_event_index,
+                    &finalized_event_evidence_digest,
                     &command.expected_status,
                 ],
             )
@@ -4895,7 +4961,8 @@ impl PgStore {
             .query_opt(
                 "SELECT id, evidence_intent_id, adjustment_id, merchant_id,
                         instruction_digest, status, signed_transaction_digest,
-                        signature, slot::text, commitment, last_error_code
+                        signature, slot::text, commitment, last_error_code,
+                        finalized_event_index, finalized_event_evidence_digest
                  FROM settlement_adjustment_chain_intents
                  WHERE id = $1 AND merchant_id = $2",
                 &[&intent_id, &merchant_id],
@@ -4962,6 +5029,10 @@ impl PgStore {
                   AND raw.event_index = indexed.event_index
                  WHERE chain.id = $1 AND chain.merchant_id = $2
                    AND chain.signature = $3
+                   AND (chain.finalized_event_index IS NULL
+                        OR indexed.event_index = chain.finalized_event_index)
+                   AND (chain.finalized_event_evidence_digest IS NULL
+                        OR indexed.evidence_digest = chain.finalized_event_evidence_digest)
                    AND indexed.slot = $4::text::numeric
                    AND indexed.adjustment = $5
                    AND indexed.original_receipt = $6
@@ -7973,12 +8044,24 @@ impl PgStore {
                 "verification lease token must be UUIDv7".to_string(),
             ));
         }
-        let client = self
+        let mut client = self
             .pool
             .get()
             .await
             .map_err(|error| StorageError::Pool(error.to_string()))?;
-        let updated = client
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::ReadCommitted)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let updated = transaction
             .execute(
                 "UPDATE refund_funding_configurations
                  SET verification_lease_token = NULL,
@@ -7990,6 +8073,7 @@ impl PgStore {
                 &[&configuration_id, &merchant_id, &claim_token],
             )
             .await?;
+        transaction.commit().await?;
         Ok(updated == 1)
     }
 
@@ -8550,6 +8634,43 @@ impl PgStore {
                 })
             })
             .collect()
+    }
+
+    pub async fn load_refund_funding_verification_metrics(
+        &self,
+    ) -> Result<RefundFundingVerificationMetricsSnapshot, StorageError> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let row = client
+            .query_one(
+                "SELECT
+                    count(*) FILTER (
+                        WHERE status IN ('approved', 'pending_verification')
+                    )::bigint,
+                    count(*) FILTER (
+                        WHERE status = 'pending_verification'
+                          AND verification_lease_token IS NOT NULL
+                          AND verification_lease_claimed_at > now()
+                              - ($1::bigint * interval '1 second')
+                    )::bigint,
+                    count(*) FILTER (
+                        WHERE status = 'pending_verification'
+                          AND verification_lease_token IS NOT NULL
+                          AND verification_lease_claimed_at <= now()
+                              - ($1::bigint * interval '1 second')
+                    )::bigint
+                 FROM refund_funding_configurations",
+                &[&(REFUND_FUNDING_VERIFICATION_LEASE.as_secs() as i64)],
+            )
+            .await?;
+        Ok(RefundFundingVerificationMetricsSnapshot {
+            pending: row.get::<_, i64>(0).max(0) as u64,
+            leases_active: row.get::<_, i64>(1).max(0) as u64,
+            leases_expired: row.get::<_, i64>(2).max(0) as u64,
+        })
     }
 
     /// Atomically stores one complete finalized topology proof and activates
@@ -10322,6 +10443,18 @@ fn parse_settlement_adjustment_chain_intent_row(
     if instruction_digest == [0; 32] {
         return Err(StorageError::AdjustmentChainIntentConflict);
     }
+    let finalized_event_index: Option<i16> = row.get(11);
+    let finalized_event_evidence_digest = row
+        .get::<_, Option<Vec<u8>>>(12)
+        .map(parse_digest)
+        .transpose()?;
+    if finalized_event_index.is_some_and(|value| value < 0)
+        || (finalized_event_index.is_some() && finalized_event_evidence_digest.is_none())
+        || (finalized_event_index.is_none() && finalized_event_evidence_digest.is_some())
+        || finalized_event_evidence_digest.is_some_and(|digest| digest == [0; 32])
+    {
+        return Err(StorageError::AdjustmentChainIntentConflict);
+    }
     Ok(SettlementAdjustmentChainIntent {
         id: row.get(0),
         evidence_intent_id: row.get(1),
@@ -10337,6 +10470,8 @@ fn parse_settlement_adjustment_chain_intent_row(
             .transpose()?,
         commitment: row.get(9),
         last_error_code: row.get(10),
+        finalized_event_index: finalized_event_index.map(|value| value as u16),
+        finalized_event_evidence_digest,
     })
 }
 

@@ -5,7 +5,7 @@ use std::{
     net::SocketAddr,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Instant,
 };
@@ -17,6 +17,9 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 struct HealthState {
     ready: Arc<AtomicBool>,
     metrics: Arc<ServiceMetrics>,
+    refund_funding_pending: Arc<AtomicU64>,
+    refund_funding_leases_active: Arc<AtomicU64>,
+    refund_funding_leases_expired: Arc<AtomicU64>,
 }
 
 async fn healthz() -> StatusCode {
@@ -32,12 +35,28 @@ async fn readyz(State(state): State<HealthState>) -> StatusCode {
 }
 
 async fn metrics(State(state): State<HealthState>) -> impl axum::response::IntoResponse {
+    let mut rendered = state.metrics.render_prometheus();
+    rendered.push_str("# TYPE stp_route_verifier_refund_funding_pending gauge\n");
+    rendered.push_str(&format!(
+        "stp_route_verifier_refund_funding_pending{{service=\"route_verifier\"}} {}\n",
+        state.refund_funding_pending.load(Ordering::Relaxed)
+    ));
+    rendered.push_str("# TYPE stp_route_verifier_refund_funding_leases_active gauge\n");
+    rendered.push_str(&format!(
+        "stp_route_verifier_refund_funding_leases_active{{service=\"route_verifier\"}} {}\n",
+        state.refund_funding_leases_active.load(Ordering::Relaxed)
+    ));
+    rendered.push_str("# TYPE stp_route_verifier_refund_funding_leases_expired gauge\n");
+    rendered.push_str(&format!(
+        "stp_route_verifier_refund_funding_leases_expired{{service=\"route_verifier\"}} {}\n",
+        state.refund_funding_leases_expired.load(Ordering::Relaxed)
+    ));
     (
         [(
             axum::http::header::CONTENT_TYPE,
             "text/plain; version=0.0.4; charset=utf-8",
         )],
-        state.metrics.render_prometheus(),
+        rendered,
     )
 }
 
@@ -56,6 +75,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "route_verifier",
             &["verify", "verify_refund_funding"],
         )?),
+        refund_funding_pending: Arc::new(AtomicU64::new(0)),
+        refund_funding_leases_active: Arc::new(AtomicU64::new(0)),
+        refund_funding_leases_expired: Arc::new(AtomicU64::new(0)),
     };
     let bind_address = std::env::var("ROUTE_VERIFIER_HEALTH_BIND_ADDRESS")
         .unwrap_or_else(|_| "0.0.0.0:8083".to_string());
@@ -107,6 +129,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         warn!(%error, "refund funding verification pass failed; configurations remain inactive");
                         let _ = health_state.metrics.observe("verify_refund_funding", started.elapsed(), true);
                     }
+                }
+                match store.load_refund_funding_verification_metrics().await {
+                    Ok(snapshot) => {
+                        health_state.refund_funding_pending.store(snapshot.pending, Ordering::Relaxed);
+                        health_state.refund_funding_leases_active.store(snapshot.leases_active, Ordering::Relaxed);
+                        health_state.refund_funding_leases_expired.store(snapshot.leases_expired, Ordering::Relaxed);
+                    }
+                    Err(error) => warn!(%error, "refund funding verification metrics refresh failed"),
                 }
             }
         }

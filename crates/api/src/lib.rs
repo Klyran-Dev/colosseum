@@ -16,7 +16,9 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use indexer::{FinalizedSignaturePageSource, FinalizedTransactionSource};
+use indexer::{
+    FinalizedSignaturePageSource, FinalizedTransactionSource, IndexedSettlementAdjustment,
+};
 use indexer_service::{
     IndexerServiceError, MAX_TARGETED_RECOVERY_PAGES, recover_targeted_signature,
 };
@@ -56,8 +58,9 @@ use storage::{
     JurisdictionPolicyGovernanceTransition, PgStore, QuoteCommand, QuoteOutcome,
     RefundClaimIntentTransition, RefundExecuteIntentTransition,
     RefundFundingConfigurationTransition, RuleCacheStats, RuleGovernanceTransition,
-    SettlementAdjustmentChainTransition, SettlementAdjustmentTransition, SettlementTransition,
-    StorageError, VaultReleaseClaimTransition,
+    SettlementAdjustmentChainIntent, SettlementAdjustmentChainTransition,
+    SettlementAdjustmentEvidenceIntent, SettlementAdjustmentRecord, SettlementAdjustmentTransition,
+    SettlementTransition, StorageError, VaultReleaseClaimTransition,
 };
 use tax_engine::{CalculationResult, RuleSet, TaxError, TaxFacts, calculate};
 use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
@@ -377,6 +380,177 @@ pub struct SubmitSettlementAdjustmentResponse {
     pub status: String,
     pub signature: Option<String>,
     pub provider_index: Option<usize>,
+    pub finalized_evidence: Option<FinalizedSettlementAdjustmentEvidenceResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FinalizedSettlementAdjustmentEvidenceResponse {
+    pub event_type: &'static str,
+    pub event_version: &'static str,
+    pub event_discriminator: Vec<u8>,
+    pub commitment: &'static str,
+    pub signature: String,
+    #[serde(with = "policy::serde_u64_string")]
+    pub slot: u64,
+    pub event_index: u16,
+    pub adjustment: Digest32,
+    pub original_receipt: Digest32,
+    pub merchant: Digest32,
+    pub mint: Digest32,
+    #[serde(with = "policy::serde_u64_string")]
+    pub nonce: u64,
+    pub kind: u8,
+    pub gross_sign: u8,
+    #[serde(with = "policy::serde_u64_string")]
+    pub gross_magnitude: u64,
+    pub tax_sign: u8,
+    #[serde(with = "policy::serde_u64_string")]
+    pub tax_magnitude: u64,
+    pub net_sign: u8,
+    #[serde(with = "policy::serde_u64_string")]
+    pub net_magnitude: u64,
+    pub adjustment_digest: Digest32,
+    pub adjustment_evidence_digest: Digest32,
+    pub event_evidence_digest: Digest32,
+    pub approver: Digest32,
+}
+
+fn finalized_adjustment_evidence_response(
+    record: IndexedSettlementAdjustment,
+) -> FinalizedSettlementAdjustmentEvidenceResponse {
+    FinalizedSettlementAdjustmentEvidenceResponse {
+        event_type: "SettlementAdjustmentRecorded",
+        event_version: "v1",
+        event_discriminator: indexer::SETTLEMENT_ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR.to_vec(),
+        commitment: "finalized",
+        signature: record.signature,
+        slot: record.slot,
+        event_index: record.event_index,
+        adjustment: record.adjustment,
+        original_receipt: record.original_receipt,
+        merchant: record.merchant,
+        mint: record.mint,
+        nonce: record.nonce,
+        kind: record.kind,
+        gross_sign: record.gross_sign,
+        gross_magnitude: record.gross_magnitude,
+        tax_sign: record.tax_sign,
+        tax_magnitude: record.tax_magnitude,
+        net_sign: record.net_sign,
+        net_magnitude: record.net_magnitude,
+        adjustment_digest: record.adjustment_digest,
+        adjustment_evidence_digest: record.adjustment_evidence_digest,
+        event_evidence_digest: record.evidence_digest,
+        approver: record.approver,
+    }
+}
+
+fn expected_finalized_adjustment_record(
+    chain_intent: &SettlementAdjustmentChainIntent,
+    evidence_intent: &SettlementAdjustmentEvidenceIntent,
+    adjustment: &SettlementAdjustmentRecord,
+    signature: String,
+    slot: u64,
+) -> Result<IndexedSettlementAdjustment, ApiError> {
+    let adjustment_pda = Pubkey::find_program_address(
+        &[
+            b"adjustment",
+            &evidence_intent.original_receipt,
+            &evidence_intent.nonce.to_le_bytes(),
+        ],
+        &Pubkey::from_str(SETTLEMENT_PROGRAM_ID).map_err(|_| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "SETTLEMENT_PROGRAM_CONFIGURATION_INVALID",
+            message: "configured settlement program id is invalid".into(),
+        })?,
+    )
+    .0;
+    let (gross_sign, gross_magnitude) = signed_magnitude_u64(adjustment.delta.gross_atomic)?;
+    let (tax_sign, tax_magnitude) = signed_magnitude_u64(adjustment.delta.tax_atomic)?;
+    let (net_sign, net_magnitude) = signed_magnitude_u64(adjustment.delta.net_atomic)?;
+    Ok(IndexedSettlementAdjustment {
+        signature,
+        slot,
+        event_index: chain_intent.finalized_event_index.unwrap_or(0),
+        adjustment: adjustment_pda.to_bytes(),
+        original_receipt: evidence_intent.original_receipt,
+        merchant: evidence_intent.merchant,
+        mint: evidence_intent.mint,
+        nonce: evidence_intent.nonce,
+        kind: adjustment_kind_tag(adjustment.kind),
+        gross_sign,
+        gross_magnitude,
+        tax_sign,
+        tax_magnitude,
+        net_sign,
+        net_magnitude,
+        adjustment_digest: adjustment.adjustment_digest,
+        adjustment_evidence_digest: adjustment.evidence_digest,
+        evidence_digest: chain_intent
+            .finalized_event_evidence_digest
+            .unwrap_or([1; 32]),
+        approver: evidence_intent.approver,
+    })
+}
+
+async fn load_finalized_adjustment_evidence_response(
+    store: &PgStore,
+    intent: &SettlementAdjustmentChainIntent,
+    merchant_id: Uuid,
+) -> Result<Option<FinalizedSettlementAdjustmentEvidenceResponse>, ApiError> {
+    if intent.status != SettlementStatus::Finalized.as_str() {
+        return Ok(None);
+    }
+    let signature = intent.signature.clone().ok_or_else(|| ApiError {
+        status: StatusCode::CONFLICT,
+        code: "ADJUSTMENT_FINALIZED_PROOF_INCOMPLETE",
+        message: "finalized adjustment intent is missing its server-bound signature".into(),
+    })?;
+    let slot = intent.slot.ok_or_else(|| ApiError {
+        status: StatusCode::CONFLICT,
+        code: "ADJUSTMENT_FINALIZED_PROOF_INCOMPLETE",
+        message: "finalized adjustment intent is missing its finalized slot".into(),
+    })?;
+    if intent.commitment.as_deref() != Some("finalized")
+        || intent.finalized_event_index.is_none()
+        || intent.finalized_event_evidence_digest.is_none()
+    {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "ADJUSTMENT_FINALIZED_PROOF_INCOMPLETE",
+            message: "finalized adjustment intent is missing its typed-event proof binding".into(),
+        });
+    }
+    let evidence_intent = store
+        .load_settlement_adjustment_evidence_intent(intent.evidence_intent_id, merchant_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError {
+            status: StatusCode::CONFLICT,
+            code: "ADJUSTMENT_EVIDENCE_INTENT_NOT_FOUND",
+            message: "immutable adjustment evidence is unavailable for the finalized proof".into(),
+        })?;
+    let adjustment = store
+        .load_settlement_adjustment(intent.adjustment_id, merchant_id)
+        .await
+        .map_err(ApiError::from)?;
+    let expected = expected_finalized_adjustment_record(
+        intent,
+        &evidence_intent,
+        &adjustment,
+        signature,
+        slot,
+    )?;
+    let record = store
+        .load_finalized_settlement_adjustment_record(intent.id, merchant_id, &expected)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError {
+            status: StatusCode::CONFLICT,
+            code: "ADJUSTMENT_FINALIZED_PROOF_NOT_FOUND",
+            message: "finalized status has no matching typed event evidence".into(),
+        })?;
+    Ok(Some(finalized_adjustment_evidence_response(record)))
 }
 
 #[derive(Serialize)]
@@ -2766,6 +2940,7 @@ async fn submit_settlement_adjustment(
             status: intent.status,
             signature: intent.signature,
             provider_index: None,
+            finalized_evidence: None,
         }));
     }
     let coordinator = state.settlement_coordinator.ok_or_else(|| ApiError {
@@ -2818,6 +2993,8 @@ async fn submit_settlement_adjustment(
                 signature: None,
                 slot: None,
                 last_error_code: None,
+                finalized_event_index: None,
+                finalized_event_evidence_digest: None,
                 evidence: serde_json::json!({"source": "wallet_handoff"}),
             })
             .await
@@ -2839,6 +3016,8 @@ async fn submit_settlement_adjustment(
             signature: Some(transaction_signature.clone()),
             slot: None,
             last_error_code: None,
+            finalized_event_index: None,
+            finalized_event_evidence_digest: None,
             evidence: serde_json::json!({"source": "submission_fence"}),
         })
         .await
@@ -2865,6 +3044,8 @@ async fn submit_settlement_adjustment(
                         signature: Some(transaction_signature),
                         slot: None,
                         last_error_code: Some(error_code.to_string()),
+                        finalized_event_index: None,
+                        finalized_event_evidence_digest: None,
                         evidence: serde_json::json!({"source": "rpc", "error_code": error_code}),
                     },
                 )
@@ -2888,6 +3069,8 @@ async fn submit_settlement_adjustment(
             signature: Some(submitted.signature.clone()),
             slot: None,
             last_error_code: None,
+            finalized_event_index: None,
+            finalized_event_evidence_digest: None,
             evidence: serde_json::json!({"source": "rpc", "provider_index": submitted.provider_index}),
         })
         .await
@@ -2904,6 +3087,7 @@ async fn submit_settlement_adjustment(
         status: submitted.status.as_str().to_string(),
         signature: Some(submitted.signature),
         provider_index: Some(submitted.provider_index),
+        finalized_evidence: None,
     }))
 }
 
@@ -2927,11 +3111,14 @@ async fn get_settlement_adjustment_chain_intent(
             code: "ADJUSTMENT_CHAIN_INTENT_NOT_FOUND",
             message: "the adjustment submission intent was not found".to_string(),
         })?;
+    let finalized_evidence =
+        load_finalized_adjustment_evidence_response(&store, &intent, principal.merchant_id).await?;
     Ok(Json(SubmitSettlementAdjustmentResponse {
         chain_intent_id: intent.id,
         status: intent.status,
         signature: intent.signature,
         provider_index: None,
+        finalized_evidence,
     }))
 }
 
@@ -2966,6 +3153,7 @@ async fn reconcile_settlement_adjustment_chain_intent(
             status: intent.status,
             signature: None,
             provider_index: None,
+            finalized_evidence: None,
         }));
     };
     let observed = coordinator
@@ -2992,6 +3180,8 @@ async fn reconcile_settlement_adjustment_chain_intent(
                 slot: observed.slot,
                 last_error_code: (target == SettlementStatus::Unknown)
                     .then_some("rpc_status_unknown".to_string()),
+                finalized_event_index: None,
+                finalized_event_evidence_digest: None,
                 evidence: serde_json::json!({
                     "source": "rpc_status",
                     "provider_index": observed.provider_index,
@@ -3026,45 +3216,16 @@ async fn reconcile_settlement_adjustment_chain_intent(
                 status: status.as_str().to_string(),
                 signature: Some(signature),
                 provider_index: Some(observed.provider_index),
+                finalized_evidence: None,
             }));
         };
-        let adjustment_pda = Pubkey::find_program_address(
-            &[
-                b"adjustment",
-                &evidence_intent.original_receipt,
-                &evidence_intent.nonce.to_le_bytes(),
-            ],
-            &Pubkey::from_str(SETTLEMENT_PROGRAM_ID).map_err(|_| ApiError {
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-                code: "SETTLEMENT_PROGRAM_CONFIGURATION_INVALID",
-                message: "configured settlement program id is invalid".into(),
-            })?,
-        )
-        .0;
-        let (gross_sign, gross_magnitude) = signed_magnitude_u64(adjustment.delta.gross_atomic)?;
-        let (tax_sign, tax_magnitude) = signed_magnitude_u64(adjustment.delta.tax_atomic)?;
-        let (net_sign, net_magnitude) = signed_magnitude_u64(adjustment.delta.net_atomic)?;
-        let expected = indexer::IndexedSettlementAdjustment {
-            signature: signature.clone(),
-            slot: observed_slot,
-            event_index: 0,
-            adjustment: adjustment_pda.to_bytes(),
-            original_receipt: evidence_intent.original_receipt,
-            merchant: evidence_intent.merchant,
-            mint: evidence_intent.mint,
-            nonce: evidence_intent.nonce,
-            kind: adjustment_kind_tag(adjustment.kind),
-            gross_sign,
-            gross_magnitude,
-            tax_sign,
-            tax_magnitude,
-            net_sign,
-            net_magnitude,
-            adjustment_digest: adjustment.adjustment_digest,
-            adjustment_evidence_digest: adjustment.evidence_digest,
-            evidence_digest: [1; 32],
-            approver: evidence_intent.approver,
-        };
+        let expected = expected_finalized_adjustment_record(
+            &intent,
+            &evidence_intent,
+            &adjustment,
+            signature.clone(),
+            observed_slot,
+        )?;
         if let Some(record) = store
             .load_finalized_settlement_adjustment_record(
                 intent.id,
@@ -3086,6 +3247,8 @@ async fn reconcile_settlement_adjustment_chain_intent(
                         signature: Some(record.signature.clone()),
                         slot: Some(record.slot),
                         last_error_code: None,
+                        finalized_event_index: Some(record.event_index),
+                        finalized_event_evidence_digest: Some(record.evidence_digest),
                         evidence: serde_json::json!({
                             "source": "finalized_indexer_event",
                             "event_index": record.event_index,
@@ -3095,15 +3258,29 @@ async fn reconcile_settlement_adjustment_chain_intent(
                 )
                 .await
                 .map_err(ApiError::from)?
-        {
-            status = SettlementStatus::Finalized;
-        }
+        {}
     }
+    let response_intent = store
+        .load_settlement_adjustment_chain_intent(intent.id, principal.merchant_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError {
+            status: StatusCode::CONFLICT,
+            code: "ADJUSTMENT_CHAIN_INTENT_NOT_FOUND",
+            message: "adjustment intent disappeared during reconciliation".into(),
+        })?;
+    let finalized_evidence = load_finalized_adjustment_evidence_response(
+        &store,
+        &response_intent,
+        principal.merchant_id,
+    )
+    .await?;
     Ok(Json(SubmitSettlementAdjustmentResponse {
-        chain_intent_id: intent.id,
-        status: status.as_str().to_string(),
-        signature: Some(signature),
+        chain_intent_id: response_intent.id,
+        status: response_intent.status,
+        signature: response_intent.signature,
         provider_index: Some(observed.provider_index),
+        finalized_evidence,
     }))
 }
 

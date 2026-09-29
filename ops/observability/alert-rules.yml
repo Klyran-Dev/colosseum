@@ -191,3 +191,28 @@ groups:
           summary: "Refund claim finality backlog is not draining"
           description: "At least one submitted refund claim lacks a finalized claim-created event match for ten minutes; inspect targeted recovery, provider finality, and the refund incident runbook before enabling execute preparation."
           runbook: docs/runbooks/vault-release-incident.md
+
+  - name: solana-tax-protocol.refund-funding-verification
+    interval: 15s
+    rules:
+      - alert: STPRefundFundingVerificationBacklog
+        expr: stp_route_verifier_refund_funding_pending{service="route_verifier"} > 0
+        for: 10m
+        labels:
+          severity: warning
+          owner: finance-tax-sre
+        annotations:
+          summary: "Refund-funding topology verification backlog is not draining"
+          description: "At least one reviewed refund-funding configuration is not active; inspect finalized topology evidence, provider agreement, and verifier lease state before allowing refund movement."
+          runbook: docs/runbooks/vault-release-incident.md
+
+      - alert: STPRefundFundingVerificationLeaseExpired
+        expr: stp_route_verifier_refund_funding_leases_expired{service="route_verifier"} > 0
+        for: 1m
+        labels:
+          severity: warning
+          owner: platform-sre
+        annotations:
+          summary: "Refund-funding verification leases are expiring"
+          description: "A verifier lease exceeded its bounded crash window; investigate verifier restarts, RPC deadlines, and provider availability before repeated reclaim cycles amplify load."
+          runbook: docs/runbooks/vault-release-incident.md

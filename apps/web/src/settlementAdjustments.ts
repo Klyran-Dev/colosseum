@@ -81,6 +81,33 @@ export type AdjustmentChainIntentResponse = {
   status: AdjustmentChainIntentStatus;
   signature: string | null;
   provider_index: number | null;
+  finalized_evidence: FinalizedSettlementAdjustmentEvidence | null;
+};
+
+export type FinalizedSettlementAdjustmentEvidence = {
+  event_type: "SettlementAdjustmentRecorded";
+  event_version: "v1";
+  event_discriminator: number[];
+  commitment: "finalized";
+  signature: string;
+  slot: string;
+  event_index: number;
+  adjustment: number[];
+  original_receipt: number[];
+  merchant: number[];
+  mint: number[];
+  nonce: string;
+  kind: number;
+  gross_sign: number;
+  gross_magnitude: string;
+  tax_sign: number;
+  tax_magnitude: string;
+  net_sign: number;
+  net_magnitude: string;
+  adjustment_digest: number[];
+  adjustment_evidence_digest: number[];
+  event_evidence_digest: number[];
+  approver: number[];
 };
 
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

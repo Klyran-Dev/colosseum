@@ -65,6 +65,44 @@ if [ ! -s "$dump_file" ]; then
     exit 1
 fi
 
+restore_dump_file="$dump_file"
+if [ "${BACKUP_DRILL_ENCRYPTED:-false}" = "true" ]; then
+    # Synthetic local/CI envelope contract only. Production must replace the
+    # ephemeral DEK and local HMAC with an approved KMS/HSM-backed AEAD
+    # envelope and separately managed key lifecycle.
+    key_file="$drill_dir/backup-dek.hex"
+    encrypted_dump_file="$drill_dir/tax_protocol.dump.enc"
+    manifest_file="$drill_dir/tax_protocol.dump.enc.hmac"
+    tampered_file="$drill_dir/tax_protocol.dump.tampered"
+    decrypted_dump_file="$drill_dir/tax_protocol.dump.decrypted"
+    openssl rand -hex 32 > "$key_file"
+    chmod 600 "$key_file"
+    backup_key=$(tr -d '\n' < "$key_file")
+    hmac_file() {
+        openssl dgst -sha256 -mac HMAC -macopt "hexkey:$backup_key" "$1" \
+            | awk '{print $2}'
+    }
+    openssl enc -aes-256-ctr -pbkdf2 -iter 600000 -salt \
+        -in "$dump_file" -out "$encrypted_dump_file" \
+        -pass file:"$key_file" >/dev/null 2>&1
+    encrypted_hmac=$(hmac_file "$encrypted_dump_file")
+    printf '%s\n' "$encrypted_hmac" > "$manifest_file"
+    if [ "$(hmac_file "$encrypted_dump_file")" != "$(tr -d '\n' < "$manifest_file")" ]; then
+        echo "encrypted backup integrity manifest did not verify" >&2
+        exit 1
+    fi
+    cp "$encrypted_dump_file" "$tampered_file"
+    printf '\377' | dd of="$tampered_file" bs=1 count=1 conv=notrunc >/dev/null 2>&1
+    if [ "$(hmac_file "$tampered_file")" = "$(tr -d '\n' < "$manifest_file")" ]; then
+        echo "tampered encrypted backup unexpectedly passed integrity verification" >&2
+        exit 1
+    fi
+    openssl enc -d -aes-256-ctr -pbkdf2 -iter 600000 \
+        -in "$encrypted_dump_file" -out "$decrypted_dump_file" \
+        -pass file:"$key_file" >/dev/null 2>&1
+    restore_dump_file="$decrypted_dump_file"
+fi
+
 docker run --detach \
     --name "$target_container" \
     --platform linux/amd64 \
@@ -91,7 +129,7 @@ docker exec -i "$target_container" pg_restore \
     --no-owner \
     --no-acl \
     --username=tax_protocol \
-    --dbname=tax_protocol < "$dump_file"
+    --dbname=tax_protocol < "$restore_dump_file"
 
 facts_column_count=$(docker exec "$target_container" psql -U tax_protocol -d tax_protocol -Atc \
     "SELECT count(*) FROM information_schema.columns WHERE table_name = 'tax_calculations' AND column_name = 'facts_document';")
@@ -122,4 +160,8 @@ if [ "$required_tables" != "4" ]; then
     exit 1
 fi
 
-echo "PostgreSQL logical backup and isolated restore drill passed"
+if [ "${BACKUP_DRILL_ENCRYPTED:-false}" = "true" ]; then
+    echo "PostgreSQL encrypted logical backup and isolated restore drill passed"
+else
+    echo "PostgreSQL logical backup and isolated restore drill passed"
+fi

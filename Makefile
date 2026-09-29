@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 
-.PHONY: fmt lint test bench-tax-engine benchmark-quote-service benchmark-rule-simulation postgres-pool-drill postgres-index-plan-drill postgres-pitr-drill vault-reconciliation-drill migration-integrity-drill adjustment-authority-drill web-install web-check web-browser-check security-scan observability-config public-docs-check environment-contract deployment-config-contract migration-bootstrap-contract check compose-config migrate backup-restore-drill projection-rebuild-drill postgres-contention-drill integration-check solana-build solana-conformance solana-up solana-down indexer-up indexer-down route-verifier-up route-verifier-down observability-up observability-down up down logs
+.PHONY: fmt lint test bench-tax-engine benchmark-quote-service benchmark-rule-simulation postgres-pool-drill postgres-index-plan-drill postgres-pitr-drill vault-reconciliation-drill migration-integrity-drill migration-rollback-rehearsal adjustment-authority-drill refund-funding-verifier-drill web-install web-check web-browser-check security-scan observability-config public-docs-check environment-contract deployment-config-contract migration-bootstrap-contract check compose-config migrate backup-restore-drill encrypted-backup-restore-drill projection-rebuild-drill postgres-contention-drill integration-check solana-build solana-conformance solana-up solana-down indexer-up indexer-down route-verifier-up route-verifier-down observability-up observability-down up down logs
 
 fmt:
 	cargo fmt --all
@@ -90,17 +90,26 @@ indexer-up:
 backup-restore-drill:
 	./scripts/backup_restore_drill.sh
 
+encrypted-backup-restore-drill:
+	BACKUP_DRILL_ENCRYPTED=true ./scripts/backup_restore_drill.sh
+
 projection-rebuild-drill:
 	./scripts/projection_rebuild_drill.sh
 
 postgres-contention-drill:
 	./scripts/postgres_contention_drill.sh
 
+refund-funding-verifier-drill:
+	./scripts/refund_funding_verifier_drill.sh
+
 vault-reconciliation-drill:
 	./scripts/vault_reconciliation_drill.sh
 
 migration-integrity-drill:
 	./scripts/migration_integrity_drill.sh
+
+migration-rollback-rehearsal:
+	./scripts/migration_rollback_rehearsal.sh
 
 adjustment-authority-drill:
 	./scripts/adjustment_authority_drill.sh

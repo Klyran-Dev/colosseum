@@ -1,6 +1,6 @@
 # ADR-0181: Lease-fenced refund-funding topology verification
 
-- Status: Accepted — implementation in progress
+- Status: Accepted — implementation complete; release evidence pending
 - Date: 2026-09-29
 - Owners: Settlement infrastructure and finance/tax SRE
 - Scope: Refund Movement bounded context, route-verifier, PostgreSQL
@@ -81,3 +81,19 @@ auditable worker-claim identities; it is not used as a secret or authority.
   provider disagreement, and activation failures.
 - Linux validator evidence remains a separate ADR-0174 release gate.
 
+The reproducible local evidence is `make refund-funding-verifier-drill`. It
+starts two isolated route-verifier containers against PostgreSQL and a
+synthetic RPC fixture that returns the complete five-account legacy-SPL
+topology. The drill asserts that exactly one verifier owns the lease, exactly
+one finalized account read occurs, exactly one activation event is committed,
+and the other verifier observes a fenced skip. It then ages a claimed lease,
+restarts a verifier, and asserts stale reclaim plus single activation. The
+fixture is synthetic and local-only; it is not an authority and cannot be
+used by staging or production configuration.
+
+The same command is retained as a public-safe artifact by the Ubuntu CI
+`refund-funding-verifier` job. `REFUND_FUNDING_VERIFIER_EVIDENCE_DIR` writes
+only exit status and fixed-cardinality counts to `result.env`; it contains no
+RPC credentials, private keys, customer data, or tax evidence. CI retention
+improves regression detection but does not replace production RPC,
+multi-region, or Linux validator evidence required by ADR-0174.

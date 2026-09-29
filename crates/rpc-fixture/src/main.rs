@@ -65,6 +65,8 @@ struct FixtureState {
     vault_slot: Arc<AtomicU64>,
     vault_read_count: Arc<AtomicU64>,
     adjustment_registry: Option<AdjustmentRegistryFixture>,
+    refund_funding: Option<RefundFundingFixture>,
+    refund_funding_read_delay: Duration,
     send_delay: Duration,
     send_count: Arc<AtomicU64>,
     send_outcome: Arc<RwLock<SendOutcome>>,
@@ -79,6 +81,19 @@ struct AdjustmentRegistryFixture {
     address: String,
     slot: u64,
     data: Vec<u8>,
+}
+
+#[derive(Clone)]
+struct RefundFundingFixture {
+    merchant_account: String,
+    mint: Pubkey,
+    mint_address: String,
+    tax_vault: String,
+    vault_authority: String,
+    refund_funder: String,
+    net_source: String,
+    slot: u64,
+    mint_decimals: u8,
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,6 +147,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if send_delay_ms > 2_000 {
         return Err("RPC_FIXTURE_SEND_DELAY_MS must be at most 2000ms".into());
     }
+    let refund_funding_read_delay_ms = env::var("RPC_FIXTURE_REFUND_FUNDING_READ_DELAY_MS")
+        .unwrap_or_else(|_| "0".to_string())
+        .parse::<u64>()?;
+    if refund_funding_read_delay_ms > 2_000 {
+        return Err("RPC_FIXTURE_REFUND_FUNDING_READ_DELAY_MS must be at most 2000ms".into());
+    }
     let vault_address =
         env::var("RPC_FIXTURE_VAULT_ADDRESS").unwrap_or_else(|_| DEFAULT_VAULT_ADDRESS.to_string());
     Pubkey::from_str(&vault_address)
@@ -147,6 +168,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|_| "42".to_string())
         .parse::<u64>()?;
     let adjustment_registry = load_adjustment_registry_fixture()?;
+    let refund_funding = load_refund_funding_fixture()?;
     let fail_method_config = env::var("RPC_FIXTURE_FAIL_METHODS").ok();
     let fail_methods = parse_fail_methods(fail_method_config.as_deref())
         .map_err(|error| format!("RPC_FIXTURE_FAIL_METHODS is invalid: {error}"))?;
@@ -159,6 +181,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         vault_slot: Arc::new(AtomicU64::new(vault_slot)),
         vault_read_count: Arc::new(AtomicU64::new(0)),
         adjustment_registry,
+        refund_funding,
+        refund_funding_read_delay: Duration::from_millis(refund_funding_read_delay_ms),
         send_delay: Duration::from_millis(send_delay_ms),
         send_count: Arc::new(AtomicU64::new(0)),
         send_outcome: Arc::new(RwLock::new(SendOutcome::Success)),
@@ -176,6 +200,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/admin/release", post(release_send))
         .route("/admin/vault-amount", post(set_vault_amount))
         .route("/admin/vault-read-count", get(vault_read_count))
+        .route("/admin/refund-funding-read-count", get(vault_read_count))
         .with_state(state);
     let listener = TcpListener::bind(bind_address).await?;
     axum::serve(listener, app).await?;
@@ -275,6 +300,9 @@ async fn handle_method(
 ) -> Result<Value, (i64, String)> {
     if method == "getMultipleAccounts" {
         state.vault_read_count.fetch_add(1, Ordering::AcqRel);
+        if state.refund_funding.is_some() && !state.refund_funding_read_delay.is_zero() {
+            sleep(state.refund_funding_read_delay).await;
+        }
     }
     if state
         .fail_methods
@@ -318,7 +346,7 @@ fn load_adjustment_registry_fixture()
     ];
     let values = names
         .iter()
-        .map(|name| env::var(name).ok())
+        .map(|name| env::var(name).ok().filter(|value| !value.trim().is_empty()))
         .collect::<Vec<_>>();
     if values.iter().all(Option::is_none) {
         return Ok(None);
@@ -381,6 +409,64 @@ fn load_adjustment_registry_fixture()
     }))
 }
 
+fn load_refund_funding_fixture() -> Result<Option<RefundFundingFixture>, Box<dyn std::error::Error>>
+{
+    let names = [
+        "RPC_FIXTURE_REFUND_FUNDING_MERCHANT",
+        "RPC_FIXTURE_REFUND_FUNDING_MINT",
+        "RPC_FIXTURE_REFUND_FUNDING_TAX_VAULT",
+        "RPC_FIXTURE_REFUND_FUNDING_VAULT_AUTHORITY",
+        "RPC_FIXTURE_REFUND_FUNDING_REFUND_FUNDER",
+        "RPC_FIXTURE_REFUND_FUNDING_NET_SOURCE",
+    ];
+    let values = names
+        .iter()
+        .map(|name| env::var(name).ok().filter(|value| !value.trim().is_empty()))
+        .collect::<Vec<_>>();
+    if values.iter().all(Option::is_none) {
+        return Ok(None);
+    }
+    if values.iter().any(Option::is_none) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "all RPC_FIXTURE_REFUND_FUNDING_* public keys are required together",
+        )
+        .into());
+    }
+    let value = |index: usize| -> Result<String, Box<dyn std::error::Error>> {
+        values.get(index).and_then(Clone::clone).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "refund funding fixture environment value is missing",
+            )
+            .into()
+        })
+    };
+    let mint_address = value(1)?;
+    let mint = Pubkey::from_str(&mint_address)
+        .map_err(|_| "RPC_FIXTURE_REFUND_FUNDING_MINT must be a valid public key")?;
+    let slot = env::var("RPC_FIXTURE_REFUND_FUNDING_SLOT")
+        .unwrap_or_else(|_| "888".to_string())
+        .parse::<u64>()?;
+    if slot == 0 {
+        return Err("RPC_FIXTURE_REFUND_FUNDING_SLOT must be positive".into());
+    }
+    let mint_decimals = env::var("RPC_FIXTURE_REFUND_FUNDING_MINT_DECIMALS")
+        .unwrap_or_else(|_| "6".to_string())
+        .parse::<u8>()?;
+    Ok(Some(RefundFundingFixture {
+        merchant_account: value(0)?,
+        mint,
+        mint_address,
+        tax_vault: value(2)?,
+        vault_authority: value(3)?,
+        refund_funder: value(4)?,
+        net_source: value(5)?,
+        slot,
+        mint_decimals,
+    }))
+}
+
 fn parse_fail_methods(value: Option<&str>) -> Result<Vec<String>, &'static str> {
     let raw = value.unwrap_or("").trim();
     if raw.len() > MAX_FAIL_METHOD_CONFIG_BYTES {
@@ -419,6 +505,9 @@ fn get_multiple_accounts(state: &FixtureState, params: &Value) -> Result<Value, 
         .first()
         .and_then(Value::as_array)
         .ok_or((-32602, "account addresses must be an array".to_string()))?;
+    if let Some(fixture) = &state.refund_funding {
+        return get_refund_funding_accounts(fixture, addresses, values);
+    }
     if addresses.len() != 1 {
         return Err((
             -32602,
@@ -459,6 +548,92 @@ fn get_multiple_accounts(state: &FixtureState, params: &Value) -> Result<Value, 
             "owner": SPL_TOKEN_PROGRAM_ID,
             "rentEpoch": u64::MAX
         }]
+    }))
+}
+
+fn get_refund_funding_accounts(
+    fixture: &RefundFundingFixture,
+    addresses: &[Value],
+    values: &[Value],
+) -> Result<Value, (i64, String)> {
+    let expected = [
+        fixture.merchant_account.as_str(),
+        fixture.mint_address.as_str(),
+        fixture.tax_vault.as_str(),
+        fixture.refund_funder.as_str(),
+        fixture.net_source.as_str(),
+    ];
+    if addresses.len() != expected.len()
+        || addresses
+            .iter()
+            .zip(expected)
+            .any(|(actual, expected)| actual.as_str() != Some(expected))
+    {
+        return Err((
+            -32602,
+            "fixture refund-funding account addresses do not match the configured topology"
+                .to_string(),
+        ));
+    }
+    let options = values
+        .get(1)
+        .and_then(Value::as_object)
+        .ok_or((-32602, "account options are required".to_string()))?;
+    if options.get("commitment").and_then(Value::as_str) != Some("finalized")
+        || options.get("encoding").and_then(Value::as_str) != Some("base64")
+    {
+        return Err((
+            -32602,
+            "fixture requires finalized base64 account reads".to_string(),
+        ));
+    }
+    let system_account = || {
+        json!({
+            "data": [BASE64.encode([]), "base64"],
+            "executable": false,
+            "lamports": 1_000_000u64,
+            "owner": "11111111111111111111111111111111",
+            "rentEpoch": u64::MAX
+        })
+    };
+    let mut mint_data = vec![0; 82];
+    mint_data[44] = fixture.mint_decimals;
+    let mut tax_data = vec![0; 165];
+    tax_data[..32].copy_from_slice(fixture.mint.as_ref());
+    let vault_authority = Pubkey::from_str(&fixture.vault_authority).map_err(|_| {
+        (
+            -32602,
+            "fixture vault authority is not a valid public key".to_string(),
+        )
+    })?;
+    tax_data[32..64].copy_from_slice(vault_authority.as_ref());
+    let refund_funder = Pubkey::from_str(&fixture.refund_funder).map_err(|_| {
+        (
+            -32602,
+            "fixture refund funder is not a valid public key".to_string(),
+        )
+    })?;
+    let mut source_data = vec![0; 165];
+    source_data[..32].copy_from_slice(fixture.mint.as_ref());
+    source_data[32..64].copy_from_slice(refund_funder.as_ref());
+    let token_account = |data: Vec<u8>| {
+        json!({
+            "data": [BASE64.encode(data), "base64"],
+            "executable": false,
+            "lamports": 1_000_000u64,
+            "owner": SPL_TOKEN_PROGRAM_ID,
+            "rentEpoch": u64::MAX
+        })
+    };
+    Ok(json!({
+        "context": {"slot": fixture.slot},
+        "value": [
+            system_account(),
+            token_account(mint_data),
+            token_account(tax_data),
+            system_account(),
+            token_account(source_data)
+        ]
     }))
 }
 
@@ -669,6 +844,8 @@ mod tests {
             vault_slot: Arc::new(AtomicU64::new(42)),
             vault_read_count: Arc::new(AtomicU64::new(0)),
             adjustment_registry: None,
+            refund_funding: None,
+            refund_funding_read_delay: Duration::ZERO,
             send_delay: Duration::ZERO,
             send_count: Arc::new(AtomicU64::new(0)),
             send_outcome: Arc::new(RwLock::new(SendOutcome::Success)),

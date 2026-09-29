@@ -179,6 +179,13 @@ if ! docker compose -p "$project_name" exec -T postgres \
     exit 1
 fi
 
+if ! docker compose -p "$project_name" exec -T postgres \
+    psql -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
+    < db/verification/adjustment_finalized_proof.sql >/dev/null; then
+    echo "finalized adjustment proof contract failed" >&2
+    exit 1
+fi
+
 pause_event_table=$(docker compose -p "$project_name" exec -T postgres \
     psql -qAt -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
     -c "SELECT to_regclass('public.protocol_pause_events') IS NOT NULL" | tr -d '[:space:]')
@@ -1487,6 +1494,69 @@ if [ "$governance_event_count" != "6" ]; then
     echo "expected six append-only rule governance events after retirement, found $governance_event_count" >&2
     exit 1
 fi
+
+# Rehearse the governed rule rollback contract: a published rule is never
+# edited in place. The bad release remains immutable/retired and a corrected
+# version must pass the complete four-eyes lifecycle before it can be used.
+rollback_effective_from="$(date +%s)"
+rollback_body="{\"idempotency_key\":\"integration-rule-rollback-01\",\"external_id\":\"integration-governed-rule\",\"version\":2,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"effective_from_unix\":$rollback_effective_from,\"effective_until_unix\":null,\"rule_set\":{\"id\":\"integration-governed-rule\",\"version\":2,\"components\":[{\"id\":\"sales-tax\",\"label\":\"Sales tax\",\"base\":{\"sources\":[\"Net\"]},\"rate\":{\"Flat\":{\"numerator\":\"12\",\"denominator\":\"100\"}},\"price_mode\":\"Exclusive\",\"credit_atomic\":\"0\",\"floor_atomic\":null,\"cap_atomic\":null,\"rounding\":{\"mode\":\"HalfUp\"},\"threshold\":null,\"exemption_codes\":[]}]},\"provenance\":{\"source\":\"integration-rollback\",\"ticket\":\"RULE-ROLLBACK-001\"}}"
+rollback_response_file="$integration_dir/rule-rollback-response"
+rollback_status=$(printf '%s' "$rollback_body" | curl --silent --show-error \
+    --output "$rollback_response_file" --write-out '%{http_code}' \
+    --header 'content-type: application/json' \
+    --header "authorization: $(make_authorization rollback-author 'tax:rule:author' '["tax_rule_author"]')" \
+    --data-binary @- "$base_url/v1/tax/rules")
+if [ "$rollback_status" -lt 200 ] || [ "$rollback_status" -ge 300 ] \
+    || ! grep -q '"status":"draft"' "$rollback_response_file"; then
+    echo "corrective rule draft returned HTTP $rollback_status" >&2
+    sed -n '1,160p' "$rollback_response_file" >&2 || true
+    exit 1
+fi
+rollback_rule_id=$(docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -Atc \
+    "select id from rule_sets where merchant_id = '$merchant_id' and external_id = 'integration-governed-rule' and version = 2;")
+if [ -z "$rollback_rule_id" ]; then
+    echo "corrective rule draft was not persisted" >&2
+    exit 1
+fi
+
+rollback_transition() {
+    target_status=$1
+    actor_subject=$2
+    scope=$3
+    role=$4
+    body="{\"to_status\":\"$target_status\",\"evidence\":{\"source\":\"integration-rollback\",\"ticket\":\"RULE-ROLLBACK-001\"}}"
+    printf '%s' "$body" | curl --fail --silent --show-error \
+        --header 'content-type: application/json' \
+        --header "authorization: $(make_authorization "$actor_subject" "$scope" "[\"$role\"]")" \
+        --data-binary @- "$base_url/v1/tax/rules/$rollback_rule_id/transition" \
+        | grep -q "\"to_status\":\"$target_status\""
+}
+rollback_transition simulated rollback-author 'tax:rule:author' tax_rule_author
+rollback_transition reviewed rollback-reviewer 'tax:rule:review' tax_rule_reviewer
+rollback_transition approved rollback-approver 'tax:rule:approve' tax_rule_approver
+rollback_transition published rollback-approver 'tax:rule:publish' tax_rule_approver
+
+rollback_statuses=$(docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -Atc \
+    "select string_agg(version || ':' || status, ',' order by version) from rule_sets where merchant_id = '$merchant_id' and external_id = 'integration-governed-rule';")
+if [ "$rollback_statuses" != "1:retired,2:published" ]; then
+    echo "corrective rule lifecycle was not isolated from retired release: $rollback_statuses" >&2
+    exit 1
+fi
+rollback_simulation_response=$(printf '%s' "$simulation_request" | curl --fail --silent --show-error \
+    --header 'content-type: application/json' \
+    --header "authorization: $(make_authorization rollback-auditor 'tax:rule:read' '["tax_rule_auditor"]')" \
+    --data-binary @- "$base_url/v1/tax/rules/$rollback_rule_id/simulate")
+if ! printf '%s' "$rollback_simulation_response" \
+    | grep -q '"rule_version":2' \
+    || ! printf '%s' "$rollback_simulation_response" \
+    | grep -q '"total_tax_atomic":"120"'; then
+    echo "corrective published rule did not produce the expected server-owned result" >&2
+    printf '%s\n' "$rollback_simulation_response" >&2
+    exit 1
+fi
+echo "rule_rollback=passed"
 
 # Exercise the durable settlement-adjustment proposal and evidence compiler
 # boundary. This records an immutable signed refund delta and server-verified

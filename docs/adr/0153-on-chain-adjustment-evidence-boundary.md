@@ -2,9 +2,9 @@
 
 ## Status
 
-Accepted for the first contract slice; implementation and validator evidence
-are still required. This ADR does not authorize token movement, tax refunds,
-or a `posted` API state.
+Accepted for the first contract slice; implementation is complete and pinned
+Linux validator execution remains required evidence. This ADR does not
+authorize token movement, tax refunds, or a `posted` API state.
 
 ## Context
 
@@ -135,7 +135,9 @@ release. These are diagnostic budgets until target-cluster evidence exists.
 3. Add a cross-language vector for the adjustment instruction and PDA payload.
 4. Extend the Linux validator conformance suite with successful record,
    duplicate rejection, wrong receipt binding, non-conserving delta, and
-   unchanged token balances.
+   unchanged token balances. The TypeScript conformance contract now includes
+   the wrong-receipt and non-conserving negative cases; successful Linux
+   execution is still required before this gate is checked.
 5. Add coordinator/API gating tests proving an approved adjustment cannot be
    reported as paid from a non-final or mismatched transaction.
 6. Add the separate token movement ADR only after the authority, funding,

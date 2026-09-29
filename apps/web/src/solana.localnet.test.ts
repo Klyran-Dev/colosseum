@@ -273,7 +273,17 @@ function recordAdjustmentInstruction(
   settlementNonce: bigint,
   adjustmentNonce: bigint,
   tokenProgram: PublicKey,
+  options: {
+    receiptSettlementNonce?: bigint;
+    grossMagnitude?: bigint;
+    taxMagnitude?: bigint;
+    netMagnitude?: bigint;
+  } = {},
 ): TransactionInstruction {
+  const receiptSettlementNonce = options.receiptSettlementNonce ?? settlementNonce;
+  const grossMagnitude = options.grossMagnitude ?? 100n;
+  const taxMagnitude = options.taxMagnitude ?? 25n;
+  const netMagnitude = options.netMagnitude ?? 75n;
   return instruction(
     "record_adjustment",
     [
@@ -284,15 +294,15 @@ function recordAdjustmentInstruction(
       { pubkey: tokenProgram, isSigner: false, isWritable: false },
       { pubkey: protocolConfig(), isSigner: false, isWritable: false },
       { pubkey: adjustmentRegistry(mint), isSigner: false, isWritable: false },
-      { pubkey: receipt(mint, settlementNonce), isSigner: false, isWritable: false },
+      { pubkey: receipt(mint, receiptSettlementNonce), isSigner: false, isWritable: false },
       { pubkey: adjustmentEvidence(mint, settlementNonce, adjustmentNonce), isSigner: false, isWritable: true },
       { pubkey: systemProgram, isSigner: false, isWritable: false },
     ],
     Buffer.concat([
       u64(adjustmentNonce),
-      Buffer.from([1, 1]), u64(100n),
-      Buffer.from([1]), u64(25n),
-      Buffer.from([1]), u64(75n),
+      Buffer.from([1, 1]), u64(grossMagnitude),
+      Buffer.from([1]), u64(taxMagnitude),
+      Buffer.from([1]), u64(netMagnitude),
       Buffer.alloc(32, 3),
       Buffer.alloc(32, 4),
       Buffer.alloc(32, 5),
@@ -706,6 +716,26 @@ describe("validator-backed settlement conformance", () => {
     await expect(send([
       recordAdjustmentInstruction(mint, 1n, 1n, TOKEN_PROGRAM_ID),
     ], [adjustmentApprover])).rejects.toThrow();
+
+    await expect(send([
+      recordAdjustmentInstruction(mint, 1n, 2n, TOKEN_PROGRAM_ID, {
+        receiptSettlementNonce: 2n,
+      }),
+    ], [adjustmentApprover])).rejects.toThrow();
+    expect(await connection.getAccountInfo(
+      adjustmentEvidence(mint, 1n, 2n),
+      "finalized",
+    )).toBeNull();
+
+    await expect(send([
+      recordAdjustmentInstruction(mint, 1n, 3n, TOKEN_PROGRAM_ID, {
+        netMagnitude: 74n,
+      }),
+    ], [adjustmentApprover])).rejects.toThrow();
+    expect(await connection.getAccountInfo(
+      adjustmentEvidence(mint, 1n, 3n),
+      "finalized",
+    )).toBeNull();
 
     const refundFunderSource = await getOrCreateAssociatedTokenAccount(
       connection,

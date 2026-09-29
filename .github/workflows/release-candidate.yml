@@ -54,10 +54,25 @@ jobs:
           mkdir -p release-bundle
           make vault-reconciliation-drill | tee release-bundle/rpc-failover.txt
 
+      - name: Run lease-fenced refund-funding verifier drill
+        env:
+          REFUND_FUNDING_VERIFIER_EVIDENCE_DIR: release-bundle/refund-funding-verifier
+        run: make refund-funding-verifier-drill
+
       - name: Run migration integrity drill
         run: |
           mkdir -p release-bundle
           make migration-integrity-drill | tee release-bundle/migration-integrity.txt
+
+      - name: Run migration rollback rehearsal
+        run: |
+          mkdir -p release-bundle
+          make migration-rollback-rehearsal | tee release-bundle/migration-rollback.txt
+
+      - name: Run encrypted backup artifact drill
+        run: |
+          mkdir -p release-bundle
+          make encrypted-backup-restore-drill | tee release-bundle/encrypted-backup.txt
 
       - name: Build locked release binaries
         run: cargo build --locked --release --workspace

@@ -2,12 +2,14 @@
 
 ## ADR-0153 — On-chain adjustment evidence boundary
 
-The next adjustment slice is a separate bounded `record_adjustment` Solana
+The adjustment slice is a separate bounded `record_adjustment` Solana
 instruction and an active merchant/mint-scoped authority registry. It records an approved signed-delta adjustment in a deterministic
 PDA without token CPI or mutation of the original settlement receipt. The
 compiler, canonical payload, account constraints, cross-language vector, and
 Linux validator evidence are required before any API state can say chain
-evidence was recorded. A separate ADR is required before token movement: the
+evidence was recorded. The Docker conformance contract includes success,
+duplicate, wrong-receipt, non-conserving, and no-token-movement assertions;
+Linux validator execution remains open. A separate ADR is required before token movement: the
 funding signer, beneficiary, tax-vault authority, legal evidence, and
 Token-2022 compatibility cannot be inferred from a negative adjustment.
 
@@ -60,8 +62,11 @@ are complete.
 - [x] Submit unchanged signed bytes through the durable chain intent and make
   timeout, wallet rejection, unknown, provider disagreement, and indexer-lag
   states explicit and accessible.
-- [ ] Allow `finalized` to render only after the API confirms the exact
+- [x] Allow `finalized` to render only after the API confirms the exact
   finalized typed event; never imply payment, filing, or legal compliance.
+  ADR-0184 adds the persisted event-index/evidence-digest binding, typed API
+  proof envelope, strict browser parser, and proof-backed UI state. Live-wallet,
+  live-provider, and production accessibility evidence remain release gates.
 
 ## ADR-0172 — exact decimal wire encoding for Solana `u64` values
 
@@ -102,10 +107,10 @@ accounts at one finalized slot, compare complete provider attempts, and bind
 the resulting digest to immutable activation evidence. The first activation
 contract is legacy SPL Token only; Token-2022 requires a separate compatibility
 decision and validator evidence.
-- [ ] Add the bounded provider/parser port and failing-first topology vectors.
-- [ ] Add immutable verification evidence and the approval-to-active state
+- [x] Add the bounded provider/parser port and failing-first topology vectors.
+- [x] Add immutable verification evidence and the approval-to-active state
   machine; browser status/evidence must never activate a configuration.
-- [ ] Add API/operator activation flow, metrics, UI failure states, and
+- [x] Add API/operator activation flow, metrics, UI failure states, and
   provider-disagreement/restart tests.
 - [ ] Add Linux validator topology-rotation and claim-admission conformance.
 
@@ -122,8 +127,15 @@ validator evidence remain release gates.
   policy in ADR-0181.
 - [x] Add UUIDv7 lease columns, pair constraint, eligibility index, claim/release
   storage operations, and token-fenced activation.
-- [ ] Add two-replica verifier contention/crash evidence and operational
-  backlog/lease-expiry metrics.
+- [x] Add two-replica verifier contention/crash evidence with
+  `make refund-funding-verifier-drill`: two replicas converge to one finalized
+  read and activation, and a killed claimant is reclaimed exactly once after
+  the bounded lease is aged past its TTL. This is Docker/synthetic evidence;
+  Ubuntu CI retains its fixed-cardinality `result.env` artifact; Linux
+  validator and production RPC evidence remain separate gates.
+- [x] Add fixed-cardinality backlog, active-lease, and expired-lease metrics
+  with bounded Prometheus alerts; retained scrape/delivery evidence remains a
+  production gate.
 
 ## ADR-0175 — durable refund claim and execute intents
 
@@ -246,12 +258,14 @@ adjustment compilation be enabled.
 ## ADR-0168/0169 — reproducible conformance and SBF stack safety
 
 The validator conformance client runs inside a pinned non-root Docker image,
-so `make solana-conformance` no longer requires host Node.js or pnpm. The
+and the CI validator job no longer bootstraps host Node.js or pnpm, so
+`make solana-conformance` has no host JavaScript-toolchain dependency. The
 adjustment-refund Anchor contexts box their large account values, and the
 Docker/local SBF build wrapper fails closed on compiler stack-frame safety
 diagnostics. The program artifact now builds without the previously observed
-4 KiB frame overflows; Linux validator execution remains an independent
-release gate.
+4 KiB frame overflows. Validator health probes are bounded and classify an
+early Agave exit in retained `result.env` evidence; Linux validator execution
+remains an independent release gate.
 
 ## ADR-0154 — governed adjustment refund movement
 
@@ -412,7 +426,10 @@ ledger. Compose runs it as a one-shot dependency before application services;
 local synthetic fixtures are an explicit separate seed phase. The runner is
 exercised concurrently against an isolated PostgreSQL 18 instance and then
 against an intentionally changed historical file to prove that drift fails
-closed. Encrypted backups and rollback rehearsal remain release gates.
+closed. ADR-0182 adds the synthetic encrypted-artifact contract and ADR-0183
+adds the isolated expand/contract rollback rehearsal; production KMS/HSM,
+off-site recovery, staging approval, and live rollback authorization remain
+release gates.
 
 ## ADR-0160 — clean-stack Docker drill migration gate
 
@@ -769,8 +786,33 @@ gates.
 ADR-0071 adds `make backup-restore-drill`, which initializes a clean pinned
 PostgreSQL 18 source from every migration and synthetic fixture, performs a
 custom-format logical dump, restores it into a separate disposable target, and
-checks the replay-era schema and UUIDv7 contract. Production PITR, encrypted
-off-site retention, RPO/RTO measurement, and rollback rehearsal remain open.
+checks the replay-era schema and UUIDv7 contract. ADR-0182 adds
+`make encrypted-backup-restore-drill`, which verifies an encrypted artifact and
+rejects tampered ciphertext before restore. Production KMS/HSM envelope
+encryption, PITR, encrypted off-site retention, RPO/RTO measurement, and
+live rollback authorization remain open; ADR-0183 adds the isolated recovery
+rehearsal contract below.
+
+## ADR-0183 — expand/contract migration rollback rehearsal
+
+Add `make migration-rollback-rehearsal` as a bounded Docker recovery contract.
+The drill captures a pre-deployment PostgreSQL 18 image, applies a synthetic
+additive migration, restores the pre-deployment image into an isolated target,
+proves the old-schema read and sentinel-data contract, and reapplies the
+forward migration idempotently. It does not claim production RPO/RTO,
+KMS/HSM key recovery, off-site retention, or live rollback authorization.
+
+## ADR-0184 — typed finalized adjustment proof envelope
+
+Persist the exact finalized adjustment event index and evidence digest on the
+chain intent, then expose a server-owned typed proof envelope in the API only
+after complete indexed-event identity matching. The browser rejects a
+status-only `finalized` response and renders finality evidence separately from
+payment, filing, or legal-compliance claims. Migration `0048` is additive;
+legacy finalized rows without the proof binding fail closed. The clean Docker
+integration gate proves the migration/schema contract, adjustment lifecycle,
+and proof-bound API/browser behavior; live wallet, provider, validator, and
+production accessibility evidence remain open.
 
 ADR-0076 adds the authenticated tax-rule governance control plane. The
 `draft → simulated → reviewed → approved → published → retired` workflow
@@ -778,8 +820,10 @@ requires exact JWT scopes and roles, distinct author/reviewer/approver
 subjects, serializable revision fencing, and an append-only governance event
 in the same PostgreSQL transaction. The isolated integration harness proves
 the complete promotion-and-retirement path, same-subject review rejection,
-and event immutability. Identity-provider role lifecycle, legal/tax owner attestation,
-and production ceremony rehearsal remain release gates.
+event immutability, and the corrective-release rollback contract: version 1 is
+retired and version 2 is independently promoted and selected for calculation.
+Identity-provider role lifecycle, legal/tax owner attestation, and production
+ceremony rehearsal remain release gates.
 
 ADR-0077 adds the governance read model and production operator workspace.
 `GET /v1/tax/rules/{rule_set_id}/governance` returns a repeatable-read,
@@ -870,7 +914,8 @@ LSN between two synthetic marker transactions, and restores to that LSN in a
 disposable target. The target marker must exist while the post-target marker
 must be absent. This proves local PostgreSQL recovery mechanics only; encrypted
 off-site WAL, archive monitoring, measured RPO/RTO, retention ownership, and
-migration rollback rehearsal remain production gates.
+production rollback authorization remain production gates. ADR-0183 separately
+exercises the pre-deploy restore and forward-recovery migration sequence.
 The 2026-09-27 run passed at target LSN `0/4006470` with six archived WAL files
 and 1 second of local recovery time; this is not a production RTO claim.
 
@@ -1295,11 +1340,13 @@ The web platform now includes an opt-in Docker Compose `browser` profile with
 an official Playwright 1.63.0 runner pinned by immutable image digest. It
 executes against the built NGINX edge and proves keyboard skip/focus behavior,
 real lazy workspace loading, narrow RTL overflow, reduced-motion behavior, and
-redacted dynamic-import recovery. Use `make web-browser-check`; CI retains
-failure traces, screenshots, videos, and JSON results under the ignored
-`test-results/web-e2e` path. This deterministic browser contract complements
-the fast axe-core baseline and does not claim screen-reader, legal/tax, live
-RPC, or mainnet evidence.
+redacted dynamic-import recovery. It also injects the locked dev-only
+`axe-core` source into the real browser and audits the quote plus every lazy
+workspace against WCAG A/AA tags. Use `make web-browser-check`; the current
+Docker run passes 4/4 tests. CI retains failure traces, screenshots, videos,
+and JSON results under the ignored `test-results/web-e2e` path. This automated
+contract complements the fast axe-core baseline and does not claim
+screen-reader, legal/tax, live RPC, or mainnet evidence.
 
 ### Secure browser idempotency identity (ADR-0149)
 

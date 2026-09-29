@@ -255,6 +255,13 @@ Migration `0039` expands the typed projection with the on-chain adjustment
 evidence digest; legacy rows remain incomplete until raw-event rebuild and are
 rejected by reconciliation rather than silently upgraded.
 
+Migration `0048` stores the finalized typed-event index and event evidence
+digest on the adjustment chain intent. The API emits a proof envelope only
+after the complete event and raw discriminator match; the clean-stack
+`db/verification/adjustment_finalized_proof.sql` contract checks the additive
+schema/index boundary. Existing finalized rows without proof fields fail
+closed until independently reconciled.
+
 Migration `0040` adds the tenant-scoped, versioned refund funding
 configuration boundary. It records the explicit tax-vault, vault-authority,
 merchant-funder, net-source, mint, and token-program topology with UUIDv7

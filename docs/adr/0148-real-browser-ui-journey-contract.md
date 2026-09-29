@@ -31,6 +31,10 @@ Add a separate Docker Compose `browser` profile with a `web-e2e` service:
   display-settings RTL/reduced-motion behavior, every lazy workspace's real
   chunk load, and a bounded dynamic-import failure that must render the
   redacted ADR-0147 recovery state;
+- inject the pinned dev-only `axe-core` source into the real browser and audit
+  the quote workspace plus every lazy operational workspace against the
+  `wcag2a` and `wcag2aa` rule tags; report only bounded rule/node metadata and
+  never persist page content, credentials, or financial state;
 - keep API mutation and wallet-signing journeys outside this deterministic UI
   contract unless their server-owned fixtures and authority boundaries are
   explicitly added in a later ADR;
@@ -58,6 +62,9 @@ finality, or reconciliation result.
   job budget; it must not retry failed tests automatically.
 - The browser image is isolated to the test profile and is not inherited by
   production images.
+- A real-browser axe failure blocks the browser gate; a pass is automated
+  evidence only and does not replace manual screen-reader or assistive-
+  technology review.
 
 ## Alternatives considered
 

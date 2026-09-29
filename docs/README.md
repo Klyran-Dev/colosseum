@@ -74,6 +74,10 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [ADR-0175: Durable refund claim and execute intents](adr/0175-durable-refund-claim-execute-intents.md)
 - [ADR-0179: Durable, proof-gated refund-execute intent](adr/0179-durable-refund-execute-intent.md)
 - [ADR-0180: Proof-driven refund-claim finality reconciliation](adr/0180-proof-driven-refund-claim-finality.md)
+- [ADR-0181: Lease-fenced refund-funding topology verification](adr/0181-lease-fenced-refund-funding-verification.md)
+- [ADR-0182: Encrypted backup artifact contract](adr/0182-encrypted-backup-artifact-contract.md)
+- [ADR-0183: Expand/contract migration rollback rehearsal](adr/0183-migration-rollback-rehearsal.md)
+- [ADR-0184: Typed finalized adjustment proof envelope](adr/0184-typed-finalized-adjustment-proof-envelope.md)
 - [Operations runbooks](runbooks/README.md)
 
 ## Status and scope
@@ -85,7 +89,11 @@ proofs, the finalized server-owned adjustment evidence compiler, the durable
 chain-intent submission/reconciliation API, and the accessible browser wallet
 workflow. The authenticated Docker path is covered by
 `make integration-check`; validator registry lifecycle, live wallet/provider
-evidence, and finalized reconciliation remain release gates.
+evidence, and finalized reconciliation remain release gates. ADR-0184 also
+requires a persisted typed finalized-event proof envelope before the browser
+can render an adjustment as finalized; migration `0048` and the clean-stack
+integration contract are implemented, while live-wallet/provider and
+production accessibility evidence remain open.
 
 The current foundation also includes ADR-0145's facts-only, two-replica
 persisted-rule simulation latency harness. The 2026-09-27 Docker run measured
@@ -118,8 +126,10 @@ database safety drill, not a production saturation or regional SLO claim.
 
 Run `make migration-integrity-drill` for the Rust migration runner's ordered
 PostgreSQL ledger, advisory-lock, idempotent re-run, and historical checksum
-drift contract. Staging/production migration-service cutover and rollback
-rehearsal remain release gates.
+drift contract. Run `make migration-rollback-rehearsal` for the isolated
+expand/contract pre-deploy restore, old-schema read, and forward-recovery
+contract. Staging/production migration-service cutover, KMS/HSM recovery, and
+live rollback authorization remain release gates.
 
 Run `make deployment-config-contract` to exercise the fail-closed staging and
 production configuration preflight. It checks structure and forbidden local
@@ -145,6 +155,17 @@ tenant rejection, non-simulation single/Split Plan compilation, the governed
 vault-release lifecycle and database immutability guards, and that the outbox
 worker publishes transactional events only after PostgreSQL commit.
 It also runs the rollback-only PostgreSQL 18 refund-proof backlog contract.
+
+Run `make refund-funding-verifier-drill` for the isolated lease-fenced
+two-replica verifier contention/crash drill described by
+[ADR-0181](adr/0181-lease-fenced-refund-funding-verification.md). Its RPC
+fixture and addresses are synthetic and local-only. CI retains its
+public-safe fixed-cardinality `result.env` artifact; this is regression
+evidence, not production-provider or validator evidence.
+
+Run `make encrypted-backup-restore-drill` for the ADR-0182 synthetic
+encrypted-backup artifact contract. It rejects tampered ciphertext before
+restore; production KMS/HSM and off-site recovery evidence remain separate.
 
 The adjustment evidence compiler requires a configured finalized Solana RPC
 coordinator. It derives and verifies the active adjustment registry, snapshots

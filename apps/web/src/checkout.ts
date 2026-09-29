@@ -12,7 +12,7 @@ import type {
   CompiledSettlementAdjustmentArtifact,
   CompiledSettlementAdjustmentInstruction,
 } from "./settlementAdjustments";
-import { parseCanonicalU64 } from "./settlementAdjustments";
+import { parseCanonicalU64, validateByteArray } from "./settlementAdjustments";
 export { parseCanonicalU64 } from "./settlementAdjustments";
 
 export const SETTLEMENT_PROGRAM_ID = "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi";
@@ -23,6 +23,14 @@ export const COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget1111111111111111111111111
 export const SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT = 12;
 const SETTLE_DISCRIMINATOR_BASE64 = "ryq5V5CDZtQ=";
 const SPLIT_SETTLE_DISCRIMINATOR_BASE64 = "A6qY2V4JCdU=";
+const ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR = [208, 86, 69, 183, 44, 203, 236, 75] as const;
+
+function proofNumber(value: unknown, label: string, minimum: number, maximum: number): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`The API returned an invalid ${label}.`);
+  }
+  return value;
+}
 
 export type SettlementRoute = {
   id: string;
@@ -503,11 +511,79 @@ export function parseSettlementAdjustmentChainIntentResponse(value: unknown): Ad
         || providerIndex < 0)) {
     throw new Error("The API returned an invalid adjustment provider index.");
   }
+  const finalizedEvidenceValue = record.finalized_evidence;
+  let finalizedEvidence: AdjustmentChainIntentResponse["finalized_evidence"] = null;
+  if (record.status === "finalized") {
+    const evidence = recordValue(finalizedEvidenceValue, "The API returned an invalid finalized adjustment proof.");
+    if (evidence.event_type !== "SettlementAdjustmentRecorded"
+        || evidence.event_version !== "v1"
+        || evidence.commitment !== "finalized"
+        || evidence.signature !== signature) {
+      throw new Error("The API returned a finalized adjustment proof that is not bound to the intent.");
+    }
+    if (!Array.isArray(evidence.event_discriminator)
+        || evidence.event_discriminator.length !== ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR.length
+        || evidence.event_discriminator.some((byte, index) => byte !== ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR[index])) {
+      throw new Error("The API returned an invalid finalized adjustment event discriminator.");
+    }
+    const digestFields = [
+      "adjustment", "original_receipt", "merchant", "mint", "adjustment_digest",
+      "adjustment_evidence_digest", "event_evidence_digest", "approver",
+    ] as const;
+    for (const field of digestFields) validateByteArray(evidence[field], `finalized proof ${field}`, true);
+    const slot = parseCanonicalU64(evidence.slot, "finalized proof slot");
+    const nonce = parseCanonicalU64(evidence.nonce, "finalized proof nonce");
+    const magnitudes = [
+      ["gross", evidence.gross_sign, evidence.gross_magnitude],
+      ["tax", evidence.tax_sign, evidence.tax_magnitude],
+      ["net", evidence.net_sign, evidence.net_magnitude],
+    ] as const;
+    const eventIndex = proofNumber(evidence.event_index, "finalized proof event index", 0, 32767);
+    const kind = proofNumber(evidence.kind, "finalized proof kind", 1, 5);
+    const grossSign = proofNumber(evidence.gross_sign, "finalized proof gross sign", 0, 1);
+    const taxSign = proofNumber(evidence.tax_sign, "finalized proof tax sign", 0, 1);
+    const netSign = proofNumber(evidence.net_sign, "finalized proof net sign", 0, 1);
+    for (const [label, sign, magnitude] of [
+      ["gross", grossSign, evidence.gross_magnitude],
+      ["tax", taxSign, evidence.tax_magnitude],
+      ["net", netSign, evidence.net_magnitude],
+    ] as const) {
+      parseCanonicalU64(magnitude, `finalized proof ${label} magnitude`);
+    }
+    finalizedEvidence = {
+      event_type: "SettlementAdjustmentRecorded",
+      event_version: "v1",
+      event_discriminator: [...ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR],
+      commitment: "finalized",
+      signature: signature as string,
+      slot,
+      event_index: eventIndex,
+      adjustment: validateByteArray(evidence.adjustment, "finalized proof adjustment", true),
+      original_receipt: validateByteArray(evidence.original_receipt, "finalized proof original_receipt", true),
+      merchant: validateByteArray(evidence.merchant, "finalized proof merchant", true),
+      mint: validateByteArray(evidence.mint, "finalized proof mint", true),
+      nonce,
+      kind,
+      gross_sign: grossSign,
+      gross_magnitude: parseCanonicalU64(evidence.gross_magnitude, "finalized proof gross magnitude"),
+      tax_sign: taxSign,
+      tax_magnitude: parseCanonicalU64(evidence.tax_magnitude, "finalized proof tax magnitude"),
+      net_sign: netSign,
+      net_magnitude: parseCanonicalU64(evidence.net_magnitude, "finalized proof net magnitude"),
+      adjustment_digest: validateByteArray(evidence.adjustment_digest, "finalized proof adjustment_digest", true),
+      adjustment_evidence_digest: validateByteArray(evidence.adjustment_evidence_digest, "finalized proof adjustment_evidence_digest", true),
+      event_evidence_digest: validateByteArray(evidence.event_evidence_digest, "finalized proof event_evidence_digest", true),
+      approver: validateByteArray(evidence.approver, "finalized proof approver", true),
+    };
+  } else if (finalizedEvidenceValue !== null && finalizedEvidenceValue !== undefined) {
+    throw new Error("The API returned finalized proof for a non-finalized adjustment state.");
+  }
   return {
     chain_intent_id: chainIntentId,
     status: record.status as AdjustmentChainIntentStatus,
     signature: signature as string | null,
     provider_index: providerIndex as number | null,
+    finalized_evidence: finalizedEvidence,
   };
 }
 

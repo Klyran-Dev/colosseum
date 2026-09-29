@@ -56,6 +56,7 @@ This document records the comparison baseline required before implementation. It
 | Alternative | Strengths | Risks/trade-offs | Decision |
 | --- | --- | --- | --- |
 | `happy-dom` plus axe-core only | Fast and deterministic | Cannot prove browser focus, layout, responsive overflow, or code-split failure behavior | Retained as the fast baseline, rejected as the complete contract |
+| Real-browser axe audit through the pinned Playwright runner | Proves rendered browser accessibility semantics at the NGINX edge | Adds browser runtime cost and still cannot certify assistive-technology quality | **Selected as a complementary automated gate in ADR-0148** |
 | Host-installed browser in CI/developer machines | Low repository setup cost | Browser and OS drift weaken reproducibility and clean-checkout parity | Rejected |
 | Browser binaries inside the NGINX image | One image to operate | Expands production attack surface and couples test tooling to the serving edge | Rejected |
 | Unpinned browser image/download | Simple updates | Mutable binaries undermine evidence, debugging, and supply-chain review | Rejected |
@@ -1201,3 +1202,29 @@ after a bounded finalized proof.
 | Hold a PostgreSQL row lock across RPC verification | Serializes one configuration | Holds a pool connection across network I/O and can block governance or activation | Rejected |
 | Redis/advisory lock | Low-latency coordination | Non-authoritative or weakly inspectable ownership; activation still needs durable fencing | Rejected |
 | **Short PostgreSQL UUIDv7 lease with stale reclaim, explicit failure release, and token-fenced activation** | Durable cross-replica ownership, bounded crash recovery, no lock across RPC, exact evidence binding | Requires migration and lease telemetry | **Selected in ADR-0181** |
+
+### Migration rollback rehearsal
+
+**Criteria:** preserve immutable migration history, recover financial evidence
+to a known pre-deploy image, keep the old application/schema compatible, and
+prove forward recovery after the rollback decision.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Destructive `down` migrations | Familiar command shape; potentially fast | Can destroy evidence, is hard to make data-safe, and conflicts with immutable migration history | Rejected |
+| Restore only | Proves a backup can be opened | Does not prove old-schema compatibility or safe forward recovery | Rejected |
+| Corrective forward migration only | Preserves history and supports additive repair | Cannot recover an incompatible deployment without a pre-deploy image | Rejected as the sole contract |
+| **Pre-deploy restore plus compatible old-schema read and forward reapply rehearsal** | Covers operator rollback, data preservation, compatibility, and redeployment recovery | Requires an isolated PostgreSQL drill and synthetic migration fixture | **Selected in ADR-0183** |
+
+### Typed finalized adjustment proof envelope
+
+**Criteria:** ensure the browser cannot render finalized evidence from a bare
+status, preserve tenant/server authority, keep refresh recovery bounded, and
+bind the response to the exact finalized typed event.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Status and signature only | Minimal response | Does not expose proof identity or prevent status-only UI success | Rejected |
+| Client-supplied proof fields | Flexible client recovery | Caller-controlled evidence and substitution risk | Rejected |
+| Re-query indexed evidence for every browser render | No schema change | Adds latency/availability coupling and no stable proof contract | Rejected |
+| **Persist event index/digest and return a server-owned typed proof envelope** | Refresh-safe, replayable, bounded, and explicit | Additive migration and cross-language vectors required | **Selected in ADR-0184** |

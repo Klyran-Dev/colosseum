@@ -6,6 +6,12 @@ Production-grade architecture for a low-latency Solana payment-routing and Tier-
 
 The repository contains the executable foundation: a deterministic Rust tax-engine crate with immutable compiled rule graphs, authenticated idempotent tenant-scoped rule-draft authoring and an author/reviewer/approver governance workflow with append-only evidence, an immutable settlement-adjustments domain and durable proposal/approval/rejection API plus accessible operator workspace for bounded refund/reversal/correction/chargeback deltas, a persisted published-rule quote boundary with transactional idempotency and scoped EdDSA authentication, a tenant-scoped settlement route registry with deterministic payer ATA derivation, a finalized multi-provider route-verifier service with append-only activation evidence, a deterministic non-custodial settlement instruction compiler, a bounded wallet-signed transaction coordinator, UUIDv7 settlement-intent persistence, an atomic PostgreSQL outbox, a bounded Rust worker with NATS JetStream delivery, a finalized-indexer persistence slice with raw transaction evidence, typed split-settlement evidence, and lease-fenced replay, an isolated preview API, an authenticated React/Vite quote UI, a PostgreSQL 18 migration baseline, bounded Prometheus metrics and validated alert rules, and pinned Docker/NGINX local orchestration. It does not claim production deployment, legal/tax coverage, audit completion, or mainnet readiness. Production submission enablement, adjustment on-chain posting, live identity-provider key rotation, production HSM/KMS attestation issuance, route governance ceremonies, identity-provider governance, RPC-backed indexing, production alert receiver delivery, and local validator slices remain gated by the design, TDD, security, performance, and operational requirements in [AGENTS.md](AGENTS.md). The Docker integration gate does include an isolated synthetic external issuer fixture; its key is generated only for the test run and is never placed in the API image.
 
+Adjustment finality responses now carry a server-owned typed event-proof
+envelope; a browser status string alone cannot render an adjustment as
+finalized. Migration `0048` and the clean PostgreSQL 18 Docker integration
+contract verify this boundary. Live wallet/provider, validator, production
+SLO, and full browser accessibility evidence remain release gates.
+
 The validator conformance command now includes the real bounded Split Plan
 fan-out path, finalized conservation checks, duplicate receipt rejection, and
 wrong-recipient-order failure evidence. It requires the pinned Linux validator
@@ -48,11 +54,14 @@ All implementation work follows [AGENTS.md](AGENTS.md): design before code, alte
 
 ## Public repository status
 
-The executable foundation can be checked with `make check`; `make integration-check` additionally builds an isolated Docker stack and verifies authenticated persisted quotes, an isolated synthetic external issuer, quote-bound attestation ingestion and exact replay, conflict/tenant rejection, non-simulation single/Split Plan compilation, quote-bound settlement compilation from server-owned amounts, authenticated replay-gap operator actions, NGINX forwarding and bounded-burst `429` admission, governed vault-release proposal/approval/on-chain-created/executed transitions with append-only evidence and mutation rejection, idempotency conflict behavior, and asynchronous outbox publication through NATS JetStream. Run `make bench-tax-engine` for the explicit Criterion hot-path benchmark (record the workload and machine before comparing results). Run `make benchmark-quote-service` for the bounded HTTP workload, including same-key idempotency contention and exact persistence convergence. Run `make backup-restore-drill` for the isolated PostgreSQL logical backup/restore check, and `make migration-integrity-drill` for ordered, checksum-verified migration ledger evidence. Run `make solana-conformance` for the explicit validator-backed release gate: it builds the pinned SBF artifact and executes real legacy SPL, extension-free Token-2022, duplicate-nonce, and unsupported-extension transactions. Start the local stack with `docker compose up --build`, then open `http://localhost:8088`; the direct API port is `18080`, PostgreSQL is `55432`, and NATS is `44222`. On a new named volume, the one-shot Rust migration runner applies the versioned migrations from `db/migrations/`; `make migrate` is safe to rerun. The optional Solana profile requires a Linux runtime with the `io_uring` capabilities required by Agave 4.3.0. Do not infer production support from architecture documents or the simulation endpoint alone.
+The executable foundation can be checked with `make check`; `make integration-check` additionally builds an isolated Docker stack and verifies authenticated persisted quotes, an isolated synthetic external issuer, quote-bound attestation ingestion and exact replay, conflict/tenant rejection, non-simulation single/Split Plan compilation, quote-bound settlement compilation from server-owned amounts, authenticated replay-gap operator actions, NGINX forwarding and bounded-burst `429` admission, governed vault-release proposal/approval/on-chain-created/executed transitions with append-only evidence and mutation rejection, governed rule rollback through a corrected immutable release, idempotency conflict behavior, and asynchronous outbox publication through NATS JetStream. Run `make bench-tax-engine` for the explicit Criterion hot-path benchmark (record the workload and machine before comparing results). Run `make benchmark-quote-service` for the bounded HTTP workload, including same-key idempotency contention and exact persistence convergence. Run `make backup-restore-drill` for the isolated PostgreSQL logical backup/restore check, `make migration-integrity-drill` for ordered, checksum-verified migration ledger evidence, and `make migration-rollback-rehearsal` for pre-deploy restore, old-schema compatibility, and forward-recovery evidence. Run `make solana-conformance` for the explicit validator-backed release gate: it builds the pinned SBF artifact and executes real legacy SPL, extension-free Token-2022, duplicate-nonce, and unsupported-extension transactions. Start the local stack with `docker compose up --build`, then open `http://localhost:8088`; the direct API port is `18080`, PostgreSQL is `55432`, and NATS is `44222`. On a new named volume, the one-shot Rust migration runner applies the versioned migrations from `db/migrations/`; `make migrate` is safe to rerun. The optional Solana profile requires a Linux runtime with the `io_uring` capabilities required by Agave 4.3.0. Do not infer production support from architecture documents or the simulation endpoint alone.
 
 The conformance client is executed inside a pinned non-root Docker image, so
 the validator gate does not require host Node.js or pnpm. The SBF build also
-fails closed on known stack-frame safety diagnostics.
+fails closed on known stack-frame safety diagnostics. Validator startup probes
+are bounded and retain a typed failure reason when the pinned Agave process
+exits before RPC readiness, so unsupported host capabilities fail fast instead
+of hanging the gate.
 
 The quote-load drill runs two independent API containers, alternates requests
 across replicas, and proves cross-replica same-key convergence at the
@@ -63,6 +72,17 @@ simulation workload. It verifies server-owned rule identity and digest binding,
 two-replica read contention, and p50/p95/p99 latency without creating financial
 rows. The SPA also exposes bounded locale, IANA time-zone, and RTL display
 settings; these are display concerns and never alter tax or settlement inputs.
+
+Run `make refund-funding-verifier-drill` for the Docker-only synthetic
+two-replica refund-funding verification evidence. It proves lease-fenced single
+activation, one finalized RPC read under contention, and stale-lease reclaim
+after verifier termination; it does not claim live-provider or production
+validator readiness.
+
+Run `make encrypted-backup-restore-drill` for the isolated PostgreSQL 18
+encrypted-artifact and tamper-rejection contract. It uses an ephemeral
+synthetic key and does not claim production KMS/HSM, off-site retention, or
+RPO/RTO readiness.
 
 Lazy operational workspaces are also protected by a redacted error boundary:
 chunk or render failures leave navigation available and expose an explicit

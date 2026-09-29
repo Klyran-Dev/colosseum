@@ -133,6 +133,49 @@ describe("checkout settlement boundary", () => {
     })).toThrow(/bound signature/i);
   });
 
+  it("requires and validates the exact typed proof before accepting finalized adjustment evidence", () => {
+    const proof = {
+      event_type: "SettlementAdjustmentRecorded",
+      event_version: "v1",
+      event_discriminator: [208, 86, 69, 183, 44, 203, 236, 75],
+      commitment: "finalized",
+      signature: "5".repeat(88),
+      slot: "901",
+      event_index: 2,
+      adjustment: Array(32).fill(1),
+      original_receipt: Array(32).fill(2),
+      merchant: Array(32).fill(3),
+      mint: Array(32).fill(4),
+      nonce: "7",
+      kind: 1,
+      gross_sign: 1,
+      gross_magnitude: "100",
+      tax_sign: 1,
+      tax_magnitude: "25",
+      net_sign: 1,
+      net_magnitude: "75",
+      adjustment_digest: Array(32).fill(5),
+      adjustment_evidence_digest: Array(32).fill(6),
+      event_evidence_digest: Array(32).fill(7),
+      approver: Array(32).fill(8),
+    };
+    const parsed = parseSettlementAdjustmentChainIntentResponse({
+      chain_intent_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d13",
+      status: "finalized",
+      signature: proof.signature,
+      provider_index: 1,
+      finalized_evidence: proof,
+    });
+    expect(parsed.finalized_evidence?.event_index).toBe(2);
+    expect(() => parseSettlementAdjustmentChainIntentResponse({
+      chain_intent_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d13",
+      status: "finalized",
+      signature: proof.signature,
+      provider_index: 1,
+      finalized_evidence: null,
+    })).toThrow(/finalized adjustment proof/i);
+  });
+
   it("validates bounded routes and compiled artifacts before review", () => {
     const routeId = "01992f1b-4a70-7e30-8ea2-b6e37a9d9d13";
     const [route] = parseSettlementRoutes([{

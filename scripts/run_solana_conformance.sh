@@ -11,6 +11,7 @@ evidence_dir="${SOLANA_CONFORMANCE_EVIDENCE_DIR:-$repo_root/test-results/solana-
 mkdir -p "$evidence_dir"
 phase="initialization"
 run_status=1
+failure_reason="not_completed"
 
 {
     printf 'started_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -28,7 +29,7 @@ run_status=1
 
 cleanup() {
     cleanup_status="$run_status"
-    printf 'phase=%s\nstatus=%s\n' "$phase" "$cleanup_status" > "$evidence_dir/result.env"
+    printf 'phase=%s\nstatus=%s\nfailure_reason=%s\n' "$phase" "$cleanup_status" "$failure_reason" > "$evidence_dir/result.env"
     if [ -f "$repo_root/target/deploy/settlement.so" ]; then
         if command -v sha256sum >/dev/null 2>&1; then
             sha256sum "$repo_root/target/deploy/settlement.so" > "$evidence_dir/settlement.so.sha256"
@@ -59,6 +60,7 @@ trap cleanup EXIT INT TERM
 
 phase="sbf_build"
 if ! "$repo_root/scripts/build_sbf.sh" > "$evidence_dir/sbf-build.log" 2>&1; then
+    failure_reason="sbf_build_failed"
     cat "$evidence_dir/sbf-build.log"
     exit 1
 fi
@@ -77,14 +79,22 @@ docker compose --profile solana up --build --detach validator
 phase="validator_health"
 ready=false
 for _attempt in $(seq 1 60); do
-    if curl --fail --silent http://127.0.0.1:8899/health >/dev/null 2>&1; then
+    if curl --fail --silent --connect-timeout 1 --max-time 2 \
+        http://127.0.0.1:8899/health >/dev/null 2>&1; then
         ready=true
         break
+    fi
+    if [ -n "$(docker compose --profile solana ps -q --status exited validator 2>/dev/null || true)" ]; then
+        failure_reason="validator_exited_before_health"
+        echo "Solana validator exited before becoming healthy" >&2
+        docker compose --profile solana logs --no-color --tail=120 validator >&2 || true
+        exit 1
     fi
     sleep 1
 done
 
 if [ "$ready" != "true" ]; then
+    failure_reason="validator_health_timeout"
     echo "Solana validator did not become healthy" >&2
     exit 1
 fi
@@ -93,8 +103,10 @@ phase="localnet_tests"
 if docker compose --profile solana run --build --rm --no-deps solana-conformance \
     > "$evidence_dir/localnet-tests.log" 2>&1; then
     run_status=0
+    failure_reason="none"
 else
     run_status=$?
+    failure_reason="conformance_tests_failed"
 fi
 cat "$evidence_dir/localnet-tests.log"
 phase="completed"

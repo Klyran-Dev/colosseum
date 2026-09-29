@@ -40,7 +40,9 @@ ADR-0168 closes the local runner reproducibility gap: `make
 solana-conformance` now executes the Vitest RPC client inside a pinned,
 non-root Docker image and no longer depends on host Node.js or pnpm. This
 improves bootstrap fidelity but does not close the independent Linux Agave
-validator gate.
+validator gate. Its health probes are now bounded and retain a typed failure
+reason when Agave exits before RPC readiness, preventing a crashed validator
+from hanging a developer or CI job.
 
 ## Correctness
 
@@ -225,6 +227,16 @@ validator gate.
   verified migration runner, Compose dependency gate, and isolated drift
   drill; encrypted production backup policy, staging evidence, and rollback
   rehearsal remain open.
+- [x] ADR-0182 adds an encrypted logical-backup artifact drill that verifies
+  integrity before restore and rejects tampered ciphertext in CI. Production
+  KMS/HSM envelope encryption, off-site immutable retention, key recovery,
+  measured RPO/RTO, and restore authorization remain open.
+- [x] ADR-0183 adds a Docker-isolated expand/contract migration rollback
+  rehearsal: it restores a pre-deploy PostgreSQL 18 image, proves the old
+  schema/data read contract, removes expand-only objects, and reapplies the
+  forward migration idempotently. Production staging approval, live rollback
+  authorization, encrypted off-site recovery, and measured RPO/RTO remain
+  open.
 - [x] Internal IDs use native PostgreSQL `uuid` with UUIDv7 where sortable distributed IDs are appropriate; ADR-0083 executes a catalog-level contract after clean migrations and logical restore. Secrets, hashes, Solana IDs, and strict sequence values use the documented alternatives.
 - [x] PostgreSQL lock and statement timeout contracts, migration ordering, and
   required evidence/replay indexes are exercised by the pinned Docker
@@ -433,7 +445,12 @@ and operational gates are intentionally not marked complete by unit tests.
   governance, delivery, and incident evidence remain required.
 - [ ] Releases are reproducible and record program binary and configuration hashes.
 - [x] SLOs, error budgets, RTO/RPO, support ownership, and incident severity policy are published under ADR-0135; named deployment owners, alert-receiver delivery, and measured regional evidence remain open.
-- [ ] Backup restore, key recovery, RPC failover, indexer replay, and rule rollback drills pass.
+- [ ] Backup restore, key recovery, RPC failover, and indexer replay drills
+  pass in the required production-like environments. The Docker integration
+  gate now rehearses governed rule rollback by retiring version 1, publishing
+  corrected version 2 through the four-eyes workflow, and proving the
+  corrected server-owned calculation; encrypted production backup, key
+  recovery, live-provider, replay, and staging evidence remain open.
 - [x] The provider-neutral dependency register and RPC/vendor exit paths are published under ADR-0135; contractual portability, approved provider bindings, and replacement drills remain deployment gates.
 
 ## Legal and product
@@ -510,8 +527,10 @@ and operational gates are intentionally not marked complete by unit tests.
 - [x] ADR-0148 adds a pinned Docker Playwright runner through the real NGINX
   edge. The journey contract covers keyboard skip/focus behavior, lazy
   workspace chunks, narrow RTL overflow, reduced motion, and bounded dynamic
-  import failure. Manual assistive-technology review and live-provider
-  journeys remain open.
+  import failure. It now also runs pinned `axe-core` WCAG A/AA audits against
+  the quote and every lazy workspace in the real browser; the 4/4 Docker run
+  passed. Manual assistive-technology review and live-provider journeys
+  remain open.
 - [x] ADR-0149 removes the secure-context-only `crypto.randomUUID()` startup
   dependency by using a CSPRNG `getRandomValues()` fallback for client-only
   idempotency keys. Server UUIDv7 entity ownership is unchanged.
@@ -531,10 +550,12 @@ and operational gates are intentionally not marked complete by unit tests.
   server-owned lifecycle rendering, API conflict/support-reference states,
   accessibility coverage, and a 3/3 pinned NGINX Playwright browser gate.
   On-chain posting, wallet signing, and finalized reconciliation remain open.
-- [ ] ADR-0153 on-chain adjustment evidence contract is implemented, vectorized,
-  and proven against the pinned Linux validator; it must record a separate
-  adjustment PDA without token movement and must not expose `posted` or `paid`
-  before finalized reconciliation.
+- [ ] ADR-0153 on-chain adjustment evidence contract is implemented and
+  vectorized. The Docker conformance contract now covers successful recording,
+  duplicate rejection, wrong receipt binding, non-conserving deltas, and
+  unchanged token balances; the gate remains unchecked until the pinned Linux
+  validator executes those cases and retains finalized evidence. The contract
+  must not expose `posted` or `paid` before finalized reconciliation.
 - [x] ADR-0164 enriches the canonical finalized receipt projection with the
   receipt PDA, payer, merchant, mint, nonce, and policy digest from raw
   settlement events. Migration `0034` is additive and readers fail closed on
@@ -565,6 +586,12 @@ and operational gates are intentionally not marked complete by unit tests.
   finalized event projection, exact intent/event matching, indexer-lag
   handling, wallet-workspace accessibility, and operator-visible
   unknown/conflict states must pass before production enablement.
+- [x] ADR-0184 closes the status-only finalized-response gap for adjustments:
+  migration `0048` persists the matched event index/evidence digest, the API
+  emits a server-owned typed proof envelope, and the browser rejects finalized
+  responses without that proof. This is local contract and integration
+  evidence; live wallet/provider, validator, production SLO, and full
+  WCAG/assistive-technology evidence remain open.
 - [ ] ADR-0154 governed refund movement is implemented and proven against the
   pinned Linux validator for the published Refund scope; tax-vault and
   merchant-funder sources, payer-bound destination, claim cancellation,
@@ -577,6 +604,16 @@ and operational gates are intentionally not marked complete by unit tests.
   transaction-bound execute balance proof are implemented. Linux validator
   conformance, live wallet evidence, concurrent/load/SLO evidence, and final
   operational approval remain required before refund movement is enabled.
+- [x] ADR-0174 finalized refund-funding topology verification now validates the
+  complete legacy-SPL account set at one finalized slot, requires provider
+  agreement, binds immutable evidence to the reviewed configuration, and
+  rejects Token-2022 until a separate compatibility decision. ADR-0181 adds
+  UUIDv7 lease-fenced cross-replica ownership and stale reclaim. The Docker
+  verifier drill proves one finalized read/activation under two replicas and
+  one stale reclaim after claimant termination; retained production telemetry
+  and Linux validator topology-rotation conformance remain release gates. The
+  Ubuntu CI job retains the fixed-cardinality result artifact for regression
+  review without treating synthetic evidence as production-provider proof.
 - [x] ADR-0155 adds a typed, finalized-only `AdjustmentRefundExecuted`
   projection, raw-event binding, idempotent replay merge, and PostgreSQL
   migration `0032`. It is evidence only and does not close the ADR-0154
