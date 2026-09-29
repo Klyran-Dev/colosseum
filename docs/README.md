@@ -72,6 +72,8 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [ADR-0173: Server-owned refund-claim wallet orchestration](adr/0173-refund-claim-wallet-orchestration.md)
 - [ADR-0174: Finalized refund-funding topology verification](adr/0174-finalized-refund-funding-topology-verification.md)
 - [ADR-0175: Durable refund claim and execute intents](adr/0175-durable-refund-claim-execute-intents.md)
+- [ADR-0179: Durable, proof-gated refund-execute intent](adr/0179-durable-refund-execute-intent.md)
+- [ADR-0180: Proof-driven refund-claim finality reconciliation](adr/0180-proof-driven-refund-claim-finality.md)
 - [Operations runbooks](runbooks/README.md)
 
 ## Status and scope

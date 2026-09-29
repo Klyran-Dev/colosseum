@@ -22,8 +22,9 @@ use std::{
 };
 use storage::{
     DEFAULT_REPLAY_LEASE, MAX_VAULT_RECONCILIATION_TARGETS, PgStore, ProtocolPauseMetricsSnapshot,
-    RefundProofMetricsSnapshot, ReplayGapMetricsSnapshot, StorageError,
-    TargetedRecoveryMetricsSnapshot, VaultReconciliationMetricsSnapshot, VaultReconciliationRun,
+    RefundClaimReconciliationMetricsSnapshot, RefundProofMetricsSnapshot, ReplayGapMetricsSnapshot,
+    StorageError, TargetedRecoveryMetricsSnapshot, VaultReconciliationMetricsSnapshot,
+    VaultReconciliationRun, refund_claim_evidence_expectation,
 };
 use thiserror::Error;
 
@@ -334,6 +335,8 @@ pub enum IndexerServiceError {
     TargetedRecoveryInvalid(String),
     #[error("refund balance proof domain validation failed: {0}")]
     RefundProofDomain(String),
+    #[error("refund claim reconciliation domain validation failed: {0}")]
+    RefundClaimDomain(String),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -360,6 +363,7 @@ pub struct ReplayMetrics {
     dead_lettered: Arc<AtomicU64>,
     leased_slots: Arc<AtomicU64>,
     refund_proofs_pending: Arc<AtomicU64>,
+    refund_claims_pending: Arc<AtomicU64>,
     targeted_recovery_stale_requested: Arc<AtomicU64>,
     vault_reconciliation_mismatches: Arc<AtomicU64>,
     vault_reconciliation_errors: Arc<AtomicU64>,
@@ -375,6 +379,7 @@ impl ReplayMetrics {
         targeted_recovery: TargetedRecoveryMetricsSnapshot,
         vault_reconciliation: VaultReconciliationMetricsSnapshot,
         refund_proofs: RefundProofMetricsSnapshot,
+        refund_claims: RefundClaimReconciliationMetricsSnapshot,
         protocol_pause: ProtocolPauseMetricsSnapshot,
     ) {
         self.queued.store(snapshot.queued, Ordering::Release);
@@ -385,6 +390,8 @@ impl ReplayMetrics {
             .store(snapshot.leased_slots, Ordering::Release);
         self.refund_proofs_pending
             .store(refund_proofs.pending, Ordering::Release);
+        self.refund_claims_pending
+            .store(refund_claims.pending, Ordering::Release);
         self.targeted_recovery_stale_requested
             .store(targeted_recovery.stale_requested, Ordering::Release);
         self.vault_reconciliation_mismatches
@@ -439,6 +446,11 @@ impl ReplayMetrics {
             "stp_indexer_refund_proofs_pending{{service=\"indexer\"}} {}\n",
             self.refund_proofs_pending.load(Ordering::Acquire)
         ));
+        output.push_str("# TYPE stp_indexer_refund_claims_pending gauge\n");
+        output.push_str(&format!(
+            "stp_indexer_refund_claims_pending{{service=\"indexer\"}} {}\n",
+            self.refund_claims_pending.load(Ordering::Acquire)
+        ));
         output.push_str("# TYPE stp_settlement_protocol_pause_known gauge\n");
         output.push_str(&format!(
             "stp_settlement_protocol_pause_known{{service=\"indexer\"}} {}\n",
@@ -463,11 +475,19 @@ pub async fn refresh_replay_metrics(
     stream_key: &str,
     metrics: &ReplayMetrics,
 ) -> Result<(), StorageError> {
-    let (replay, targeted_recovery, vault_reconciliation, refund_proofs, protocol_pause) = tokio::try_join!(
+    let (
+        replay,
+        targeted_recovery,
+        vault_reconciliation,
+        refund_proofs,
+        refund_claims,
+        protocol_pause,
+    ) = tokio::try_join!(
         store.load_replay_gap_metrics(stream_key),
         store.load_targeted_recovery_metrics(),
         store.load_vault_reconciliation_metrics(),
         store.load_refund_proof_metrics(stream_key),
+        store.load_refund_claim_reconciliation_metrics(),
         store.load_protocol_pause_metrics(stream_key),
     )?;
     metrics.set_snapshot(
@@ -475,6 +495,7 @@ pub async fn refresh_replay_metrics(
         targeted_recovery,
         vault_reconciliation,
         refund_proofs,
+        refund_claims,
         protocol_pause,
     );
     Ok(())
@@ -650,6 +671,125 @@ pub async fn prove_one_refund_balance_once(
         .persist_refund_balance_proof(stream_key, &execution, topology, proof)
         .await?;
     Ok(true)
+}
+
+/// Reconciles at most one server-owned refund claim. The candidate, target
+/// signature, proposer address, event expectation, and lifecycle transition
+/// all come from durable intent/artifact evidence. No browser or operator
+/// parameter can redirect this worker to another transaction.
+pub async fn reconcile_one_refund_claim_once<P, T>(
+    store: &PgStore,
+    signature_source: &P,
+    transaction_source: &T,
+    stream_key: &str,
+    max_pages: usize,
+) -> Result<bool, IndexerServiceError>
+where
+    P: FinalizedSignaturePageSource + ?Sized,
+    T: FinalizedTransactionSource + ?Sized,
+{
+    let Some(candidate) = store.load_pending_refund_claim_reconciliation().await? else {
+        return Ok(false);
+    };
+    let claim_token = candidate.claim_token;
+    let intent = candidate.intent;
+    let artifact = candidate.artifact;
+    let signature = intent.signature.clone().ok_or_else(|| {
+        IndexerServiceError::RefundClaimDomain(
+            "reconciliation candidate has no persisted transaction signature".into(),
+        )
+    })?;
+    let proposer = artifact
+        .instruction
+        .accounts
+        .first()
+        .map(|account| account.pubkey.as_str())
+        .ok_or_else(|| {
+            IndexerServiceError::RefundClaimDomain(
+                "refund claim artifact has no proposer account".into(),
+            )
+        })?;
+    let proposer = Pubkey::from_str(proposer).map_err(|_| {
+        IndexerServiceError::RefundClaimDomain(
+            "refund claim artifact proposer is not a canonical public key".into(),
+        )
+    })?;
+    if proposer == Pubkey::default() {
+        return Err(IndexerServiceError::RefundClaimDomain(
+            "refund claim artifact proposer is the default public key".into(),
+        ));
+    }
+    let recovery = recover_targeted_signature(
+        store,
+        signature_source,
+        transaction_source,
+        stream_key,
+        &proposer.to_string(),
+        &signature,
+        max_pages,
+    )
+    .await?;
+    let expected = refund_claim_evidence_expectation(&intent, &artifact)
+        .map_err(|error| IndexerServiceError::RefundClaimDomain(error.to_string()))?;
+    let evidence = store
+        .load_finalized_refund_claim_evidence(stream_key, &signature, &expected)
+        .await?;
+    if evidence.signature != signature || evidence.slot != recovery.slot {
+        return Err(IndexerServiceError::RefundClaimDomain(
+            "finalized claim event and recovered transaction disagree".into(),
+        ));
+    }
+    let original_status = intent.status.clone();
+    if original_status == "submitting"
+        && !store
+            .transition_refund_claim_intent(storage::RefundClaimIntentTransition {
+                intent_id: intent.id,
+                merchant_id: intent.merchant_id,
+                expected_status: "submitting".into(),
+                next_status: "submitted".into(),
+                signed_transaction_digest: intent.signed_transaction_digest,
+                signature: Some(evidence.signature.clone()),
+                slot: None,
+                last_error_code: None,
+                evidence: serde_json::json!({
+                    "source": "automatic_refund_claim_recovery",
+                    "stream_key": stream_key,
+                    "event_index": evidence.event_index,
+                    "event_digest": evidence.evidence_digest,
+                    "recovery_pages_scanned": recovery.pages_scanned,
+                }),
+                reconciliation_claim_token: Some(claim_token),
+            })
+            .await?
+    {
+        return Ok(false);
+    }
+    let expected_status = if original_status == "submitting" {
+        "submitted"
+    } else {
+        original_status.as_str()
+    };
+    let transitioned = store
+        .transition_refund_claim_intent(storage::RefundClaimIntentTransition {
+            intent_id: intent.id,
+            merchant_id: intent.merchant_id,
+            expected_status: expected_status.into(),
+            next_status: "finalized".into(),
+            signed_transaction_digest: intent.signed_transaction_digest,
+            signature: Some(evidence.signature.clone()),
+            slot: Some(evidence.slot),
+            last_error_code: None,
+            evidence: serde_json::json!({
+                "source": "automatic_finalized_refund_claim_reconciler",
+                "stream_key": stream_key,
+                "event_index": evidence.event_index,
+                "event_digest": evidence.evidence_digest,
+                "recovery_pages_scanned": recovery.pages_scanned,
+            }),
+            reconciliation_claim_token: Some(claim_token),
+        })
+        .await?;
+    Ok(transitioned)
 }
 
 fn parse_refund_key(value: &str, field: &str) -> Result<[u8; 32], IndexerServiceError> {
@@ -1124,6 +1264,7 @@ mod tests {
                 errors: 6,
             },
             RefundProofMetricsSnapshot { pending: 7 },
+            RefundClaimReconciliationMetricsSnapshot { pending: 8 },
             ProtocolPauseMetricsSnapshot {
                 known: true,
                 paused: true,
@@ -1153,6 +1294,7 @@ mod tests {
         );
         assert!(rendered.contains("stp_indexer_vault_reconciliation_error{service=\"indexer\"} 6"));
         assert!(rendered.contains("stp_indexer_refund_proofs_pending{service=\"indexer\"} 7"));
+        assert!(rendered.contains("stp_indexer_refund_claims_pending{service=\"indexer\"} 8"));
         assert!(rendered.contains("stp_settlement_protocol_pause_known{service=\"indexer\"} 1"));
         assert!(rendered.contains("stp_settlement_protocol_paused{service=\"indexer\"} 1"));
         assert!(rendered.contains("stp_settlement_protocol_pause_slot{service=\"indexer\"} 777"));

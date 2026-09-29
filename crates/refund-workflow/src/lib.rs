@@ -73,11 +73,14 @@ pub struct RefundClaimServerInputs {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RefundExecuteServerInputs {
     pub merchant_id: Uuid,
+    pub claim_intent_id: Uuid,
     pub adjustment_id: Uuid,
     pub funding_configuration_id: Uuid,
     pub funding_configuration_digest: [u8; 32],
     pub receipt_signature: String,
     pub receipt_slot: u64,
+    pub claim_signature: String,
+    pub claim_slot: u64,
     pub original_receipt: [u8; 32],
     pub adjustment: [u8; 32],
     pub payer: [u8; 32],
@@ -106,6 +109,9 @@ pub struct RefundArtifact {
     pub receipt_signature: String,
     #[serde(with = "policy::serde_optional_u64_string")]
     pub receipt_slot: Option<u64>,
+    pub claim_signature: Option<String>,
+    #[serde(with = "policy::serde_optional_u64_string")]
+    pub claim_slot: Option<u64>,
     pub authority_subject: String,
     pub proposer_subject: String,
     pub refund_funder_subject: String,
@@ -209,6 +215,8 @@ pub fn build_claim_artifact(
             funding_configuration_digest: input.funding_configuration_digest,
             receipt_signature: input.receipt_signature.clone(),
             receipt_slot: Some(input.receipt_slot),
+            claim_signature: None,
+            claim_slot: None,
             authority_subject: proposer,
             proposer_subject: input.proposer_subject.clone(),
             refund_funder_subject: input.refund_funder_subject.clone(),
@@ -261,6 +269,36 @@ pub fn claim_request_digest(input: &RefundClaimServerInputs) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+/// Computes the canonical execute-preparation digest. Finalized claim
+/// evidence is included so a later execute cannot be rebound to a different
+/// claim transport record or slot.
+pub fn execute_request_digest(input: &RefundExecuteServerInputs) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"refund-execute-request/v1");
+    hasher.update(input.merchant_id.as_bytes());
+    hasher.update(input.claim_intent_id.as_bytes());
+    hasher.update(input.adjustment_id.as_bytes());
+    hasher.update(input.funding_configuration_id.as_bytes());
+    hasher.update(input.funding_configuration_digest);
+    update_digest_text(&mut hasher, &input.receipt_signature);
+    hasher.update(input.receipt_slot.to_le_bytes());
+    update_digest_text(&mut hasher, &input.claim_signature);
+    hasher.update(input.claim_slot.to_le_bytes());
+    hasher.update(input.original_receipt);
+    hasher.update(input.adjustment);
+    hasher.update(input.payer);
+    hasher.update(input.merchant);
+    hasher.update(input.mint);
+    update_digest_text(&mut hasher, &input.token_program);
+    update_digest_text(&mut hasher, &input.approver);
+    update_digest_text(&mut hasher, &input.refund_funder);
+    update_digest_text(&mut hasher, &input.refund_funder_subject);
+    update_digest_text(&mut hasher, &input.tax_vault);
+    update_digest_text(&mut hasher, &input.net_source);
+    hasher.update(input.claim_nonce.to_le_bytes());
+    hasher.finalize().into()
+}
+
 /// Recompiles and compares a claim artifact at an authority-sensitive storage
 /// boundary. This makes the persisted artifact self-validating instead of
 /// relying on the caller having used the builder correctly.
@@ -279,10 +317,50 @@ pub fn validate_claim_artifact(
         || expected.funding_configuration_digest != artifact.funding_configuration_digest
         || expected.receipt_signature != artifact.receipt_signature
         || expected.receipt_slot != artifact.receipt_slot
+        || expected.claim_signature != artifact.claim_signature
+        || expected.claim_slot != artifact.claim_slot
         || expected.authority_subject != artifact.authority_subject
         || expected.proposer_subject != artifact.proposer_subject
         || expected.refund_funder_subject != artifact.refund_funder_subject
         || expected.proposer != artifact.proposer
+        || expected.refund_funder != artifact.refund_funder
+        || expected.merchant != artifact.merchant
+        || expected.mint != artifact.mint
+        || expected.token_program != artifact.token_program
+        || expected.tax_vault != artifact.tax_vault
+        || expected.net_source != artifact.net_source
+        || expected.gross_atomic != artifact.gross_atomic
+        || expected.tax_atomic != artifact.tax_atomic
+        || expected.net_atomic != artifact.net_atomic
+        || expected.execute_after_unix != artifact.execute_after_unix
+        || expected.expires_at_unix != artifact.expires_at_unix
+    {
+        return Err(RefundWorkflowError::InvalidIdentity);
+    }
+    Ok(())
+}
+
+/// Recompiles and compares an execute artifact at the storage boundary.
+pub fn validate_execute_artifact(
+    input: &RefundExecuteServerInputs,
+    artifact: &RefundArtifact,
+) -> Result<(), RefundWorkflowError> {
+    let expected = build_execute_artifact(input)?;
+    if expected.instruction != artifact.instruction
+        || expected.instruction_digest != artifact.instruction_digest
+        || expected.artifact_digest != artifact.artifact_digest
+        || expected.refund_destination != artifact.refund_destination
+        || expected.merchant_id != artifact.merchant_id
+        || expected.adjustment_id != artifact.adjustment_id
+        || expected.funding_configuration_id != artifact.funding_configuration_id
+        || expected.funding_configuration_digest != artifact.funding_configuration_digest
+        || expected.receipt_signature != artifact.receipt_signature
+        || expected.receipt_slot != artifact.receipt_slot
+        || expected.claim_signature != artifact.claim_signature
+        || expected.claim_slot != artifact.claim_slot
+        || expected.authority_subject != artifact.authority_subject
+        || expected.proposer != artifact.proposer
+        || expected.refund_funder_subject != artifact.refund_funder_subject
         || expected.refund_funder != artifact.refund_funder
         || expected.merchant != artifact.merchant
         || expected.mint != artifact.mint
@@ -315,6 +393,13 @@ fn update_digest_text(hasher: &mut Sha256, value: &str) {
 pub fn build_execute_artifact(
     input: &RefundExecuteServerInputs,
 ) -> Result<RefundArtifact, RefundWorkflowError> {
+    if input.claim_intent_id.get_version_num() != 7
+        || input.claim_signature.trim().is_empty()
+        || input.claim_signature.len() > 128
+        || input.claim_slot == 0
+    {
+        return Err(RefundWorkflowError::InvalidIdentity);
+    }
     validate_common(&CommonValidation {
         merchant_id: input.merchant_id,
         adjustment_id: input.adjustment_id,
@@ -368,6 +453,8 @@ pub fn build_execute_artifact(
             funding_configuration_digest: input.funding_configuration_digest,
             receipt_signature: input.receipt_signature.clone(),
             receipt_slot: Some(input.receipt_slot),
+            claim_signature: Some(input.claim_signature.clone()),
+            claim_slot: Some(input.claim_slot),
             authority_subject: approver,
             proposer_subject: String::new(),
             refund_funder_subject: input.refund_funder_subject.clone(),
@@ -460,6 +547,8 @@ struct ArtifactContext {
     funding_configuration_digest: [u8; 32],
     receipt_signature: String,
     receipt_slot: Option<u64>,
+    claim_signature: Option<String>,
+    claim_slot: Option<u64>,
     authority_subject: String,
     proposer_subject: String,
     refund_funder_subject: String,
@@ -491,6 +580,11 @@ fn finish_artifact(
     artifact_hasher.update(context.funding_configuration_digest);
     artifact_hasher.update(context.receipt_signature.as_bytes());
     artifact_hasher.update(context.receipt_slot.unwrap_or_default().to_le_bytes());
+    update_digest_text(
+        &mut artifact_hasher,
+        context.claim_signature.as_deref().unwrap_or_default(),
+    );
+    artifact_hasher.update(context.claim_slot.unwrap_or_default().to_le_bytes());
     artifact_hasher.update(instruction_digest);
     artifact_hasher.update(context.authority_subject.as_bytes());
     artifact_hasher.update(context.proposer_subject.as_bytes());
@@ -508,6 +602,8 @@ fn finish_artifact(
         funding_configuration_digest: context.funding_configuration_digest,
         receipt_signature: context.receipt_signature,
         receipt_slot: context.receipt_slot,
+        claim_signature: context.claim_signature,
+        claim_slot: context.claim_slot,
         authority_subject: context.authority_subject,
         proposer_subject: context.proposer_subject,
         refund_funder_subject: context.refund_funder_subject,
@@ -602,5 +698,51 @@ mod tests {
         assert_eq!(claim_request_digest(&first), claim_request_digest(&second));
         second.net_atomic += 1;
         assert_ne!(claim_request_digest(&first), claim_request_digest(&second));
+    }
+
+    #[test]
+    fn execute_artifact_binds_finalized_claim_evidence_and_role_topology() {
+        let base = claim();
+        let input = RefundExecuteServerInputs {
+            merchant_id: base.merchant_id,
+            claim_intent_id: Uuid::now_v7(),
+            adjustment_id: base.adjustment_id,
+            funding_configuration_id: base.funding_configuration_id,
+            funding_configuration_digest: base.funding_configuration_digest,
+            receipt_signature: base.receipt_signature,
+            receipt_slot: base.receipt_slot,
+            claim_signature: "5Ux987654321098765432109876543210987654321098765432109876543210"
+                .into(),
+            claim_slot: 11,
+            original_receipt: base.original_receipt,
+            adjustment: base.adjustment,
+            payer: base.payer,
+            merchant: base.merchant,
+            mint: base.mint,
+            token_program: base.token_program,
+            approver: Pubkey::new_unique().to_string(),
+            refund_funder: base.refund_funder,
+            refund_funder_subject: base.refund_funder_subject,
+            tax_vault: base.tax_vault,
+            net_source: base.net_source,
+            claim_nonce: base.claim_nonce,
+        };
+        let artifact = build_execute_artifact(&input).expect("execute artifact");
+        assert_eq!(
+            artifact.claim_signature.as_deref(),
+            Some(input.claim_signature.as_str())
+        );
+        assert_eq!(artifact.claim_slot, Some(input.claim_slot));
+        assert!(artifact.proposer.is_empty());
+        assert_eq!(artifact.authority_subject, input.approver);
+        validate_execute_artifact(&input, &artifact).expect("artifact validates");
+
+        let mut changed = input.clone();
+        changed.claim_slot += 1;
+        assert_ne!(
+            execute_request_digest(&input),
+            execute_request_digest(&changed)
+        );
+        assert!(validate_execute_artifact(&changed, &artifact).is_err());
     }
 }

@@ -26,7 +26,8 @@ use policy::{
     merchant_identity_digest,
 };
 use refund_workflow::{
-    RefundArtifact, RefundClaimServerInputs, build_claim_artifact, claim_request_digest,
+    RefundArtifact, RefundClaimServerInputs, RefundExecuteServerInputs, build_claim_artifact,
+    build_execute_artifact, claim_request_digest, execute_request_digest,
     refund_instruction_digest,
 };
 use serde::{Deserialize, Serialize};
@@ -48,14 +49,15 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use storage::{
     BindAdjustmentAuthority, CreateAdjustmentAuthorityChallenge, CreateJurisdictionPolicyCommand,
-    CreateRefundClaimIntentCommand, CreateRefundFundingConfigurationCommand,
-    CreateSettlementAdjustmentChainIntent, CreateSettlementAdjustmentCommand,
-    CreateSettlementAdjustmentEvidenceIntent, CreateVaultReleaseClaimCommand, DatabasePoolStats,
-    EvidenceAccessAuditCommand, JurisdictionPolicyGovernanceTransition, PgStore, QuoteCommand,
-    QuoteOutcome, RefundClaimIntentTransition, RefundFundingConfigurationTransition,
-    RuleCacheStats, RuleGovernanceTransition, SettlementAdjustmentChainTransition,
-    SettlementAdjustmentTransition, SettlementTransition, StorageError,
-    VaultReleaseClaimTransition,
+    CreateRefundClaimIntentCommand, CreateRefundExecuteIntentCommand,
+    CreateRefundFundingConfigurationCommand, CreateSettlementAdjustmentChainIntent,
+    CreateSettlementAdjustmentCommand, CreateSettlementAdjustmentEvidenceIntent,
+    CreateVaultReleaseClaimCommand, DatabasePoolStats, EvidenceAccessAuditCommand,
+    JurisdictionPolicyGovernanceTransition, PgStore, QuoteCommand, QuoteOutcome,
+    RefundClaimIntentTransition, RefundExecuteIntentTransition,
+    RefundFundingConfigurationTransition, RuleCacheStats, RuleGovernanceTransition,
+    SettlementAdjustmentChainTransition, SettlementAdjustmentTransition, SettlementTransition,
+    StorageError, VaultReleaseClaimTransition,
 };
 use tax_engine::{CalculationResult, RuleSet, TaxError, TaxFacts, calculate};
 use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
@@ -261,6 +263,46 @@ pub struct RefundClaimSubmitRequest {
 
 #[derive(Debug, Serialize)]
 pub struct RefundClaimSubmissionResponse {
+    pub intent_id: Uuid,
+    pub status: String,
+    pub signature: Option<String>,
+    pub provider_index: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RefundExecutePrepareRequest {
+    pub idempotency_key: String,
+    pub claim_intent_id: Uuid,
+    pub confirm: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RefundExecutePreparationResponse {
+    pub status: String,
+    pub intent_id: Uuid,
+    pub request_digest: Digest32,
+    pub instruction_digest: Digest32,
+    pub artifact_digest: Digest32,
+    pub claim: String,
+    pub artifact: RefundArtifact,
+    pub signed_transaction_digest: Option<Digest32>,
+    pub signature: Option<String>,
+    #[serde(with = "policy::serde_optional_u64_string")]
+    pub submitted_slot: Option<u64>,
+    pub commitment: Option<String>,
+    pub last_error_code: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RefundExecuteSubmitRequest {
+    pub intent_id: Uuid,
+    pub signed_transaction_base64: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RefundExecuteSubmissionResponse {
     pub intent_id: Uuid,
     pub status: String,
     pub signature: Option<String>,
@@ -822,6 +864,21 @@ impl From<StorageError> for ApiError {
                 StatusCode::CONFLICT,
                 "REFUND_CLAIM_NONCE_ALLOCATION_CONFLICT",
                 "a refund claim nonce could not be allocated safely; retry the request".to_string(),
+            ),
+            StorageError::RefundExecuteIntentNotFound => (
+                StatusCode::NOT_FOUND,
+                "REFUND_EXECUTE_INTENT_NOT_FOUND",
+                "the refund execute intent was not found for this merchant".to_string(),
+            ),
+            StorageError::RefundExecuteIntentIdempotencyConflict => (
+                StatusCode::CONFLICT,
+                "REFUND_EXECUTE_INTENT_IDEMPOTENCY_CONFLICT",
+                "the refund execute idempotency key was reused for different input".to_string(),
+            ),
+            StorageError::InvalidRefundExecuteIntent(message) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_REFUND_EXECUTE_INTENT",
+                message,
             ),
             StorageError::SettlementSplitPlanNotFound => (
                 StatusCode::NOT_FOUND,
@@ -1437,6 +1494,22 @@ pub fn router() -> Router<AppState> {
         .route(
             "/v1/settlement/refund-claims/{intent_id}",
             get(load_refund_claim),
+        )
+        .route(
+            "/v1/settlement/refund-claims/{intent_id}/reconcile",
+            post(reconcile_refund_claim),
+        )
+        .route(
+            "/v1/settlement/refund-executions",
+            post(prepare_refund_execute),
+        )
+        .route(
+            "/v1/settlement/refund-executions/submit",
+            post(submit_refund_execute),
+        )
+        .route(
+            "/v1/settlement/refund-executions/{intent_id}",
+            get(load_refund_execute),
         )
         .route(
             "/v1/vault/reconciliation/targets",
@@ -3847,6 +3920,7 @@ fn targeted_recovery_error_code(error: &IndexerServiceError) -> &'static str {
         IndexerServiceError::Provider(_) => "provider_failure",
         IndexerServiceError::Storage(_) => "storage_failure",
         IndexerServiceError::Configuration(_) => "recovery_configuration_invalid",
+        IndexerServiceError::RefundClaimDomain(_) => "refund_claim_domain_invalid",
         _ => "targeted_recovery_failed",
     }
 }
@@ -3879,6 +3953,11 @@ fn targeted_recovery_api_error(error: IndexerServiceError) -> ApiError {
         IndexerServiceError::RefundProofDomain(message) => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "INVALID_REFUND_BALANCE_PROOF",
+            message,
+        },
+        IndexerServiceError::RefundClaimDomain(message) => ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "INVALID_REFUND_CLAIM_RECONCILIATION",
             message,
         },
         IndexerServiceError::GapRecordFailed { primary, gap } => ApiError {
@@ -4459,6 +4538,138 @@ async fn load_refund_claim(
     Ok(Json(refund_claim_response(intent, artifact)))
 }
 
+async fn reconcile_refund_claim(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(intent_id): Path<Uuid>,
+) -> Result<Json<RefundClaimPreparationResponse>, ApiError> {
+    let principal = authenticate_scope_role(
+        &state,
+        &headers,
+        "tax:refund:claim:reconcile",
+        "settlement_adjustment_proposer",
+    )?;
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "REFUND_CLAIM_STORAGE_UNAVAILABLE",
+        message: "refund claim storage is not configured".to_string(),
+    })?;
+    let intent = store
+        .load_refund_claim_intent(intent_id, principal.merchant_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::from(StorageError::RefundClaimIntentNotFound))?;
+    let artifact = serde_json::from_value::<RefundArtifact>(intent.unsigned_artifact.clone())
+        .map_err(|_| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "REFUND_CLAIM_ARTIFACT_CORRUPT",
+            message: "persisted refund claim artifact failed integrity validation".into(),
+        })?;
+    if artifact.proposer_subject != principal.subject {
+        return Err(ApiError::from(
+            StorageError::RefundClaimIntentIdempotencyConflict,
+        ));
+    }
+    if intent.status == SettlementStatus::Finalized.as_str() {
+        return Ok(Json(refund_claim_response(intent, artifact)));
+    }
+    if matches!(
+        intent.status.as_str(),
+        "prepared_unsubmitted" | "signed" | "rejected" | "cancelled"
+    ) {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REFUND_CLAIM_NOT_SUBMITTED",
+            message: "claim reconciliation requires a persisted submitted signature".into(),
+        });
+    }
+    let signature = intent.signature.clone().ok_or_else(|| ApiError {
+        status: StatusCode::CONFLICT,
+        code: "REFUND_CLAIM_SIGNATURE_MISSING",
+        message: "claim reconciliation requires the signature fenced at submission".into(),
+    })?;
+    let ports = state.targeted_recovery.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "REFUND_CLAIM_RECONCILIATION_UNAVAILABLE",
+        message: "finalized transaction recovery is not configured".to_string(),
+    })?;
+    let proposer = artifact
+        .instruction
+        .accounts
+        .first()
+        .map(|account| account.pubkey.clone())
+        .ok_or_else(|| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "REFUND_CLAIM_ARTIFACT_CORRUPT",
+            message: "refund claim artifact has no proposer account".into(),
+        })?;
+    let recovery = recover_targeted_signature(
+        store.as_ref(),
+        ports.signature_source.as_ref(),
+        ports.transaction_source.as_ref(),
+        &ports.stream_key,
+        &proposer,
+        &signature,
+        ports.max_pages,
+    )
+    .await
+    .map_err(targeted_recovery_api_error)?;
+
+    let expected =
+        storage::refund_claim_evidence_expectation(&intent, &artifact).map_err(|error| {
+            ApiError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "REFUND_CLAIM_ARTIFACT_CORRUPT",
+                message: error.to_string(),
+            }
+        })?;
+    let evidence = store
+        .load_finalized_refund_claim_evidence(&ports.stream_key, &signature, &expected)
+        .await
+        .map_err(ApiError::from)?;
+    if evidence.signature != signature || evidence.slot != recovery.slot {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REFUND_CLAIM_FINALIZED_EVIDENCE_CONFLICT",
+            message: "finalized claim event and recovered transaction disagree".into(),
+        });
+    }
+    if !store
+        .transition_refund_claim_intent(RefundClaimIntentTransition {
+            intent_id: intent.id,
+            merchant_id: principal.merchant_id,
+            expected_status: intent.status.clone(),
+            next_status: SettlementStatus::Finalized.as_str().into(),
+            signed_transaction_digest: intent.signed_transaction_digest,
+            signature: Some(evidence.signature.clone()),
+            slot: Some(evidence.slot),
+            last_error_code: None,
+            evidence: serde_json::json!({
+                "source": "finalized_refund_claim_event",
+                "stream_key": ports.stream_key,
+                "event_index": evidence.event_index,
+                "event_digest": evidence.evidence_digest,
+                "recovery_pages_scanned": recovery.pages_scanned,
+            }),
+            reconciliation_claim_token: None,
+        })
+        .await
+        .map_err(ApiError::from)?
+    {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REFUND_CLAIM_STATE_CHANGED",
+            message: "claim changed concurrently; reload before retry".into(),
+        });
+    }
+    let finalized = store
+        .load_refund_claim_intent(intent.id, principal.merchant_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::from(StorageError::RefundClaimIntentNotFound))?;
+    Ok(Json(refund_claim_response(finalized, artifact)))
+}
+
 async fn submit_refund_claim(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -4556,6 +4767,7 @@ async fn submit_refund_claim(
                 slot: None,
                 last_error_code: None,
                 evidence: serde_json::json!({"source": "wallet_handoff"}),
+                reconciliation_claim_token: None,
             })
             .await
             .map_err(ApiError::from)?
@@ -4577,6 +4789,7 @@ async fn submit_refund_claim(
             slot: None,
             last_error_code: None,
             evidence: serde_json::json!({"source": "submission_fence"}),
+            reconciliation_claim_token: None,
         })
         .await
         .map_err(ApiError::from)?
@@ -4602,6 +4815,7 @@ async fn submit_refund_claim(
                     slot: None,
                     last_error_code: Some(error_code.to_string()),
                     evidence: serde_json::json!({"source": "rpc", "error_code": error_code}),
+                    reconciliation_claim_token: None,
                 })
                 .await;
             return Err(ApiError {
@@ -4627,6 +4841,7 @@ async fn submit_refund_claim(
                 "source": "rpc",
                 "provider_index": submitted.provider_index,
             }),
+            reconciliation_claim_token: None,
         })
         .await
         .map_err(ApiError::from)?
@@ -4638,6 +4853,509 @@ async fn submit_refund_claim(
         });
     }
     Ok(Json(RefundClaimSubmissionResponse {
+        intent_id: intent.id,
+        status: submitted.status.as_str().to_string(),
+        signature: Some(submitted.signature),
+        provider_index: Some(submitted.provider_index),
+    }))
+}
+
+async fn prepare_refund_execute(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    payload: Result<Json<RefundExecutePrepareRequest>, JsonRejection>,
+) -> Result<Json<RefundExecutePreparationResponse>, ApiError> {
+    prepare_refund_execute_inner(state, headers, payload).await
+}
+
+async fn prepare_refund_execute_inner(
+    state: AppState,
+    headers: HeaderMap,
+    payload: Result<Json<RefundExecutePrepareRequest>, JsonRejection>,
+) -> Result<Json<RefundExecutePreparationResponse>, ApiError> {
+    let Json(request) = payload.map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "INVALID_JSON",
+        message: "request body is invalid".to_string(),
+    })?;
+    if !request.confirm {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "REFUND_EXECUTE_PREPARE_CONFIRMATION_REQUIRED",
+            message: "explicit execute-preparation confirmation is required".to_string(),
+        });
+    }
+    if request.idempotency_key.trim().is_empty()
+        || request.idempotency_key.len() > 200
+        || request.idempotency_key != request.idempotency_key.trim()
+    {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_IDEMPOTENCY_KEY",
+            message: "idempotency key must be a bounded, non-empty trimmed string".to_string(),
+        });
+    }
+    if request.claim_intent_id.get_version_num() != 7 {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_CLAIM_INTENT_ID",
+            message: "claim_intent_id must be a UUIDv7".to_string(),
+        });
+    }
+    let principal = authenticate_scope_role(
+        &state,
+        &headers,
+        "tax:refund:execute:prepare",
+        "settlement_adjustment_approver",
+    )?;
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "REFUND_EXECUTE_STORAGE_UNAVAILABLE",
+        message: "refund execute storage is not configured".to_string(),
+    })?;
+    if let Some(intent) = store
+        .load_refund_execute_intent_by_idempotency(
+            principal.merchant_id,
+            request.idempotency_key.as_str(),
+        )
+        .await
+        .map_err(ApiError::from)?
+    {
+        let artifact = serde_json::from_value::<RefundArtifact>(intent.unsigned_artifact.clone())
+            .map_err(|_| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "REFUND_EXECUTE_ARTIFACT_CORRUPT",
+            message: "persisted refund execute artifact failed integrity validation".into(),
+        })?;
+        if artifact.authority_subject != principal.subject {
+            return Err(ApiError::from(
+                StorageError::RefundExecuteIntentIdempotencyConflict,
+            ));
+        }
+        return Ok(Json(refund_execute_response(intent, artifact)));
+    }
+
+    let claim = store
+        .load_refund_claim_intent(request.claim_intent_id, principal.merchant_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::from(StorageError::RefundClaimIntentNotFound))?;
+    if claim.status != SettlementStatus::Finalized.as_str()
+        || claim.signature.is_none()
+        || claim.submitted_slot.is_none()
+    {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REFUND_EXECUTE_CLAIM_NOT_FINALIZED",
+            message: "execute preparation requires finalized claim transaction evidence".into(),
+        });
+    }
+    let claim_artifact = serde_json::from_value::<RefundArtifact>(claim.unsigned_artifact.clone())
+        .map_err(|_| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "REFUND_CLAIM_ARTIFACT_CORRUPT",
+            message: "persisted refund claim artifact failed integrity validation".into(),
+        })?;
+    if claim_artifact.instruction.claim != Pubkey::new_from_array(claim.claim).to_string()
+        || claim_artifact.instruction.claim_nonce != claim.claim_nonce
+    {
+        return Err(ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "REFUND_CLAIM_ARTIFACT_CORRUPT",
+            message: "finalized claim artifact does not match durable claim identity".into(),
+        });
+    }
+    let adjustment = store
+        .load_settlement_adjustment(claim.adjustment_id, principal.merchant_id)
+        .await
+        .map_err(ApiError::from)?;
+    if adjustment.status != "approved"
+        || adjustment.kind != AdjustmentKind::Refund
+        || adjustment.approver_subject.as_deref() != Some(principal.subject.as_str())
+    {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REFUND_EXECUTE_ADJUSTMENT_NOT_READY",
+            message:
+                "the authenticated approver has no approved refund adjustment ready for execution"
+                    .into(),
+        });
+    }
+    let receipt = store
+        .load_finalized_settlement_receipt_binding(
+            principal.merchant_id,
+            adjustment.original_settlement_id,
+            adjustment.asset_id,
+        )
+        .await
+        .map_err(ApiError::from)?;
+    let token_program = SPL_TOKEN_PROGRAM_ID.to_string();
+    let receipt_mint = Pubkey::new_from_array(receipt.mint).to_string();
+    let (funding, approver_binding, adjustment_binding) = tokio::try_join!(
+        store.load_active_refund_funding_configuration(
+            principal.merchant_id,
+            &receipt_mint,
+            token_program.as_str(),
+        ),
+        store.load_active_adjustment_authority(
+            principal.merchant_id,
+            principal.subject.as_str(),
+            "approver",
+        ),
+        store.load_finalized_settlement_adjustment_binding(principal.merchant_id, adjustment.id,),
+    )
+    .map_err(ApiError::from)?;
+    let configured_merchant =
+        Pubkey::from_str(&funding.merchant_account).map_err(|_| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "REFUND_FUNDING_CONFIGURATION_CORRUPT",
+            message: "stored refund funding merchant account is invalid".into(),
+        })?;
+    if configured_merchant.to_bytes() != receipt.merchant
+        || Pubkey::from_str(&funding.mint)
+            .map(|key| key.to_bytes() != receipt.mint)
+            .unwrap_or(true)
+        || funding.token_program != token_program
+        || adjustment_binding.original_receipt != receipt.receipt
+        || adjustment_binding.adjustment_digest != adjustment.adjustment_digest
+        || adjustment_binding.evidence_digest != adjustment.evidence_digest
+        || approver_binding.subject != principal.subject
+        || approver_binding.role != "approver"
+    {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REFUND_EXECUTE_TOPOLOGY_CONFLICT",
+            message: "finalized receipt, adjustment evidence, authority binding, and active funding topology do not agree".into(),
+        });
+    }
+    let funder_subject = funding
+        .refund_funder_subject
+        .clone()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REFUND_FUNDING_AUTHORITY_UNAVAILABLE",
+            message: "active refund funding has no configured funder subject".into(),
+        })?;
+    let funder_binding = store
+        .load_active_adjustment_authority(
+            principal.merchant_id,
+            funder_subject.as_str(),
+            "refund_funder",
+        )
+        .await
+        .map_err(ApiError::from)?;
+    let approver_key = Pubkey::new_from_array(approver_binding.public_key);
+    let funder_key = Pubkey::from_str(&funding.refund_funder).map_err(|_| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        code: "REFUND_FUNDING_CONFIGURATION_CORRUPT",
+        message: "stored refund funder account is invalid".into(),
+    })?;
+    if approver_key == funder_key
+        || funder_binding.subject != funder_subject
+        || funder_binding.role != "refund_funder"
+        || funder_binding.public_key != funder_key.to_bytes()
+    {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REFUND_EXECUTE_AUTHORITY_CONFLICT",
+            message: "active approver and refund-funder wallet bindings are invalid or aliased"
+                .into(),
+        });
+    }
+    let claim_signature = claim.signature.ok_or_else(|| ApiError {
+        status: StatusCode::CONFLICT,
+        code: "REFUND_EXECUTE_CLAIM_NOT_FINALIZED",
+        message: "finalized claim signature evidence is missing".into(),
+    })?;
+    let claim_slot = claim.submitted_slot.ok_or_else(|| ApiError {
+        status: StatusCode::CONFLICT,
+        code: "REFUND_EXECUTE_CLAIM_NOT_FINALIZED",
+        message: "finalized claim slot evidence is missing".into(),
+    })?;
+    let inputs = RefundExecuteServerInputs {
+        merchant_id: principal.merchant_id,
+        claim_intent_id: claim.id,
+        adjustment_id: adjustment.id,
+        funding_configuration_id: funding.id,
+        funding_configuration_digest: funding.configuration_digest,
+        receipt_signature: receipt.signature,
+        receipt_slot: receipt.slot,
+        claim_signature,
+        claim_slot,
+        original_receipt: receipt.receipt,
+        adjustment: adjustment_binding.adjustment,
+        payer: receipt.payer,
+        merchant: receipt.merchant,
+        mint: receipt.mint,
+        token_program,
+        approver: approver_key.to_string(),
+        refund_funder: funder_key.to_string(),
+        refund_funder_subject: funder_subject,
+        tax_vault: funding.tax_vault,
+        net_source: funding.net_source,
+        claim_nonce: claim.claim_nonce,
+    };
+    let request_digest = execute_request_digest(&inputs);
+    let artifact = build_execute_artifact(&inputs).map_err(|error| ApiError {
+        status: StatusCode::UNPROCESSABLE_ENTITY,
+        code: "INVALID_REFUND_EXECUTE_ARTIFACT",
+        message: error.to_string(),
+    })?;
+    if artifact.instruction.claim != Pubkey::new_from_array(claim.claim).to_string() {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REFUND_EXECUTE_CLAIM_TOPOLOGY_CONFLICT",
+            message: "compiled execute claim PDA does not match finalized claim evidence".into(),
+        });
+    }
+    let intent = store
+        .create_refund_execute_intent(CreateRefundExecuteIntentCommand {
+            merchant_id: principal.merchant_id,
+            idempotency_key: request.idempotency_key,
+            request_digest,
+            claim_intent_id: claim.id,
+            inputs,
+            artifact: artifact.clone(),
+        })
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(refund_execute_response(intent, artifact)))
+}
+
+fn refund_execute_response(
+    intent: storage::RefundExecuteIntent,
+    artifact: RefundArtifact,
+) -> RefundExecutePreparationResponse {
+    RefundExecutePreparationResponse {
+        status: intent.status.clone(),
+        intent_id: intent.id,
+        request_digest: intent.request_digest,
+        instruction_digest: intent.instruction_digest,
+        artifact_digest: intent.artifact_digest,
+        claim: Pubkey::new_from_array(intent.claim).to_string(),
+        artifact,
+        signed_transaction_digest: intent.signed_transaction_digest,
+        signature: intent.signature,
+        submitted_slot: intent.submitted_slot,
+        commitment: intent.commitment,
+        last_error_code: intent.last_error_code,
+    }
+}
+
+async fn load_refund_execute(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(intent_id): Path<Uuid>,
+) -> Result<Json<RefundExecutePreparationResponse>, ApiError> {
+    let principal = authenticate_scope_role(
+        &state,
+        &headers,
+        "tax:refund:execute:read",
+        "settlement_adjustment_approver",
+    )?;
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "REFUND_EXECUTE_STORAGE_UNAVAILABLE",
+        message: "refund execute storage is not configured".to_string(),
+    })?;
+    let intent = store
+        .load_refund_execute_intent(intent_id, principal.merchant_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::from(StorageError::RefundExecuteIntentNotFound))?;
+    let artifact = serde_json::from_value::<RefundArtifact>(intent.unsigned_artifact.clone())
+        .map_err(|_| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "REFUND_EXECUTE_ARTIFACT_CORRUPT",
+            message: "persisted refund execute artifact failed integrity validation".into(),
+        })?;
+    if artifact.authority_subject != principal.subject {
+        return Err(ApiError::from(
+            StorageError::RefundExecuteIntentIdempotencyConflict,
+        ));
+    }
+    Ok(Json(refund_execute_response(intent, artifact)))
+}
+
+async fn submit_refund_execute(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    payload: Result<Json<RefundExecuteSubmitRequest>, JsonRejection>,
+) -> Result<Json<RefundExecuteSubmissionResponse>, ApiError> {
+    let principal = authenticate_scope_role(
+        &state,
+        &headers,
+        "tax:refund:execute:submit",
+        "settlement_adjustment_approver",
+    )?;
+    let Json(request) = payload.map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "INVALID_JSON",
+        message: "request body is invalid".to_string(),
+    })?;
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "REFUND_EXECUTE_STORAGE_UNAVAILABLE",
+        message: "refund execute storage is not configured".to_string(),
+    })?;
+    let intent = store
+        .load_refund_execute_intent(request.intent_id, principal.merchant_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::from(StorageError::RefundExecuteIntentNotFound))?;
+    let artifact = serde_json::from_value::<RefundArtifact>(intent.unsigned_artifact.clone())
+        .map_err(|_| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "REFUND_EXECUTE_ARTIFACT_CORRUPT",
+            message: "persisted refund execute artifact failed integrity validation".into(),
+        })?;
+    if artifact.authority_subject != principal.subject {
+        return Err(ApiError::from(
+            StorageError::RefundExecuteIntentIdempotencyConflict,
+        ));
+    }
+    if intent.status != SettlementStatus::PreparedUnsubmitted.as_str()
+        && intent.status != SettlementStatus::Signed.as_str()
+    {
+        return Ok(Json(RefundExecuteSubmissionResponse {
+            intent_id: intent.id,
+            status: intent.status,
+            signature: intent.signature,
+            provider_index: None,
+        }));
+    }
+    if artifact.instruction.status != SettlementStatus::PreparedUnsubmitted.as_str()
+        || refund_instruction_digest(&artifact.instruction).map_err(|error| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "REFUND_EXECUTE_ARTIFACT_CORRUPT",
+            message: error.to_string(),
+        })? != intent.instruction_digest
+    {
+        return Err(ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "REFUND_EXECUTE_INSTRUCTION_CORRUPT",
+            message: "persisted refund execute instruction does not match its durable digest"
+                .into(),
+        });
+    }
+    let coordinator = state.settlement_coordinator.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "SETTLEMENT_RPC_NOT_CONFIGURED",
+        message: "settlement RPC providers are not configured".into(),
+    })?;
+    let transaction =
+        SignedTransaction::parse(&request.signed_transaction_base64).map_err(ApiError::from)?;
+    let signed_digest = sha256_digest(transaction.bytes());
+    transaction
+        .verify_refund_instruction(&artifact.instruction)
+        .map_err(ApiError::from)?;
+    let transaction_signature = transaction.signature().map_err(ApiError::from)?;
+    coordinator
+        .validate_blockhash(&transaction)
+        .await
+        .map_err(ApiError::from)?;
+    if let Some(existing_digest) = intent.signed_transaction_digest
+        && existing_digest != signed_digest
+    {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REFUND_EXECUTE_SIGNED_BYTES_CONFLICT",
+            message: "execute intent is already bound to different signed bytes".into(),
+        });
+    }
+    if intent.status == SettlementStatus::PreparedUnsubmitted.as_str()
+        && !store
+            .transition_refund_execute_intent(RefundExecuteIntentTransition {
+                intent_id: intent.id,
+                merchant_id: principal.merchant_id,
+                expected_status: SettlementStatus::PreparedUnsubmitted.as_str().into(),
+                next_status: SettlementStatus::Signed.as_str().into(),
+                signed_transaction_digest: Some(signed_digest),
+                signature: None,
+                slot: None,
+                last_error_code: None,
+                evidence: serde_json::json!({"source": "wallet_handoff"}),
+            })
+            .await
+            .map_err(ApiError::from)?
+    {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REFUND_EXECUTE_STATE_CHANGED",
+            message: "refund execute changed concurrently; reconcile before retry".into(),
+        });
+    }
+    if !store
+        .transition_refund_execute_intent(RefundExecuteIntentTransition {
+            intent_id: intent.id,
+            merchant_id: principal.merchant_id,
+            expected_status: SettlementStatus::Signed.as_str().into(),
+            next_status: SettlementStatus::Submitting.as_str().into(),
+            signed_transaction_digest: Some(signed_digest),
+            signature: Some(transaction_signature.clone()),
+            slot: None,
+            last_error_code: None,
+            evidence: serde_json::json!({"source": "submission_fence"}),
+        })
+        .await
+        .map_err(ApiError::from)?
+    {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REFUND_EXECUTE_SUBMISSION_IN_PROGRESS",
+            message: "refund execute submission is already owned by another request; reconcile the intent before retry".into(),
+        });
+    }
+    let submitted = match coordinator.submit(&transaction).await {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            let error_code = settlement_submission_error_code(&error);
+            let _ = store
+                .transition_refund_execute_intent(RefundExecuteIntentTransition {
+                    intent_id: intent.id,
+                    merchant_id: principal.merchant_id,
+                    expected_status: SettlementStatus::Submitting.as_str().into(),
+                    next_status: SettlementStatus::Unknown.as_str().into(),
+                    signed_transaction_digest: Some(signed_digest),
+                    signature: Some(transaction_signature),
+                    slot: None,
+                    last_error_code: Some(error_code.to_string()),
+                    evidence: serde_json::json!({"source": "rpc", "error_code": error_code}),
+                })
+                .await;
+            return Err(ApiError {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                code: "REFUND_EXECUTE_SUBMISSION_UNKNOWN",
+                message: "provider outcome is unknown; reconcile the execute intent before retry"
+                    .into(),
+            });
+        }
+    };
+    if !store
+        .transition_refund_execute_intent(RefundExecuteIntentTransition {
+            intent_id: intent.id,
+            merchant_id: principal.merchant_id,
+            expected_status: SettlementStatus::Submitting.as_str().into(),
+            next_status: submitted.status.as_str().into(),
+            signed_transaction_digest: None,
+            signature: Some(submitted.signature.clone()),
+            slot: None,
+            last_error_code: None,
+            evidence: serde_json::json!({
+                "source": "rpc",
+                "provider_index": submitted.provider_index,
+            }),
+        })
+        .await
+        .map_err(ApiError::from)?
+    {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REFUND_EXECUTE_STATE_CHANGED",
+            message: "refund execute changed while recording provider acknowledgement".into(),
+        });
+    }
+    Ok(Json(RefundExecuteSubmissionResponse {
         intent_id: intent.id,
         status: submitted.status.as_str().to_string(),
         signature: Some(submitted.signature),
@@ -5633,6 +6351,97 @@ mod tests {
                 Request::builder()
                     .method("POST")
                     .uri("/v1/settlement/refund-claims/submit")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn refund_claim_reconcile_requires_authentication_before_storage_or_recovery() {
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: false,
+                storage: None,
+                authenticator: Some(auth::test_authenticator()),
+                jurisdiction_provider_registry: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!(
+                        "/v1/settlement/refund-claims/{}/reconcile",
+                        Uuid::now_v7()
+                    ))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn refund_execute_prepare_requires_explicit_confirmation_before_auth_or_storage() {
+        let body = serde_json::to_vec(&RefundExecutePrepareRequest {
+            idempotency_key: "execute-test-01".to_string(),
+            claim_intent_id: Uuid::now_v7(),
+            confirm: false,
+        })
+        .expect("request JSON");
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: true,
+                storage: None,
+                authenticator: None,
+                jurisdiction_provider_registry: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/settlement/refund-executions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn refund_execute_submit_requires_authentication_before_storage_or_rpc() {
+        let body = serde_json::to_vec(&RefundExecuteSubmitRequest {
+            intent_id: Uuid::now_v7(),
+            signed_transaction_base64: "not-a-transaction".to_string(),
+        })
+        .expect("request JSON");
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: false,
+                storage: None,
+                authenticator: Some(auth::test_authenticator()),
+                jurisdiction_provider_registry: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/settlement/refund-executions/submit")
                     .header("content-type", "application/json")
                     .body(Body::from(body))
                     .expect("request"),

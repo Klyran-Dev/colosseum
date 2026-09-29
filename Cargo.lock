@@ -1679,6 +1679,7 @@ dependencies = [
  "indexer",
  "observability",
  "reqwest",
+ "serde_json",
  "settlement-adjustments",
  "solana-pubkey 4.4.0",
  "storage",

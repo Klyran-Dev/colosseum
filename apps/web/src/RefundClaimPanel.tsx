@@ -9,7 +9,7 @@ import {
   refundClaimHasAllSignatures,
   signRefundClaimRole,
 } from "./refundClaims";
-import { formatAtomic } from "./formatters";
+import { formatInteger } from "./formatters";
 
 type RefundClaimPanelProps = {
   apiBase: string;
@@ -20,6 +20,10 @@ type RefundClaimPanelProps = {
 
 function statusLabel(status: string): string {
   return status.replaceAll("_", " ");
+}
+
+function atomicAmount(value: string | null, locale: string): string {
+  return value === null ? "Not present" : `${formatInteger(value, locale)} atomic units`;
 }
 
 export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, locale }: RefundClaimPanelProps) {
@@ -142,6 +146,27 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
     }
   }
 
+  async function reconcile() {
+    setBusy(true);
+    clearMessages();
+    try {
+      const token = requireToken();
+      if (!claim) throw new Error("Prepare or recover a refund claim before reconciliation.");
+      const response = await fetchWithTimeout(`${apiBase.replace(/\/$/, "")}/v1/settlement/refund-claims/${claim.intent_id}/reconcile`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+      }, REQUEST_TIMEOUT_MS.settlementSubmit);
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(responseError(response, payload, `Refund claim reconciliation failed (${response.status})`));
+      setClaim(parseRefundClaimResponse(payload));
+      setNotice("Finalized claim event evidence matched the durable artifact. Execute preparation is now eligible for the separately authorized approver workflow.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Refund claim reconciliation failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="adjustment-layout" aria-label="Refund claim wallet workspace">
       <article className="panel">
@@ -165,9 +190,9 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
         <div className="panel-heading"><div><p className="eyebrow">Immutable artifact review</p><h2>Wallet authorization</h2></div>{claim && <span className="status-pill">{statusLabel(claim.status)}</span>}</div>
         {!claim ? <div className="empty-state"><span className="empty-icon">↔</span><strong>No claim artifact loaded</strong><p>Prepare or recover a claim to inspect its exact server-owned evidence.</p></div> : <>
           <dl className="summary-list">
-            <div><dt>Gross refund</dt><dd>{claim.artifact.gross_atomic ? formatAtomic(claim.artifact.gross_atomic, "USD", locale) : "Not present"}</dd></div>
-            <div><dt>Tax component</dt><dd>{claim.artifact.tax_atomic ? formatAtomic(claim.artifact.tax_atomic, "USD", locale) : "Not present"}</dd></div>
-            <div><dt>Net refund</dt><dd>{claim.artifact.net_atomic ? formatAtomic(claim.artifact.net_atomic, "USD", locale) : "Not present"}</dd></div>
+            <div><dt>Gross refund</dt><dd>{atomicAmount(claim.artifact.gross_atomic, locale)}</dd></div>
+            <div><dt>Tax component</dt><dd>{atomicAmount(claim.artifact.tax_atomic, locale)}</dd></div>
+            <div><dt>Net refund</dt><dd>{atomicAmount(claim.artifact.net_atomic, locale)}</dd></div>
             <div><dt>Asset mint</dt><dd><code>{claim.artifact.mint}</code></dd></div>
             <div><dt>Destination</dt><dd><code>{claim.artifact.refund_destination}</code></dd></div>
             <div><dt>Claim PDA</dt><dd><code>{claim.claim}</code></dd></div>
@@ -181,7 +206,7 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
             <label className="full-field"><span>Exact signed bytes for recovery (base64, memory-only)</span><textarea value={recoveryBytes} onChange={(event) => setRecoveryBytes(event.target.value)} placeholder="Paste the unchanged wallet artifact when recovering a signed intent after reload." rows={3} autoComplete="off" spellCheck={false} /></label>
             <button type="button" onClick={submit} disabled={busy || (!signedBytes && !recoveryBytes.trim())}>{busy ? "Submitting…" : "Submit unchanged signed bytes"}</button>
           </div>}
-          {(claim.status === "unknown" || claim.status === "submitted" || claim.status === "processed" || claim.status === "confirmed") && <p className="inline-warning">This state requires durable chain reconciliation. A provider response or wallet signature is not proof of a completed refund.</p>}
+          {(claim.status === "unknown" || claim.status === "submitted" || claim.status === "processed" || claim.status === "confirmed") && <div className="evidence-actions"><p className="inline-warning">This state requires durable chain reconciliation. A provider response or wallet signature is not proof of a completed refund.</p><button type="button" onClick={reconcile} disabled={busy || !serviceOnline || !accessToken.trim()}>Reconcile finalized claim evidence</button></div>}
           {claim.last_error_code && <p className="inline-error" role="alert">Last durable error: {claim.last_error_code}</p>}
         </>}
       </article>

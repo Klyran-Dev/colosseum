@@ -225,7 +225,7 @@ pub async fn verify_refund_funding_once(
         ..VerificationSummary::default()
     };
     for candidate in candidates {
-        if let Err(error) = store
+        let claim_token = match store
             .begin_refund_funding_verification(
                 candidate.merchant_id,
                 candidate.id,
@@ -233,10 +233,14 @@ pub async fn verify_refund_funding_once(
             )
             .await
         {
-            summary.failed += 1;
-            tracing::warn!(configuration_id = %candidate.id, %error, "refund funding verification claim failed");
-            continue;
-        }
+            Ok(Some(claim_token)) => claim_token,
+            Ok(None) => continue,
+            Err(error) => {
+                summary.failed += 1;
+                tracing::warn!(configuration_id = %candidate.id, %error, "refund funding verification claim failed");
+                continue;
+            }
+        };
         let topology = RefundFundingTopologyConfig {
             configuration_id: candidate.id,
             version: candidate.version,
@@ -254,6 +258,7 @@ pub async fn verify_refund_funding_once(
                 .activate_refund_funding_configuration(
                     candidate.merchant_id,
                     candidate.id,
+                    claim_token,
                     &verification,
                 )
                 .await
@@ -262,11 +267,28 @@ pub async fn verify_refund_funding_once(
                 Ok(false) => summary.already_active += 1,
                 Err(error) => {
                     summary.failed += 1;
+                    let _ = store
+                        .release_refund_funding_verification(
+                            candidate.merchant_id,
+                            candidate.id,
+                            claim_token,
+                        )
+                        .await;
                     tracing::warn!(configuration_id = %candidate.id, %error, "refund funding verification evidence could not be activated");
                 }
             },
             Err(error) => {
                 summary.failed += 1;
+                if let Err(release_error) = store
+                    .release_refund_funding_verification(
+                        candidate.merchant_id,
+                        candidate.id,
+                        claim_token,
+                    )
+                    .await
+                {
+                    tracing::warn!(configuration_id = %candidate.id, %release_error, "refund funding verification lease release failed");
+                }
                 tracing::warn!(configuration_id = %candidate.id, %error, "refund funding topology verification failed closed");
             }
         }

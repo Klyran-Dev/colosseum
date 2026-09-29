@@ -180,3 +180,14 @@ groups:
           summary: "Finalized refund balance proof backlog is not draining"
           description: "At least one indexed refund execution has no immutable finalized balance proof for ten minutes; inspect the transaction-bound evidence and provider health before retrying."
           runbook: docs/runbooks/vault-release-incident.md
+
+      - alert: STPRefundClaimFinalityBacklog
+        expr: stp_indexer_refund_claims_pending{service="indexer"} > 0
+        for: 10m
+        labels:
+          severity: warning
+          owner: finance-tax-sre
+        annotations:
+          summary: "Refund claim finality backlog is not draining"
+          description: "At least one submitted refund claim lacks a finalized claim-created event match for ten minutes; inspect targeted recovery, provider finality, and the refund incident runbook before enabling execute preparation."
+          runbook: docs/runbooks/vault-release-incident.md

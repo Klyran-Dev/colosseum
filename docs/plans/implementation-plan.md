@@ -85,11 +85,13 @@ from a wallet signature, provider acknowledgement, or indexed event alone.
   suspension/retirement transitions, append-only events, and API scope/role
   boundaries. The configuration is evidence only and cannot become active
   without finalized Solana verification.
-- [ ] Add durable claim/execute intents, exact signed-message verification,
-  claim-account topology verification, shared wallet orchestration, and proof
-  gated lifecycle transitions.
-- [ ] Complete migration/API/domain/UI failure states and TDD evidence before
-  Linux validator conformance and production enablement are considered.
+- [x] Add durable claim/execute intents, exact signed-message verification,
+  claim-account topology verification, shared non-custodial wallet
+  orchestration, and proof-gated lifecycle transitions. Finalized claim-event
+  reconciliation and transaction-bound execute balance proof are implemented;
+  operational release gates remain below.
+- [ ] Complete Linux validator conformance, concurrent idempotency/submission
+  evidence, production load/SLO evidence, and production enablement.
 
 ## ADR-0174 — finalized refund-funding topology verification
 
@@ -107,6 +109,22 @@ decision and validator evidence.
   provider-disagreement/restart tests.
 - [ ] Add Linux validator topology-rotation and claim-admission conformance.
 
+## ADR-0181 — lease-fenced refund-funding topology verification
+
+The finalized topology verifier now uses a short PostgreSQL UUIDv7 lease for
+cross-replica ownership. It commits the claim before RPC work, skips unexpired
+leases, reclaims stale pending rows after 60 seconds, releases only the
+matching token on provider failure, and requires the exact token for activation.
+Migration `0047` and the schema verification contract are implemented; the
+concurrent verifier Docker drill, production lease telemetry, and Linux
+validator evidence remain release gates.
+- [x] Record alternatives, invariants, TTL, stale-worker fencing, and retry
+  policy in ADR-0181.
+- [x] Add UUIDv7 lease columns, pair constraint, eligibility index, claim/release
+  storage operations, and token-fenced activation.
+- [ ] Add two-replica verifier contention/crash evidence and operational
+  backlog/lease-expiry metrics.
+
 ## ADR-0175 — durable refund claim and execute intents
 
 Create the Refund Movement bounded context with separate server-owned claim and
@@ -123,14 +141,13 @@ advance a movement to a successful state.
   destination derivation, claim/execute compilation, conservation checks, and
   tenant/configuration/receipt-bound artifact digests.
 - [x] Add the `refund_claim_intents`, `refund_execute_intents`, nonce allocator,
-  append-only lifecycle evidence, and outbox schema. Claim-intent persistence,
-  UUIDv7 nonce allocation, and first outbox publication are now implemented;
-  execute-intent persistence remains a release gate.
-- [x] Add the first server-owned claim artifact builder and preparation API;
-  exact signed-message verification, bounded submission/reconciliation, and
-  execute-intent API contracts remain separate release gates.
-- [ ] Add wallet workspace states, accessibility journeys, validator
-  conformance, load evidence, and production enablement gates.
+  append-only lifecycle evidence, and outbox schema. Claim and execute
+  persistence, UUIDv7 allocation, and first outbox publication are implemented.
+- [x] Add the server-owned claim artifact builder and preparation API, exact
+  signed-message verification, bounded submission/reconciliation, and execute
+  intent API contracts.
+- [ ] Add wallet workspace evidence against a live injected wallet, Linux
+  validator conformance, load/SLO evidence, and production enablement gates.
 
 ## ADR-0177 — exact signed refund-claim submission
 
@@ -144,7 +161,7 @@ bytes, and records ambiguous provider outcomes as `unknown`.
 - [x] Add claim recovery and signed-submission routes with durable CAS
   transitions.
 - [ ] Add RPC-fixture integration, contention, and accessibility recovery
-  evidence.
+  evidence; the production worker now performs bounded automatic convergence.
 
 ## ADR-0178 — two-signer refund-claim wallet workspace
 
@@ -157,7 +174,39 @@ versus finalized-proof state semantics.
 - [x] Add strict browser parsing, two-role signing, submission gating, and
   accessible explicit failure states.
 - [ ] Add real injected-wallet multi-account, reload, RPC-fixture, and
-  finalized-proof browser evidence.
+  finalized-proof browser evidence. The browser action and indexer worker both
+  use the shared proof-driven finality boundary.
+
+## ADR-0179 — durable, proof-gated refund-execute intent
+
+Add the second server-owned refund movement workflow after a finalized claim.
+The execute bounded context must load finalized claim evidence and active
+verified topology, compile the fixed fourteen-account execute instruction,
+persist it before wallet signing, verify exact approver/refund-funder signed
+bytes, and reconcile only from finalized transaction-bound event and balance
+proof.
+
+- [x] Record the execute-intent authority boundary, alternatives, invariants,
+  API shape, and proof-gated release policy in ADR-0179.
+- [x] Add failing-first execute-intent storage/domain tests, idempotent
+  persistence, append-only outbox publication, and lifecycle CAS transitions.
+- [x] Add prepare/recover/submit API routes with exact signed-message and
+  recent-blockhash verification.
+- [x] Add approver/refund-funder wallet workspace and explicit proof-pending,
+  unknown, and finalized states.
+- [x] Connect immutable transaction-bound balance-proof persistence to the
+  execute-intent finalized transition and outbox evidence; align SQL unknown
+  recovery triggers in migration `0045`.
+- [x] Add server-owned claim-finality reconciliation from bounded finalized
+  recovery and exact `AdjustmentRefundClaimCreated` event evidence; unlock
+  execute preparation only after the CAS transition to `finalized`, and run
+  the same bounded reconciliation automatically from the indexer worker.
+- [x] Add migration `0046` short UUIDv7 reconciliation leases with
+  `SKIP LOCKED`, stale-lease reclaim, lease-fenced finalization, and fixed
+  backlog telemetry; no database lock is held across RPC recovery.
+- [ ] Add concurrent idempotency/submission tests, validator conformance,
+  end-to-end reconciliation fixtures, load evidence, and production
+  enablement gates.
 
 ## ADR-0176 — server-owned refund claim preparation API
 

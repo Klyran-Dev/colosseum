@@ -14,18 +14,20 @@ use deadpool_postgres::{
     tokio_postgres::{IsolationLevel, NoTls, types::Json},
 };
 use indexer::{
-    BalanceExpectation, BalanceSnapshot, Checkpoint, FinalizedPage,
+    BalanceExpectation, BalanceSnapshot, Checkpoint, FinalizedPage, FinalizedRefundClaimEvidence,
     IndexedAdjustmentRefundExecution, IndexedReceipt, IndexedSettlementAdjustment,
     IndexedSplitSettlement, MAX_REPLAY_ATTEMPTS, MAX_SCAN_RANGE_SLOTS, ProtocolPauseChangedEvent,
     RawChainEvidence, RawChainTransaction, Reconciliation, ReplayGap, ReplayGapReason, ReplayWork,
-    VaultBalanceExpectation, merge_adjustment_refund_execution, merge_raw_evidence, merge_receipt,
-    merge_settlement_adjustment, rebuild_receipt_from_raw_evidence,
-    rebuild_split_settlement_from_raw_evidence, reconcile,
+    VaultBalanceExpectation, decode_refund_claim_created_event, merge_adjustment_refund_execution,
+    merge_raw_evidence, merge_receipt, merge_settlement_adjustment,
+    rebuild_receipt_from_raw_evidence, rebuild_split_settlement_from_raw_evidence, reconcile,
 };
 use jurisdiction::{JurisdictionCandidate, ResolutionPolicy, candidate_set_digest};
 use policy::CalculationAttestation;
 use refund_workflow::{
-    RefundArtifact, RefundClaimServerInputs, claim_request_digest, validate_claim_artifact,
+    RefundArtifact, RefundClaimServerInputs, RefundExecuteServerInputs, claim_request_digest,
+    execute_request_digest, refund_instruction_digest, validate_claim_artifact,
+    validate_execute_artifact,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -52,6 +54,17 @@ use uuid::Uuid;
 
 const SPL_TOKEN_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const TOKEN_2022_PROGRAM_ID: &str = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+const REFUND_EXECUTE_INTENT_SELECT_SQL: &str =
+    "SELECT id, merchant_id, idempotency_key, request_digest,
+            claim_intent_id, funding_configuration_id,
+            funding_configuration_digest, claim, adjustment_id,
+            original_receipt, merchant, mint, token_program,
+            approver, refund_funder, refund_funder_subject,
+            instruction_digest, artifact_digest, status,
+            signed_transaction_digest, signature, submitted_slot::text,
+            commitment, last_error_code, unsigned_artifact
+     FROM refund_execute_intents
+     {where}";
 
 pub const CALCULATION_STATUS: &str = "calculated_unattested";
 pub const DEFAULT_POOL_SIZE: usize = 16;
@@ -64,6 +77,7 @@ pub const DEFAULT_OUTBOX_LEASE: Duration = Duration::from_secs(30);
 pub const MAX_OUTBOX_ATTEMPTS: i32 = 10;
 pub const OUTBOX_PAYLOAD_SCHEMA_VERSION: u32 = 1;
 pub const REFUND_FUNDING_VERIFIER_VERSION: &str = "refund-funding-topology-v1";
+pub const REFUND_FUNDING_VERIFICATION_LEASE: Duration = Duration::from_secs(60);
 const REFUND_FUNDING_VERIFIER_ACTOR: &str = "system:refund-funding-verifier";
 pub const DEFAULT_REPLAY_BATCH_SIZE: usize = 16;
 pub const MAX_REPLAY_BATCH_SIZE: usize = 64;
@@ -187,6 +201,12 @@ pub enum StorageError {
     InvalidRefundClaimIntent(String),
     #[error("refund claim nonce could not be allocated")]
     RefundClaimNonceAllocationConflict,
+    #[error("refund execute intent was not found")]
+    RefundExecuteIntentNotFound,
+    #[error("refund execute intent idempotency key was reused for different input")]
+    RefundExecuteIntentIdempotencyConflict,
+    #[error("refund execute intent is invalid: {0}")]
+    InvalidRefundExecuteIntent(String),
     #[error("settlement split plan was not found for this merchant")]
     SettlementSplitPlanNotFound,
     #[error("settlement split plan is not active or is outside its effective window")]
@@ -1196,6 +1216,42 @@ pub struct RefundClaimIntent {
     pub unsigned_artifact: Value,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RefundClaimReconciliationCandidate {
+    pub intent: RefundClaimIntent,
+    pub artifact: RefundArtifact,
+    pub claim_token: Uuid,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RefundExecuteIntent {
+    pub id: Uuid,
+    pub merchant_id: Uuid,
+    pub idempotency_key: String,
+    pub request_digest: Digest32,
+    pub claim_intent_id: Uuid,
+    pub funding_configuration_id: Uuid,
+    pub funding_configuration_digest: Digest32,
+    pub claim: [u8; 32],
+    pub adjustment_id: Uuid,
+    pub original_receipt: [u8; 32],
+    pub merchant: [u8; 32],
+    pub mint: [u8; 32],
+    pub token_program: String,
+    pub approver: String,
+    pub refund_funder: String,
+    pub refund_funder_subject: String,
+    pub instruction_digest: Digest32,
+    pub artifact_digest: Digest32,
+    pub status: String,
+    pub signed_transaction_digest: Option<Digest32>,
+    pub signature: Option<String>,
+    pub submitted_slot: Option<u64>,
+    pub commitment: Option<String>,
+    pub last_error_code: Option<String>,
+    pub unsigned_artifact: Value,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FinalizedSettlementAdjustmentBinding {
     pub adjustment: [u8; 32],
@@ -1218,6 +1274,140 @@ pub struct CreateRefundClaimIntentCommand {
 
 #[derive(Clone, Debug)]
 pub struct RefundClaimIntentTransition {
+    pub intent_id: Uuid,
+    pub merchant_id: Uuid,
+    pub expected_status: String,
+    pub next_status: String,
+    pub signed_transaction_digest: Option<Digest32>,
+    pub signature: Option<String>,
+    pub slot: Option<u64>,
+    pub last_error_code: Option<String>,
+    pub evidence: Value,
+    /// When present, the transition must own the automatic reconciliation
+    /// lease. API/operator transitions leave this unset and clear any stale
+    /// worker lease as part of their compare-and-set.
+    pub reconciliation_claim_token: Option<Uuid>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RefundClaimEvidenceExpectation {
+    pub claim: [u8; 32],
+    pub adjustment: [u8; 32],
+    pub original_receipt: [u8; 32],
+    pub merchant: [u8; 32],
+    pub mint: [u8; 32],
+    pub nonce: u64,
+    pub gross_magnitude: u64,
+    pub tax_magnitude: u64,
+    pub net_magnitude: u64,
+    pub refund_funder: [u8; 32],
+    pub refund_destination: [u8; 32],
+    pub proposer: [u8; 32],
+    pub reference_digest: [u8; 32],
+    pub execute_after_unix: i64,
+    pub expires_at_unix: i64,
+}
+
+/// Derives the finalized claim-event expectation exclusively from the
+/// immutable intent and artifact stored by the API. This is shared by the
+/// authenticated operator endpoint and the automatic indexer worker so they
+/// cannot evolve different authority or account-binding rules.
+pub fn refund_claim_evidence_expectation(
+    intent: &RefundClaimIntent,
+    artifact: &RefundArtifact,
+) -> Result<RefundClaimEvidenceExpectation, StorageError> {
+    const CLAIM_INSTRUCTION_BYTES: usize = 8 + 8 + 32 + 8 + 8;
+    let recomputed_instruction_digest = refund_instruction_digest(&artifact.instruction)
+        .map_err(|error| StorageError::InvalidRefundClaimIntent(error.to_string()))?;
+    if artifact.instruction_digest != intent.instruction_digest
+        || recomputed_instruction_digest != intent.instruction_digest
+        || artifact.artifact_digest != intent.artifact_digest
+    {
+        return Err(StorageError::InvalidRefundClaimIntent(
+            "refund claim artifact digest is not bound to its durable intent".into(),
+        ));
+    }
+    let instruction_data = BASE64_STANDARD
+        .decode(&artifact.instruction.instruction_data_base64)
+        .map_err(|_| {
+            StorageError::InvalidRefundClaimIntent(
+                "refund claim instruction data is not canonical base64".into(),
+            )
+        })?;
+    if instruction_data.len() != CLAIM_INSTRUCTION_BYTES
+        || instruction_data[8..16] != artifact.instruction.claim_nonce.to_le_bytes()
+        || artifact.instruction.claim != Pubkey::new_from_array(intent.claim).to_string()
+        || artifact.instruction.claim_nonce != intent.claim_nonce
+    {
+        return Err(StorageError::InvalidRefundClaimIntent(
+            "refund claim instruction data does not match its durable identity".into(),
+        ));
+    }
+    let reference_digest: [u8; 32] = instruction_data[16..48].try_into().map_err(|_| {
+        StorageError::InvalidRefundClaimIntent("refund reference digest is malformed".into())
+    })?;
+    let execute_after_unix =
+        i64::from_le_bytes(instruction_data[48..56].try_into().map_err(|_| {
+            StorageError::InvalidRefundClaimIntent("refund execute window is malformed".into())
+        })?);
+    let expires_at_unix =
+        i64::from_le_bytes(instruction_data[56..64].try_into().map_err(|_| {
+            StorageError::InvalidRefundClaimIntent("refund expiry window is malformed".into())
+        })?);
+    let account_key = |index: usize, field: &str| -> Result<[u8; 32], StorageError> {
+        let value = artifact
+            .instruction
+            .accounts
+            .get(index)
+            .map(|account| account.pubkey.as_str())
+            .ok_or_else(|| {
+                StorageError::InvalidRefundClaimIntent(format!(
+                    "refund claim {field} account is missing"
+                ))
+            })?;
+        let key = Pubkey::from_str(value).map_err(|_| {
+            StorageError::InvalidRefundClaimIntent(format!(
+                "refund claim {field} account is invalid"
+            ))
+        })?;
+        if key == Pubkey::default() || key.to_string() != value {
+            return Err(StorageError::InvalidRefundClaimIntent(format!(
+                "refund claim {field} account is not canonical"
+            )));
+        }
+        Ok(key.to_bytes())
+    };
+    Ok(RefundClaimEvidenceExpectation {
+        claim: intent.claim,
+        adjustment: account_key(7, "adjustment")?,
+        original_receipt: account_key(8, "original receipt")?,
+        merchant: account_key(2, "merchant")?,
+        mint: account_key(3, "mint")?,
+        nonce: intent.claim_nonce,
+        gross_magnitude: intent.gross_atomic,
+        tax_magnitude: intent.tax_atomic,
+        net_magnitude: intent.net_atomic,
+        refund_funder: account_key(1, "refund funder")?,
+        refund_destination: account_key(12, "refund destination")?,
+        proposer: account_key(0, "proposer")?,
+        reference_digest,
+        execute_after_unix,
+        expires_at_unix,
+    })
+}
+
+#[derive(Clone, Debug)]
+pub struct CreateRefundExecuteIntentCommand {
+    pub merchant_id: Uuid,
+    pub idempotency_key: String,
+    pub request_digest: Digest32,
+    pub claim_intent_id: Uuid,
+    pub inputs: RefundExecuteServerInputs,
+    pub artifact: RefundArtifact,
+}
+
+#[derive(Clone, Debug)]
+pub struct RefundExecuteIntentTransition {
     pub intent_id: Uuid,
     pub merchant_id: Uuid,
     pub expected_status: String,
@@ -1392,6 +1582,14 @@ pub struct ReplayGapMetricsSnapshot {
 /// rows remain the authoritative evidence records.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RefundProofMetricsSnapshot {
+    pub pending: u64,
+}
+
+/// Fixed-cardinality operational snapshot for automatic refund-claim
+/// finality reconciliation. This is a backlog signal only; finalized chain
+/// event evidence remains authoritative.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RefundClaimReconciliationMetricsSnapshot {
     pub pending: u64,
 }
 
@@ -2593,6 +2791,31 @@ impl PgStore {
         })
     }
 
+    /// Loads the bounded count of submitted refund claims whose finalized
+    /// transaction evidence still needs reconciliation. The query contains
+    /// no tenant or signature label and is safe to expose as a fixed metric.
+    pub async fn load_refund_claim_reconciliation_metrics(
+        &self,
+    ) -> Result<RefundClaimReconciliationMetricsSnapshot, StorageError> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let row = client
+            .query_one(
+                "SELECT COUNT(*)::text
+                 FROM refund_claim_intents
+                 WHERE signature IS NOT NULL
+                   AND status IN ('submitting', 'submitted', 'processed', 'confirmed', 'unknown')",
+                &[],
+            )
+            .await?;
+        Ok(RefundClaimReconciliationMetricsSnapshot {
+            pending: parse_u64(row.get(0), "pending refund claim reconciliations")?,
+        })
+    }
+
     /// Loads the bounded count of targeted-recovery requests older than the
     /// reconciliation grace period without a terminal audit row.
     pub async fn load_targeted_recovery_metrics(
@@ -3644,6 +3867,13 @@ impl PgStore {
             {
                 return Err(StorageError::RefundBalanceProofConflict);
             }
+            finalize_refund_execute_intents_for_proof(
+                &transaction,
+                stream_key,
+                execution,
+                proof_digest,
+            )
+            .await?;
             transaction.commit().await?;
             return Ok(existing_record.0);
         }
@@ -3698,6 +3928,13 @@ impl PgStore {
             )
             .await?;
         let id = row.get(0);
+        finalize_refund_execute_intents_for_proof(
+            &transaction,
+            stream_key,
+            execution,
+            proof_digest,
+        )
+        .await?;
         transaction.commit().await?;
         Ok(id)
     }
@@ -7140,6 +7377,173 @@ impl PgStore {
         row.map(parse_refund_claim_intent_row).transpose()
     }
 
+    /// Claims one oldest submitted claim whose finalized evidence still needs
+    /// reconciliation. The short lease is committed before external RPC
+    /// work, so replicas do not hold a database lock across the network. A
+    /// stale lease is reclaimable after the bounded crash window.
+    pub async fn load_pending_refund_claim_reconciliation(
+        &self,
+    ) -> Result<Option<RefundClaimReconciliationCandidate>, StorageError> {
+        const LEASE_SECONDS: i64 = 60;
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::ReadCommitted)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let row = transaction
+            .query_opt(
+                "SELECT id, merchant_id, idempotency_key, request_digest,
+                        adjustment_id, funding_configuration_id,
+                        receipt_signature, receipt_slot::text, mint, token_program,
+                        gross_atomic::text, tax_atomic::text, net_atomic::text,
+                        claim_nonce::text, claim, instruction_digest,
+                        artifact_digest, status, signed_transaction_digest,
+                        signature, submitted_slot::text, commitment, last_error_code,
+                        unsigned_artifact
+                 FROM refund_claim_intents
+                 WHERE signature IS NOT NULL
+                   AND status IN ('submitting', 'submitted', 'processed', 'confirmed', 'unknown')
+                   AND (reconciliation_claim_token IS NULL
+                        OR reconciliation_claimed_at < now() - ($1::bigint * interval '1 second'))
+                 ORDER BY updated_at, id
+                 FOR UPDATE SKIP LOCKED
+                 LIMIT 1",
+                &[&LEASE_SECONDS],
+            )
+            .await?;
+        let Some(row) = row else {
+            transaction.commit().await?;
+            return Ok(None);
+        };
+        let intent = parse_refund_claim_intent_row(row)?;
+        let artifact = serde_json::from_value::<RefundArtifact>(intent.unsigned_artifact.clone())
+            .map_err(|_| {
+            StorageError::InvalidRefundClaimIntent(
+                "persisted refund claim artifact is not valid".into(),
+            )
+        })?;
+        if artifact.merchant_id != intent.merchant_id
+            || artifact.adjustment_id != intent.adjustment_id
+            || artifact.funding_configuration_id != intent.funding_configuration_id
+            || artifact.instruction_digest != intent.instruction_digest
+            || artifact.artifact_digest != intent.artifact_digest
+            || artifact.instruction.claim != Pubkey::new_from_array(intent.claim).to_string()
+            || artifact.instruction.claim_nonce != intent.claim_nonce
+        {
+            return Err(StorageError::InvalidRefundClaimIntent(
+                "persisted refund claim artifact is not bound to its intent".into(),
+            ));
+        }
+        let claim_token = Uuid::now_v7();
+        let updated = transaction
+            .execute(
+                "UPDATE refund_claim_intents
+                 SET reconciliation_claim_token = $2,
+                     reconciliation_claimed_at = now()
+                 WHERE id = $1",
+                &[&intent.id, &claim_token],
+            )
+            .await?;
+        if updated != 1 {
+            transaction.rollback().await?;
+            return Ok(None);
+        }
+        transaction.commit().await?;
+        Ok(Some(RefundClaimReconciliationCandidate {
+            intent,
+            artifact,
+            claim_token,
+        }))
+    }
+
+    /// Loads and validates the immutable claim-created event retained during
+    /// finalized targeted recovery. This is the signature-to-claim binding
+    /// used by claim reconciliation; a finalized account snapshot alone is
+    /// insufficient because it does not identify which transaction created it.
+    pub async fn load_finalized_refund_claim_evidence(
+        &self,
+        stream_key: &str,
+        signature: &str,
+        expected: &RefundClaimEvidenceExpectation,
+    ) -> Result<FinalizedRefundClaimEvidence, StorageError> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let rows = client
+            .query(
+                "SELECT signature, slot::text, event_index::text,
+                        event_discriminator, event_data, evidence_digest
+                 FROM raw_chain_evidence
+                 WHERE stream_key = $1 AND signature = $2
+                   AND event_discriminator = $3
+                 ORDER BY event_index
+                 LIMIT 2",
+                &[
+                    &stream_key,
+                    &signature,
+                    &&indexer::ADJUSTMENT_REFUND_CLAIM_CREATED_EVENT_DISCRIMINATOR[..],
+                ],
+            )
+            .await?;
+        let mut matches = Vec::new();
+        for row in rows {
+            let evidence = parse_raw_evidence_row(row)?;
+            let decoded = decode_refund_claim_created_event(
+                &evidence.signature,
+                evidence.slot,
+                evidence.event_index,
+                &evidence.event_data,
+                evidence.evidence_digest,
+            )
+            .map_err(|error| StorageError::InvalidIndexerState(error.to_string()))?;
+            if decoded.claim == expected.claim
+                && decoded.adjustment == expected.adjustment
+                && decoded.original_receipt == expected.original_receipt
+                && decoded.merchant == expected.merchant
+                && decoded.mint == expected.mint
+                && decoded.nonce == expected.nonce
+                && decoded.gross_magnitude == expected.gross_magnitude
+                && decoded.tax_magnitude == expected.tax_magnitude
+                && decoded.net_magnitude == expected.net_magnitude
+                && decoded.refund_funder == expected.refund_funder
+                && decoded.refund_destination == expected.refund_destination
+                && decoded.proposer == expected.proposer
+                && decoded.reference_digest == expected.reference_digest
+                && decoded.execute_after_unix == expected.execute_after_unix
+                && decoded.expires_at_unix == expected.expires_at_unix
+            {
+                matches.push(decoded);
+            }
+        }
+        match matches.len() {
+            1 => matches.pop().ok_or_else(|| {
+                StorageError::InvalidIndexerState(
+                    "refund claim evidence match disappeared unexpectedly".into(),
+                )
+            }),
+            0 => Err(StorageError::InvalidIndexerState(
+                "finalized refund claim event did not match the durable intent".into(),
+            )),
+            _ => Err(StorageError::InvalidIndexerState(
+                "multiple finalized refund claim events matched the durable intent".into(),
+            )),
+        }
+    }
+
     /// Applies one compare-and-set refund claim lifecycle transition and
     /// records its event and outbox publication atomically. The transport
     /// fields are never accepted from a browser without the exact signed-byte
@@ -7209,8 +7613,19 @@ impl PgStore {
                      submitted_slot = COALESCE($6::text::numeric, submitted_slot),
                      commitment = COALESCE($7, commitment),
                      last_error_code = $8,
+                     reconciliation_claim_token = CASE
+                         WHEN $10::uuid IS NOT NULL AND $3 <> 'finalized'
+                             THEN reconciliation_claim_token
+                         ELSE NULL
+                     END,
+                     reconciliation_claimed_at = CASE
+                         WHEN $10::uuid IS NOT NULL AND $3 <> 'finalized'
+                             THEN reconciliation_claimed_at
+                         ELSE NULL
+                     END,
                      updated_at = now()
-                 WHERE id = $1 AND merchant_id = $2 AND status = $9",
+                 WHERE id = $1 AND merchant_id = $2 AND status = $9
+                   AND ($10::uuid IS NULL OR reconciliation_claim_token = $10)",
                 &[
                     &command.intent_id,
                     &command.merchant_id,
@@ -7221,6 +7636,7 @@ impl PgStore {
                     &commitment,
                     &command.last_error_code,
                     &command.expected_status,
+                    &command.reconciliation_claim_token,
                 ],
             )
             .await?;
@@ -7422,14 +7838,15 @@ impl PgStore {
     }
 
     /// Claims an approved funding configuration for server-owned finalized
-    /// topology verification. The claim is durable and idempotent; a failed
-    /// provider attempt leaves the configuration pending for bounded retry.
+    /// topology verification. The claim is a short durable lease: a second
+    /// verifier skips an unexpired pending lease, while a crashed owner can
+    /// be reclaimed after the bounded lease window.
     pub async fn begin_refund_funding_verification(
         &self,
         merchant_id: Uuid,
         configuration_id: Uuid,
         actor_subject: &str,
-    ) -> Result<bool, StorageError> {
+    ) -> Result<Option<Uuid>, StorageError> {
         if actor_subject.is_empty() || actor_subject.len() > 256 {
             return Err(StorageError::InvalidRefundFundingConfiguration(
                 "verification actor subject must contain 1 to 256 bytes".to_string(),
@@ -7452,60 +7869,128 @@ impl PgStore {
                 DEFAULT_STATEMENT_TIMEOUT.as_millis()
             ))
             .await?;
-        let status = transaction
+        let row = transaction
             .query_opt(
-                "SELECT status FROM refund_funding_configurations
+                "SELECT status,
+                        COALESCE(
+                            verification_lease_claimed_at > now()
+                                - ($3::bigint * interval '1 second'),
+                            false
+                        )
+                 FROM refund_funding_configurations
                  WHERE id = $1 AND merchant_id = $2 FOR UPDATE",
-                &[&configuration_id, &merchant_id],
+                &[
+                    &configuration_id,
+                    &merchant_id,
+                    &(REFUND_FUNDING_VERIFICATION_LEASE.as_secs() as i64),
+                ],
             )
             .await?
-            .ok_or(StorageError::RefundFundingConfigurationNotFound)?
-            .get::<_, String>(0);
-        if status == "pending_verification" {
+            .ok_or(StorageError::RefundFundingConfigurationNotFound)?;
+        let status: String = row.get(0);
+        let lease_active: bool = row.get(1);
+        if status == "pending_verification" && lease_active {
             transaction.commit().await?;
-            return Ok(false);
+            return Ok(None);
         }
-        if status != "approved" {
+        if status != "approved" && status != "pending_verification" {
             return Err(StorageError::RefundFundingConfigurationActivationConflict);
         }
+        let claim_token = Uuid::now_v7();
         transaction
             .execute(
                 "UPDATE refund_funding_configurations
-                 SET status = 'pending_verification', updated_at = now()
-                 WHERE id = $1 AND merchant_id = $2 AND status = 'approved'",
-                &[&configuration_id, &merchant_id],
+                 SET status = CASE WHEN status = 'approved'
+                                  THEN 'pending_verification' ELSE status END,
+                     verification_lease_token = $3,
+                     verification_lease_claimed_at = now(),
+                     updated_at = now()
+                 WHERE id = $1 AND merchant_id = $2
+                   AND status IN ('approved', 'pending_verification')",
+                &[&configuration_id, &merchant_id, &claim_token],
             )
             .await?;
-        let evidence = serde_json::json!({ "verifier_version": REFUND_FUNDING_VERIFIER_VERSION });
+        let (from_status, action) = if status == "approved" {
+            ("approved", "begin_verification")
+        } else {
+            ("pending_verification", "reclaim_verification")
+        };
+        let evidence = serde_json::json!({
+            "verifier_version": REFUND_FUNDING_VERIFIER_VERSION,
+            "lease_token": claim_token,
+            "lease_seconds": REFUND_FUNDING_VERIFICATION_LEASE.as_secs(),
+        });
         transaction
             .execute(
                 "INSERT INTO refund_funding_configuration_events
                     (configuration_id, merchant_id, actor_subject, action,
                      from_status, to_status, evidence)
-                 VALUES ($1, $2, $3, 'begin_verification', 'approved',
-                         'pending_verification', $4)",
-                &[&configuration_id, &merchant_id, &actor_subject, &evidence],
-            )
-            .await?;
-        transaction
-            .execute(
-                "INSERT INTO outbox_events
-                    (aggregate_type, aggregate_id, event_type, payload)
-                 VALUES ($1, $2, $3, $4)",
+                 VALUES ($1, $2, $3, $4, $5, 'pending_verification', $6)",
                 &[
-                    &"refund_funding_configuration",
                     &configuration_id,
-                    &"tax.refund_funding_configuration.verification_started",
-                    &serde_json::json!({
-                        "schema_version": OUTBOX_PAYLOAD_SCHEMA_VERSION,
-                        "merchant_id": merchant_id,
-                        "configuration_id": configuration_id,
-                    }),
+                    &merchant_id,
+                    &actor_subject,
+                    &action,
+                    &from_status,
+                    &evidence,
                 ],
             )
             .await?;
+        if status == "approved" {
+            transaction
+                .execute(
+                    "INSERT INTO outbox_events
+                        (aggregate_type, aggregate_id, event_type, payload)
+                     VALUES ($1, $2, $3, $4)",
+                    &[
+                        &"refund_funding_configuration",
+                        &configuration_id,
+                        &"tax.refund_funding_configuration.verification_started",
+                        &serde_json::json!({
+                            "schema_version": OUTBOX_PAYLOAD_SCHEMA_VERSION,
+                            "merchant_id": merchant_id,
+                            "configuration_id": configuration_id,
+                            "lease_token": claim_token,
+                        }),
+                    ],
+                )
+                .await?;
+        }
         transaction.commit().await?;
-        Ok(true)
+        Ok(Some(claim_token))
+    }
+
+    /// Releases only the currently owned verification lease after a bounded
+    /// provider failure. A stale worker cannot clear a newer owner's lease.
+    pub async fn release_refund_funding_verification(
+        &self,
+        merchant_id: Uuid,
+        configuration_id: Uuid,
+        claim_token: Uuid,
+    ) -> Result<bool, StorageError> {
+        if claim_token.get_version_num() != 7 {
+            return Err(StorageError::InvalidRefundFundingConfiguration(
+                "verification lease token must be UUIDv7".to_string(),
+            ));
+        }
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let updated = client
+            .execute(
+                "UPDATE refund_funding_configurations
+                 SET verification_lease_token = NULL,
+                     verification_lease_claimed_at = NULL,
+                     updated_at = now()
+                 WHERE id = $1 AND merchant_id = $2
+                   AND status = 'pending_verification'
+                   AND verification_lease_token = $3",
+                &[&configuration_id, &merchant_id, &claim_token],
+            )
+            .await?;
+        Ok(updated == 1)
     }
 
     /// Allocates a server-owned claim nonce. Gaps are safe and intentional:
@@ -7718,6 +8203,302 @@ impl PgStore {
         Ok(intent)
     }
 
+    pub async fn load_refund_execute_intent_by_idempotency(
+        &self,
+        merchant_id: Uuid,
+        idempotency_key: &str,
+    ) -> Result<Option<RefundExecuteIntent>, StorageError> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let query = REFUND_EXECUTE_INTENT_SELECT_SQL
+            .to_string()
+            .replace("{where}", "WHERE merchant_id = $1 AND idempotency_key = $2");
+        let row = client
+            .query_opt(&query, &[&merchant_id, &idempotency_key])
+            .await?;
+        row.map(parse_refund_execute_intent_row).transpose()
+    }
+
+    pub async fn load_refund_execute_intent(
+        &self,
+        intent_id: Uuid,
+        merchant_id: Uuid,
+    ) -> Result<Option<RefundExecuteIntent>, StorageError> {
+        if intent_id.get_version_num() != 7 || merchant_id.get_version_num() != 7 {
+            return Err(StorageError::RefundExecuteIntentNotFound);
+        }
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let query = REFUND_EXECUTE_INTENT_SELECT_SQL
+            .to_string()
+            .replace("{where}", "WHERE id = $1 AND merchant_id = $2");
+        let row = client
+            .query_opt(&query, &[&intent_id, &merchant_id])
+            .await?;
+        row.map(parse_refund_execute_intent_row).transpose()
+    }
+
+    pub async fn create_refund_execute_intent(
+        &self,
+        command: CreateRefundExecuteIntentCommand,
+    ) -> Result<RefundExecuteIntent, StorageError> {
+        validate_refund_execute_intent_command(&command)?;
+        let unsigned_artifact = command
+            .artifact
+            .unsigned_artifact()
+            .map_err(|error| StorageError::InvalidRefundExecuteIntent(error.to_string()))?;
+        let claim = Pubkey::from_str(&command.artifact.instruction.claim)
+            .map_err(|_| StorageError::InvalidRefundExecuteIntent("claim PDA is invalid".into()))?;
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let inputs = &command.inputs;
+        let artifact = &command.artifact;
+        let intent_id = Uuid::now_v7();
+        let inserted = transaction
+            .query_opt(
+                "INSERT INTO refund_execute_intents
+                    (id, merchant_id, idempotency_key, request_digest,
+                     claim_intent_id, funding_configuration_id,
+                     funding_configuration_digest, claim, adjustment_id,
+                     original_receipt, merchant, mint, token_program,
+                     approver, refund_funder, refund_funder_subject,
+                     instruction_digest, artifact_digest, unsigned_artifact)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                         $12, $13, $14, $15, $16, $17, $18, $19)
+                 ON CONFLICT (merchant_id, idempotency_key) DO NOTHING
+                 RETURNING id, merchant_id, idempotency_key, request_digest,
+                           claim_intent_id, funding_configuration_id,
+                           funding_configuration_digest, claim, adjustment_id,
+                           original_receipt, merchant, mint, token_program,
+                           approver, refund_funder, refund_funder_subject,
+                           instruction_digest, artifact_digest, status,
+                           signed_transaction_digest, signature,
+                           submitted_slot::text, commitment, last_error_code,
+                           unsigned_artifact",
+                &[
+                    &intent_id,
+                    &command.merchant_id,
+                    &command.idempotency_key,
+                    &&command.request_digest[..],
+                    &command.claim_intent_id,
+                    &inputs.funding_configuration_id,
+                    &&inputs.funding_configuration_digest[..],
+                    &&claim.to_bytes()[..],
+                    &inputs.adjustment_id,
+                    &&inputs.original_receipt[..],
+                    &&inputs.merchant[..],
+                    &&inputs.mint[..],
+                    &inputs.token_program,
+                    &inputs.approver,
+                    &inputs.refund_funder,
+                    &inputs.refund_funder_subject,
+                    &&artifact.instruction_digest[..],
+                    &&artifact.artifact_digest[..],
+                    &unsigned_artifact,
+                ],
+            )
+            .await?;
+        if let Some(row) = inserted {
+            let intent = parse_refund_execute_intent_row(row)?;
+            transaction
+                .execute(
+                    "INSERT INTO refund_execute_intent_events
+                        (intent_id, merchant_id, from_status, to_status, evidence)
+                     VALUES ($1, $2, 'none', 'prepared_unsubmitted', $3)",
+                    &[
+                        &intent.id,
+                        &command.merchant_id,
+                        &serde_json::json!({
+                            "request_digest": command.request_digest,
+                            "artifact_digest": artifact.artifact_digest,
+                            "claim_intent_id": command.claim_intent_id,
+                        }),
+                    ],
+                )
+                .await?;
+            transaction
+                .execute(
+                    "INSERT INTO outbox_events
+                        (aggregate_type, aggregate_id, event_type, payload)
+                     VALUES ($1, $2, $3, $4)",
+                    &[
+                        &"refund_execute_intent",
+                        &intent.id,
+                        &"tax.refund_execute_intent.prepared",
+                        &serde_json::json!({
+                            "schema_version": OUTBOX_PAYLOAD_SCHEMA_VERSION,
+                            "merchant_id": command.merchant_id,
+                            "intent": intent,
+                        }),
+                    ],
+                )
+                .await?;
+            transaction.commit().await?;
+            return Ok(intent);
+        }
+        let row = transaction
+            .query_one(
+                &REFUND_EXECUTE_INTENT_SELECT_SQL.to_string().replace(
+                    "{where}",
+                    "WHERE merchant_id = $1 AND idempotency_key = $2 FOR UPDATE",
+                ),
+                &[&command.merchant_id, &command.idempotency_key],
+            )
+            .await?;
+        let intent = parse_refund_execute_intent_row(row)?;
+        if intent.request_digest != command.request_digest {
+            return Err(StorageError::RefundExecuteIntentIdempotencyConflict);
+        }
+        transaction.commit().await?;
+        Ok(intent)
+    }
+
+    pub async fn transition_refund_execute_intent(
+        &self,
+        command: RefundExecuteIntentTransition,
+    ) -> Result<bool, StorageError> {
+        let expected = parse_settlement_status(&command.expected_status)?;
+        let next = parse_settlement_status(&command.next_status)?;
+        if !can_transition(expected, next) || command.evidence.to_string().len() > 64 * 1024 {
+            return Err(StorageError::InvalidRefundExecuteIntent(
+                "refund execute lifecycle transition is invalid".into(),
+            ));
+        }
+        if command
+            .signature
+            .as_deref()
+            .is_some_and(|value| value.is_empty() || value.len() > 128)
+            || command
+                .last_error_code
+                .as_deref()
+                .is_some_and(|value| value.trim().is_empty() || value.len() > 128)
+        {
+            return Err(StorageError::InvalidRefundExecuteIntent(
+                "refund execute transport evidence is invalid".into(),
+            ));
+        }
+        if matches!(next, SettlementStatus::Unknown) && command.last_error_code.is_none() {
+            return Err(StorageError::InvalidRefundExecuteIntent(
+                "unknown refund execute status requires an error code".into(),
+            ));
+        }
+        let commitment = match next {
+            SettlementStatus::Processed => Some("processed"),
+            SettlementStatus::Confirmed => Some("confirmed"),
+            SettlementStatus::Finalized => Some("finalized"),
+            _ => None,
+        };
+        let slot_text = command.slot.map(|value| value.to_string());
+        let signed_digest = command
+            .signed_transaction_digest
+            .map(|value| value.to_vec());
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::ReadCommitted)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let updated = transaction
+            .execute(
+                "UPDATE refund_execute_intents
+                 SET status = $3,
+                     signed_transaction_digest = COALESCE($4, signed_transaction_digest),
+                     signature = COALESCE($5, signature),
+                     submitted_slot = COALESCE($6::text::numeric, submitted_slot),
+                     commitment = COALESCE($7, commitment),
+                     last_error_code = $8,
+                     updated_at = now()
+                 WHERE id = $1 AND merchant_id = $2 AND status = $9",
+                &[
+                    &command.intent_id,
+                    &command.merchant_id,
+                    &command.next_status,
+                    &signed_digest,
+                    &command.signature,
+                    &slot_text,
+                    &commitment,
+                    &command.last_error_code,
+                    &command.expected_status,
+                ],
+            )
+            .await?;
+        if updated != 1 {
+            transaction.rollback().await?;
+            return Ok(false);
+        }
+        transaction
+            .execute(
+                "INSERT INTO refund_execute_intent_events
+                    (intent_id, merchant_id, from_status, to_status, signature, slot, evidence)
+                 VALUES ($1, $2, $3, $4, $5, $6::text::numeric, $7)",
+                &[
+                    &command.intent_id,
+                    &command.merchant_id,
+                    &command.expected_status,
+                    &command.next_status,
+                    &command.signature,
+                    &slot_text,
+                    &command.evidence,
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "INSERT INTO outbox_events
+                    (aggregate_type, aggregate_id, event_type, payload)
+                 VALUES ($1, $2, $3, $4)",
+                &[
+                    &"refund_execute_intent",
+                    &command.intent_id,
+                    &"tax.refund_execute_intent.status_changed",
+                    &serde_json::json!({
+                        "schema_version": OUTBOX_PAYLOAD_SCHEMA_VERSION,
+                        "merchant_id": command.merchant_id,
+                        "intent_id": command.intent_id,
+                        "from_status": command.expected_status,
+                        "to_status": command.next_status,
+                        "signature": command.signature,
+                        "slot": slot_text,
+                    }),
+                ],
+            )
+            .await?;
+        transaction.commit().await?;
+        Ok(true)
+    }
+
     pub async fn list_refund_funding_configurations_for_verification(
         &self,
         limit: usize,
@@ -7738,10 +8519,17 @@ impl PgStore {
                         merchant_account, mint, tax_vault, vault_authority,
                         refund_funder, refund_funder_subject, net_source, token_program
                  FROM refund_funding_configurations
-                 WHERE status IN ('approved', 'pending_verification')
+                 WHERE status = 'approved'
+                    OR (status = 'pending_verification'
+                        AND (verification_lease_token IS NULL
+                             OR verification_lease_claimed_at < now()
+                                - ($2::bigint * interval '1 second')))
                  ORDER BY updated_at, id
                  LIMIT $1",
-                &[&(limit as i64)],
+                &[
+                    &(limit as i64),
+                    &(REFUND_FUNDING_VERIFICATION_LEASE.as_secs() as i64),
+                ],
             )
             .await?;
         rows.into_iter()
@@ -7770,6 +8558,7 @@ impl PgStore {
         &self,
         merchant_id: Uuid,
         configuration_id: Uuid,
+        claim_token: Uuid,
         verification: &indexer::RefundFundingTopologyVerification,
     ) -> Result<bool, StorageError> {
         if verification.configuration_id != configuration_id
@@ -7778,6 +8567,7 @@ impl PgStore {
             || verification.verification_digest == [0; 32]
             || verification.accounts.len() != 5
             || verification.verification_commitment != "finalized"
+            || claim_token.get_version_num() != 7
         {
             return Err(StorageError::RefundFundingConfigurationVerificationInvalid(
                 "verification identity, commitment, account count, slot, or digest is invalid"
@@ -7813,7 +8603,8 @@ impl PgStore {
                 "SELECT status, version, configuration_digest,
                         merchant_account, mint, tax_vault, vault_authority,
                         refund_funder, net_source, token_program,
-                        refund_funder_subject, verification_digest
+                        refund_funder_subject, verification_digest,
+                        verification_lease_token
                  FROM refund_funding_configurations
                  WHERE id = $1 AND merchant_id = $2 FOR UPDATE",
                 &[&configuration_id, &merchant_id],
@@ -7822,8 +8613,9 @@ impl PgStore {
             .ok_or(StorageError::RefundFundingConfigurationNotFound)?;
         let status: String = row.get(0);
         let version: i32 = row.get(1);
-        let funder_subject: Option<String> = row.get(11);
-        let existing_digest: Option<Vec<u8>> = row.get(12);
+        let funder_subject: Option<String> = row.get(10);
+        let existing_digest: Option<Vec<u8>> = row.get(11);
+        let stored_claim_token: Option<Uuid> = row.get(12);
         if version != verification.configuration_version
             || row.get::<_, Vec<u8>>(2).as_slice() != verification.configuration_digest
             || row.get::<_, String>(3) != verification.merchant_account
@@ -7874,10 +8666,10 @@ impl PgStore {
             transaction.commit().await?;
             return Ok(false);
         }
-        if status != "pending_verification" {
+        if status != "pending_verification" || stored_claim_token != Some(claim_token) {
             return Err(StorageError::RefundFundingConfigurationActivationConflict);
         }
-        transaction
+        let updated = transaction
             .execute(
                 "UPDATE refund_funding_configurations
                  SET status = 'active', verification_digest = $3,
@@ -7885,9 +8677,12 @@ impl PgStore {
                      verification_commitment = $5,
                      verification_evidence = $6,
                      verifier_version = $7,
+                     verification_lease_token = NULL,
+                     verification_lease_claimed_at = NULL,
                      verified_at = now(), updated_at = now()
                  WHERE id = $1 AND merchant_id = $2
-                   AND status = 'pending_verification'",
+                   AND status = 'pending_verification'
+                   AND verification_lease_token = $8",
                 &[
                     &configuration_id,
                     &merchant_id,
@@ -7896,9 +8691,14 @@ impl PgStore {
                     &verification.verification_commitment,
                     &evidence,
                     &REFUND_FUNDING_VERIFIER_VERSION,
+                    &claim_token,
                 ],
             )
             .await?;
+        if updated != 1 {
+            transaction.rollback().await?;
+            return Ok(false);
+        }
         transaction
             .execute(
                 "INSERT INTO refund_funding_configuration_events
@@ -9953,6 +10753,56 @@ fn parse_refund_claim_intent_row(
     })
 }
 
+fn parse_refund_execute_intent_row(
+    row: deadpool_postgres::tokio_postgres::Row,
+) -> Result<RefundExecuteIntent, StorageError> {
+    let bytes = |index: usize, field: &str| -> Result<[u8; 32], StorageError> {
+        row.get::<_, Vec<u8>>(index).try_into().map_err(|_| {
+            StorageError::InvalidRefundExecuteIntent(format!("stored {field} is not 32 bytes"))
+        })
+    };
+    Ok(RefundExecuteIntent {
+        id: row.get(0),
+        merchant_id: row.get(1),
+        idempotency_key: row.get(2),
+        request_digest: parse_digest(row.get(3))?,
+        claim_intent_id: row.get(4),
+        funding_configuration_id: row.get(5),
+        funding_configuration_digest: parse_digest(row.get(6))?,
+        claim: bytes(7, "claim PDA")?,
+        adjustment_id: row.get(8),
+        original_receipt: bytes(9, "original receipt")?,
+        merchant: bytes(10, "merchant")?,
+        mint: bytes(11, "mint")?,
+        token_program: row.get(12),
+        approver: row.get(13),
+        refund_funder: row.get(14),
+        refund_funder_subject: row.get(15),
+        instruction_digest: parse_digest(row.get(16))?,
+        artifact_digest: parse_digest(row.get(17))?,
+        status: row.get(18),
+        signed_transaction_digest: row
+            .get::<_, Option<Vec<u8>>>(19)
+            .map(|value| {
+                value.try_into().map_err(|_| {
+                    StorageError::InvalidRefundExecuteIntent(
+                        "stored signed transaction digest is not 32 bytes".into(),
+                    )
+                })
+            })
+            .transpose()?,
+        signature: row.get(20),
+        submitted_slot: row
+            .get::<_, Option<String>>(21)
+            .as_ref()
+            .map(|value| parse_u64(value, "submitted slot"))
+            .transpose()?,
+        commitment: row.get(22),
+        last_error_code: row.get(23),
+        unsigned_artifact: row.get(24),
+    })
+}
+
 fn parse_finalized_settlement_adjustment_binding(
     row: deadpool_postgres::tokio_postgres::Row,
 ) -> Result<FinalizedSettlementAdjustmentBinding, StorageError> {
@@ -10054,6 +10904,85 @@ fn validate_refund_claim_intent_command(
     if artifact_bytes.is_empty() || artifact_bytes.len() > 65_536 {
         return Err(StorageError::InvalidRefundClaimIntent(
             "unsigned refund artifact exceeds the bounded persistence limit".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_refund_execute_intent_command(
+    command: &CreateRefundExecuteIntentCommand,
+) -> Result<(), StorageError> {
+    let inputs = &command.inputs;
+    let artifact = &command.artifact;
+    validate_execute_artifact(inputs, artifact)
+        .map_err(|error| StorageError::InvalidRefundExecuteIntent(error.to_string()))?;
+    if command.merchant_id.get_version_num() != 7
+        || inputs.merchant_id != command.merchant_id
+        || inputs.claim_intent_id != command.claim_intent_id
+        || inputs.adjustment_id.get_version_num() != 7
+        || inputs.funding_configuration_id.get_version_num() != 7
+        || inputs.claim_intent_id.get_version_num() != 7
+        || command.claim_intent_id.get_version_num() != 7
+        || command.request_digest == [0; 32]
+        || command.request_digest != execute_request_digest(inputs)
+        || command.idempotency_key.trim().is_empty()
+        || command.idempotency_key.len() > 200
+        || command.idempotency_key != command.idempotency_key.trim()
+        || inputs.claim_signature.trim().is_empty()
+        || inputs.claim_slot == 0
+        || inputs.receipt_slot == 0
+        || inputs.claim_nonce == 0
+        || artifact.schema != "refund-movement-artifact/v1"
+        || artifact.merchant_id != command.merchant_id
+        || artifact.adjustment_id != inputs.adjustment_id
+        || artifact.funding_configuration_id != inputs.funding_configuration_id
+        || artifact.funding_configuration_digest != inputs.funding_configuration_digest
+        || artifact.receipt_signature != inputs.receipt_signature
+        || artifact.receipt_slot != Some(inputs.receipt_slot)
+        || artifact.claim_signature.as_deref() != Some(inputs.claim_signature.as_str())
+        || artifact.claim_slot != Some(inputs.claim_slot)
+        || artifact.authority_subject != inputs.approver
+        || !artifact.proposer.is_empty()
+        || !artifact.proposer_subject.is_empty()
+        || artifact.refund_funder != inputs.refund_funder
+        || artifact.refund_funder_subject != inputs.refund_funder_subject
+        || artifact.merchant != Pubkey::new_from_array(inputs.merchant).to_string()
+        || artifact.mint != Pubkey::new_from_array(inputs.mint).to_string()
+        || artifact.token_program != inputs.token_program
+        || artifact.tax_vault != inputs.tax_vault
+        || artifact.net_source != inputs.net_source
+        || artifact.gross_atomic.is_some()
+        || artifact.tax_atomic.is_some()
+        || artifact.net_atomic.is_some()
+        || artifact.execute_after_unix.is_some()
+        || artifact.expires_at_unix.is_some()
+        || artifact.instruction.status != "prepared_unsubmitted"
+        || artifact.instruction.claim_nonce != inputs.claim_nonce
+        || artifact.instruction.program_id != settlement_client::SETTLEMENT_PROGRAM_ID
+        || artifact
+            .instruction
+            .accounts
+            .first()
+            .map(|account| account.pubkey.as_str())
+            != Some(inputs.approver.as_str())
+        || artifact
+            .instruction
+            .accounts
+            .get(1)
+            .map(|account| account.pubkey.as_str())
+            != Some(inputs.refund_funder.as_str())
+    {
+        return Err(StorageError::InvalidRefundExecuteIntent(
+            "execute intent identity, artifact, or finalized claim evidence is inconsistent".into(),
+        ));
+    }
+    let unsigned_artifact = artifact
+        .unsigned_artifact()
+        .map_err(|error| StorageError::InvalidRefundExecuteIntent(error.to_string()))?;
+    let artifact_bytes = serde_json::to_vec(&unsigned_artifact)?;
+    if artifact_bytes.is_empty() || artifact_bytes.len() > 65_536 {
+        return Err(StorageError::InvalidRefundExecuteIntent(
+            "unsigned refund execute artifact exceeds the bounded persistence limit".into(),
         ));
     }
     Ok(())
@@ -10654,6 +11583,131 @@ fn parse_indexed_adjustment_refund_execution_row(
     })
 }
 
+async fn finalize_refund_execute_intents_for_proof(
+    transaction: &deadpool_postgres::tokio_postgres::Transaction<'_>,
+    stream_key: &str,
+    execution: &IndexedAdjustmentRefundExecution,
+    proof_digest: Digest32,
+) -> Result<(), StorageError> {
+    let rows = transaction
+        .query(
+            "SELECT id, merchant_id, status, unsigned_artifact
+             FROM refund_execute_intents
+             WHERE claim = $1 AND original_receipt = $2 AND merchant = $3
+               AND mint = $4 AND signature = $5
+             FOR UPDATE",
+            &[
+                &&execution.claim[..],
+                &&execution.original_receipt[..],
+                &&execution.merchant[..],
+                &&execution.mint[..],
+                &execution.signature,
+            ],
+        )
+        .await?;
+    if rows.len() > 1 {
+        return Err(StorageError::InvalidRefundBalanceProof(
+            "finalized refund execution matches multiple durable execute intents".into(),
+        ));
+    }
+    let Some(row) = rows.into_iter().next() else {
+        return Ok(());
+    };
+    let intent_id: Uuid = row.get(0);
+    let merchant_id: Uuid = row.get(1);
+    let current_status = row.get::<_, String>(2);
+    let unsigned_artifact: Value = row.get(3);
+    let artifact = serde_json::from_value::<RefundArtifact>(unsigned_artifact).map_err(|_| {
+        StorageError::InvalidRefundBalanceProof(
+            "durable execute artifact is not valid JSON evidence".into(),
+        )
+    })?;
+    let adjustment_account = artifact
+        .instruction
+        .accounts
+        .get(7)
+        .map(|account| account.pubkey.as_str())
+        .ok_or_else(|| {
+            StorageError::InvalidRefundBalanceProof(
+                "durable execute artifact has no adjustment account".into(),
+            )
+        })?;
+    if adjustment_account != Pubkey::new_from_array(execution.adjustment).to_string() {
+        return Err(StorageError::InvalidRefundBalanceProof(
+            "durable execute artifact adjustment is not bound to the indexed execution".into(),
+        ));
+    }
+    let current = parse_settlement_status(&current_status)?;
+    if current == SettlementStatus::Finalized {
+        return Ok(());
+    }
+    if !can_transition(current, SettlementStatus::Finalized) {
+        return Err(StorageError::InvalidRefundBalanceProof(format!(
+            "execute intent {intent_id} cannot transition from {current_status} to finalized"
+        )));
+    }
+    let slot = execution.slot.to_string();
+    let updated = transaction
+        .execute(
+            "UPDATE refund_execute_intents
+             SET status = 'finalized', commitment = 'finalized',
+                 submitted_slot = $3::text::numeric, last_error_code = NULL,
+                 updated_at = now()
+             WHERE id = $1 AND merchant_id = $2 AND status = $4",
+            &[&intent_id, &merchant_id, &slot, &current_status],
+        )
+        .await?;
+    if updated != 1 {
+        return Err(StorageError::InvalidRefundBalanceProof(
+            "execute intent changed while recording finalized refund proof".into(),
+        ));
+    }
+    let evidence = serde_json::json!({
+        "source": "finalized_refund_balance_proof",
+        "stream_key": stream_key,
+        "signature": execution.signature,
+        "slot": execution.slot,
+        "event_index": execution.event_index,
+        "proof_digest": proof_digest,
+    });
+    transaction
+        .execute(
+            "INSERT INTO refund_execute_intent_events
+                (intent_id, merchant_id, from_status, to_status, signature, slot, evidence)
+             VALUES ($1, $2, $3, 'finalized', $4, $5::text::numeric, $6)",
+            &[
+                &intent_id,
+                &merchant_id,
+                &current_status,
+                &execution.signature,
+                &slot,
+                &evidence,
+            ],
+        )
+        .await?;
+    transaction
+        .execute(
+            "INSERT INTO outbox_events
+                (aggregate_type, aggregate_id, event_type, payload)
+             VALUES ($1, $2, $3, $4)",
+            &[
+                &"refund_execute_intent",
+                &intent_id,
+                &"tax.refund_execute_intent.finalized",
+                &serde_json::json!({
+                    "schema_version": OUTBOX_PAYLOAD_SCHEMA_VERSION,
+                    "merchant_id": merchant_id,
+                    "intent_id": intent_id,
+                    "signature": execution.signature,
+                    "slot": execution.slot,
+                    "proof_digest": proof_digest,
+                }),
+            ],
+        )
+        .await?;
+    Ok(())
+}
+
 fn validate_refund_balance_proof_binding(
     execution: &IndexedAdjustmentRefundExecution,
     topology: &RefundBalanceProofTopology,
@@ -11058,6 +12112,89 @@ mod tests {
             payer_destination_after_atomic: 100,
         };
         (execution, topology, proof)
+    }
+
+    #[test]
+    fn refund_claim_evidence_expectation_is_derived_from_immutable_artifact() {
+        let merchant_id = Uuid::now_v7();
+        let adjustment_id = Uuid::now_v7();
+        let funding_configuration_id = Uuid::now_v7();
+        let proposer = Pubkey::new_unique();
+        let refund_funder = Pubkey::new_unique();
+        let tax_vault = Pubkey::new_unique();
+        let net_source = Pubkey::new_unique();
+        let input = RefundClaimServerInputs {
+            merchant_id,
+            adjustment_id,
+            funding_configuration_id,
+            funding_configuration_digest: [1; 32],
+            receipt_signature: "5Ux123456789012345678901234567890123456789012345678901234567890"
+                .into(),
+            receipt_slot: 7,
+            original_receipt: Pubkey::new_unique().to_bytes(),
+            adjustment: Pubkey::new_unique().to_bytes(),
+            payer: Pubkey::new_unique().to_bytes(),
+            merchant: Pubkey::new_unique().to_bytes(),
+            mint: Pubkey::new_unique().to_bytes(),
+            token_program: SPL_TOKEN_PROGRAM_ID.into(),
+            proposer: proposer.to_string(),
+            proposer_subject: "proposer".into(),
+            refund_funder: refund_funder.to_string(),
+            refund_funder_subject: "funder".into(),
+            tax_vault: tax_vault.to_string(),
+            net_source: net_source.to_string(),
+            gross_atomic: 100,
+            tax_atomic: 25,
+            net_atomic: 75,
+            reference_digest: [2; 32],
+            claim_nonce: 9,
+            execute_after_unix: 1_790_000_000,
+            expires_at_unix: 1_790_003_600,
+        };
+        let artifact = refund_workflow::build_claim_artifact(&input).unwrap();
+        let claim = Pubkey::from_str(&artifact.instruction.claim)
+            .unwrap()
+            .to_bytes();
+        let intent = RefundClaimIntent {
+            id: Uuid::now_v7(),
+            merchant_id,
+            idempotency_key: "claim-1".into(),
+            request_digest: [3; 32],
+            adjustment_id,
+            funding_configuration_id,
+            receipt_signature: input.receipt_signature,
+            receipt_slot: input.receipt_slot,
+            mint: input.mint,
+            token_program: input.token_program,
+            gross_atomic: input.gross_atomic,
+            tax_atomic: input.tax_atomic,
+            net_atomic: input.net_atomic,
+            claim_nonce: input.claim_nonce,
+            claim,
+            instruction_digest: artifact.instruction_digest,
+            artifact_digest: artifact.artifact_digest,
+            status: "submitted".into(),
+            signed_transaction_digest: None,
+            signature: Some("5Vf6aYzq9hM9Vj3P6e1hL5m7oT8pQ2rS4uW6xY8zA1bC".into()),
+            submitted_slot: Some(8),
+            commitment: Some("processed".into()),
+            last_error_code: None,
+            unsigned_artifact: artifact.unsigned_artifact().unwrap(),
+        };
+        let expectation = refund_claim_evidence_expectation(&intent, &artifact).unwrap();
+        assert_eq!(expectation.claim, claim);
+        assert_eq!(expectation.adjustment, input.adjustment);
+        assert_eq!(expectation.refund_funder, refund_funder.to_bytes());
+        assert_eq!(expectation.reference_digest, input.reference_digest);
+        assert_eq!(expectation.execute_after_unix, input.execute_after_unix);
+
+        let mut tampered = artifact;
+        tampered.instruction.claim_nonce += 1;
+        assert!(matches!(
+            refund_claim_evidence_expectation(&intent, &tampered),
+            Err(StorageError::InvalidRefundClaimIntent(message))
+                if message.contains("digest")
+        ));
     }
 
     #[test]

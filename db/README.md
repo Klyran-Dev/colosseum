@@ -107,6 +107,11 @@ It also runs `db/verification/vault_reconciliation.sql`, which proves the
 opening-balance plus receipt-tax minus executed-release expectation, latest-run
 mismatch visibility, and append-only run enforcement.
 
+The clean-stack integration additionally runs
+`db/verification/refund_claim_reconciliation.sql` to verify the UUIDv7 lease
+columns, pair constraint, and partial candidate index used by automatic claim
+finality workers.
+
 Migration `0011` binds calculations to the authenticated `merchant_id` and
 requires a non-null expiration for settlement authorization. New quotes use a
 15-minute database-owned lifetime. The migration intentionally fails when
@@ -279,6 +284,24 @@ Migration `0044` extends the cryptographic wallet-authority role set with
 `refund_funder`. Funding activation now requires an active binding for the
 configured subject whose public key exactly equals the verified refund-funder
 system account.
+
+Migration `0045` aligns the claim and execute lifecycle triggers with bounded
+unknown-state recovery. An ambiguous provider outcome may converge only to a
+later chain-evidence state; it cannot be rewritten as success without the
+finalized transaction-bound event and balance proof.
+
+Migration `0046` adds a short UUIDv7 reconciliation lease to refund claim
+intents. Automatic finality workers claim candidates with `FOR UPDATE SKIP
+LOCKED`, release the lease during external RPC recovery, and reclaim stale
+leases after the bounded crash window. Lease ownership is coordination only;
+the final claim transition remains a signature/event-bound compare-and-set.
+
+Migration `0047` adds the equivalent UUIDv7 lease fence to refund-funding
+topology verification. Route-verifier replicas claim approved or stale
+pending configurations before external finalized RPC work; activation requires
+the exact claim token and clears it atomically with immutable evidence. A
+provider failure releases only the matching token, so a stale worker cannot
+erase a newer verifier's lease.
 
 Migration requirements:
 

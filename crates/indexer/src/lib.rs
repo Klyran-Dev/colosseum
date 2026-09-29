@@ -31,6 +31,8 @@ pub const SPLIT_SETTLEMENT_EVENT_DISCRIMINATOR: [u8; 8] = [50, 129, 102, 109, 24
 pub const PROTOCOL_PAUSE_EVENT_DISCRIMINATOR: [u8; 8] = [67, 33, 235, 73, 71, 124, 172, 110];
 pub const ADJUSTMENT_REFUND_EXECUTED_EVENT_DISCRIMINATOR: [u8; 8] =
     [112, 130, 243, 73, 61, 70, 35, 70];
+pub const ADJUSTMENT_REFUND_CLAIM_CREATED_EVENT_DISCRIMINATOR: [u8; 8] =
+    [40, 169, 108, 67, 121, 205, 147, 49];
 pub const SETTLEMENT_ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR: [u8; 8] =
     [208, 86, 69, 183, 44, 203, 236, 75];
 pub const MAX_ROUTE_RPC_RESULT_BYTES: usize = 256 * 1024;
@@ -3909,6 +3911,108 @@ struct AdjustmentRefundExecutedEvent {
     reference_digest: [u8; 32],
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FinalizedRefundClaimEvidence {
+    pub signature: String,
+    pub slot: u64,
+    pub event_index: u16,
+    pub claim: [u8; 32],
+    pub adjustment: [u8; 32],
+    pub original_receipt: [u8; 32],
+    pub merchant: [u8; 32],
+    pub mint: [u8; 32],
+    pub nonce: u64,
+    pub gross_magnitude: u64,
+    pub tax_magnitude: u64,
+    pub net_magnitude: u64,
+    pub refund_funder: [u8; 32],
+    pub refund_destination: [u8; 32],
+    pub proposer: [u8; 32],
+    pub reference_digest: [u8; 32],
+    pub execute_after_unix: i64,
+    pub expires_at_unix: i64,
+    pub evidence_digest: [u8; 32],
+}
+
+impl FinalizedRefundClaimEvidence {
+    fn validate(&self) -> Result<(), ProviderError> {
+        if self.signature.trim().is_empty()
+            || self.signature.len() > 128
+            || self.claim == [0; 32]
+            || self.adjustment == [0; 32]
+            || self.original_receipt == [0; 32]
+            || self.merchant == [0; 32]
+            || self.mint == [0; 32]
+            || self.nonce == 0
+            || self.gross_magnitude == 0
+            || self.tax_magnitude.checked_add(self.net_magnitude) != Some(self.gross_magnitude)
+            || self.refund_funder == [0; 32]
+            || self.refund_destination == [0; 32]
+            || self.proposer == [0; 32]
+            || self.reference_digest == [0; 32]
+            || self.evidence_digest == [0; 32]
+            || self.refund_funder == self.refund_destination
+            || self.proposer == self.refund_funder
+            || self.execute_after_unix <= 0
+            || self.execute_after_unix >= self.expires_at_unix
+        {
+            return Err(ProviderError::InvalidResponse(
+                "refund claim evidence violates identity, conservation, authority, or window invariants"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Decode the immutable Anchor event retained by the indexer for a finalized
+/// refund-claim creation. The caller must compare every field with the
+/// durable claim intent before advancing its lifecycle.
+pub fn decode_refund_claim_created_event(
+    signature: &str,
+    slot: u64,
+    event_index: u16,
+    data: &[u8],
+    evidence_digest: [u8; 32],
+) -> Result<FinalizedRefundClaimEvidence, ProviderError> {
+    const EVENT_BYTES: usize = 8 + (32 * 9) + (8 * 6);
+    if data.len() != EVENT_BYTES || data[..8] != ADJUSTMENT_REFUND_CLAIM_CREATED_EVENT_DISCRIMINATOR
+    {
+        return Err(ProviderError::InvalidResponse(
+            "refund claim event has an unexpected discriminator or length".to_string(),
+        ));
+    }
+    let mut offset = 8;
+    let event = FinalizedRefundClaimEvidence {
+        signature: signature.to_string(),
+        slot,
+        event_index,
+        claim: read_array::<32>(data, &mut offset)?,
+        adjustment: read_array::<32>(data, &mut offset)?,
+        original_receipt: read_array::<32>(data, &mut offset)?,
+        merchant: read_array::<32>(data, &mut offset)?,
+        mint: read_array::<32>(data, &mut offset)?,
+        nonce: read_u64_le(data, &mut offset)?,
+        gross_magnitude: read_u64_le(data, &mut offset)?,
+        tax_magnitude: read_u64_le(data, &mut offset)?,
+        net_magnitude: read_u64_le(data, &mut offset)?,
+        refund_funder: read_array::<32>(data, &mut offset)?,
+        refund_destination: read_array::<32>(data, &mut offset)?,
+        proposer: read_array::<32>(data, &mut offset)?,
+        reference_digest: read_array::<32>(data, &mut offset)?,
+        execute_after_unix: read_i64_le(data, &mut offset)?,
+        expires_at_unix: read_i64_le(data, &mut offset)?,
+        evidence_digest,
+    };
+    if offset != data.len() {
+        return Err(ProviderError::InvalidResponse(
+            "refund claim event has trailing bytes".to_string(),
+        ));
+    }
+    event.validate()?;
+    Ok(event)
+}
+
 impl AdjustmentRefundExecutedEvent {
     fn decode(data: &[u8]) -> Result<Self, ProviderError> {
         const EVENT_BYTES: usize = 8 + (32 * 9) + (8 * 4);
@@ -4230,8 +4334,34 @@ impl ReceiptDecoder for SettlementExecutedDecoder {
                     && discriminator != SPLIT_SETTLEMENT_EVENT_DISCRIMINATOR
                     && discriminator != SETTLEMENT_ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR
                     && discriminator != ADJUSTMENT_REFUND_EXECUTED_EVENT_DISCRIMINATOR
+                    && discriminator != ADJUSTMENT_REFUND_CLAIM_CREATED_EVENT_DISCRIMINATOR
                     && discriminator != PROTOCOL_PAUSE_EVENT_DISCRIMINATOR
                 {
+                    continue;
+                }
+                if discriminator == ADJUSTMENT_REFUND_CLAIM_CREATED_EVENT_DISCRIMINATOR {
+                    let evidence_digest =
+                        settlement_evidence_digest(signature, slot, event_index, &event_data);
+                    decode_refund_claim_created_event(
+                        signature,
+                        slot,
+                        event_index,
+                        &event_data,
+                        evidence_digest,
+                    )?;
+                    decoded.raw_evidence.push(RawChainEvidence {
+                        signature: signature.to_string(),
+                        slot,
+                        event_index,
+                        event_discriminator: discriminator,
+                        event_data,
+                        evidence_digest,
+                    });
+                    event_index = event_index.checked_add(1).ok_or_else(|| {
+                        ProviderError::InvalidResponse(
+                            "too many supported events in one transaction".to_string(),
+                        )
+                    })?;
                     continue;
                 }
                 let is_movement_event = discriminator == SETTLEMENT_EVENT_DISCRIMINATOR
@@ -4494,6 +4624,10 @@ fn read_array<const N: usize>(data: &[u8], offset: &mut usize) -> Result<[u8; N]
 
 fn read_u64_le(data: &[u8], offset: &mut usize) -> Result<u64, ProviderError> {
     Ok(u64::from_le_bytes(read_array::<8>(data, offset)?))
+}
+
+fn read_i64_le(data: &[u8], offset: &mut usize) -> Result<i64, ProviderError> {
+    Ok(i64::from_le_bytes(read_array::<8>(data, offset)?))
 }
 
 fn read_u8(data: &[u8], offset: &mut usize) -> Result<u8, ProviderError> {
@@ -5555,6 +5689,38 @@ mod tests {
         ) -> Result<DecodedBlock, ProviderError> {
             Ok(DecodedBlock::default())
         }
+    }
+
+    #[test]
+    fn refund_claim_event_decoder_binds_all_finality_fields() {
+        let mut data = Vec::with_capacity(8 + (32 * 9) + (8 * 6));
+        data.extend_from_slice(&ADJUSTMENT_REFUND_CLAIM_CREATED_EVENT_DISCRIMINATOR);
+        for value in 1_u8..=5 {
+            data.extend_from_slice(&[value; 32]);
+        }
+        for value in [3_u64, 100, 25, 75] {
+            data.extend_from_slice(&value.to_le_bytes());
+        }
+        for value in 6_u8..=9 {
+            data.extend_from_slice(&[value; 32]);
+        }
+        data.extend_from_slice(&10_i64.to_le_bytes());
+        data.extend_from_slice(&20_i64.to_le_bytes());
+
+        let evidence = decode_refund_claim_created_event("claim-signature", 77, 2, &data, [1; 32])
+            .expect("valid claim event");
+        assert_eq!(evidence.signature, "claim-signature");
+        assert_eq!(evidence.slot, 77);
+        assert_eq!(evidence.event_index, 2);
+        assert_eq!(evidence.claim, [1; 32]);
+        assert_eq!(evidence.proposer, [8; 32]);
+        assert_eq!(evidence.execute_after_unix, 10);
+        assert_eq!(evidence.expires_at_unix, 20);
+
+        data[8 + (32 * 5) + (8 * 4) + 32 + 32..8 + (32 * 5) + (8 * 4) + 32 + (32 * 2)].fill(6);
+        assert!(
+            decode_refund_claim_created_event("claim-signature", 77, 2, &data, [1; 32]).is_err()
+        );
     }
 
     #[tokio::test]

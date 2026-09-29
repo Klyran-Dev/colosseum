@@ -179,3 +179,6 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0176: Server-owned refund claim preparation API](0176-refund-claim-preparation-api.md)
 - [ADR-0177: Exact signed refund-claim submission](0177-refund-claim-signed-submission.md)
 - [ADR-0178: Two-signer refund-claim wallet workspace](0178-refund-claim-wallet-workspace.md)
+- [ADR-0179: Durable, proof-gated refund-execute intent](0179-durable-refund-execute-intent.md)
+- [ADR-0180: Proof-driven refund-claim finality reconciliation](0180-proof-driven-refund-claim-finality.md)
+- [ADR-0181: Lease-fenced refund-funding topology verification](0181-lease-fenced-refund-funding-verification.md)

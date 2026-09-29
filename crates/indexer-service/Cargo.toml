@@ -11,6 +11,7 @@ axum.workspace = true
 indexer.workspace = true
 observability = { path = "../observability" }
 reqwest.workspace = true
+serde_json.workspace = true
 storage = { path = "../storage" }
 settlement-adjustments = { path = "../settlement-adjustments" }
 solana-pubkey.workspace = true

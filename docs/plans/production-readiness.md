@@ -570,14 +570,13 @@ and operational gates are intentionally not marked complete by unit tests.
   merchant-funder sources, payer-bound destination, claim cancellation,
   finalized reconciliation, and unknown-transaction handling must pass before
   any paid-state API is introduced.
-- [ ] ADR-0173 server-owned refund-claim wallet orchestration is not enabled.
-  The tenant-scoped funding configuration control plane and ADR-0174 finalized
-  legacy-SPL topology verifier are implemented, but claim/execute intent
-  fencing, wallet submission, finalized claim/event matching, transaction-
-  bound proof, and validator evidence remain required before any refund
-  movement status is exposed. ADR-0175 now records the durable claim/execute
-  schema and exact signed-refund verifier, but the API/storage lifecycle and
-  finalized proof orchestration are still release gates.
+- [ ] ADR-0173 server-owned refund-claim wallet orchestration is not enabled
+  for production. The tenant-scoped funding configuration control plane,
+  durable claim/execute intents, exact signed-byte verification, finalized
+  claim-event reconciliation, automatic bounded claim worker, and
+  transaction-bound execute balance proof are implemented. Linux validator
+  conformance, live wallet evidence, concurrent/load/SLO evidence, and final
+  operational approval remain required before refund movement is enabled.
 - [x] ADR-0155 adds a typed, finalized-only `AdjustmentRefundExecuted`
   projection, raw-event binding, idempotent replay merge, and PostgreSQL
   migration `0032`. It is evidence only and does not close the ADR-0154
@@ -598,6 +597,14 @@ and operational gates are intentionally not marked complete by unit tests.
   alert and no identity-bearing metric labels. Scrape authorization,
   Alertmanager delivery, and retained production load/SLO evidence remain
   separate gates.
+- [x] ADR-0180 binds claim finality to the exact persisted signature, proposer,
+  immutable artifact, finalized `AdjustmentRefundClaimCreated` event, and
+  recovery slot. Both the authenticated reconciliation endpoint and automatic
+  indexer worker use the shared expectation builder and CAS/outbox transition;
+  migration `0046` adds `SKIP LOCKED` stale-reclaim leases so replicas do not
+  duplicate external recovery work; the worker exposes a fixed-cardinality
+  pending backlog gauge and alert.
+  Validator, live-wallet, and production-load evidence remain open.
 - [ ] Loading, stale-policy, expired-quote, wallet rejection, RPC timeout, and reconciliation-required states have complete browser accessibility and live-provider evidence. The shared timeout boundary and unit coverage are implemented by ADR-0095.
 
 ## Public repository

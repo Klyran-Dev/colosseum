@@ -1156,3 +1156,48 @@ inputs, support bounded recovery, and avoid implying refund completion.
 | Custodial server signing | One-click experience | Adds key custody and removes wallet consent | Rejected |
 | Browser-editable refund transaction | Flexible | Allows stale topology and amount substitution | Rejected |
 | **Dedicated lazy two-signer workspace with memory-only artifact recovery** | Explicit review, role binding, accessible failure states, and no financial authority in the browser | Requires sequential wallet actions | **Selected in ADR-0178** |
+
+### Durable refund-execute intent
+
+**Criteria:** preserve claim/execute authority separation, bind execution to
+finalized claim evidence and current verified topology, support safe wallet
+recovery, and make proof-pending state explicit.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Reuse the claim intent | Less persistence and UI work | Collapses four-eyes authority and lifecycle evidence | Rejected |
+| Compile from mutable current configuration | Simple recovery | Configuration rotation can silently change movement topology | Rejected |
+| Trust signature/provider acknowledgement/event | Low latency | No finalized transaction-bound conservation proof | Rejected |
+| Server custody of the funder key | Fewer wallet prompts | Violates non-custody and signer separation | Rejected |
+| **Separate immutable execute intent with exact signed verification and proof-gated reconciliation** | Explicit authority, replayability, bounded retries, and fail-closed completion | Additional storage, API, UI, and reconciliation implementation | **Selected in ADR-0179** |
+
+### Refund-claim finality reconciliation
+
+**Criteria:** bind the persisted submission signature to the claim actually
+created on Solana, retain forensic evidence, and unlock execute preparation only
+after a bounded finalized proof.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Trust provider acknowledgement | Lowest latency | Not finalized evidence; ambiguous outcomes are unsafe | Rejected |
+| Read the finalized claim PDA only | Simple account query | Does not bind state to the persisted transaction signature | Rejected |
+| Accept browser-supplied recovery inputs | Flexible UX | Caller-controlled signature/address and substitution risk | Rejected |
+| **Bounded finalized recovery plus exact raw claim-created event matching** | Signature binding, replayability, topology checks, forensic bytes, and restart-safe worker convergence | Requires event decoding, bounded RPC work, and operational backlog evidence | **Selected in ADR-0180** |
+
+### Refund-claim reconciliation concurrency
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| No lease; rely only on finalization CAS | Minimal schema and simple retries | Duplicate replicas repeat RPC recovery and amplify provider load | Rejected |
+| Process-local single-flight | Low local overhead | Does not coordinate replicas or survive restart | Rejected |
+| Long database lock across RPC recovery | Strong serialization | Holds a database connection/lock across external I/O and can block unrelated work | Rejected |
+| **Short PostgreSQL lease with `SKIP LOCKED`, TTL reclaim, and final CAS** | Cross-replica bounded ownership, restart recovery, no lock across RPC, safe duplicate convergence | Requires lease fields, metrics, and stale-lease tests | **Selected in ADR-0180** |
+
+### Refund-funding topology verification concurrency
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Status transition only; allow duplicate provider reads | Minimal schema and simple retries | Replicas amplify finalized RPC traffic and stale workers can race activation | Rejected |
+| Hold a PostgreSQL row lock across RPC verification | Serializes one configuration | Holds a pool connection across network I/O and can block governance or activation | Rejected |
+| Redis/advisory lock | Low-latency coordination | Non-authoritative or weakly inspectable ownership; activation still needs durable fencing | Rejected |
+| **Short PostgreSQL UUIDv7 lease with stale reclaim, explicit failure release, and token-fenced activation** | Durable cross-replica ownership, bounded crash recovery, no lock across RPC, exact evidence binding | Requires migration and lease telemetry | **Selected in ADR-0181** |

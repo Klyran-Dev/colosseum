@@ -953,11 +953,12 @@ ADR-0175 and ADR-0176 now enable only the preparation boundary:
   adjustment, authority, topology, or financial input fails with a conflict;
   any nonce gap after a process crash is intentional and safe.
 
-Signed submission, exact program/instruction/account/signer/artifact-digest
-verification, execute-intent creation, finalized event evidence, and
-transaction-bound balance proof remain separate release gates. A timeout is
-`unknown`, not success; only finalized transaction-bound event and balance
-proof can produce a successful movement state.
+Signed submission and exact program/instruction/account/signer/artifact-digest
+verification are implemented by ADR-0177. Finalized claim-event evidence is
+implemented by ADR-0180; transaction-bound balance proof remains a separate
+release gate. A timeout is `unknown`, not success; only finalized
+transaction-bound event and balance proof can produce a successful movement
+state.
 
 ADR-0177 defines the next claim transport contract. Its recovery endpoint is
 `GET /v1/settlement/refund-claims/{intent_id}`. Its submission endpoint is
@@ -970,6 +971,46 @@ claims a refund until later finalized event and balance proof.
 The recovery response exposes the persisted signed-transaction digest,
 signature, submitted slot, commitment, and bounded error code when present;
 these are transport evidence only and are not a refund-success assertion.
+
+`POST /v1/settlement/refund-claims/{intent_id}/reconcile` requires the exact
+`tax:refund:claim:reconcile` scope and `settlement_adjustment_proposer` role.
+It accepts no caller-supplied signature, address, topology, or page budget. The
+server searches the persisted proposer/signature through bounded finalized
+recovery, validates the exact immutable `AdjustmentRefundClaimCreated` event
+against the durable artifact and amounts, and only then advances the claim to
+`finalized` with slot, commitment, event digest, and outbox evidence. Missing or
+conflicting evidence remains a reconciliation failure; it never becomes a
+successful claim.
+
+The indexer service also runs the same proof-driven reconciliation as a
+bounded, restart-safe worker. It selects only submitted claim intents with a
+persisted signature, derives the proposer and event expectation from the
+immutable artifact, and uses the same compare-and-set lifecycle/outbox path.
+The worker accepts no API input and duplicate workers converge safely; a
+provider failure or missing finalized event leaves the claim proof-pending.
+
+ADR-0179 adds the proof-gated execute transport contract:
+
+- `POST /v1/settlement/refund-executions` requires the exact
+  `tax:refund:execute:prepare` scope and
+  `settlement_adjustment_approver` role. The request contains only a
+  finalized `claim_intent_id`, an idempotency key, and `confirm: true`.
+- The server requires the claim intent to be finalized with signature/slot
+  evidence, re-loads the finalized receipt and adjustment binding, verifies
+  the active funding topology and distinct approver/refund-funder bindings,
+  recompiles the fixed fourteen-account execute instruction, and persists the
+  unsigned artifact before any wallet prompt.
+- `GET /v1/settlement/refund-executions/{intent_id}` requires
+  `tax:refund:execute:read` and returns only the authenticated approver's
+  tenant-scoped durable artifact and transport evidence.
+- `POST /v1/settlement/refund-executions/submit` requires
+  `tax:refund:execute:submit` and accepts only `intent_id` plus canonical
+  `signed_transaction_base64`. It verifies the exact execute instruction,
+  both signer privileges, immutable artifact digest, and recent blockhash
+  before RPC submission. Provider ambiguity becomes `unknown`.
+- Execute `submitted`, `processed`, and `confirmed` responses are explicitly
+  proof-pending. Only the finalized typed refund event and transaction-bound
+  balance/conservation proof may produce `finalized` movement evidence.
 
 ## Compatibility rules
 

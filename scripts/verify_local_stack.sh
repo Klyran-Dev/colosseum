@@ -165,6 +165,20 @@ if ! docker compose -p "$project_name" exec -T postgres \
     exit 1
 fi
 
+if ! docker compose -p "$project_name" exec -T postgres \
+    psql -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
+    < db/verification/refund_claim_reconciliation.sql >/dev/null; then
+    echo "refund-claim reconciliation lease contract failed" >&2
+    exit 1
+fi
+
+if ! docker compose -p "$project_name" exec -T postgres \
+    psql -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
+    < db/verification/refund_funding_verification_leases.sql >/dev/null; then
+    echo "refund-funding verification lease contract failed" >&2
+    exit 1
+fi
+
 pause_event_table=$(docker compose -p "$project_name" exec -T postgres \
     psql -qAt -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
     -c "SELECT to_regclass('public.protocol_pause_events') IS NOT NULL" | tr -d '[:space:]')

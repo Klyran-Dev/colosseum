@@ -9,7 +9,7 @@ export const SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
 export const SPL_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const REFUND_CLAIM_DISCRIMINATOR_BASE64 = "eYjG9eQLZXM=";
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const REFUND_STATUSES = [
+export const REFUND_STATUSES = [
   "prepared_unsubmitted",
   "signed",
   "submitting",
