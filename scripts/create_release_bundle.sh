@@ -54,10 +54,7 @@ esac
 [ -f "$bundle_dir/security-scan.txt" ] || fail_missing "$bundle_dir/security-scan.txt"
 [ -f "$bundle_dir/sbom.cdx.json" ] || fail_missing "$bundle_dir/sbom.cdx.json"
 [ -f "$bundle_dir/validator-conformance/result.env" ] || fail_missing "$bundle_dir/validator-conformance/result.env"
-grep -Fq 'status=0' "$bundle_dir/validator-conformance/result.env" || {
-  echo "validator conformance evidence is not successful" >&2
-  exit 1
-}
+"$repo_root/scripts/verify_solana_conformance_evidence.sh" "$bundle_dir/validator-conformance"
 
 rm -rf "$artifacts_dir"
 mkdir -p "$artifacts_dir"

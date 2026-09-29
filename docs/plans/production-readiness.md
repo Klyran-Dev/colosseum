@@ -46,6 +46,15 @@ reason when Agave exits before RPC readiness; the canonical Docker Desktop
 `validator_io_uring_unsupported`, preventing a crashed validator from hanging
 a developer or CI job.
 
+ADR-0199 adds the authoritative postcondition gate. Ubuntu CI and the release
+candidate workflow assert a Linux/amd64 Docker runtime, run the same
+Dockerized conformance command, and verify the versioned result contract,
+pinned Agave log, exact SBF hash, container identity, and complete real-RPC
+case matrix before release evidence can pass. The local macOS `io_uring`
+failure remains a typed non-zero result and cannot satisfy this gate; the
+successful Linux run is still an open release item until retained evidence
+exists.
+
 ## Correctness
 
 - [x] Canonical settlement serialization has a shared versioned golden vector
@@ -651,6 +660,13 @@ and operational gates are intentionally not marked complete by unit tests.
   responses without that proof. This is local contract and integration
   evidence; live wallet/provider, validator, production SLO, and full
   WCAG/assistive-technology evidence remain open.
+- [x] ADR-0200 implements the Wallet Standard compatibility boundary for
+  checkout, adjustment, and refund workspaces: capability-filtered discovery,
+  explicit multi-provider selection, selected-account identity checks,
+  returned-byte verification, and legacy fallback only when no compatible
+  standard provider is registered. Unit/component and pinned real-browser
+  evidence pass; live provider/account matrix, Linux validator/provider,
+  production load/SLO, and assistive-technology evidence remain open.
 - [ ] ADR-0154 governed refund movement is implemented and proven against the
   pinned Linux validator for the published Refund scope; tax-vault and
   merchant-funder sources, payer-bound destination, claim cancellation,

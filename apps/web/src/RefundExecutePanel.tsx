@@ -3,6 +3,7 @@ import { PublicKey } from "@solana/web3.js";
 import { fetchWithTimeout, REQUEST_TIMEOUT_MS, responseError } from "./api";
 import { createClientUuid } from "./clientIdentity";
 import { formatInteger } from "./formatters";
+import WalletPicker from "./WalletPicker";
 import {
   RefundExecuteResponse,
   parseRefundExecuteResponse,
@@ -168,6 +169,7 @@ export default function RefundExecutePanel({ apiBase, serviceOnline, accessToken
 
       <article className="panel" aria-live="polite">
         <div className="panel-heading"><div><p className="eyebrow">Immutable artifact review</p><h2>Execution authorization</h2></div>{execute && <span className="status-pill">{statusLabel(execute.status)}</span>}</div>
+        <WalletPicker disabled={busy} connectEnabled={Boolean(execute)} />
         {!execute ? <div className="empty-state"><span className="empty-icon">↗</span><strong>No execute artifact loaded</strong><p>Prepare or recover an execute intent to inspect its finalized claim binding.</p></div> : <>
           <dl className="summary-list">
             <div><dt>Claim PDA</dt><dd><code>{execute.claim}</code></dd></div>

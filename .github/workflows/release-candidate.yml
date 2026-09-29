@@ -37,10 +37,20 @@ jobs:
       - name: Run repository checks
         run: make check
 
+      - name: Assert authoritative Linux validator runner
+        run: |
+          test "$(uname -s)" = Linux
+          test "$(docker info --format '{{.OSType}}')" = linux
+          case "$(docker info --format '{{.Architecture}}')" in
+            amd64|x86_64) ;;
+            *) echo "unsupported Docker architecture" >&2; exit 1 ;;
+          esac
       - name: Run validator-backed conformance
         env:
           SOLANA_USE_DOCKER_BUILDER: true
         run: make solana-conformance
+      - name: Verify validator conformance evidence
+        run: ./scripts/verify_solana_conformance_evidence.sh
 
       - name: Run scheduled vault-reconciliation drill
         run: |

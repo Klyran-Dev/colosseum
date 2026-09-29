@@ -14,11 +14,14 @@ run_status=1
 failure_reason="not_completed"
 
 {
+    printf 'schema_version=solana-tax-protocol/conformance-metadata/v1\n'
     printf 'started_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf 'git_revision='
     git rev-parse HEAD 2>/dev/null || true
     printf 'platform='
     uname -a 2>/dev/null || true
+    printf 'docker_server_architecture='
+    docker info --format '{{.Architecture}}' 2>/dev/null || true
     printf 'docker_version='
     docker version --format '{{.Server.Version}}' 2>/dev/null || true
     printf 'compose_version='
@@ -29,7 +32,7 @@ failure_reason="not_completed"
 
 cleanup() {
     cleanup_status="$run_status"
-    printf 'phase=%s\nstatus=%s\nfailure_reason=%s\n' "$phase" "$cleanup_status" "$failure_reason" > "$evidence_dir/result.env"
+    printf 'schema_version=solana-tax-protocol/conformance-result/v1\nphase=%s\nstatus=%s\nfailure_reason=%s\n' "$phase" "$cleanup_status" "$failure_reason" > "$evidence_dir/result.env"
     if [ -f "$repo_root/target/deploy/settlement.so" ]; then
         if command -v sha256sum >/dev/null 2>&1; then
             sha256sum "$repo_root/target/deploy/settlement.so" > "$evidence_dir/settlement.so.sha256"

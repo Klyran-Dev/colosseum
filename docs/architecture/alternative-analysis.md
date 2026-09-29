@@ -515,6 +515,9 @@ quote path were rejected for memory, integrity, and tail-latency reasons.
 | Upload the entire workspace/ledger | Maximum context | Excessive size, generated state, and secret exposure risk | Rejected |
 | Boolean pass/fail status only | Minimal | Cannot diagnose validator/runtime failures or audit exact inputs | Rejected |
 | **Bounded public-safe evidence bundle retained on success and failure** | Exact metadata, program hash, logs, test output, and reproducible review | Requires retention policy and careful redaction | **Selected; see ADR-0085** |
+| Trust the conformance process exit code | Minimal CI configuration | Does not prove Linux capability, pinned runtime, artifact identity, or complete case coverage | Rejected |
+| Privileged Docker workaround for constrained kernels | May start Agave in more environments | Expands privilege and changes the evidence environment | Rejected |
+| **Bounded postcondition verifier on Linux CI/release** | Preserves local fail-closed diagnostics and makes runtime/artifact/test evidence reviewable | Adds an explicit release gate | **Selected; see ADR-0199** |
 
 ### Replay-gap operator control
 
@@ -646,6 +649,15 @@ commonly expose the web3.js `Transaction` boundary; wallet-standard support
 must be proven against the supported provider matrix before switching. Wallet
 adapter registries, server-side signing, and browser-only RPC submission were
 rejected; see ADR-0059.
+
+### Wallet Standard compatibility boundary
+
+| Alternative | Strengths | Risks/trade-offs | Decision |
+| --- | --- | --- | --- |
+| Legacy `window.solana` only | Minimal bundle and implementation | Cannot enumerate providers or prove advertised capabilities | Rejected |
+| **Wallet Standard discovery with explicit selection and legacy fallback** | Capability-aware multi-wallet support while preserving the existing web3.js and server signed-byte boundary | Adds bounded selection/lifecycle state and exact dependencies | **Selected; ADR-0200** |
+| Full Solana Wallet Adapter registry | Broad adapter coverage | Larger bundle and lifecycle abstraction than this product boundary requires | Rejected for this slice |
+| Direct browser `sendTransaction` | Fewer API calls | Bypasses durable intent/reconciliation authority | Rejected |
 
 ### Jurisdiction resolution
 

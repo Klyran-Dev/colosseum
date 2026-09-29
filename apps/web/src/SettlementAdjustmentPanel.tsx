@@ -3,7 +3,6 @@ import { PublicKey } from "@solana/web3.js";
 import { fetchWithTimeout, REQUEST_TIMEOUT_MS, responseError } from "./api";
 import { createClientUuid } from "./clientIdentity";
 import {
-  connectInjectedWallet,
   parseCompiledSettlementAdjustmentArtifact,
   parseSettlementAdjustmentChainIntentResponse,
   signAndEncodeSettlementAdjustment,
@@ -22,6 +21,8 @@ import {
   validateByteArray,
   validateUuidV7,
 } from "./settlementAdjustments";
+import WalletPicker from "./WalletPicker";
+import { ensureConnectedWallet } from "./wallet";
 
 type SettlementAdjustmentPanelProps = {
   apiBase: string;
@@ -256,7 +257,7 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
     try {
       const token = requireToken();
       if (!chainArtifact) throw new Error("Prepare the server-owned record instruction before signing.");
-      const connected = await connectInjectedWallet();
+      const connected = (await ensureConnectedWallet()).publicKey;
       setWalletAddress(connected);
       const signedTransactionBase64 = await signAndEncodeSettlementAdjustment(
         chainArtifact.instruction,
@@ -377,6 +378,7 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
           {record.status === "approved" && <div className="adjustment-chain-card" aria-label="Wallet-bound adjustment evidence">
             <h3>Record finalized adjustment evidence</h3>
             <p className="panel-copy">This bounded Solana instruction records the approved adjustment and emits auditable evidence. It does not transfer tokens, issue a refund, file taxes, or establish legal compliance.</p>
+            <WalletPicker disabled={busy} connectEnabled={Boolean(chainArtifact)} connectedAddress={walletAddress?.toBase58()} onConnected={setWalletAddress} />
             {!chainArtifact ? <button type="button" onClick={compileChainEvidence} disabled={busy || !serviceOnline || !accessToken.trim()}>Prepare wallet record</button> : <>
               <dl className="summary-list"><div><dt>Chain intent</dt><dd><code>{chainArtifact.chain_intent_id}</code></dd></div><div><dt>Registry</dt><dd><code>{chainArtifact.registry}</code></dd></div><div><dt>Registry proof</dt><dd>Finalized slot {chainArtifact.registry_slot} · {chainArtifact.instruction.accounts.length} exact account metas</dd></div><div><dt>Wallet</dt><dd>{walletAddress?.toBase58() ?? "Not connected"}</dd></div></dl>
               <p className="inline-warning">The connected wallet must equal the compiled approver signer. The API repeats this check against the complete signed message.</p>

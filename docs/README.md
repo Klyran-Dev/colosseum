@@ -92,6 +92,8 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [ADR-0196: Client quote-expiry boundary](adr/0196-client-quote-expiry-boundary.md)
 - [ADR-0197: Strict browser tax-evidence response parsing](adr/0197-strict-browser-tax-evidence-responses.md)
 - [ADR-0198: Strict vault-release lifecycle response contract](adr/0198-strict-vault-release-response-contract.md)
+- [ADR-0199: Authoritative Linux validator evidence contract](adr/0199-linux-validator-evidence-contract.md)
+- [ADR-0200: Solana Wallet Standard signing boundary](adr/0200-solana-wallet-standard-boundary.md)
 - [Operations runbooks](runbooks/README.md)
 
 ## Status and scope
@@ -111,6 +113,15 @@ requires a persisted typed finalized-event proof envelope before the browser
 can render an adjustment as finalized; migration `0048` and the clean-stack
 integration contract are implemented, while live-wallet/provider and
 production accessibility evidence remain open.
+
+ADR-0200 adds the production wallet boundary used by checkout, adjustment, and
+refund workspaces: Wallet Standard discovery is capability-filtered, multiple
+providers require explicit selection, selected accounts and returned signed
+bytes are verified, and the legacy injected adapter is used only when no
+compatible standard provider is registered. The local unit/component and
+real-browser suites pass; live provider/account coverage, Linux validator
+evidence, regional RPC performance, and production accessibility review remain
+release gates.
 
 The current foundation also includes ADR-0145's facts-only, two-replica
 persisted-rule simulation latency harness. The 2026-09-27 Docker run measured
@@ -180,6 +191,12 @@ The TypeScript client runs inside a pinned non-root Docker image, so the gate
 does not require host Node.js or pnpm. Missing build, validator, or RPC
 evidence fails the command; it is not downgraded to a mock or skipped release
 result.
+
+The authoritative Ubuntu CI/release gate additionally runs
+`scripts/verify_solana_conformance_evidence.sh`, which proves the Linux/amd64
+runtime, pinned Agave startup, exact SBF hash, container identity, and complete
+retained test matrix. A local Docker Desktop `io_uring` failure remains a
+non-zero diagnostic and is not a conformance pass.
 
 Run `make integration-check` for the authenticated Docker quote and delivery
 path. The harness builds an isolated, non-root synthetic external issuer

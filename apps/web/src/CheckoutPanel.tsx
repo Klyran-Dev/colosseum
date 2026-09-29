@@ -7,7 +7,6 @@ import {
   SettlementRoute,
   SettlementSplitPlan,
   SettlementSubmitResponse,
-  connectInjectedWallet,
   parseCompiledSettlementArtifact,
   parsePolicyDigest,
   parseSettlementRoutes,
@@ -17,6 +16,7 @@ import {
   settlementQuoteExpired,
   settlementIntentAllowsRetry,
 } from "./checkout";
+import WalletPicker from "./WalletPicker";
 
 type Calculation = {
   calculation_id: string;
@@ -169,18 +169,6 @@ export default function CheckoutPanel({
       controller.abort();
     };
   }, [accessToken, apiBase, serviceOnline, splitPlanReload]);
-
-  async function connectWallet() {
-    setError(null);
-    setFlow("connecting");
-    try {
-      setWalletAddress(await connectInjectedWallet());
-      setFlow("idle");
-    } catch (cause) {
-      setFlow("idle");
-      setError(cause instanceof Error ? cause.message : "Wallet connection was rejected.");
-    }
-  }
 
   async function compile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -349,7 +337,7 @@ export default function CheckoutPanel({
       <article className="panel">
         <div className="panel-heading"><div><p className="eyebrow">Non-custodial checkout</p><h2 id="checkout-title">Review and authorize settlement</h2></div><span className="status-pill">Wallet required</span></div>
         <p className="panel-copy">The browser serializes the server-compiled settlement and its exact compute-budget policy. Your wallet signs it; the API verifies the complete signed message before any RPC submission.</p>
-        <div className="checkout-step"><span className="step-number">1</span><div><strong>Payer wallet</strong><p>{walletAddress ? walletAddress.toBase58() : "No wallet connected"}</p></div><button type="button" onClick={connectWallet} disabled={isBusy}>{flow === "connecting" ? "Connecting…" : walletAddress ? "Reconnect wallet" : "Connect wallet"}</button></div>
+        <div className="checkout-step"><span className="step-number">1</span><div><strong>Payer wallet</strong><p>{walletAddress ? walletAddress.toBase58() : "No wallet connected"}</p></div><WalletPicker disabled={isBusy} connectedAddress={walletAddress?.toBase58()} onConnected={setWalletAddress} /></div>
         <form className="form-grid checkout-form" onSubmit={compile}>
           <label className="full-field"><span>Configured settlement route</span><select value={routeId} onChange={(event) => setRouteId(event.target.value)} disabled={routeState !== "ready" || isBusy} required><option value="">{routeState === "loading" ? "Loading active routes…" : routeState === "error" ? "Routes unavailable" : routes.length ? "Select a route" : "No active routes"}</option>{routes.map((route) => <option value={route.id} key={route.id}>{route.route_key} · v{route.version} · {route.mint}</option>)}</select></label>
           {routeError && <p className="inline-error full-field" role="alert">{routeError}</p>}

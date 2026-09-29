@@ -10,6 +10,7 @@ import {
   signRefundClaimRole,
 } from "./refundClaims";
 import { formatInteger } from "./formatters";
+import WalletPicker from "./WalletPicker";
 
 type RefundClaimPanelProps = {
   apiBase: string;
@@ -189,6 +190,7 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
 
       <article className="panel" aria-live="polite">
         <div className="panel-heading"><div><p className="eyebrow">Immutable artifact review</p><h2>Wallet authorization</h2></div>{claim && <span className="status-pill">{statusLabel(claim.status)}</span>}</div>
+        <WalletPicker disabled={busy} connectEnabled={Boolean(claim)} />
         {!claim ? <div className="empty-state"><span className="empty-icon">↔</span><strong>No claim artifact loaded</strong><p>Prepare or recover a claim to inspect its exact server-owned evidence.</p></div> : <>
           <dl className="summary-list">
             <div><dt>Gross refund</dt><dd>{atomicAmount(claim.artifact.gross_atomic, locale)}</dd></div>

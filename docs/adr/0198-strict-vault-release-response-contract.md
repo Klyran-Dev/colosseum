@@ -55,3 +55,14 @@ browser to authorize or execute a vault release.
   response.
 - Rust storage wire-contract test and browser parser tests pass before UI
   integration is accepted.
+
+Verification recorded for this decision:
+
+- `cargo test -p storage`: 33 passed.
+- `pnpm --dir apps/web test`: 88 passed, 6 skipped.
+- `pnpm --dir apps/web typecheck` and production build: passed.
+- `make integration-check`: passed against the pinned Docker PostgreSQL 18
+  stack and authenticated API.
+- `make web-browser-check`: 10/10 pinned NGINX journeys passed.
+- `make public-docs-check`, `cargo fmt --all -- --check`, and `git diff --check`:
+  passed.

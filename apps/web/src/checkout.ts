@@ -13,6 +13,17 @@ import type {
   CompiledSettlementAdjustmentInstruction,
 } from "./settlementAdjustments";
 import { parseCanonicalU64, validateByteArray } from "./settlementAdjustments";
+import {
+  connectInjectedWallet,
+  ensureConnectedWallet,
+  signWalletTransaction,
+} from "./wallet";
+export {
+  connectInjectedWallet,
+  discoverWallets,
+  injectedWallet,
+  resetWalletSession,
+} from "./wallet";
 export { parseCanonicalU64 } from "./settlementAdjustments";
 
 export const SETTLEMENT_PROGRAM_ID = "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi";
@@ -600,13 +611,6 @@ export function settlementIntentAllowsRetry(status: SettlementIntentStatus): boo
   return status === "prepared_unsubmitted" || status === "signed";
 }
 
-type InjectedWallet = {
-  isConnected?: boolean;
-  publicKey?: PublicKey | null;
-  connect: () => Promise<{ publicKey: PublicKey }>;
-  signTransaction: (transaction: Transaction) => Promise<Transaction>;
-};
-
 const SETTLEMENT_INTENT_STATUSES: readonly SettlementIntentStatus[] = [
   "prepared_unsubmitted",
   "signed",
@@ -653,25 +657,6 @@ export function parseSettlementStatusResponse(value: unknown): SettlementSubmitR
     signature: signature as string | null,
     provider_index: providerIndex as number | null,
   };
-}
-
-declare global {
-  interface Window {
-    solana?: InjectedWallet;
-  }
-}
-
-export function injectedWallet(): InjectedWallet | null {
-  return typeof window !== "undefined" && window.solana
-    ? window.solana
-    : null;
-}
-
-export async function connectInjectedWallet(): Promise<PublicKey> {
-  const wallet = injectedWallet();
-  if (!wallet) throw new Error("No compatible injected Solana wallet was detected.");
-  const response = await wallet.connect();
-  return response.publicKey;
 }
 
 function decodeBase64(value: string): Uint8Array {
@@ -849,12 +834,11 @@ export async function signAndEncodeSettlement(
   payer: PublicKey,
   rpcUrl: string,
 ): Promise<string> {
-  const wallet = injectedWallet();
-  if (!wallet) throw new Error("Connect a compatible Solana wallet before signing.");
+  const wallet = await ensureConnectedWallet();
   if (!rpcUrl.trim()) throw new Error("A VITE_SOLANA_RPC_URL is required before wallet signing is enabled.");
   const connection = new Connection(rpcUrl, "confirmed");
   const unsigned = await buildSettlementTransaction(instruction, payer, connection);
-  const signed = await wallet.signTransaction(unsigned);
+  const signed = await signWalletTransaction(wallet, unsigned, rpcUrl);
   const serialized = signed.serialize({ requireAllSignatures: true, verifySignatures: true });
   return btoa(String.fromCharCode(...serialized));
 }
@@ -887,12 +871,11 @@ export async function signAndEncodeSettlementAdjustment(
   approver: PublicKey,
   rpcUrl: string,
 ): Promise<string> {
-  const wallet = injectedWallet();
-  if (!wallet) throw new Error("Connect a compatible Solana wallet before signing the adjustment.");
+  const wallet = await ensureConnectedWallet();
   if (!rpcUrl.trim()) throw new Error("A VITE_SOLANA_RPC_URL is required before adjustment signing is enabled.");
   const connection = new Connection(rpcUrl, "confirmed");
   const unsigned = await buildSettlementAdjustmentTransaction(instruction, approver, connection);
-  const signed = await wallet.signTransaction(unsigned);
+  const signed = await signWalletTransaction(wallet, unsigned, rpcUrl);
   const serialized = signed.serialize({ requireAllSignatures: true, verifySignatures: true });
   return btoa(String.fromCharCode(...serialized));
 }

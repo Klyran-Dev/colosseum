@@ -228,6 +228,19 @@ advance a movement to a successful state.
 - [ ] Add wallet workspace evidence against a live injected wallet, Linux
   validator conformance, load/SLO evidence, and production enablement gates.
 
+## ADR-0200 — Solana Wallet Standard signing boundary
+
+- [x] Add Wallet Standard discovery and explicit multi-provider selection while
+  retaining the legacy injected-wallet fallback only when no standard wallet
+  is registered.
+- [x] Bind the selected standard account and returned signed bytes to the
+  existing server-compiled transaction and durable intent contract.
+- [x] Add failing-first capability, rejection, mismatch, browser, and
+  accessibility tests before enabling the adapter in production flows.
+- [ ] Add live Wallet Standard provider/account matrix evidence, Linux
+  validator/provider conformance, load/SLO evidence, and production
+  enablement gates.
+
 ## ADR-0177 — exact signed refund-claim submission
 
 Connect the existing bounded signed-transaction verifier to the durable claim
@@ -339,6 +352,15 @@ diagnostics. The program artifact now builds without the previously observed
 early Agave exit in retained `result.env` evidence, including the explicit
 `validator_io_uring_unsupported` capability reason; Linux validator execution
 remains an independent release gate.
+
+## ADR-0199 — authoritative Linux validator evidence
+
+Add a postcondition verifier for the validator evidence bundle. The Ubuntu CI
+and release-candidate workflows assert the Linux/amd64 Docker runtime and
+verify the versioned result, pinned Agave log, exact SBF hash, container
+identity, and all named real-RPC test cases. Local `io_uring` failures remain
+fail-closed diagnostics; only retained successful Linux evidence can close the
+validator release gate.
 
 ## ADR-0154 — governed adjustment refund movement
 

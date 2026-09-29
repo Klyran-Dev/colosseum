@@ -1,6 +1,6 @@
 import { Connection, PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
 import { Buffer } from "buffer";
-import { injectedWallet } from "./checkout";
+import { ensureConnectedWallet, signWalletTransaction } from "./wallet";
 import { parseCanonicalU64 } from "./settlementAdjustments";
 import {
   REFUND_STATUSES,
@@ -268,13 +268,11 @@ export function buildRefundExecuteTransaction(instruction: RefundExecuteInstruct
 }
 
 export async function signRefundExecuteRole(instruction: RefundExecuteInstruction, role: "approver" | "refund_funder", expectedSigner: PublicKey, rpcUrl: string, serialized: string | null): Promise<string> {
-  const wallet = injectedWallet();
-  if (!wallet) throw new Error("No compatible injected Solana wallet was detected.");
+  const wallet = await ensureConnectedWallet();
   if (!rpcUrl.trim()) throw new Error("A VITE_SOLANA_RPC_URL is required before refund execution signing is enabled.");
-  const connected = await wallet.connect();
-  if (!connected.publicKey.equals(expectedSigner)) throw new Error(`Connected wallet must match the compiled ${role.replace("_", " ")} signer.`);
+  if (!wallet.publicKey.equals(expectedSigner)) throw new Error(`Connected wallet must match the compiled ${role.replace("_", " ")} signer.`);
   const transaction = serialized ? Transaction.from(Buffer.from(serialized, "base64")) : await buildRefundExecuteTransaction(instruction, new PublicKey(instruction.accounts[0].pubkey), new PublicKey(instruction.accounts[1].pubkey), new Connection(rpcUrl, "confirmed"));
-  return encodeTransaction(await wallet.signTransaction(transaction));
+  return encodeTransaction(await signWalletTransaction(wallet, transaction, rpcUrl));
 }
 
 export function refundExecuteHasAllSignatures(serialized: string): boolean {
