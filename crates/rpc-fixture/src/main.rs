@@ -35,7 +35,7 @@ const DEFAULT_VAULT_MINT: &str = "So11111111111111111111111111111111111111112";
 const SPL_TOKEN_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const SETTLEMENT_PROGRAM_ID: &str = "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi";
 const ADJUSTMENT_REGISTRY_ACCOUNT_DATA_LEN: usize = 8 + (5 * 32) + 2;
-const REFUND_CLAIM_ACCOUNT_DATA_LEN: usize = 410;
+const REFUND_CLAIM_ACCOUNT_DATA_LEN: usize = 8 + (9 * 32) + (4 * 8) + 32 + (2 * 8) + 32 + 3;
 const ADJUSTMENT_REFUND_EXECUTED_EVENT_DISCRIMINATOR: [u8; 8] = [112, 130, 243, 73, 61, 70, 35, 70];
 const MAX_FAIL_METHODS: usize = 8;
 const MAX_FAIL_METHOD_CONFIG_BYTES: usize = 256;
@@ -393,7 +393,12 @@ async fn handle_method(
                 "lastValidBlockHeight": 1_000_000u64
             }
         })),
-        "getSlot" => Ok(json!(42u64)),
+        "getSlot" => Ok(json!(
+            state
+                .refund_proof
+                .as_ref()
+                .map_or(42, |fixture| fixture.slot)
+        )),
         // The reconciliation drill has no synthetic settlement blocks. Returning
         // an empty finalized page keeps the indexer's replay path healthy while
         // leaving vault-account reads as the only failover assertion.
@@ -680,7 +685,7 @@ fn parse_hex_digest(value: &str, name: &str) -> Result<[u8; 32], Box<dyn std::er
         return Err(format!("{name} must contain exactly 32 bytes of hex").into());
     }
     let mut digest = [0u8; 32];
-    for (index, chunk) in value.as_bytes().chunks_exact(2).enumerate() {
+    for (index, chunk) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         digest[index] = (hex_nibble(chunk[0])? << 4) | hex_nibble(chunk[1])?;
     }
     if digest == [0; 32] {
@@ -736,10 +741,10 @@ fn get_multiple_accounts(state: &FixtureState, params: &Value) -> Result<Value, 
         .first()
         .and_then(Value::as_array)
         .ok_or((-32602, "account addresses must be an array".to_string()))?;
-    if let Some(fixture) = &state.refund_proof {
-        if addresses.len() == 1 {
-            return get_refund_proof_claim_account(fixture, addresses);
-        }
+    if let Some(fixture) = &state.refund_proof
+        && addresses.len() == 1
+    {
+        return get_refund_proof_claim_account(fixture, addresses);
     }
     if let Some(fixture) = &state.refund_funding {
         return get_refund_funding_accounts(fixture, addresses, values);
@@ -1174,6 +1179,15 @@ mod tests {
         );
         assert!(parse_fail_methods(Some(" ")).unwrap().is_empty());
         assert!(parse_fail_methods(Some(&"x".repeat(257))).is_err());
+    }
+
+    #[test]
+    fn refund_proof_digest_requires_exact_nonzero_hex() {
+        let digest = parse_hex_digest(&"ab".repeat(32), "digest").unwrap();
+        assert_eq!(digest, [0xab; 32]);
+        assert!(parse_hex_digest(&"00".repeat(32), "digest").is_err());
+        assert!(parse_hex_digest("ab", "digest").is_err());
+        assert!(parse_hex_digest(&"gg".repeat(32), "digest").is_err());
     }
 
     #[test]

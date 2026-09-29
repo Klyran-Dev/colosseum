@@ -132,6 +132,95 @@ test.describe("real-browser SPA journeys", () => {
     await expectNoBrowserAxeViolations(page, "API unavailable state");
   });
 
+  test("shows an expired quote and blocks wallet compilation before signing", async ({ page }) => {
+    const now = Math.floor(Date.now() / 1000);
+    await page.route("**/api/v1/tax/quote", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        calculation_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d21",
+        status: "calculated_unattested",
+        expires_at_unix: now - 1,
+        result: {
+          rule_set_id: "published-sales-tax",
+          rule_version: 3,
+          engine_version: "tax-engine/v1",
+          currency: "USD",
+          jurisdiction: "US-CA",
+          facts_digest: Array(32).fill(1),
+          rule_digest: Array(32).fill(2),
+          gross_atomic: "1000",
+          total_tax_atomic: "100",
+          total_net_atomic: "900",
+          components: [{
+            id: "sales-tax",
+            label: "Sales tax",
+            base_atomic: "1000",
+            effective_base_atomic: "1000",
+            threshold_atomic: null,
+            exemption_applied: false,
+            raw_tax: { numerator: "100", denominator: "1" },
+            credit_atomic: "0",
+            clamped_tax_atomic: "100",
+            tax_atomic: "100",
+            explanation: "Published rule evidence",
+          }],
+        },
+      }),
+    }));
+    await page.route("**/api/v1/settlement/routes", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([{
+        id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d22",
+        route_key: "local-usdc",
+        version: 1,
+        merchant_account: "8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR",
+        mint: "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8",
+        tax_vault: "8nGRRJuGoubpUKHVa5paPCvGLQU39nnu3zFWYREbSeNN",
+        net_destination: "QWmroo4YnnMqYW3cnxWkFdaTxGD3P7vMSzwMHGbUzwF",
+        token_program: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      }]),
+    }));
+    await page.route("**/api/v1/settlement/split-plans", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: "[]",
+    }));
+
+    await page.goto("/");
+    await expect(page.getByText("Calculation service online")).toBeVisible();
+    await page.getByLabel("OIDC access token (memory-only)").fill("synthetic-browser-token");
+    await page.getByLabel("Provider-signed jurisdiction evidence (JSON array)").fill("[{}]");
+    await page.getByRole("button", { name: "Create quote", exact: true }).click();
+    await expect(page.getByText("Calculation ID 01992f1b-4a70-7e30-8ea2-b6e37a9d9d21", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Checkout authorization", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Review and authorize settlement", exact: true })).toBeVisible();
+    await expect(page.getByText(/expired; create a new quote/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Compile for review", exact: true })).toBeDisabled();
+    await expectNoBrowserAxeViolations(page, "expired quote checkout state");
+  });
+
+  test("renders an accessible wallet-rejection state without claiming authorization", async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, "solana", {
+        configurable: true,
+        value: {
+          connect: async () => { throw new Error("User rejected wallet connection"); },
+        },
+      });
+    });
+
+    await page.goto("/");
+    await expect(page.getByText("Calculation service online")).toBeVisible();
+    await page.getByRole("button", { name: "Checkout authorization", exact: true }).click();
+    await page.getByRole("button", { name: "Connect wallet", exact: true }).click();
+    await expect(page.getByRole("alert")).toContainText("User rejected wallet connection");
+    await expect(page.getByText("No wallet connected", { exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "wallet rejection state");
+  });
+
   test("renders server-owned reconciliation evidence and stops on mismatch", async ({ page }) => {
     const target = {
       id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d12",

@@ -45,6 +45,15 @@ export type SettlementRoute = {
 
 const UUIDV7_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
+/**
+ * Applies the server-declared quote expiry as a client-side wallet-action
+ * guard. The API remains the authority; the explicit clock makes the exact
+ * second boundary deterministic in tests.
+ */
+export function settlementQuoteExpired(expiresAtUnix: number | undefined, nowUnix: number): boolean {
+  return expiresAtUnix !== undefined && expiresAtUnix <= nowUnix;
+}
+
 function recordValue(value: unknown, message: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(message);
   return value as Record<string, unknown>;

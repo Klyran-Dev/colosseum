@@ -88,6 +88,10 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [ADR-0192: Real-browser vault-reconciliation evidence](adr/0192-real-browser-vault-reconciliation-evidence.md)
 - [ADR-0193: Server-owned reconciliation freshness](adr/0193-server-owned-reconciliation-freshness.md)
 - [ADR-0194: Wallet-bound adjustment finality drill](adr/0194-adjustment-wallet-finality-drill.md)
+- [ADR-0195: Transaction-bound refund proof drill](adr/0195-transaction-bound-refund-proof-drill.md)
+- [ADR-0196: Client quote-expiry boundary](adr/0196-client-quote-expiry-boundary.md)
+- [ADR-0197: Strict browser tax-evidence response parsing](adr/0197-strict-browser-tax-evidence-responses.md)
+- [ADR-0198: Strict vault-release lifecycle response contract](adr/0198-strict-vault-release-response-contract.md)
 - [Operations runbooks](runbooks/README.md)
 
 ## Status and scope
@@ -117,6 +121,13 @@ remain open.
 ADR-0146 adds centralized exact atomic/timestamp formatting, bounded locale and
 IANA time-zone settings, and RTL direction handling. Full translation catalogs,
 real-browser responsive review, and assistive-technology evidence remain open.
+
+ADR-0195 adds a Docker proof-worker drill that resolves the finalized refund
+claim topology, reads one transaction-bound event and exact pre/post token
+balances, persists one immutable balance proof, and advances the execute intent
+only through that proof. The provider is deliberately synthetic and finalized;
+live RPC-provider, validator, production load/SLO, and paid-state enablement
+remain release gates.
 
 ADR-0147 contains lazy workspace import/render failures behind a redacted,
 accessible recovery surface while preserving the global shell. It does not

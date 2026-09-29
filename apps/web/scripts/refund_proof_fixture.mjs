@@ -1,4 +1,5 @@
 import { Keypair, PublicKey } from "@solana/web3.js";
+import { createHash } from "node:crypto";
 
 const programId = new PublicKey("4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi");
 const tokenProgram = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
@@ -11,7 +12,6 @@ const ids = {
   refund_source: key(8),
   payer_destination: key(9),
   approver: key(10),
-  signature: key(12),
   adjustment: key(1),
   original_receipt: key(2),
 };
@@ -24,7 +24,31 @@ const [vaultAuthority] = PublicKey.findProgramAddressSync(
   [Buffer.from("vault-authority"), ids.merchant.toBuffer(), ids.mint.toBuffer()],
   programId,
 );
+const signature = base58(Buffer.concat([key(12).toBytes(), key(13).toBytes()]));
 const referenceDigest = Buffer.alloc(32, 0x1f);
+const eventData = Buffer.concat([
+  Buffer.from([112, 130, 243, 73, 61, 70, 35, 70]),
+  claim.toBuffer(),
+  ids.adjustment.toBuffer(),
+  ids.original_receipt.toBuffer(),
+  ids.merchant.toBuffer(),
+  ids.mint.toBuffer(),
+  u64(nonce),
+  u64(100n),
+  u64(25n),
+  u64(75n),
+  ids.refund_funder.toBuffer(),
+  ids.payer_destination.toBuffer(),
+  ids.approver.toBuffer(),
+  referenceDigest,
+]);
+const evidenceDigest = createHash("sha256")
+  .update("solana-tax-protocol/settlement-event/v1")
+  .update(signature)
+  .update(u64(900n))
+  .update(Buffer.alloc(2))
+  .update(eventData)
+  .digest("hex");
 const artifact = {
   schema: "refund-movement-artifact/v1",
   instruction: {
@@ -93,8 +117,10 @@ const output = {
   payer_destination: ids.payer_destination.toBase58(),
   approver: ids.approver.toBase58(),
   vault_authority: vaultAuthority.toBase58(),
-  signature: ids.signature.toBase58(),
+  signature,
   reference_digest_hex: referenceDigest.toString("hex"),
+  event_hex: eventData.toString("hex"),
+  evidence_digest_hex: evidenceDigest,
   nonce: "11",
   gross: "100",
   tax: "25",
@@ -122,4 +148,20 @@ function u64(value) {
 
 function account(pubkey, isSigner, isWritable) {
   return { pubkey: pubkey.toBase58(), is_signer: isSigner, is_writable: isWritable };
+}
+
+function base58(bytes) {
+  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  let value = 0n;
+  for (const byte of bytes) value = (value << 8n) | BigInt(byte);
+  let encoded = "";
+  while (value > 0n) {
+    encoded = alphabet[Number(value % 58n)] + encoded;
+    value /= 58n;
+  }
+  for (const byte of bytes) {
+    if (byte !== 0) break;
+    encoded = `1${encoded}`;
+  }
+  return encoded || "1";
 }

@@ -85,9 +85,15 @@ for _attempt in $(seq 1 60); do
         break
     fi
     if [ -n "$(docker compose --profile solana ps -q --status exited validator 2>/dev/null || true)" ]; then
-        failure_reason="validator_exited_before_health"
+        validator_startup_log="$(docker compose --profile solana logs --no-color --tail=160 validator 2>/dev/null || true)"
+        if printf '%s\n' "$validator_startup_log" | grep -Fq 'io_uring NOT supported'; then
+            failure_reason="validator_io_uring_unsupported"
+            echo "Solana validator requires a Linux kernel with io_uring support" >&2
+        else
+            failure_reason="validator_exited_before_health"
+        fi
         echo "Solana validator exited before becoming healthy" >&2
-        docker compose --profile solana logs --no-color --tail=120 validator >&2 || true
+        printf '%s\n' "$validator_startup_log" >&2
         exit 1
     fi
     sleep 1

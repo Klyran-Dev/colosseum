@@ -14,6 +14,7 @@ import {
   parseSettlementStatusResponse,
   parseSettlementSplitPlans,
   signAndEncodeSettlement,
+  settlementQuoteExpired,
   settlementIntentAllowsRetry,
 } from "./checkout";
 
@@ -72,6 +73,15 @@ export default function CheckoutPanel({
   const [splitPlanState, setSplitPlanState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [splitPlanError, setSplitPlanError] = useState<string | null>(null);
   const [splitPlanReload, setSplitPlanReload] = useState(0);
+  const [nowUnix, setNowUnix] = useState(() => Math.floor(Date.now() / 1000));
+
+  useEffect(() => {
+    if (calculation?.expires_at_unix === undefined) return;
+    const refresh = () => setNowUnix(Math.floor(Date.now() / 1000));
+    refresh();
+    const timer = window.setInterval(refresh, 1_000);
+    return () => window.clearInterval(timer);
+  }, [calculation?.expires_at_unix]);
 
   useEffect(() => {
     if (!calculation) {
@@ -180,6 +190,9 @@ export default function CheckoutPanel({
     if (!calculation || !["calculated_unattested", "attested"].includes(calculation.status)) {
       return setError("Create an authenticated published-rule quote before preparing settlement.");
     }
+    if (settlementQuoteExpired(calculation.expires_at_unix, nowUnix)) {
+      return setError("This quote has expired. Create a new quote before preparing settlement.");
+    }
     if (!walletAddress) return setError("Connect the payer wallet before compiling the signed transaction.");
     if (!routeId || !nonce || !policySequence) {
       return setError("Select an active settlement route, nonce, and policy sequence.");
@@ -233,6 +246,10 @@ export default function CheckoutPanel({
   async function signAndSubmit() {
     setError(null);
     if (!artifact || !artifact.intent_id || !walletAddress) return setError("Compile a durable intent and connect the payer wallet first.");
+    if (settlementQuoteExpired(calculation?.expires_at_unix, nowUnix)) {
+      setFlow("ready");
+      return setError("This quote has expired. Create a new quote; no wallet signature was requested.");
+    }
     const rpcUrl = import.meta.env.VITE_SOLANA_RPC_URL ?? "";
     let submitAttempted = false;
     setFlow("signing");
@@ -325,6 +342,7 @@ export default function CheckoutPanel({
     && selectedPlan.merchant_account === selectedRoute.merchant_account
     && selectedPlan.mint === selectedRoute.mint);
   const splitPlanDigest = selectedPlan?.plan_digest.map((byte) => byte.toString(16).padStart(2, "0")).join("") ?? "";
+  const quoteExpired = settlementQuoteExpired(calculation?.expires_at_unix, nowUnix);
 
   return (
     <section className="checkout-layout" aria-labelledby="checkout-title">
@@ -356,21 +374,24 @@ export default function CheckoutPanel({
           <label><span>Client nonce</span><input inputMode="numeric" value={nonce} onChange={(event) => setNonce(event.target.value)} placeholder="Positive integer" required /></label>
           <label><span>Policy sequence</span><input inputMode="numeric" value={policySequence} onChange={(event) => setPolicySequence(event.target.value)} placeholder="Positive integer" required /></label>
           <label><span>Policy digest (hex)</span><input value={policyDigest} onChange={(event) => setPolicyDigest(event.target.value)} placeholder="64 hexadecimal characters" autoComplete="off" spellCheck={false} required /></label>
-          <button type="submit" disabled={isBusy || !serviceOnline || !calculation || !selectedRoute || (settlementMode === "split" && !splitPlanCompatible)}>{flow === "compiling" ? "Compiling durable intent…" : "Compile for review"}</button>
+          <button type="submit" disabled={isBusy || quoteExpired || !serviceOnline || !calculation || !selectedRoute || (settlementMode === "split" && !splitPlanCompatible)}>{flow === "compiling" ? "Compiling durable intent…" : "Compile for review"}</button>
         </form>
         {error && <p className="inline-error" role="alert">{error}</p>}
       </article>
 
       <article className="panel checkout-review" aria-live="polite">
         <div className="panel-heading"><div><p className="eyebrow">Authorization boundary</p><h2>Exact review</h2></div>{artifact && <span className="status-pill">Ready to sign</span>}</div>
-        {!artifact || !calculation ? <div className="empty-state"><span className="empty-icon">✓</span><strong>Quote and compiled intent required</strong><p>Generate an authenticated quote, then compile the exact instruction before the wallet control becomes available.</p></div> : <>
+        {!artifact || !calculation ? <>
+          <div className="empty-state"><span className="empty-icon">✓</span><strong>Quote and compiled intent required</strong><p>Generate an authenticated quote, then compile the exact instruction before the wallet control becomes available.</p></div>
+          {calculation?.expires_at_unix && <p className="inline-warning" role={quoteExpired ? "alert" : undefined}>Quote expires {formatEpoch(calculation.expires_at_unix, locale, timeZone)} ({quoteExpired ? "expired; create a new quote" : "server-enforced"}).</p>}
+        </> : <>
           <div className="total-card"><span>Total wallet authorization</span><strong>{formatAtomic(calculation.result.gross_atomic, currency)}</strong><small>Tax withheld: {formatAtomic(calculation.result.total_tax_atomic, currency)} · Net: {formatAtomic(calculation.result.total_net_atomic, currency)}</small></div>
           <dl className="summary-list"><div><dt>Route</dt><dd>{selectedRoute ? `${selectedRoute.route_key} v${selectedRoute.version}` : artifact.route_id}</dd></div><div><dt>Distribution</dt><dd>{"split_plan" in artifact ? `Split Plan v${selectedPlan?.version ?? "unknown"}` : "Single destination"}</dd></div><div><dt>Asset mint</dt><dd>{selectedRoute?.mint ?? "Resolved by API"}</dd></div><div><dt>Program</dt><dd>{artifact.program_id}</dd></div><div><dt>Policy sequence</dt><dd>{policySequence}</dd></div><div><dt>Compute policy</dt><dd>v{artifact.compute_budget_policy.policy_version} · {artifact.compute_budget_policy.compute_unit_limit.toLocaleString(locale)} CU</dd></div><div><dt>Priority-fee bid</dt><dd>{artifact.compute_budget_policy.micro_lamports_per_compute_unit.toLocaleString(locale)} μ-lamports/CU</dd></div><div><dt>Accounts</dt><dd>{artifact.accounts.length} exact metas</dd></div><div><dt>Intent</dt><dd>{artifact.intent_id}</dd></div></dl>
           <dl className="summary-list"><div><dt>Published rule</dt><dd>{calculation.result.rule_set_id} v{calculation.result.rule_version}</dd></div><div><dt>Rule digest</dt><dd><code>{calculation.result.rule_digest.map((byte) => byte.toString(16).padStart(2, "0")).join("")}</code></dd></div><div><dt>Policy state</dt><dd>Calculated, not attested</dd></div></dl>
           {"split_plan" in artifact && selectedPlan && <div className="split-review" aria-label="Split Plan signing review"><strong>Recipient distribution is bound to this compiled instruction</strong>{selectedPlan.recipients.map((recipient) => <div className="split-review-row" key={recipient.token_account}><span>{recipient.token_account}</span><strong>{recipient.basis_points} bps</strong></div>)}<small>Plan digest {splitPlanDigest}. The API, not this browser, owns recipient and amount authority.</small></div>}
-          {calculation.expires_at_unix && <p className="inline-warning">Quote expires {formatEpoch(calculation.expires_at_unix, locale, timeZone)} ({calculation.expires_at_unix <= Math.floor(Date.now() / 1000) ? "expired; create a new quote" : "server-enforced"}).</p>}
+          {calculation.expires_at_unix && <p className="inline-warning" role={quoteExpired ? "alert" : undefined}>Quote expires {formatEpoch(calculation.expires_at_unix, locale, timeZone)} ({quoteExpired ? "expired; create a new quote" : "server-enforced"}).</p>}
           <p className="inline-warning">Signing authorizes only the reviewed instruction. A wallet signature is not settlement confirmation; the server status below is authoritative.</p>
-          <button type="button" onClick={signAndSubmit} disabled={isBusy || flow !== "ready"}>{flow === "signing" ? "Waiting for wallet…" : flow === "submitting" ? "Submitting unchanged bytes…" : "Sign and submit"}</button>
+          <button type="button" onClick={signAndSubmit} disabled={isBusy || quoteExpired || flow !== "ready"}>{flow === "signing" ? "Waiting for wallet…" : flow === "submitting" ? "Submitting unchanged bytes…" : "Sign and submit"}</button>
           {settlement && <div className="settlement-status"><strong>Durable status: {settlement.status}</strong><small>{settlement.signature ? `Signature ${settlement.signature}` : "No chain signature is recorded yet."}</small>{settlement.status === "submitting" && <small role="status">One request owns submission. Do not sign or submit again; refresh or reconcile this intent for chain evidence.</small>}{settlement.status === "unknown" && <small role="status">Provider outcome is ambiguous. Do not authorize another transaction; reconcile this recorded signature.</small>}<div className="status-actions"><button type="button" onClick={refreshStatus} disabled={isBusy}>Refresh status</button><button type="button" onClick={reconcile} disabled={isBusy || !settlement.signature}>Reconcile evidence</button></div></div>}
         </>}
       </article>

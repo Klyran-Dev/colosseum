@@ -11,6 +11,12 @@ import {
 } from "./formatters";
 import WorkspaceErrorBoundary from "./WorkspaceErrorBoundary";
 import { createClientUuid } from "./clientIdentity";
+import {
+  Calculation,
+  parseCalculationResponse,
+  parseReplayVerificationResponse,
+  ReplayVerification,
+} from "./taxResponses";
 
 const CheckoutPanel = lazy(() => import("./CheckoutPanel"));
 const GovernancePanel = lazy(() => import("./GovernancePanel"));
@@ -23,44 +29,6 @@ const RefundExecutePanel = lazy(() => import("./RefundExecutePanel"));
 
 type Workspace = "quote" | "preview" | "checkout" | "governance" | "replay-ops" | "vault-release" | "vault-reconciliation" | "adjustments" | "refund-claims" | "refund-executions";
 type ServiceState = "checking" | "online" | "offline";
-
-type Calculation = {
-  calculation_id: string;
-  status: "calculated_unattested" | "attested" | "simulated_unattested";
-  expires_at_unix?: number;
-  result: {
-    rule_set_id: string;
-    rule_version: number;
-    engine_version: string;
-    currency: string;
-    jurisdiction: string;
-    facts_digest: number[];
-    rule_digest: number[];
-    gross_atomic: string;
-    total_tax_atomic: string;
-    total_net_atomic: string;
-    jurisdiction_resolution?: {
-      jurisdiction: string;
-      source: string;
-      candidate_set_digest: number[];
-    };
-    components: Array<{
-      id: string;
-      label: string;
-      base_atomic: string;
-      tax_atomic: string;
-      explanation: string;
-    }>;
-  };
-};
-
-type ReplayVerification = {
-  status: "replay_verified";
-  calculation_id: string;
-  engine_version: string;
-  facts_digest: number[];
-  rule_digest: number[];
-};
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
@@ -164,7 +132,7 @@ export default function App() {
       });
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok) throw new Error(responseError(response, payload, "Preview calculation failed"));
-      setCalculation(payload as Calculation);
+      setCalculation(parseCalculationResponse(payload));
       setReplayVerification(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Preview calculation failed");
@@ -207,7 +175,7 @@ export default function App() {
       });
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok) throw new Error(responseError(response, payload, `Quote request failed (${response.status})`));
-      setCalculation(payload as Calculation);
+      setCalculation(parseCalculationResponse(payload));
       setReplayVerification(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Quote request failed");
@@ -230,7 +198,7 @@ export default function App() {
       }, REQUEST_TIMEOUT_MS.default);
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok) throw new Error(responseError(response, payload, `Replay verification failed (${response.status})`));
-      setReplayVerification(payload as ReplayVerification);
+      setReplayVerification(parseReplayVerificationResponse(payload));
     } catch (cause) {
       setReplayVerification(null);
       setError(cause instanceof Error ? cause.message : "Replay verification failed");

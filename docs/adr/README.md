@@ -196,3 +196,6 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0193: Server-owned reconciliation freshness contract](0193-server-owned-reconciliation-freshness.md)
 - [ADR-0194: Wallet-bound adjustment finality drill](0194-adjustment-wallet-finality-drill.md)
 - [ADR-0195: Transaction-bound refund proof drill](0195-transaction-bound-refund-proof-drill.md)
+- [ADR-0196: Client quote-expiry boundary](0196-client-quote-expiry-boundary.md)
+- [ADR-0197: Strict browser tax-evidence response parsing](0197-strict-browser-tax-evidence-responses.md)
+- [ADR-0198: Strict vault-release lifecycle response contract](0198-strict-vault-release-response-contract.md)

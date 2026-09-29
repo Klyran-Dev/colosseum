@@ -2,6 +2,12 @@ import { FormEvent, useMemo, useState } from "react";
 import { fetchWithTimeout, REQUEST_TIMEOUT_MS, responseError } from "./api";
 import { DEFAULT_LOCALE, DEFAULT_TIME_ZONE, formatEpoch } from "./formatters";
 import { createClientUuid } from "./clientIdentity";
+import {
+  VaultReleaseClaim,
+  VaultReleaseStatus,
+  parseVaultReleaseClaim,
+  parseVaultReleaseTransitionResponse,
+} from "./vaultRelease";
 
 type VaultReleasePanelProps = {
   apiBase: string;
@@ -11,30 +17,7 @@ type VaultReleasePanelProps = {
   timeZone?: string;
 };
 
-type VaultReleaseClaim = {
-  id: string;
-  merchant_id: string;
-  idempotency_key: string;
-  request_digest: number[];
-  mint: string;
-  token_program: string;
-  tax_vault: string;
-  destination: string;
-  claim_pda: string | null;
-  nonce: string;
-  amount_atomic: string;
-  reference_digest: number[];
-  status: "proposed" | "approved" | "onchain_created" | "executed" | "cancelled" | "unknown";
-  proposer_subject: string;
-  approver_subject: string | null;
-  execute_after_unix: number;
-  expires_at_unix: number;
-  transaction_signature: string | null;
-  slot: string | null;
-  last_error_code: string | null;
-};
-
-type ReleaseStatus = "approved" | "onchain_created" | "executed" | "cancelled" | "unknown";
+type ReleaseStatus = Exclude<VaultReleaseStatus, "proposed">;
 
 const DEFAULT_REFERENCE_DIGEST = JSON.stringify(Array.from({ length: 32 }, (_, index) => index + 1));
 
@@ -83,6 +66,15 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
     return parsed as Record<string, unknown>;
   }
 
+  async function loadClaimById(id: string, token: string): Promise<VaultReleaseClaim> {
+    const response = await fetchWithTimeout(`${apiBase}/v1/vault/release-claims/${encodeURIComponent(id)}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const payload: unknown = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(responseError(response, payload, `Claim lookup failed (${response.status})`));
+    return parseVaultReleaseClaim(payload);
+  }
+
   async function createClaim(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
@@ -112,7 +104,7 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
       });
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok) throw new Error(responseError(response, payload, `Claim proposal failed (${response.status})`));
-      const created = payload as VaultReleaseClaim;
+      const created = parseVaultReleaseClaim(payload);
       setClaim(created);
       setClaimId(created.id);
       setNotice(`Claim ${created.id} is durably proposed. No funds moved and no chain authority was delegated.`);
@@ -135,7 +127,7 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
       });
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok) throw new Error(responseError(response, payload, `Claim lookup failed (${response.status})`));
-      setClaim(payload as VaultReleaseClaim);
+      setClaim(parseVaultReleaseClaim(payload));
       setNotice("Claim state loaded from the tenant-scoped API projection. Finalized chain evidence remains authoritative.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Claim lookup failed");
@@ -166,8 +158,19 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
       });
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok) throw new Error(responseError(response, payload, `Claim transition failed (${response.status})`));
-      setNotice(`Transition recorded as ${transitionStatus}. Refresh the claim before taking the next lifecycle action.`);
-      if (claim) setClaim({ ...claim, status: transitionStatus, claim_pda: claimPda.trim() || claim.claim_pda, transaction_signature: transactionSignature.trim() || claim.transaction_signature, slot: slot.trim() || claim.slot, last_error_code: lastErrorCode.trim() || claim.last_error_code });
+      const transitioned = parseVaultReleaseTransitionResponse(payload);
+      const expectedClaimId = (claim?.id ?? claimId).trim();
+      if (transitioned.claim_id !== expectedClaimId) throw new Error("The API returned a transition for a different claim.");
+      try {
+        const refreshed = await loadClaimById(transitioned.claim_id, token);
+        setClaim(refreshed);
+        setClaimId(refreshed.id);
+        setNotice(`Transition recorded as ${transitioned.to_status}. The displayed claim was refreshed from the tenant-scoped API.`);
+      } catch (refreshCause) {
+        setClaim(null);
+        setNotice(`Transition recorded as ${transitioned.to_status}, but the refreshed claim could not be loaded. Reconcile before taking another lifecycle action.`);
+        throw refreshCause;
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Claim transition failed");
     } finally {

@@ -85,6 +85,13 @@ execution, UUIDv7 stale-lease reclaim, stale-worker fencing, proof exclusion,
 and three-attempt dead-letter handling; it does not claim live-provider or
 production validator readiness.
 
+Run `make refund-proof-integration-drill` for the real Docker indexer proof
+boundary. It resolves a synthetic finalized refund claim PDA, parses the exact
+transaction-bound event and pre/post token balances, persists one immutable
+proof, finalizes the execute intent/outbox once, and rejects mutation/replay
+duplication. It is local synthetic-provider evidence only and does not claim
+live RPC-provider, validator, production SLO, or paid-state readiness.
+
 Run `make encrypted-backup-restore-drill` for the isolated PostgreSQL 18
 encrypted-artifact and tamper-rejection contract. It uses an ephemeral
 synthetic key and does not claim production KMS/HSM, off-site retention, or

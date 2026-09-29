@@ -160,7 +160,17 @@ jobs:
       - name: Check out source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Run transaction-bound proof-worker drill
-        run: make refund-proof-integration-drill
+        run: |
+          mkdir -p test-results/refund-proof-integration
+          make refund-proof-integration-drill | tee test-results/refund-proof-integration/evidence.txt
+      - name: Upload transaction-bound proof evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: refund-proof-integration-${{ github.run_id }}
+          path: test-results/refund-proof-integration/
+          if-no-files-found: warn
+          retention-days: 14
 
   indexer-replay-dead-letter:
     name: Indexer replay retry exhaustion

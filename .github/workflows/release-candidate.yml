@@ -76,6 +76,11 @@ jobs:
           mkdir -p release-bundle/indexer-replay-dead-letter
           cp -R test-results/indexer-replay-dead-letter/. release-bundle/indexer-replay-dead-letter/
 
+      - name: Run transaction-bound refund proof drill
+        run: |
+          mkdir -p release-bundle/refund-proof-integration
+          make refund-proof-integration-drill | tee release-bundle/refund-proof-integration/evidence.txt
+
       - name: Run Alertmanager delivery drill
         run: |
           make alert-delivery-drill

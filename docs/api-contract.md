@@ -633,6 +633,14 @@ window no longer than 90 days:
 }
 ```
 
+Claim responses use the exact wire contract `nonce`, `amount_atomic`, and
+optional `slot` as canonical decimal strings, including values above
+JavaScript's safe-integer range. Clients must reject numeric representations,
+malformed UUIDv7/account/digest fields, unsupported lifecycle states, and an
+invalid execution window before rendering the claim. After a transition, the
+client must reload the tenant-scoped claim; the transition envelope and local
+form values are not a financial projection.
+
 The first request creates a `proposed` claim, its append-only event, and its
 outbox publication in one serializable transaction. An identical retry returns
 the same claim; reuse of the idempotency key for different input returns

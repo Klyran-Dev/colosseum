@@ -41,8 +41,10 @@ solana-conformance` now executes the Vitest RPC client inside a pinned,
 non-root Docker image and no longer depends on host Node.js or pnpm. This
 improves bootstrap fidelity but does not close the independent Linux Agave
 validator gate. Its health probes are now bounded and retain a typed failure
-reason when Agave exits before RPC readiness, preventing a crashed validator
-from hanging a developer or CI job.
+reason when Agave exits before RPC readiness; the canonical Docker Desktop
+`io_uring NOT supported` diagnostic is classified as
+`validator_io_uring_unsupported`, preventing a crashed validator from hanging
+a developer or CI job.
 
 ## Correctness
 
@@ -504,6 +506,21 @@ and operational gates are intentionally not marked complete by unit tests.
 - [x] Checkout explains gross, tax, net, governed distribution, published rule
   release, rule digest, policy state, quote expiry, wallet authorization, and
   durable intent before wallet signing.
+- [x] ADR-0196 adds an exact-second client expiry guard that prevents stale
+  quote compilation and wallet signing while preserving server-owned expiry
+  validation. The 10/10 pinned browser run proves the synthetic expired-quote,
+  wallet-rejection rendering, and WCAG audit; live-provider and full recovery evidence remain
+  open.
+- [x] ADR-0197 adds strict browser parsing for calculation and replay evidence,
+  preserving signed i128 atomic values and rejecting malformed identities,
+  digests, statuses, component traces, and expiry before rendering. API,
+  browser, live-provider, and production identity evidence remain separate
+  gates.
+- [x] ADR-0198 adds strict vault-release response parsing and canonical Rust
+  `u64` wire strings, plus an authoritative claim reload after transitions;
+  malformed lifecycle evidence and stale local projections fail closed. Live
+  provider, validator, production identity, and full assistive-technology
+  evidence remain separate gates.
 - [x] Checkout constructs only the reviewed compiled instruction, keeps wallet
   keys client-side, submits unchanged signed bytes, and displays durable
   intent/commitment states without inferring finality from wallet signing.
@@ -671,6 +688,12 @@ and operational gates are intentionally not marked complete by unit tests.
   same-slot enforcement, checked-u64 underflow/overflow handling, and boundary
   tests, plus a bounded finalized post-state/topology reader. It is diagnostic
   only and is not a before/after proof source.
+- [x] ADR-0195 adds a real Docker proof-worker drill for ADR-0157: the indexer
+  resolves the finalized claim PDA, reads the exact transaction-bound event and
+  three-leg pre/post token balances, persists one immutable proof, finalizes the
+  execute intent/outbox exactly once, and rejects mutation/replay duplication.
+  The RPC is a synthetic finalized provider contract; live provider/validator,
+  production load/SLO, and paid-state gates remain open.
 - [ ] ADR-0157 transaction-bound refund proof is implemented with finalized
   `getTransaction` pre/post token balances, exact account-index/event binding,
   immutable proof persistence, and bounded failover. Paid-state behavior

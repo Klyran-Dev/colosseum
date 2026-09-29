@@ -15,16 +15,16 @@ export INDEXER_ALLOW_INSECURE_LOCAL_RPC="true"
 export INDEXER_RPC_ENDPOINTS="http://rpc-fixture:8899"
 export INDEXER_STREAM_KEY="drill/refund-proof/v1"
 export INDEXER_POLL_MS="100"
-export INDEXER_VAULT_RECONCILIATION_POLL_MS="100"
+export INDEXER_VAULT_RECONCILIATION_POLL_MS="5000"
 export RPC_FIXTURE_SIGNATURE_STATUS="finalized"
 
-merchant_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d61"
-adjustment_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d62"
-funding_configuration_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d63"
-claim_intent_id="01992f1b-4a70-8e30-8ea2-b6e37a9d9d64"
-execute_intent_id="01992f1b-4a70-8e30-8ea2-b6e37a9d9d65"
-original_settlement_id="01992f1b-4a70-8e30-8ea2-b6e37a9d9d66"
-source_calculation_id="01992f1b-4a70-8e30-8ea2-b6e37a9d9d67"
+merchant_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d51"
+adjustment_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d52"
+funding_configuration_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d53"
+claim_intent_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d54"
+execute_intent_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d55"
+original_settlement_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d56"
+source_calculation_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d57"
 stream_key="$INDEXER_STREAM_KEY"
 
 drill_dir="$(mktemp -d)"
@@ -62,7 +62,7 @@ export RPC_FIXTURE_REFUND_PROOF_NET="$(fixture_value '.net')"
 export RPC_FIXTURE_REFUND_PROOF_SLOT="$(fixture_value '.slot')"
 
 docker compose -p "$project_name" --profile settlement-submit-drill --profile indexer \
-    up --build --detach postgres rpc-fixture indexer >/dev/null
+    up --build --detach postgres rpc-fixture >/dev/null
 
 wait_http() {
     url=$1
@@ -76,16 +76,26 @@ wait_http() {
     return 1
 }
 
-wait_http "http://127.0.0.1:\${RPC_FIXTURE_PORT}/healthz" 90 || {
+wait_http "http://127.0.0.1:${RPC_FIXTURE_PORT}/healthz" 90 || {
     docker compose -p "$project_name" logs --no-color rpc-fixture >&2 || true
     echo "refund-proof RPC fixture did not become ready" >&2
     exit 1
 }
-wait_http "http://127.0.0.1:\${INDEXER_HEALTH_PORT}/readyz" 90 || {
-    docker compose -p "$project_name" logs --no-color indexer postgres >&2 || true
-    echo "refund-proof indexer did not become ready" >&2
+postgres_ready="false"
+for _attempt in $(seq 1 90); do
+    if docker compose -p "$project_name" exec -T postgres pg_isready -U tax_protocol -d tax_protocol >/dev/null 2>&1; then
+        postgres_ready="true"
+        break
+    fi
+    sleep 1
+done
+if [ "$postgres_ready" != "true" ]; then
+    docker compose -p "$project_name" logs --no-color postgres >&2 || true
+    echo "refund-proof PostgreSQL did not become ready" >&2
     exit 1
-}
+fi
+docker compose -p "$project_name" --profile settlement-submit-drill --profile indexer \
+    run --rm migrator >/dev/null
 
 claim_hex="$(fixture_value '.claim_hex')"
 adjustment_hex="$(fixture_value '.hex.adjustment')"
@@ -97,6 +107,8 @@ refund_funder_hex="$(fixture_value '.hex.refund_funder')"
 payer_destination_hex="$(fixture_value '.hex.payer_destination')"
 approver_hex="$(fixture_value '.hex.approver')"
 reference_digest_hex="$(fixture_value '.reference_digest_hex')"
+event_hex="$(fixture_value '.event_hex')"
+evidence_digest_hex="$(fixture_value '.evidence_digest_hex')"
 vault_authority="$(fixture_value '.vault_authority')"
 refund_funder="$(fixture_value '.refund_funder')"
 refund_source="$(fixture_value '.refund_source')"
@@ -112,7 +124,11 @@ psql_args="-v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol"
 docker compose -p "$project_name" exec -T postgres psql $psql_args \
     -v artifact_json="$artifact_json" <<SQL
 INSERT INTO chain_checkpoints (stream_key, next_slot, finalized_slot, generation)
-VALUES ('$stream_key', 901, 900, 0);
+VALUES ('$stream_key', 901, 900, 0)
+ON CONFLICT (stream_key) DO UPDATE
+SET next_slot = EXCLUDED.next_slot,
+    finalized_slot = EXCLUDED.finalized_slot,
+    generation = EXCLUDED.generation;
 
 INSERT INTO settlement_adjustments (
     id, merchant_id, idempotency_key, request_digest, adjustment_digest,
@@ -155,7 +171,7 @@ INSERT INTO refund_claim_intents (
     '$claim_intent_id', '$merchant_id', 'refund-proof-drill-claim', decode(repeat('37', 32), 'hex'),
     '$adjustment_id', '$funding_configuration_id', decode(repeat('35', 32), 'hex'), 'refund-proof-receipt',
     700, decode('$original_receipt_hex', 'hex'), decode('$payer_hex', 'hex'), decode('$merchant_hex', 'hex'),
-    decode('$mint_hex', 'hex'), 'TokenkegQfeZyiNwAJbbNbGKPFXCWuBvf9Ss623VQ5DA', '$merchant',
+    decode('$mint_hex', 'hex'), 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', '$merchant',
     '$refund_funder', 'refund-proof-funder', '$tax_vault', '$refund_source', '$payer_destination',
     11, 100, 25, 75, decode('$reference_digest_hex', 'hex'), 1, 9999999999,
     decode('$claim_hex', 'hex'), decode(repeat('38', 32), 'hex'), decode(repeat('39', 32), 'hex'),
@@ -173,7 +189,7 @@ INSERT INTO refund_execute_intents (
     '$claim_intent_id', '$funding_configuration_id', decode(repeat('35', 32), 'hex'),
     decode('$claim_hex', 'hex'), '$adjustment_id', decode('$original_receipt_hex', 'hex'),
     decode('$merchant_hex', 'hex'), decode('$mint_hex', 'hex'),
-    'TokenkegQfeZyiNwAJbbNbGKPFXCWuBv9Ss623VQ5DA',
+    'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
     '$approver', '$refund_funder', 'refund-proof-funder', decode(repeat('41', 32), 'hex'),
     decode(repeat('42', 32), 'hex'), :'artifact_json'::jsonb, 'submitted',
     '$signature', 900, 'confirmed'
@@ -188,9 +204,25 @@ INSERT INTO indexed_adjustment_refund_executions (
     decode('$adjustment_hex', 'hex'), decode('$original_receipt_hex', 'hex'), decode('$merchant_hex', 'hex'),
     decode('$mint_hex', 'hex'), 11, 100, 25, 75, decode('$refund_funder_hex', 'hex'),
     decode('$payer_destination_hex', 'hex'), decode('$approver_hex', 'hex'),
-    decode('$reference_digest_hex', 'hex'), decode(repeat('43', 32), 'hex')
+    decode('$reference_digest_hex', 'hex'), decode('$evidence_digest_hex', 'hex')
+);
+
+INSERT INTO raw_chain_evidence (
+    stream_key, signature, slot, event_index, event_discriminator,
+    event_data, evidence_digest
+) VALUES (
+    '$stream_key', '$signature', 900, 0, decode(left('$event_hex', 16), 'hex'),
+    decode('$event_hex', 'hex'), decode('$evidence_digest_hex', 'hex')
 );
 SQL
+
+docker compose -p "$project_name" --profile settlement-submit-drill --profile indexer \
+    up --build --detach indexer >/dev/null
+wait_http "http://127.0.0.1:${INDEXER_HEALTH_PORT}/readyz" 90 || {
+    docker compose -p "$project_name" logs --no-color indexer postgres >&2 || true
+    echo "refund-proof indexer did not become ready" >&2
+    exit 1
+}
 
 proof_ready="false"
 for _attempt in $(seq 1 120); do
@@ -212,7 +244,7 @@ if [ "$proof_ready" != "true" ]; then
 fi
 
 proof_cardinality="$(docker compose -p "$project_name" exec -T postgres psql -qAt $psql_args -c \
-    "SELECT count(*) || '|' || min(slot::text) || '|' || min(execution.proof_claim_attempts::text)
+    "SELECT count(*) || '|' || min(proof.slot::text) || '|' || min(execution.proof_claim_attempts::text)
        FROM refund_balance_proofs proof
        JOIN indexed_adjustment_refund_executions execution USING (stream_key, signature, event_index)
       WHERE proof.stream_key = '$stream_key';")"

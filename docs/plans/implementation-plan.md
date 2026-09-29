@@ -205,6 +205,26 @@ advance a movement to a successful state.
   observation, typed event/raw evidence projection, and proof-envelope replay.
   Live wallet/provider, Linux validator, load/SLO, and production accessibility
   evidence remain separate gates.
+- [x] Add ADR-0195 and `make refund-proof-integration-drill`: the real Docker
+  indexer resolves the synthetic finalized claim PDA, parses the exact
+  transaction-bound refund event and pre/post token balances, persists one
+  immutable balance proof, finalizes the execute intent/outbox once, and
+  rejects proof mutation and replay duplication. Live RPC-provider, validator,
+  production load/SLO, and paid-state enablement remain separate gates.
+- [x] Add ADR-0196's client quote-expiry boundary: the checkout refreshes the
+  server-declared expiry observation once per second, prevents compile/sign
+  actions at the exact expiry second, keeps API expiry validation as the
+  authority, and has a 10/10 pinned NGINX browser regression for the rendered
+  disabled state. Live-provider evidence remains a separate gate.
+- [x] Add ADR-0197's strict browser tax-evidence response parser. Calculation
+  and replay payloads now validate UUIDv7 identity, bounded complete component
+  traces, fixed digests, expiry, statuses, and signed i128 decimal amounts
+  before entering React state; malformed responses fail closed.
+- [x] Add ADR-0198's strict vault-release lifecycle response contract.
+  Vault-release `u64` amounts, nonces, and slots serialize as canonical decimal
+  strings; the SPA validates claim/transition evidence and refreshes the
+  server-owned claim after every successful transition instead of merging form
+  values into financial state.
 - [ ] Add wallet workspace evidence against a live injected wallet, Linux
   validator conformance, load/SLO evidence, and production enablement gates.
 
@@ -316,7 +336,8 @@ adjustment-refund Anchor contexts box their large account values, and the
 Docker/local SBF build wrapper fails closed on compiler stack-frame safety
 diagnostics. The program artifact now builds without the previously observed
 4 KiB frame overflows. Validator health probes are bounded and classify an
-early Agave exit in retained `result.env` evidence; Linux validator execution
+early Agave exit in retained `result.env` evidence, including the explicit
+`validator_io_uring_unsupported` capability reason; Linux validator execution
 remains an independent release gate.
 
 ## ADR-0154 — governed adjustment refund movement

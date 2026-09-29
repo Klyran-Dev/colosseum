@@ -31,7 +31,10 @@ change validator state, mount the host Docker socket, or access private keys.
 Health probes use bounded connect and total timeouts and inspect the validator
 container state after each attempt. A failed validator is therefore classified
 as a retained environment/startup failure rather than leaving CI waiting on an
-unbounded socket operation.
+unbounded socket operation. When Agave emits its canonical `io_uring NOT
+supported` startup diagnostic, the runner records the typed
+`validator_io_uring_unsupported` failure reason; it remains non-zero and never
+downgrades the validator gate.
 
 The conformance command therefore requires Docker/Compose and the pinned
 images, but no host Rust, Node.js, pnpm, Solana CLI, or NGINX installation.
@@ -52,6 +55,9 @@ images, but no host Rust, Node.js, pnpm, Solana CLI, or NGINX installation.
   `SOLANA_LOCALNET_TESTS=true`;
 - a missing image, failed dependency install, Vitest failure, RPC failure, or
   validator failure returns non-zero and retains evidence;
+- an Agave `io_uring NOT supported` startup diagnostic is recorded as
+  `validator_io_uring_unsupported`, preserving a precise infrastructure
+  prerequisite without treating it as protocol evidence;
 - each health probe has a bounded timeout, and `result.env` records the
   failure phase/reason so an unavailable Linux capability is distinguishable
   from a test assertion failure;

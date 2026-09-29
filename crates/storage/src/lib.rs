@@ -927,6 +927,7 @@ pub struct VaultReleaseClaim {
     pub tax_vault: String,
     pub destination: String,
     pub claim_pda: Option<String>,
+    #[serde(with = "policy::serde_u64_string")]
     pub nonce: u64,
     #[serde(with = "policy::serde_u64_string")]
     pub amount_atomic: u64,
@@ -937,6 +938,7 @@ pub struct VaultReleaseClaim {
     pub execute_after_unix: i64,
     pub expires_at_unix: i64,
     pub transaction_signature: Option<String>,
+    #[serde(with = "policy::serde_optional_u64_string")]
     pub slot: Option<u64>,
     pub last_error_code: Option<String>,
 }
@@ -12463,6 +12465,45 @@ mod tests {
             execute_after_unix: 1_790_000_000,
             expires_at_unix: 1_790_003_600,
         }
+    }
+
+    #[test]
+    fn vault_release_claim_wire_contract_preserves_u64_precision() {
+        let claim = VaultReleaseClaim {
+            id: Uuid::now_v7(),
+            merchant_id: Uuid::now_v7(),
+            idempotency_key: "release-precision".to_string(),
+            request_digest: [1; 32],
+            mint: "So11111111111111111111111111111111111111112".to_string(),
+            token_program: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA".to_string(),
+            tax_vault: "11111111111111111111111111111111".to_string(),
+            destination: "SysvarRent111111111111111111111111111111111".to_string(),
+            claim_pda: None,
+            nonce: u64::MAX,
+            amount_atomic: u64::MAX,
+            reference_digest: [2; 32],
+            status: "proposed".to_string(),
+            proposer_subject: "proposer".to_string(),
+            approver_subject: None,
+            execute_after_unix: 1_790_000_000,
+            expires_at_unix: 1_790_003_600,
+            transaction_signature: None,
+            slot: Some(u64::MAX),
+            last_error_code: None,
+        };
+        let wire = serde_json::to_value(claim).expect("vault release claim serializes");
+        assert_eq!(
+            wire["nonce"],
+            serde_json::Value::String(u64::MAX.to_string())
+        );
+        assert_eq!(
+            wire["amount_atomic"],
+            serde_json::Value::String(u64::MAX.to_string())
+        );
+        assert_eq!(
+            wire["slot"],
+            serde_json::Value::String(u64::MAX.to_string())
+        );
     }
 
     fn refund_funding_configuration_command() -> CreateRefundFundingConfigurationCommand {

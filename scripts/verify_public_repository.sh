@@ -71,6 +71,10 @@ for file in \
   docs/adr/0192-real-browser-vault-reconciliation-evidence.md \
   docs/adr/0193-server-owned-reconciliation-freshness.md \
   docs/adr/0194-adjustment-wallet-finality-drill.md \
+  docs/adr/0195-transaction-bound-refund-proof-drill.md \
+  docs/adr/0196-client-quote-expiry-boundary.md \
+  docs/adr/0197-strict-browser-tax-evidence-responses.md \
+  docs/adr/0198-strict-vault-release-response-contract.md \
   test-vectors/settlement-adjustment-evidence-v1.json \
   test-vectors/settlement-refund-claim-v1.json \
   docs/operations/slo-error-budget-policy.md \
@@ -83,6 +87,7 @@ for file in \
   ops/docker/Dockerfile.solana-conformance \
   scripts/generate_release_sbom.sh \
   scripts/vault_reconciliation_drill.sh \
+  scripts/refund_proof_integration_drill.sh \
   scripts/benchmark_rule_simulation.sh \
   scripts/migration_integrity_drill.sh \
   scripts/verify_deployment_config.sh \

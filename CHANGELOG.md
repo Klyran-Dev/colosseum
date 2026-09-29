@@ -27,6 +27,25 @@
   explicitly finalized fixture status, projects the typed event, and replays
   the server-owned proof envelope. Live wallet/provider, validator, Linux,
   load/SLO, and production accessibility evidence remain release gates.
+- Added ADR-0195's transaction-bound refund proof drill. The real Docker
+  indexer now resolves the synthetic finalized claim PDA, parses the exact
+  refund event and pre/post token balances, persists one immutable proof,
+  finalizes the execute intent/outbox once, and rejects mutation/replay
+  duplication. Live RPC-provider, validator, load/SLO, and paid-state evidence
+  remain release gates.
+- Tightened ADR-0168 conformance diagnostics so Agave's canonical
+  `io_uring NOT supported` startup failure is retained as the typed
+  `validator_io_uring_unsupported` result reason while preserving non-zero
+  fail-closed behavior.
+- Added ADR-0196's exact-second client quote-expiry guard. Expired quotes no
+  longer expose compile or wallet-sign actions; the API remains the expiry
+  authority. The pinned NGINX browser suite now covers the accessible expired
+  and wallet-rejection states with synthetic route fixtures.
+- Added ADR-0197 strict browser parsing for tax calculation and replay evidence;
+  malformed or numerically unsafe financial payloads now fail closed before
+  entering React state.
+- Added ADR-0198 strict vault-release lifecycle response parsing, canonical
+  Rust `u64` wire strings, and authoritative post-transition claim refreshes.
 - Added real component interaction coverage for the claim and execute wallet
   workspaces, including sequential role signing, unchanged-byte submission, and
   proof-pending UX. Live wallet/provider/finality evidence remains gated.

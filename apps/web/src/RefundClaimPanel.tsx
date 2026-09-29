@@ -62,10 +62,11 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
       });
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok) throw new Error(responseError(response, payload, `Refund claim preparation failed (${response.status})`));
-      setClaim(parseRefundClaimResponse(payload));
+      const parsed = parseRefundClaimResponse(payload);
+      setClaim(parsed);
       setSignedBytes(null);
       setRecoveryBytes("");
-      setLookupId((payload as { intent_id: string }).intent_id);
+      setLookupId(parsed.intent_id);
       setNotice("The server prepared an immutable claim artifact. Review the exact amounts, accounts, authorities, and expiry before collecting wallet signatures. No funds moved.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Refund claim preparation failed.");
