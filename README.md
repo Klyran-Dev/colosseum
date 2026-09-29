@@ -79,6 +79,12 @@ activation, one finalized RPC read under contention, and stale-lease reclaim
 after verifier termination; it does not claim live-provider or production
 validator readiness.
 
+Run `make refund-proof-lease-drill` for the Docker-only synthetic refund-proof
+worker evidence. It proves one winner for concurrent claims of the same
+execution, UUIDv7 stale-lease reclaim, stale-worker fencing, proof exclusion,
+and three-attempt dead-letter handling; it does not claim live-provider or
+production validator readiness.
+
 Run `make encrypted-backup-restore-drill` for the isolated PostgreSQL 18
 encrypted-artifact and tamper-rejection contract. It uses an ephemeral
 synthetic key and does not claim production KMS/HSM, off-site retention, or
@@ -91,9 +97,13 @@ reload action without implying a financial or Solana outcome.
 Run `make web-browser-check` for the opt-in real-browser UI contract. It uses
 the pinned Playwright Docker profile through the NGINX edge and verifies
 keyboard focus, lazy workspace loading, narrow RTL overflow, reduced motion,
-and redacted chunk-failure recovery. Client-only idempotency keys use a
-CSPRNG-only secure-context fallback; server UUIDv7 entity authority is
-unchanged.
+redacted chunk-failure recovery, an API-unavailable fail-closed state, and
+pinned axe-core WCAG A/AA audits across the quote and operational workspaces.
+The runner type-checks the e2e project before launching the browser.
+Client-only idempotency keys use a CSPRNG-only
+secure-context fallback; server UUIDv7 entity authority is unchanged. This
+automated gate does not replace manual assistive-technology, legal/tax,
+live-RPC, or mainnet evidence.
 
 Run `make deployment-config-contract` to check the non-local deployment
 preflight. It is intentionally synthetic and structural: it catches local
@@ -104,8 +114,15 @@ Run `make projection-rebuild-drill` for the Dockerized clean-projection
 rebuild and checkpoint-invariance check. It is a synthetic local drill, not a
 claim of production recovery readiness.
 Run `make postgres-contention-drill` for the pinned PostgreSQL lock,
-statement-timeout, and evidence-index contract; production saturation remains
-separate.
+statement-timeout, evidence-index, concurrent refund-nonce, same-key
+refund-claim, lifecycle-event, and outbox-cardinality contract; production
+saturation and regional SLO evidence remain separate.
+Run `make refund-execute-api-contention-drill` for the authenticated Docker API
+contract: real claim and finalized execute preparation with 16 concurrent
+same-key callers converging to one intent, lifecycle event, outbox row, and
+response digest; synthetic evidence does not claim live wallet/provider
+submission or production SLOs. The drill also reports bounded local p50/p95/p99
+latency samples with workload metadata.
 Run `make vault-reconciliation-drill` to exercise the real scheduled indexer
 against a bounded synthetic finalized token-account RPC response. The drill
 proves matched and append-only mismatch runs plus fixed-cardinality alert

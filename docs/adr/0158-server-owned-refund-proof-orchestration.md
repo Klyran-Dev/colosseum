@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted for implementation.
+Accepted — bounded orchestration ports, one-candidate worker, UUIDv7
+lease-fenced PostgreSQL ownership, and canonical service wiring are
+implemented. Linux validator/provider evidence and production enablement
+remain separate release gates.
 
 ## Context
 
@@ -80,3 +83,12 @@ room for future sharding by stream and merchant.
 - Add service tests proving one-candidate bounded processing and fail-closed
   behavior. Keep the production loop disabled until Linux validator-backed
   conformance and finalized-provider fixtures pass.
+
+The indexer provides `RefundProofCandidate`, `RefundProofCandidateSource`,
+`RefundProofSink`, and `RefundProofWorker`. The indexer service uses PostgreSQL
+source/sink adapters with the ADR-0185 UUIDv7 lease and token-fenced
+persistence. Focused tests prove one candidate per cycle, exact checked
+three-leg arithmetic, empty-cycle behavior, and provider topology substitution
+rejection; the Docker lease drill proves concurrent ownership, stale reclaim,
+stale-worker fencing, and proof exclusion. The worker never creates a paid
+lifecycle state.

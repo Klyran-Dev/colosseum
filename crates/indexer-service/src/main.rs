@@ -65,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (refund_claim_signature_source, refund_claim_transaction_source) =
         config.build_targeted_recovery_sources()?;
     let vault_source = config.build_vault_balance_source()?;
-    let refund_proof_source = config.build_refund_balance_proof_source()?;
+    let refund_proof_source = Arc::new(config.build_refund_balance_proof_source()?);
     let store = Arc::new(PgStore::from_url(
         &config.database_url,
         config.database_pool_size,
@@ -176,7 +176,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 let refund_proof_started = Instant::now();
                 let refund_proof_result = prove_one_refund_balance_once(
                     &store,
-                    &refund_proof_source,
+                    Arc::clone(&refund_proof_source),
                     &config.stream_key,
                 )
                 .await;

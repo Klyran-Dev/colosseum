@@ -158,6 +158,19 @@ advance a movement to a successful state.
 - [x] Add the server-owned claim artifact builder and preparation API, exact
   signed-message verification, bounded submission/reconciliation, and execute
   intent API contracts.
+- [x] Add ADR-0186 bounded storage-local retries for PostgreSQL serialization
+  and deadlock conflicts during refund nonce, claim-intent, and execute-intent
+  transactions; preserve the same digest and idempotency key across attempts.
+- [x] Add the authenticated Docker refund-execute API contention drill: 16
+  concurrent same-key callers converge to one durable intent, lifecycle event,
+  outbox publication, and response digest; fix replay authority validation so
+  idempotent replays bind both the compiled approver key and authenticated
+  adjustment approver subject.
+- [x] Record the replay identity-domain correction and bounded authorization
+  lookup in ADR-0187.
+- [x] Add ADR-0188 bounded p50/p95/p99 latency evidence to the authenticated
+  execute-preparation contention drill; retain production and regional SLO
+  gates as separate evidence requirements.
 - [ ] Add wallet workspace evidence against a live injected wallet, Linux
   validator conformance, load/SLO evidence, and production enablement gates.
 
@@ -313,10 +326,38 @@ reconciliation gates pass.
 
 ## ADR-0158 — server-owned refund-proof orchestration
 
-Implement the bounded worker and storage candidate loader. The worker must
-derive all missing account bindings from the finalized claim PDA, use complete
-provider failover, call the pure checked proof, and persist only immutable
-evidence. Keep lifecycle/payment state out of this slice.
+The bounded worker and its narrow ports are implemented in the indexer and
+wired into the indexer service. `RefundProofWorker` claims at most one
+server-owned candidate, derives all missing account bindings from the finalized
+claim PDA through the complete provider port, calls the pure checked proof, and
+persists only immutable evidence. ADR-0185 implements the UUIDv7 PostgreSQL
+lease, proof-exclusion query, concurrent ownership fencing, idempotent proof
+path, raw-event transactional adapter, and three-attempt dead-letter handling.
+Focused tests plus the Docker lease drill cover the bounded and contention
+behavior. Keep lifecycle/payment state out of this slice.
+
+## ADR-0185 — lease-fenced refund-proof candidate ownership
+
+Add a 60-second PostgreSQL UUIDv7 lease to the indexed refund execution
+projection. `SKIP LOCKED` claims one candidate before RPC work, stale leases
+are reclaimable, and serializable persistence requires the exact lease token
+while rechecking raw event identity. Wire the canonical `RefundProofWorker`
+through PostgreSQL source/sink adapters and remove the legacy unleased proof
+cursor. The lease is coordination only and cannot authorize payment.
+
+## ADR-0186 — bounded refund-intent serialization retries
+
+Refund nonce allocation and claim/execute intent creation retain their
+`SERIALIZABLE` authority boundary while applying a three-attempt, storage-local
+retry only for PostgreSQL `40001` and `40P01`. The request digest,
+idempotency key, immutable artifact, first lifecycle event, and first outbox
+publication remain unchanged across attempts. `make postgres-contention-drill`
+proves the database contract for 16 concurrent nonce allocations and same-key
+claim creation. `make refund-execute-api-contention-drill` additionally drives
+the authenticated API and proves 16 same-key execute-preparation callers
+converge to one intent, lifecycle event, outbox publication, and response
+digest; retry telemetry, live submission, and production load/SLO evidence
+remain release evidence.
 
 ## ADR-0159 — refund-proof operational observability
 
@@ -1341,9 +1382,12 @@ an official Playwright 1.63.0 runner pinned by immutable image digest. It
 executes against the built NGINX edge and proves keyboard skip/focus behavior,
 real lazy workspace loading, narrow RTL overflow, reduced-motion behavior, and
 redacted dynamic-import recovery. It also injects the locked dev-only
-`axe-core` source into the real browser and audits the quote plus every lazy
-workspace against WCAG A/AA tags. Use `make web-browser-check`; the current
-Docker run passes 4/4 tests. CI retains failure traces, screenshots, videos,
+`axe-core` source into the real browser and audits the quote, API-unavailable
+state, plus every lazy workspace against WCAG A/AA tags. Use
+`make web-browser-check`; the current Docker run type-checks the e2e project
+before launching and passes 5/5 test cases while auditing 7/7 lazy workspace
+surfaces.
+CI retains failure traces, screenshots, videos,
 and JSON results under the ignored `test-results/web-e2e` path. This automated
 contract complements the fast axe-core baseline and does not claim
 screen-reader, legal/tax, live RPC, or mainnet evidence.

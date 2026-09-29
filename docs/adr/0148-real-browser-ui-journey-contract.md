@@ -25,6 +25,8 @@ Add a separate Docker Compose `browser` profile with a `web-e2e` service:
 - use `@playwright/test` 1.63.0 as a development-only test dependency;
 - use the official Playwright `v1.63.0-noble` multi-architecture image pinned
   by its immutable OCI index digest;
+- type-check the browser test project inside the same pinned runner before
+  launching Playwright, so CI cannot pass a transpiled-but-invalid journey;
 - build the test runner separately from the NGINX runtime image and run it
   against `http://edge:8080` over the Compose network;
 - cover desktop and narrow mobile viewports, keyboard skip/focus behavior,
@@ -65,6 +67,7 @@ finality, or reconciliation result.
 - A real-browser axe failure blocks the browser gate; a pass is automated
   evidence only and does not replace manual screen-reader or assistive-
   technology review.
+- The browser test project must type-check before any browser is launched.
 
 ## Alternatives considered
 
@@ -78,8 +81,11 @@ finality, or reconciliation result.
 
 ## Verification and release impact
 
-`make web-browser-check` must pass on a clean Docker environment. CI retains
-the failure artifacts and publishes the test result as a separate browser
+`make web-browser-check` must pass on a clean Docker environment. The pinned
+runner type-checks the e2e project before launching Playwright and audits the
+quote, degraded API-health state, and every lazy operational workspace with
+axe-core WCAG A/AA tags. CI retains failure artifacts and publishes the result
+as a separate browser
 journey gate. This closes the deterministic real-browser journey contract but
 does not, by itself, prove screen-reader quality, legal/tax correctness, live
 RPC behavior, or general WCAG 2.2 AA conformance; manual assistive-technology

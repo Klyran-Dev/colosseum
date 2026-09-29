@@ -4,6 +4,9 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use settlement_adjustments::{
+    AdjustmentDelta, RefundBalanceProof, RefundBalanceSnapshot, prove_refund_balance_deltas,
+};
 use sha2::{Digest, Sha256};
 use solana_signature::Signature;
 use std::str::FromStr;
@@ -13,6 +16,7 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 use thiserror::Error;
+use uuid::Uuid;
 
 pub const MAX_SCAN_RANGE_SLOTS: u64 = 10_000;
 pub const MAX_RPC_PAGE_SLOTS: u64 = 128;
@@ -2097,6 +2101,275 @@ impl FailoverRefundBalanceProofSource {
             ProviderError::Transport("refund proof provider pool returned no result".to_string())
         }))
     }
+}
+
+#[async_trait]
+impl FinalizedRefundBalanceProofSource for FailoverRefundBalanceProofSource {
+    async fn fetch_finalized_refund_balance_proof(
+        &self,
+        request: &RefundClaimTopologyRequest,
+        signature: &str,
+    ) -> Result<(RefundBalanceProofTarget, FinalizedRefundBalanceTransition), ProviderError> {
+        self.fetch_finalized_refund_balance_proof(request, signature)
+            .await
+    }
+}
+
+#[derive(Debug, Error, Eq, PartialEq)]
+pub enum RefundProofWorkerError {
+    #[error("refund proof candidate is invalid: {0}")]
+    InvalidCandidate(String),
+    #[error("refund proof provider failed: {0}")]
+    Provider(#[from] ProviderError),
+    #[error("refund proof arithmetic failed: {0}")]
+    Arithmetic(String),
+    #[error("refund proof persistence failed: {0}")]
+    Persistence(String),
+}
+
+/// A server-owned candidate selected from the indexed execution projection.
+/// The topology request is assembled by the storage boundary from finalized
+/// claim evidence; it is never accepted from an operator or browser request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RefundProofCandidate {
+    pub stream_key: String,
+    pub lease_token: Uuid,
+    pub execution: IndexedAdjustmentRefundExecution,
+    pub topology_request: RefundClaimTopologyRequest,
+}
+
+impl RefundProofCandidate {
+    pub fn validate(&self) -> Result<(), RefundProofWorkerError> {
+        if self.stream_key.trim().is_empty()
+            || self.stream_key.len() > 256
+            || self.stream_key != self.stream_key.trim()
+            || self.lease_token.get_version_num() != 7
+            || self.execution.slot == 0
+        {
+            return Err(RefundProofWorkerError::InvalidCandidate(
+                "stream key or finalized execution slot is invalid".to_string(),
+            ));
+        }
+        self.execution.validate_identity().map_err(|_| {
+            RefundProofWorkerError::InvalidCandidate(
+                "indexed refund execution identity is invalid".to_string(),
+            )
+        })?;
+        let request = &self.topology_request;
+        if request.claim != self.execution.claim
+            || request.adjustment != self.execution.adjustment
+            || request.original_receipt != self.execution.original_receipt
+            || request.merchant != self.execution.merchant
+            || request.mint != self.execution.mint
+            || request.claim_nonce != self.execution.nonce
+            || request.gross_atomic != self.execution.gross_magnitude
+            || request.tax_atomic != self.execution.tax_magnitude
+            || request.net_atomic != self.execution.net_magnitude
+            || request.refund_funder != self.execution.refund_funder
+            || request.refund_destination != self.execution.refund_destination
+            || request.reference_digest != self.execution.reference_digest
+        {
+            return Err(RefundProofWorkerError::InvalidCandidate(
+                "claim topology request is not bound to the indexed execution".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RefundProofEvidence {
+    pub stream_key: String,
+    pub lease_token: Uuid,
+    pub execution: IndexedAdjustmentRefundExecution,
+    pub topology: RefundBalanceTarget,
+    pub proof: RefundBalanceProof,
+}
+
+#[async_trait]
+pub trait RefundProofCandidateSource: Send + Sync {
+    async fn claim_next_refund_proof_candidate(
+        &self,
+    ) -> Result<Option<RefundProofCandidate>, RefundProofWorkerError>;
+
+    async fn record_refund_proof_failure(
+        &self,
+        _candidate: &RefundProofCandidate,
+        _reason: &str,
+    ) -> Result<(), RefundProofWorkerError> {
+        Ok(())
+    }
+}
+
+#[async_trait]
+pub trait RefundProofSink: Send + Sync {
+    async fn persist_refund_proof(
+        &self,
+        evidence: RefundProofEvidence,
+    ) -> Result<(), RefundProofWorkerError>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RefundProofCycleResult {
+    NoCandidate,
+    Persisted { signature: String, slot: u64 },
+}
+
+/// One-candidate, bounded proof cycle. The production adapter supplies the
+/// PostgreSQL claim/persistence ports; this worker owns only the trust-boundary
+/// sequencing and exact arithmetic. It never creates a paid state.
+pub struct RefundProofWorker {
+    candidates: Arc<dyn RefundProofCandidateSource>,
+    provider: Arc<dyn FinalizedRefundBalanceProofSource>,
+    sink: Arc<dyn RefundProofSink>,
+}
+
+impl RefundProofWorker {
+    pub fn new(
+        candidates: Arc<dyn RefundProofCandidateSource>,
+        provider: Arc<dyn FinalizedRefundBalanceProofSource>,
+        sink: Arc<dyn RefundProofSink>,
+    ) -> Self {
+        Self {
+            candidates,
+            provider,
+            sink,
+        }
+    }
+
+    pub async fn process_one(&self) -> Result<RefundProofCycleResult, RefundProofWorkerError> {
+        let Some(candidate) = self.candidates.claim_next_refund_proof_candidate().await? else {
+            return Ok(RefundProofCycleResult::NoCandidate);
+        };
+        let result = self.process_candidate(&candidate).await;
+        if let Err(error) = &result {
+            self.candidates
+                .record_refund_proof_failure(&candidate, refund_proof_failure_code(error))
+                .await?;
+        }
+        result
+    }
+
+    async fn process_candidate(
+        &self,
+        candidate: &RefundProofCandidate,
+    ) -> Result<RefundProofCycleResult, RefundProofWorkerError> {
+        candidate.validate()?;
+
+        let (target, transition) = self
+            .provider
+            .fetch_finalized_refund_balance_proof(
+                &candidate.topology_request,
+                &candidate.execution.signature,
+            )
+            .await
+            .map_err(RefundProofWorkerError::Provider)?;
+        validate_refund_proof_target_binding(candidate, &target)?;
+
+        let proof = prove_refund_balance_deltas(
+            AdjustmentDelta {
+                gross_atomic: -i128::from(candidate.execution.gross_magnitude),
+                tax_atomic: -i128::from(candidate.execution.tax_magnitude),
+                net_atomic: -i128::from(candidate.execution.net_magnitude),
+            },
+            RefundBalanceSnapshot {
+                finalized_slot: transition.slot,
+                tax_vault_atomic: transition.tax_vault_before_atomic,
+                refund_source_atomic: transition.refund_source_before_atomic,
+                payer_destination_atomic: transition.payer_destination_before_atomic,
+            },
+            RefundBalanceSnapshot {
+                finalized_slot: transition.slot,
+                tax_vault_atomic: transition.tax_vault_after_atomic,
+                refund_source_atomic: transition.refund_source_after_atomic,
+                payer_destination_atomic: transition.payer_destination_after_atomic,
+            },
+        )
+        .map_err(|error| RefundProofWorkerError::Arithmetic(error.to_string()))?;
+        let slot = proof.finalized_slot;
+        let signature = candidate.execution.signature.clone();
+        self.sink
+            .persist_refund_proof(RefundProofEvidence {
+                stream_key: candidate.stream_key.clone(),
+                lease_token: candidate.lease_token,
+                execution: candidate.execution.clone(),
+                topology: target.topology,
+                proof,
+            })
+            .await?;
+        Ok(RefundProofCycleResult::Persisted { signature, slot })
+    }
+}
+
+fn refund_proof_failure_code(error: &RefundProofWorkerError) -> &'static str {
+    match error {
+        RefundProofWorkerError::InvalidCandidate(_) => "invalid_candidate",
+        RefundProofWorkerError::Provider(_) => "provider_failure",
+        RefundProofWorkerError::Arithmetic(_) => "arithmetic_failure",
+        RefundProofWorkerError::Persistence(_) => "persistence_failure",
+    }
+}
+
+fn validate_refund_proof_target_binding(
+    candidate: &RefundProofCandidate,
+    target: &RefundBalanceProofTarget,
+) -> Result<(), RefundProofWorkerError> {
+    validate_refund_proof_target(target).map_err(RefundProofWorkerError::Provider)?;
+    let execution = &candidate.execution;
+    let request = &candidate.topology_request;
+    if target.signature != execution.signature
+        || target.gross_atomic != execution.gross_magnitude
+        || target.tax_atomic != execution.tax_magnitude
+        || target.net_atomic != execution.net_magnitude
+        || target.reference_digest != execution.reference_digest
+        || target.topology.claim_nonce != execution.nonce
+        || target.topology.token_program != settlement_client::SPL_TOKEN_PROGRAM_ID
+    {
+        return Err(RefundProofWorkerError::InvalidCandidate(
+            "provider proof target is not bound to the indexed execution".to_string(),
+        ));
+    }
+    for (value, expected, field) in [
+        (&target.topology.claim, request.claim, "claim"),
+        (
+            &target.topology.adjustment,
+            request.adjustment,
+            "adjustment",
+        ),
+        (
+            &target.topology.original_receipt,
+            request.original_receipt,
+            "original receipt",
+        ),
+        (&target.topology.merchant, request.merchant, "merchant"),
+        (&target.topology.mint, request.mint, "mint"),
+        (
+            &target.topology.refund_funder,
+            request.refund_funder,
+            "refund funder",
+        ),
+        (
+            &target.topology.payer_destination,
+            request.refund_destination,
+            "refund destination",
+        ),
+    ] {
+        let parsed = parse_refund_pubkey(value, field).map_err(RefundProofWorkerError::Provider)?;
+        if parsed.to_bytes() != expected {
+            return Err(RefundProofWorkerError::InvalidCandidate(format!(
+                "provider proof {field} is not bound to the indexed execution"
+            )));
+        }
+    }
+    for (value, field) in [
+        (&target.topology.tax_vault, "tax vault"),
+        (&target.topology.refund_source, "refund source"),
+        (&target.topology.vault_authority, "vault authority"),
+        (&target.topology.payer, "payer"),
+    ] {
+        parse_refund_pubkey(value, field).map_err(RefundProofWorkerError::Provider)?;
+    }
+    Ok(())
 }
 
 fn validate_refund_proof_target(target: &RefundBalanceProofTarget) -> Result<(), ProviderError> {
@@ -5396,6 +5669,233 @@ mod tests {
                 Ok(self.transition)
             }
         }
+    }
+
+    struct FakeRefundProofCandidates {
+        candidate: Mutex<Option<RefundProofCandidate>>,
+        failures: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl RefundProofCandidateSource for FakeRefundProofCandidates {
+        async fn claim_next_refund_proof_candidate(
+            &self,
+        ) -> Result<Option<RefundProofCandidate>, RefundProofWorkerError> {
+            self.candidate
+                .lock()
+                .map_err(|_| RefundProofWorkerError::Persistence("candidate mutex poisoned".into()))
+                .map(|mut candidate| candidate.take())
+        }
+
+        async fn record_refund_proof_failure(
+            &self,
+            _candidate: &RefundProofCandidate,
+            reason: &str,
+        ) -> Result<(), RefundProofWorkerError> {
+            self.failures
+                .lock()
+                .map_err(|_| RefundProofWorkerError::Persistence("failure mutex poisoned".into()))?
+                .push(reason.to_string());
+            Ok(())
+        }
+    }
+
+    struct FakeRefundProofProvider {
+        target: RefundBalanceProofTarget,
+        transition: FinalizedRefundBalanceTransition,
+    }
+
+    #[async_trait]
+    impl FinalizedRefundBalanceProofSource for FakeRefundProofProvider {
+        async fn fetch_finalized_refund_balance_proof(
+            &self,
+            _request: &RefundClaimTopologyRequest,
+            _signature: &str,
+        ) -> Result<(RefundBalanceProofTarget, FinalizedRefundBalanceTransition), ProviderError>
+        {
+            Ok((self.target.clone(), self.transition))
+        }
+    }
+
+    struct CapturingRefundProofSink {
+        evidence: Mutex<Option<RefundProofEvidence>>,
+    }
+
+    #[async_trait]
+    impl RefundProofSink for CapturingRefundProofSink {
+        async fn persist_refund_proof(
+            &self,
+            evidence: RefundProofEvidence,
+        ) -> Result<(), RefundProofWorkerError> {
+            self.evidence
+                .lock()
+                .map_err(|_| RefundProofWorkerError::Persistence("sink mutex poisoned".into()))?
+                .replace(evidence);
+            Ok(())
+        }
+    }
+
+    fn refund_proof_worker_fixture() -> (
+        RefundProofCandidate,
+        RefundBalanceProofTarget,
+        FinalizedRefundBalanceTransition,
+    ) {
+        let execution = IndexedAdjustmentRefundExecution {
+            signature: test_signature(42),
+            slot: 777,
+            event_index: 0,
+            claim: [1; 32],
+            adjustment: [2; 32],
+            original_receipt: [3; 32],
+            merchant: [4; 32],
+            mint: [5; 32],
+            nonce: 1,
+            gross_magnitude: 100,
+            tax_magnitude: 25,
+            net_magnitude: 75,
+            refund_funder: [6; 32],
+            refund_destination: [7; 32],
+            approver: [8; 32],
+            reference_digest: [9; 32],
+            evidence_digest: [10; 32],
+        };
+        let pubkey = |bytes: [u8; 32]| Pubkey::new_from_array(bytes).to_string();
+        let topology_request = RefundClaimTopologyRequest {
+            claim: execution.claim,
+            adjustment: execution.adjustment,
+            original_receipt: execution.original_receipt,
+            merchant: execution.merchant,
+            mint: execution.mint,
+            claim_nonce: execution.nonce,
+            gross_atomic: execution.gross_magnitude,
+            tax_atomic: execution.tax_magnitude,
+            net_atomic: execution.net_magnitude,
+            refund_funder: execution.refund_funder,
+            refund_destination: execution.refund_destination,
+            reference_digest: execution.reference_digest,
+        };
+        let target = RefundBalanceProofTarget {
+            signature: execution.signature.clone(),
+            topology: RefundBalanceTarget {
+                claim: pubkey(execution.claim),
+                adjustment: pubkey(execution.adjustment),
+                original_receipt: pubkey(execution.original_receipt),
+                merchant: pubkey(execution.merchant),
+                claim_nonce: execution.nonce,
+                tax_vault: pubkey([11; 32]),
+                refund_source: pubkey([12; 32]),
+                payer_destination: pubkey(execution.refund_destination),
+                mint: pubkey(execution.mint),
+                token_program: settlement_client::SPL_TOKEN_PROGRAM_ID.to_string(),
+                vault_authority: pubkey([14; 32]),
+                refund_funder: pubkey(execution.refund_funder),
+                payer: pubkey([15; 32]),
+            },
+            gross_atomic: execution.gross_magnitude,
+            tax_atomic: execution.tax_magnitude,
+            net_atomic: execution.net_magnitude,
+            reference_digest: execution.reference_digest,
+        };
+        let transition = FinalizedRefundBalanceTransition {
+            slot: execution.slot,
+            tax_vault_before_atomic: 125,
+            tax_vault_after_atomic: 100,
+            refund_source_before_atomic: 175,
+            refund_source_after_atomic: 100,
+            payer_destination_before_atomic: 0,
+            payer_destination_after_atomic: 100,
+        };
+        (
+            RefundProofCandidate {
+                stream_key: "mainnet/settlement/v1".to_string(),
+                lease_token: Uuid::now_v7(),
+                execution,
+                topology_request,
+            },
+            target,
+            transition,
+        )
+    }
+
+    #[tokio::test]
+    async fn refund_proof_worker_processes_one_bound_candidate_and_persists_exact_proof() {
+        let (candidate, target, transition) = refund_proof_worker_fixture();
+        let signature = candidate.execution.signature.clone();
+        let sink = Arc::new(CapturingRefundProofSink {
+            evidence: Mutex::new(None),
+        });
+        let worker = RefundProofWorker::new(
+            Arc::new(FakeRefundProofCandidates {
+                candidate: Mutex::new(Some(candidate)),
+                failures: Mutex::new(Vec::new()),
+            }),
+            Arc::new(FakeRefundProofProvider { target, transition }),
+            sink.clone(),
+        );
+
+        assert_eq!(
+            worker.process_one().await.unwrap(),
+            RefundProofCycleResult::Persisted {
+                signature,
+                slot: 777
+            }
+        );
+        let evidence = sink.evidence.lock().unwrap().clone().unwrap();
+        assert_eq!(evidence.stream_key, "mainnet/settlement/v1");
+        assert_eq!(evidence.proof.gross_atomic, 100);
+        assert_eq!(evidence.proof.tax_atomic, 25);
+        assert_eq!(evidence.proof.net_atomic, 75);
+        assert_eq!(evidence.proof.finalized_slot, 777);
+    }
+
+    #[tokio::test]
+    async fn refund_proof_worker_has_one_candidate_bound_and_empty_cycle() {
+        let (candidate, target, transition) = refund_proof_worker_fixture();
+        let worker = RefundProofWorker::new(
+            Arc::new(FakeRefundProofCandidates {
+                candidate: Mutex::new(Some(candidate)),
+                failures: Mutex::new(Vec::new()),
+            }),
+            Arc::new(FakeRefundProofProvider { target, transition }),
+            Arc::new(CapturingRefundProofSink {
+                evidence: Mutex::new(None),
+            }),
+        );
+
+        worker.process_one().await.unwrap();
+        assert_eq!(
+            worker.process_one().await.unwrap(),
+            RefundProofCycleResult::NoCandidate
+        );
+    }
+
+    #[tokio::test]
+    async fn refund_proof_worker_rejects_provider_topology_substitution_before_persistence() {
+        let (candidate, mut target, transition) = refund_proof_worker_fixture();
+        target.topology.payer_destination = Pubkey::new_from_array([16; 32]).to_string();
+        let sink = Arc::new(CapturingRefundProofSink {
+            evidence: Mutex::new(None),
+        });
+        let candidates = Arc::new(FakeRefundProofCandidates {
+            candidate: Mutex::new(Some(candidate)),
+            failures: Mutex::new(Vec::new()),
+        });
+        let worker = RefundProofWorker::new(
+            candidates.clone(),
+            Arc::new(FakeRefundProofProvider { target, transition }),
+            sink.clone(),
+        );
+
+        assert!(matches!(
+            worker.process_one().await,
+            Err(RefundProofWorkerError::InvalidCandidate(message))
+                if message.contains("refund destination")
+        ));
+        assert!(sink.evidence.lock().unwrap().is_none());
+        assert_eq!(
+            candidates.failures.lock().unwrap().as_slice(),
+            ["invalid_candidate"]
+        );
     }
 
     struct CountingSource {

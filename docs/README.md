@@ -78,6 +78,10 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [ADR-0182: Encrypted backup artifact contract](adr/0182-encrypted-backup-artifact-contract.md)
 - [ADR-0183: Expand/contract migration rollback rehearsal](adr/0183-migration-rollback-rehearsal.md)
 - [ADR-0184: Typed finalized adjustment proof envelope](adr/0184-typed-finalized-adjustment-proof-envelope.md)
+- [ADR-0185: Lease-fenced refund-proof candidate ownership](adr/0185-lease-fenced-refund-proof-candidate-ownership.md)
+- [ADR-0186: Bounded refund-intent serialization retries](adr/0186-bounded-refund-intent-serialization-retries.md)
+- [ADR-0187: Refund-execute idempotent replay authorization](adr/0187-refund-execute-idempotent-replay-authorization.md)
+- [ADR-0188: Refund-execute contention latency evidence](adr/0188-refund-execute-contention-latency-evidence.md)
 - [Operations runbooks](runbooks/README.md)
 
 ## Status and scope
@@ -121,8 +125,17 @@ comparison runs through the Docker drill and CI; broader merchant, vault, and
 reporting projection rebuilds remain separately scoped.
 
 Run `make postgres-contention-drill` for the isolated PostgreSQL 18 lock,
-statement-timeout, migration, and evidence-index contract. It is a bounded
-database safety drill, not a production saturation or regional SLO claim.
+statement-timeout, migration, evidence-index, concurrent refund-nonce,
+same-key refund-claim, lifecycle-event, and outbox-cardinality contract. It
+is a bounded database safety drill, not a production saturation or regional
+SLO claim.
+Run `make refund-execute-api-contention-drill` for the authenticated API
+contention contract. It drives real claim and finalized execute preparation
+with 16 concurrent same-key callers and verifies one execute intent, one
+lifecycle event, one outbox row, and stable response digests. It is synthetic
+Docker evidence and does not replace live wallet/provider, validator, or
+production SLO evidence. It also reports bounded local p50/p95/p99 latency
+samples with workload metadata.
 
 Run `make migration-integrity-drill` for the Rust migration runner's ordered
 PostgreSQL ledger, advisory-lock, idempotent re-run, and historical checksum

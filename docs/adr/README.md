@@ -185,3 +185,7 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0182: Encrypted backup artifact contract](0182-encrypted-backup-artifact-contract.md)
 - [ADR-0183: Expand/contract migration rollback rehearsal](0183-migration-rollback-rehearsal.md)
 - [ADR-0184: Typed finalized adjustment proof envelope](0184-typed-finalized-adjustment-proof-envelope.md)
+- [ADR-0185: Lease-fenced refund-proof candidate ownership](0185-lease-fenced-refund-proof-candidate-ownership.md)
+- [ADR-0186: Bounded refund-intent serialization retries](0186-bounded-refund-intent-serialization-retries.md)
+- [ADR-0187: Refund-execute idempotent replay authorization](0187-refund-execute-idempotent-replay-authorization.md)
+- [ADR-0188: Refund-execute contention latency evidence](0188-refund-execute-contention-latency-evidence.md)

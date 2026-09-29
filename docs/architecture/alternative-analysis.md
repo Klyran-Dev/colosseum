@@ -1228,3 +1228,15 @@ bind the response to the exact finalized typed event.
 | Client-supplied proof fields | Flexible client recovery | Caller-controlled evidence and substitution risk | Rejected |
 | Re-query indexed evidence for every browser render | No schema change | Adds latency/availability coupling and no stable proof contract | Rejected |
 | **Persist event index/digest and return a server-owned typed proof envelope** | Refresh-safe, replayable, bounded, and explicit | Additive migration and cross-language vectors required | **Selected in ADR-0184** |
+
+### Refund-proof candidate ownership
+
+| Option | Benefits | Costs / risks | Decision |
+| --- | --- | --- | --- |
+| Read-only unproved cursor | No coordination schema | Duplicate provider work and replica races | Rejected |
+| Database lock held across RPC | Strong active exclusion | Couples pool capacity to external latency and stalls | Rejected |
+| Redis/distributed lock | Familiar lease primitive | Disposable coordination is not evidence-bound; adds failure authority | Rejected |
+| **PostgreSQL UUIDv7 lease with `SKIP LOCKED`, TTL reclaim, and final token CAS** | Durable ownership, bounded crash recovery, no database lock during RPC, stale-worker fencing | Requires additive lease columns, metrics, and contention tests | **Selected in ADR-0185** |
+| **Storage-local bounded retries for refund-intent serializable conflicts** | Preserves atomic idempotency/event/outbox writes while absorbing ordinary `40001`/`40P01` contention | Adds bounded retry latency and requires measured retry telemetry | **Selected in ADR-0186** |
+| **Refund-execute replay authorization** | Compiled approver public key plus immutable adjustment approver subject | Adds one bounded tenant-scoped lookup on replay/read/submit | **Selected in ADR-0187; avoids comparing Solana keys to OIDC subjects** |
+| **Refund-execute contention latency evidence** | Bounded authenticated API samples with p50/p95/p99 and explicit workload metadata | Local-only evidence with a small sample; excludes live wallet/RPC and regional variance | **Selected in ADR-0188** |

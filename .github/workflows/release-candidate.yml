@@ -59,6 +59,16 @@ jobs:
           REFUND_FUNDING_VERIFIER_EVIDENCE_DIR: release-bundle/refund-funding-verifier
         run: make refund-funding-verifier-drill
 
+      - name: Run lease-fenced refund-proof candidate ownership drill
+        run: |
+          mkdir -p release-bundle/refund-proof-lease
+          make refund-proof-lease-drill | tee release-bundle/refund-proof-lease/evidence.txt
+
+      - name: Run authenticated refund-execute API contention drill
+        run: |
+          mkdir -p release-bundle/refund-execute-api-contention
+          make refund-execute-api-contention-drill | tee release-bundle/refund-execute-api-contention/evidence.txt
+
       - name: Run migration integrity drill
         run: |
           mkdir -p release-bundle

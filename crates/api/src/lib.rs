@@ -1387,6 +1387,11 @@ impl From<StorageError> for ApiError {
                 "immutable refund balance proof evidence conflicts with the stored record"
                     .to_string(),
             ),
+            StorageError::RefundBalanceProofLeaseLost => (
+                StatusCode::CONFLICT,
+                "REFUND_BALANCE_PROOF_LEASE_LOST",
+                "the refund proof worker no longer owns this evidence candidate".to_string(),
+            ),
         };
         Self {
             status,
@@ -5104,11 +5109,8 @@ async fn prepare_refund_execute_inner(
             code: "REFUND_EXECUTE_ARTIFACT_CORRUPT",
             message: "persisted refund execute artifact failed integrity validation".into(),
         })?;
-        if artifact.authority_subject != principal.subject {
-            return Err(ApiError::from(
-                StorageError::RefundExecuteIntentIdempotencyConflict,
-            ));
-        }
+        validate_refund_execute_replay_authority(store.as_ref(), &intent, &artifact, &principal)
+            .await?;
         return Ok(Json(refund_execute_response(intent, artifact)));
     }
 
@@ -5319,6 +5321,29 @@ fn refund_execute_response(
     }
 }
 
+async fn validate_refund_execute_replay_authority(
+    store: &PgStore,
+    intent: &storage::RefundExecuteIntent,
+    artifact: &RefundArtifact,
+    principal: &auth::AuthenticatedPrincipal,
+) -> Result<(), ApiError> {
+    if artifact.authority_subject != intent.approver {
+        return Err(ApiError::from(
+            StorageError::RefundExecuteIntentIdempotencyConflict,
+        ));
+    }
+    let adjustment = store
+        .load_settlement_adjustment(intent.adjustment_id, principal.merchant_id)
+        .await
+        .map_err(ApiError::from)?;
+    if adjustment.approver_subject.as_deref() != Some(principal.subject.as_str()) {
+        return Err(ApiError::from(
+            StorageError::RefundExecuteIntentIdempotencyConflict,
+        ));
+    }
+    Ok(())
+}
+
 async fn load_refund_execute(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -5346,11 +5371,8 @@ async fn load_refund_execute(
             code: "REFUND_EXECUTE_ARTIFACT_CORRUPT",
             message: "persisted refund execute artifact failed integrity validation".into(),
         })?;
-    if artifact.authority_subject != principal.subject {
-        return Err(ApiError::from(
-            StorageError::RefundExecuteIntentIdempotencyConflict,
-        ));
-    }
+    validate_refund_execute_replay_authority(store.as_ref(), &intent, &artifact, &principal)
+        .await?;
     Ok(Json(refund_execute_response(intent, artifact)))
 }
 
@@ -5386,11 +5408,8 @@ async fn submit_refund_execute(
             code: "REFUND_EXECUTE_ARTIFACT_CORRUPT",
             message: "persisted refund execute artifact failed integrity validation".into(),
         })?;
-    if artifact.authority_subject != principal.subject {
-        return Err(ApiError::from(
-            StorageError::RefundExecuteIntentIdempotencyConflict,
-        ));
-    }
+    validate_refund_execute_replay_authority(store.as_ref(), &intent, &artifact, &principal)
+        .await?;
     if intent.status != SettlementStatus::PreparedUnsubmitted.as_str()
         && intent.status != SettlementStatus::Signed.as_str()
     {

@@ -154,6 +154,46 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  refund-proof-lease:
+    name: Lease-fenced refund-proof candidate ownership drill
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Run concurrent claim, stale reclaim, and dead-letter drill
+        run: |
+          mkdir -p test-results/refund-proof-lease
+          make refund-proof-lease-drill | tee test-results/refund-proof-lease/evidence.txt
+      - name: Upload refund-proof lease evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: refund-proof-lease-${{ github.run_id }}
+          path: test-results/refund-proof-lease/
+          if-no-files-found: warn
+          retention-days: 14
+
+  refund-execute-api-contention:
+    name: Authenticated refund-execute API contention drill
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Run concurrent authenticated execute-preparation drill
+        run: |
+          mkdir -p test-results/refund-execute-api-contention
+          make refund-execute-api-contention-drill | tee test-results/refund-execute-api-contention/evidence.txt
+      - name: Upload execute API contention evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: refund-execute-api-contention-${{ github.run_id }}
+          path: test-results/refund-execute-api-contention/
+          if-no-files-found: warn
+          retention-days: 14
+
   quote-load:
     name: Bounded quote-service load evidence
     runs-on: ubuntu-24.04

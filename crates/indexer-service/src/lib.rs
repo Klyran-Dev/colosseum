@@ -1,15 +1,17 @@
+use async_trait::async_trait;
 use indexer::{
     Checkpoint, FailoverPageSource, FailoverRefundBalanceProofSource, FailoverSignaturePageSource,
     FailoverTransactionSource, FailoverVaultBalanceSource, FinalizedPageSource,
     FinalizedRefundBalanceProofSource, FinalizedSignaturePageSource, FinalizedTransactionSource,
     FinalizedVaultBalanceSource, IndexerCoordinator, MAX_PROVIDER_ATTEMPTS, MAX_RPC_PAGE_SLOTS,
     MAX_RPC_RESPONSE_BYTES, ProviderError, ProviderHealthSnapshot, RefundClaimTopologyRequest,
-    ReplayGap, ReplayGapReason, ReqwestJsonRpcTransport, ScanRange, SettlementExecutedDecoder,
-    SolanaRpcPageSource, SolanaRpcRefundBalanceProofSource, SolanaRpcSignaturePageSource,
-    SolanaRpcTransactionSource, SolanaRpcVaultBalanceSource, VaultBalanceExpectation,
-    VaultBalanceReconciliation, VaultBalanceTarget, canonical_signature,
+    RefundProofCandidate, RefundProofCandidateSource, RefundProofCycleResult, RefundProofEvidence,
+    RefundProofSink, RefundProofWorker, RefundProofWorkerError, ReplayGap, ReplayGapReason,
+    ReqwestJsonRpcTransport, ScanRange, SettlementExecutedDecoder, SolanaRpcPageSource,
+    SolanaRpcRefundBalanceProofSource, SolanaRpcSignaturePageSource, SolanaRpcTransactionSource,
+    SolanaRpcVaultBalanceSource, VaultBalanceExpectation, VaultBalanceReconciliation,
+    VaultBalanceTarget, canonical_signature,
 };
-use settlement_adjustments::{AdjustmentDelta, RefundBalanceSnapshot, prove_refund_balance_deltas};
 use solana_pubkey::Pubkey;
 use std::str::FromStr;
 use std::{
@@ -22,9 +24,10 @@ use std::{
 };
 use storage::{
     DEFAULT_REPLAY_LEASE, MAX_VAULT_RECONCILIATION_TARGETS, PgStore, ProtocolPauseMetricsSnapshot,
-    RefundClaimReconciliationMetricsSnapshot, RefundProofMetricsSnapshot, ReplayGapMetricsSnapshot,
-    StorageError, TargetedRecoveryMetricsSnapshot, VaultReconciliationMetricsSnapshot,
-    VaultReconciliationRun, refund_claim_evidence_expectation,
+    RefundBalanceProofTopology, RefundClaimReconciliationMetricsSnapshot,
+    RefundProofMetricsSnapshot, ReplayGapMetricsSnapshot, StorageError,
+    TargetedRecoveryMetricsSnapshot, VaultReconciliationMetricsSnapshot, VaultReconciliationRun,
+    refund_claim_evidence_expectation,
 };
 use thiserror::Error;
 
@@ -592,85 +595,158 @@ pub async fn reconcile_vaults_once(
     Ok(())
 }
 
-/// Proves and persists at most one refund balance transition. The candidate,
-/// topology, and proof are all server-owned; no browser or operator input is
-/// accepted by this worker boundary.
+struct PostgresRefundProofCandidateSource {
+    store: Arc<PgStore>,
+    stream_key: String,
+}
+
+#[async_trait]
+impl RefundProofCandidateSource for PostgresRefundProofCandidateSource {
+    async fn claim_next_refund_proof_candidate(
+        &self,
+    ) -> Result<Option<RefundProofCandidate>, RefundProofWorkerError> {
+        let Some(candidate) = self
+            .store
+            .load_pending_refund_balance_proof_execution(&self.stream_key)
+            .await
+            .map_err(|error| RefundProofWorkerError::Persistence(error.to_string()))?
+        else {
+            return Ok(None);
+        };
+        let execution = candidate.execution;
+        Ok(Some(RefundProofCandidate {
+            stream_key: self.stream_key.clone(),
+            lease_token: candidate.lease_token,
+            topology_request: RefundClaimTopologyRequest {
+                claim: execution.claim,
+                adjustment: execution.adjustment,
+                original_receipt: execution.original_receipt,
+                merchant: execution.merchant,
+                mint: execution.mint,
+                claim_nonce: execution.nonce,
+                gross_atomic: execution.gross_magnitude,
+                tax_atomic: execution.tax_magnitude,
+                net_atomic: execution.net_magnitude,
+                refund_funder: execution.refund_funder,
+                refund_destination: execution.refund_destination,
+                reference_digest: execution.reference_digest,
+            },
+            execution,
+        }))
+    }
+
+    async fn record_refund_proof_failure(
+        &self,
+        candidate: &RefundProofCandidate,
+        reason: &str,
+    ) -> Result<(), RefundProofWorkerError> {
+        let owned = self
+            .store
+            .record_refund_proof_candidate_failure(
+                &candidate.stream_key,
+                &candidate.execution,
+                candidate.lease_token,
+                reason,
+            )
+            .await
+            .map_err(|error| RefundProofWorkerError::Persistence(error.to_string()))?;
+        if !owned {
+            return Err(RefundProofWorkerError::Persistence(
+                "refund proof failure lease was lost before recording".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+struct PostgresRefundProofSink {
+    store: Arc<PgStore>,
+}
+
+#[async_trait]
+impl RefundProofSink for PostgresRefundProofSink {
+    async fn persist_refund_proof(
+        &self,
+        evidence: RefundProofEvidence,
+    ) -> Result<(), RefundProofWorkerError> {
+        let target = evidence.topology;
+        let topology = RefundBalanceProofTopology {
+            claim: parse_refund_key(&target.claim, "claim")
+                .map_err(|error| RefundProofWorkerError::Persistence(error.to_string()))?,
+            adjustment: parse_refund_key(&target.adjustment, "adjustment")
+                .map_err(|error| RefundProofWorkerError::Persistence(error.to_string()))?,
+            original_receipt: parse_refund_key(&target.original_receipt, "original receipt")
+                .map_err(|error| RefundProofWorkerError::Persistence(error.to_string()))?,
+            merchant: parse_refund_key(&target.merchant, "merchant")
+                .map_err(|error| RefundProofWorkerError::Persistence(error.to_string()))?,
+            mint: parse_refund_key(&target.mint, "mint")
+                .map_err(|error| RefundProofWorkerError::Persistence(error.to_string()))?,
+            token_program: parse_refund_key(&target.token_program, "token program")
+                .map_err(|error| RefundProofWorkerError::Persistence(error.to_string()))?,
+            tax_vault: parse_refund_key(&target.tax_vault, "tax vault")
+                .map_err(|error| RefundProofWorkerError::Persistence(error.to_string()))?,
+            refund_source: parse_refund_key(&target.refund_source, "refund source")
+                .map_err(|error| RefundProofWorkerError::Persistence(error.to_string()))?,
+            payer_destination: parse_refund_key(&target.payer_destination, "payer destination")
+                .map_err(|error| RefundProofWorkerError::Persistence(error.to_string()))?,
+            vault_authority: parse_refund_key(&target.vault_authority, "vault authority")
+                .map_err(|error| RefundProofWorkerError::Persistence(error.to_string()))?,
+            refund_funder: parse_refund_key(&target.refund_funder, "refund funder")
+                .map_err(|error| RefundProofWorkerError::Persistence(error.to_string()))?,
+            payer: parse_refund_key(&target.payer, "payer")
+                .map_err(|error| RefundProofWorkerError::Persistence(error.to_string()))?,
+        };
+        self.store
+            .persist_refund_balance_proof(
+                &evidence.stream_key,
+                &evidence.execution,
+                evidence.lease_token,
+                topology,
+                evidence.proof,
+            )
+            .await
+            .map_err(|error| RefundProofWorkerError::Persistence(error.to_string()))?;
+        Ok(())
+    }
+}
+
+fn map_refund_proof_worker_error(error: RefundProofWorkerError) -> IndexerServiceError {
+    match error {
+        RefundProofWorkerError::Provider(error) => IndexerServiceError::Provider(error),
+        RefundProofWorkerError::InvalidCandidate(message)
+        | RefundProofWorkerError::Arithmetic(message)
+        | RefundProofWorkerError::Persistence(message) => {
+            IndexerServiceError::RefundProofDomain(message)
+        }
+    }
+}
+
+/// Proves and persists at most one refund balance transition. PostgreSQL
+/// claims the candidate with a UUIDv7 lease before this bounded worker calls
+/// external RPC; persistence is fenced by the same token.
 pub async fn prove_one_refund_balance_once(
     store: &PgStore,
-    source: &FailoverRefundBalanceProofSource,
+    source: Arc<FailoverRefundBalanceProofSource>,
     stream_key: &str,
 ) -> Result<bool, IndexerServiceError> {
-    let Some(execution) = store
-        .load_pending_refund_balance_proof_execution(stream_key)
-        .await?
-    else {
-        return Ok(false);
-    };
-    let request = RefundClaimTopologyRequest {
-        claim: execution.claim,
-        adjustment: execution.adjustment,
-        original_receipt: execution.original_receipt,
-        merchant: execution.merchant,
-        mint: execution.mint,
-        claim_nonce: execution.nonce,
-        gross_atomic: execution.gross_magnitude,
-        tax_atomic: execution.tax_magnitude,
-        net_atomic: execution.net_magnitude,
-        refund_funder: execution.refund_funder,
-        refund_destination: execution.refund_destination,
-        reference_digest: execution.reference_digest,
-    };
-    let (target, transition) = source
-        .fetch_finalized_refund_balance_proof(&request, &execution.signature)
-        .await?;
-    if transition.slot != execution.slot || target.signature != execution.signature {
-        return Err(IndexerServiceError::RefundProofDomain(
-            "finalized refund proof slot or signature is not bound to the indexed execution"
-                .to_string(),
-        ));
+    let worker = RefundProofWorker::new(
+        Arc::new(PostgresRefundProofCandidateSource {
+            store: Arc::new(store.clone()),
+            stream_key: stream_key.to_string(),
+        }),
+        source,
+        Arc::new(PostgresRefundProofSink {
+            store: Arc::new(store.clone()),
+        }),
+    );
+    match worker
+        .process_one()
+        .await
+        .map_err(map_refund_proof_worker_error)?
+    {
+        RefundProofCycleResult::NoCandidate => Ok(false),
+        RefundProofCycleResult::Persisted { .. } => Ok(true),
     }
-    let delta = AdjustmentDelta {
-        gross_atomic: -(execution.gross_magnitude as i128),
-        tax_atomic: -(execution.tax_magnitude as i128),
-        net_atomic: -(execution.net_magnitude as i128),
-    };
-    let proof = prove_refund_balance_deltas(
-        delta,
-        RefundBalanceSnapshot {
-            finalized_slot: transition.slot,
-            tax_vault_atomic: transition.tax_vault_before_atomic,
-            refund_source_atomic: transition.refund_source_before_atomic,
-            payer_destination_atomic: transition.payer_destination_before_atomic,
-        },
-        RefundBalanceSnapshot {
-            finalized_slot: transition.slot,
-            tax_vault_atomic: transition.tax_vault_after_atomic,
-            refund_source_atomic: transition.refund_source_after_atomic,
-            payer_destination_atomic: transition.payer_destination_after_atomic,
-        },
-    )
-    .map_err(|error| IndexerServiceError::RefundProofDomain(error.to_string()))?;
-    let topology = storage::RefundBalanceProofTopology {
-        claim: execution.claim,
-        adjustment: execution.adjustment,
-        original_receipt: execution.original_receipt,
-        merchant: execution.merchant,
-        mint: execution.mint,
-        token_program: parse_refund_key(&target.topology.token_program, "token program")?,
-        tax_vault: parse_refund_key(&target.topology.tax_vault, "tax vault")?,
-        refund_source: parse_refund_key(&target.topology.refund_source, "refund source")?,
-        payer_destination: parse_refund_key(
-            &target.topology.payer_destination,
-            "payer destination",
-        )?,
-        vault_authority: parse_refund_key(&target.topology.vault_authority, "vault authority")?,
-        refund_funder: execution.refund_funder,
-        payer: parse_refund_key(&target.topology.payer, "payer")?,
-    };
-    store
-        .persist_refund_balance_proof(stream_key, &execution, topology, proof)
-        .await?;
-    Ok(true)
 }
 
 /// Reconciles at most one server-owned refund claim. The candidate, target

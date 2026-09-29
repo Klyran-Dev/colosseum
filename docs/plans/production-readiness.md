@@ -241,6 +241,23 @@ from hanging a developer or CI job.
 - [x] PostgreSQL lock and statement timeout contracts, migration ordering, and
   required evidence/replay indexes are exercised by the pinned Docker
   `make postgres-contention-drill` and CI job.
+- [x] The same Docker contention drill exercises 16 concurrent refund nonce
+  callers and 16 same-key refund-claim callers: nonce allocations are unique
+  with aggregate 1..16, and the idempotent claim converges to exactly one
+  intent, one initial lifecycle event, and one outbox row. This is database
+  contract evidence.
+- [x] The authenticated Docker API contention drill exercises the real claim
+  preparation and finalized execute-preparation routes with 16 concurrent
+  same-key callers. It proves HTTP 200 convergence to one execute intent, one
+  lifecycle event, one outbox row, and one request/artifact digest, and covers
+  the replay-authority boundary fixed by ADR-0187. This uses
+  synthetic server-owned finalized evidence; retry telemetry, pool saturation,
+  live wallet/provider submission, Linux validator conformance, and
+  production-scale SLO evidence remain open.
+- [x] ADR-0188 extends that drill with 16 client-observed latency samples and
+  reports p50/p95/p99 in milliseconds with workload metadata. This is bounded
+  Docker-local diagnostic evidence; regional, live-RPC, production-volume,
+  and finality SLO acceptance remain open.
 - [x] Bounded local pool pressure is measured through connection-free API
   gauges by `make postgres-pool-drill` and its CI job. On 2026-09-27, a
   one-connection pool handled 256 normal requests at concurrency 64 plus 256
@@ -528,8 +545,9 @@ and operational gates are intentionally not marked complete by unit tests.
   edge. The journey contract covers keyboard skip/focus behavior, lazy
   workspace chunks, narrow RTL overflow, reduced motion, and bounded dynamic
   import failure. It now also runs pinned `axe-core` WCAG A/AA audits against
-  the quote and every lazy workspace in the real browser; the 4/4 Docker run
-  passed. Manual assistive-technology review and live-provider journeys
+  the quote, API-unavailable fail-closed state, and every lazy workspace in the
+  real browser; the 7/7 Docker run passed. Manual assistive-technology review
+  and live-provider journeys
   remain open.
 - [x] ADR-0149 removes the secure-context-only `crypto.randomUUID()` startup
   dependency by using a CSPRNG `getRandomValues()` fallback for client-only
@@ -604,6 +622,11 @@ and operational gates are intentionally not marked complete by unit tests.
   transaction-bound execute balance proof are implemented. Linux validator
   conformance, live wallet evidence, concurrent/load/SLO evidence, and final
   operational approval remain required before refund movement is enabled.
+- [x] ADR-0186 adds bounded storage-local retries for refund nonce allocation
+  and claim/execute intent creation, retrying only PostgreSQL `40001` and
+  `40P01` conflicts while preserving immutable request and idempotency bindings.
+  PostgreSQL contention evidence, load/SLO measurement, and production approval
+  remain open.
 - [x] ADR-0174 finalized refund-funding topology verification now validates the
   complete legacy-SPL account set at one finalized slot, requires provider
   agreement, binds immutable evidence to the reviewed configuration, and
@@ -626,9 +649,23 @@ and operational gates are intentionally not marked complete by unit tests.
   `getTransaction` pre/post token balances, exact account-index/event binding,
   immutable proof persistence, and bounded failover. Paid-state behavior
   remains gated on validator, replay, and operator-reconciliation evidence.
-- [ ] ADR-0158 server-owned proof orchestration selects only unproved indexed
-  executions, resolves claim topology inside the complete provider attempt,
-  invokes checked domain arithmetic, and persists one bounded proof per cycle.
+- [x] ADR-0158 server-owned proof orchestration now has a bounded indexer
+  worker with narrow candidate/provider/sink ports. Focused tests prove one
+  candidate per cycle, exact checked arithmetic, empty-cycle behavior, and
+  provider-topology substitution rejection. ADR-0185 completes the
+  lease-fenced PostgreSQL candidate ownership, proof-exclusion selection,
+  concurrent token fencing, transactional raw-event binding, and canonical
+  production worker wiring. Linux validator/provider evidence, duplicate
+  persistence against live database fixtures, and retained production SLO
+  evidence remain separate release gates.
+- [x] ADR-0185 lease-fenced refund-proof candidate ownership is implemented
+  and verified with Docker-backed concurrent claimers, stale reclaim,
+  exact-token fencing, proof exclusion, and service wiring. Linux validator
+  conformance, finalized-provider evidence, duplicate-persistence fixtures,
+  and retained production SLO evidence remain separate release gates.
+- [x] CI and release-candidate workflows retain ADR-0185 lease-fencing
+  evidence, including concurrent claim ownership, stale-token fencing,
+  proof exclusion, and bounded dead-letter handling.
 - [x] ADR-0159 exports a fixed-cardinality refund-proof worker operation and a
   durable configured-stream pending backlog gauge, with a versioned Prometheus
   alert and no identity-bearing metric labels. Scrape authorization,

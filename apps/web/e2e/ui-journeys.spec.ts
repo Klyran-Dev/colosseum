@@ -55,6 +55,8 @@ test.describe("real-browser SPA journeys", () => {
       ["Vault releases", "Propose a vault release claim"],
       ["Vault reconciliation", "Vault reconciliation"],
       ["Settlement adjustments", "Propose an adjustment"],
+      ["Refund claims", "Prepare a refund claim"],
+      ["Refund executions", "Prepare execution"],
       ["Checkout authorization", "Review and authorize settlement"],
     ] as const;
 
@@ -76,6 +78,8 @@ test.describe("real-browser SPA journeys", () => {
       ["Vault releases", "Propose a vault release claim"],
       ["Vault reconciliation", "Vault reconciliation"],
       ["Settlement adjustments", "Propose an adjustment"],
+      ["Refund claims", "Prepare a refund claim"],
+      ["Refund executions", "Prepare execution"],
       ["Checkout authorization", "Review and authorize settlement"],
     ] as const;
 
@@ -111,5 +115,20 @@ test.describe("real-browser SPA journeys", () => {
     await expect(page.getByRole("heading", { name: "This workspace could not be loaded" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Reload application" })).toBeVisible();
     await expect(page.getByText(/secret|exception|stack|token/i)).toHaveCount(0);
+  });
+
+  test("fails closed when the API health boundary is unavailable", async ({ page }) => {
+    await page.route("**/*healthz*", (route) => route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: { code: "SERVICE_UNAVAILABLE", message: "temporarily unavailable" } }),
+    }));
+    await page.goto("/");
+
+    const outageAlert = page.getByRole("alert");
+    await expect(outageAlert).toHaveText("The service is unavailable. No client-side fallback is used.");
+    await expect(page.getByText("No calculation yet", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Create quote", exact: true })).toBeDisabled();
+    await expectNoBrowserAxeViolations(page, "API unavailable state");
   });
 });

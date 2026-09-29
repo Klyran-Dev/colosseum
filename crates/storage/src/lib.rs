@@ -78,6 +78,9 @@ pub const MAX_OUTBOX_ATTEMPTS: i32 = 10;
 pub const OUTBOX_PAYLOAD_SCHEMA_VERSION: u32 = 1;
 pub const REFUND_FUNDING_VERIFIER_VERSION: &str = "refund-funding-topology-v1";
 pub const REFUND_FUNDING_VERIFICATION_LEASE: Duration = Duration::from_secs(60);
+pub const REFUND_PROOF_CANDIDATE_LEASE: Duration = Duration::from_secs(60);
+pub const MAX_REFUND_PROOF_ATTEMPTS: i16 = 3;
+pub const MAX_REFUND_PROOF_ERROR_BYTES: usize = 1_024;
 const REFUND_FUNDING_VERIFIER_ACTOR: &str = "system:refund-funding-verifier";
 pub const DEFAULT_REPLAY_BATCH_SIZE: usize = 16;
 pub const MAX_REPLAY_BATCH_SIZE: usize = 64;
@@ -92,6 +95,8 @@ pub const DEFAULT_QUOTE_TTL: Duration = Duration::from_secs(15 * 60);
 pub const ATTESTED_CALCULATION_STATUS: &str = "attested";
 pub const MAX_QUOTE_RETRY_ATTEMPTS: usize = 3;
 const QUOTE_RETRY_BACKOFF: Duration = Duration::from_millis(2);
+pub const MAX_REFUND_INTENT_RETRY_ATTEMPTS: usize = 3;
+const REFUND_INTENT_RETRY_BACKOFF: Duration = Duration::from_millis(2);
 const MAX_EVIDENCE_LOOKUP_ATTEMPTS: usize = 3;
 const EVIDENCE_LOOKUP_BACKOFF: Duration = Duration::from_millis(2);
 pub const MAX_RULE_GOVERNANCE_EVIDENCE_BYTES: usize = 16 * 1024;
@@ -345,6 +350,8 @@ pub enum StorageError {
     InvalidRefundBalanceProof(String),
     #[error("refund balance proof conflicts with existing immutable evidence")]
     RefundBalanceProofConflict,
+    #[error("refund balance proof candidate lease is missing or owned by another worker")]
+    RefundBalanceProofLeaseLost,
 }
 
 #[derive(Clone)]
@@ -739,6 +746,19 @@ fn is_retryable_quote_error(error: &StorageError) -> bool {
 
 fn is_retryable_quote_sql_state(code: &str) -> bool {
     matches!(code, "40001" | "40P01")
+}
+
+fn is_retryable_refund_intent_sql_state(code: &str) -> bool {
+    matches!(code, "40001" | "40P01")
+}
+
+fn is_retryable_refund_intent_error(error: &StorageError) -> bool {
+    match error {
+        StorageError::Database(database_error) => database_error
+            .code()
+            .is_some_and(|code| is_retryable_refund_intent_sql_state(code.code())),
+        _ => false,
+    }
 }
 
 fn is_retryable_evidence_lookup_error(error: &StorageError) -> bool {
@@ -1484,6 +1504,12 @@ pub struct RefundBalanceProofTopology {
     pub vault_authority: [u8; 32],
     pub refund_funder: [u8; 32],
     pub payer: [u8; 32],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RefundBalanceProofCandidate {
+    pub execution: IndexedAdjustmentRefundExecution,
+    pub lease_token: Uuid,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -3800,10 +3826,14 @@ impl PgStore {
         &self,
         stream_key: &str,
         execution: &IndexedAdjustmentRefundExecution,
+        lease_token: Uuid,
         topology: RefundBalanceProofTopology,
         proof: RefundBalanceProof,
     ) -> Result<Uuid, StorageError> {
         validate_indexer_stream_key(stream_key)?;
+        if lease_token.get_version_num() != 7 {
+            return Err(StorageError::RefundBalanceProofLeaseLost);
+        }
         merge_adjustment_refund_execution(None, execution.clone())?;
         validate_refund_balance_proof_binding(execution, &topology, &proof)?;
         let proof_digest = proof
@@ -3833,7 +3863,8 @@ impl PgStore {
                         adjustment, original_receipt, merchant, mint,
                         nonce::text, gross_magnitude::text, tax_magnitude::text,
                         net_magnitude::text, refund_funder, refund_destination,
-                        approver, reference_digest, evidence_digest
+                        approver, reference_digest, evidence_digest,
+                        proof_claim_token
                  FROM indexed_adjustment_refund_executions
                  WHERE stream_key = $1 AND signature = $2 AND event_index = $3::text::smallint
                  FOR UPDATE",
@@ -3845,8 +3876,12 @@ impl PgStore {
             )
             .await?
             .ok_or(StorageError::RefundBalanceProofExecutionNotFound)?;
+        let stored_lease_token: Option<Uuid> = execution_row.get(17);
         if parse_indexed_adjustment_refund_execution_row(execution_row)? != *execution {
             return Err(StorageError::RefundBalanceProofConflict);
+        }
+        if stored_lease_token != Some(lease_token) {
+            return Err(StorageError::RefundBalanceProofLeaseLost);
         }
         let raw_row = transaction
             .query_opt(
@@ -3911,6 +3946,24 @@ impl PgStore {
                 proof_digest,
             )
             .await?;
+            let lease_cleared = transaction
+                .execute(
+                    "UPDATE indexed_adjustment_refund_executions
+                     SET proof_claim_token = NULL, proof_claimed_at = NULL
+                     WHERE stream_key = $1 AND signature = $2
+                       AND event_index = $3::text::smallint
+                       AND proof_claim_token = $4",
+                    &[
+                        &stream_key,
+                        &execution.signature,
+                        &execution.event_index.to_string(),
+                        &lease_token,
+                    ],
+                )
+                .await?;
+            if lease_cleared != 1 {
+                return Err(StorageError::RefundBalanceProofLeaseLost);
+            }
             transaction.commit().await?;
             return Ok(existing_record.0);
         }
@@ -3972,24 +4025,55 @@ impl PgStore {
             proof_digest,
         )
         .await?;
+        let lease_cleared = transaction
+            .execute(
+                "UPDATE indexed_adjustment_refund_executions
+                 SET proof_claim_token = NULL, proof_claimed_at = NULL
+                 WHERE stream_key = $1 AND signature = $2
+                   AND event_index = $3::text::smallint
+                   AND proof_claim_token = $4",
+                &[
+                    &stream_key,
+                    &execution.signature,
+                    &execution.event_index.to_string(),
+                    &lease_token,
+                ],
+            )
+            .await?;
+        if lease_cleared != 1 {
+            return Err(StorageError::RefundBalanceProofLeaseLost);
+        }
         transaction.commit().await?;
         Ok(id)
     }
 
-    /// Loads one server-owned indexed refund execution that has not yet
-    /// received immutable balance evidence. This is a bounded work cursor;
-    /// finalized Solana evidence and the proof digest remain authoritative.
+    /// Claims one server-owned indexed refund execution that has not yet
+    /// received immutable balance evidence. The UUIDv7 lease is committed
+    /// before external RPC work; an expired lease is reclaimable after the
+    /// bounded crash window.
     pub async fn load_pending_refund_balance_proof_execution(
         &self,
         stream_key: &str,
-    ) -> Result<Option<IndexedAdjustmentRefundExecution>, StorageError> {
+    ) -> Result<Option<RefundBalanceProofCandidate>, StorageError> {
         validate_indexer_stream_key(stream_key)?;
-        let client = self
+        let mut client = self
             .pool
             .get()
             .await
             .map_err(|error| StorageError::Pool(error.to_string()))?;
-        let row = client
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::ReadCommitted)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let row = transaction
             .query_opt(
                 "SELECT execution.signature, execution.slot::text,
                         execution.event_index::text, execution.claim,
@@ -4007,14 +4091,129 @@ impl PgStore {
                   AND proof.event_index = execution.event_index
                  WHERE execution.stream_key = $1
                    AND proof.id IS NULL
-                 ORDER BY execution.slot ASC, execution.signature ASC,
+                   AND execution.proof_claim_dead_lettered_at IS NULL
+                   AND execution.proof_claim_attempts < $3::smallint
+                   AND (execution.proof_claim_token IS NULL
+                        OR execution.proof_claimed_at < now()
+                            - ($2::bigint * interval '1 second'))
+                 ORDER BY execution.proof_claimed_at NULLS FIRST,
+                          execution.slot ASC, execution.signature ASC,
                           execution.event_index ASC
+                 FOR UPDATE OF execution SKIP LOCKED
                  LIMIT 1",
-                &[&stream_key],
+                &[
+                    &stream_key,
+                    &(REFUND_PROOF_CANDIDATE_LEASE.as_secs() as i64),
+                    &MAX_REFUND_PROOF_ATTEMPTS,
+                ],
             )
             .await?;
-        row.map(parse_indexed_adjustment_refund_execution_row)
-            .transpose()
+        let Some(row) = row else {
+            transaction.commit().await?;
+            return Ok(None);
+        };
+        let execution = parse_indexed_adjustment_refund_execution_row(row)?;
+        let lease_token = Uuid::now_v7();
+        let claimed = transaction
+            .execute(
+                "UPDATE indexed_adjustment_refund_executions
+                 SET proof_claim_token = $4,
+                     proof_claimed_at = now(),
+                     proof_claim_attempts = proof_claim_attempts + 1,
+                     proof_claim_last_error = NULL,
+                     proof_claim_dead_lettered_at = NULL
+                 WHERE stream_key = $1 AND signature = $2
+                   AND event_index = $3::text::smallint
+                   AND proof_claim_dead_lettered_at IS NULL
+                   AND proof_claim_attempts < $6::smallint
+                   AND (proof_claim_token IS NULL
+                        OR proof_claimed_at < now()
+                            - ($5::bigint * interval '1 second'))",
+                &[
+                    &stream_key,
+                    &execution.signature,
+                    &execution.event_index.to_string(),
+                    &lease_token,
+                    &(REFUND_PROOF_CANDIDATE_LEASE.as_secs() as i64),
+                    &MAX_REFUND_PROOF_ATTEMPTS,
+                ],
+            )
+            .await?;
+        if claimed != 1 {
+            transaction.rollback().await?;
+            return Ok(None);
+        }
+        transaction.commit().await?;
+        Ok(Some(RefundBalanceProofCandidate {
+            execution,
+            lease_token,
+        }))
+    }
+
+    /// Records a bounded proof-worker failure while fencing the exact lease
+    /// owner. The third attempt becomes explicit dead-letter evidence and is
+    /// excluded from automatic retries until an operator/reconciliation flow
+    /// handles it.
+    pub async fn record_refund_proof_candidate_failure(
+        &self,
+        stream_key: &str,
+        execution: &IndexedAdjustmentRefundExecution,
+        lease_token: Uuid,
+        reason: &str,
+    ) -> Result<bool, StorageError> {
+        validate_indexer_stream_key(stream_key)?;
+        if lease_token.get_version_num() != 7
+            || reason.trim().is_empty()
+            || reason.len() > MAX_REFUND_PROOF_ERROR_BYTES
+            || reason.bytes().any(|byte| byte.is_ascii_control())
+        {
+            return Err(StorageError::InvalidRefundBalanceProof(
+                "refund proof failure identity or reason is invalid".to_string(),
+            ));
+        }
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::ReadCommitted)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let updated = transaction
+            .execute(
+                "UPDATE indexed_adjustment_refund_executions
+                 SET proof_claim_token = NULL,
+                     proof_claimed_at = NULL,
+                     proof_claim_last_error = $4,
+                     proof_claim_dead_lettered_at = CASE
+                         WHEN proof_claim_attempts >= $5::smallint THEN now()
+                         ELSE NULL
+                     END
+                 WHERE stream_key = $1 AND signature = $2
+                   AND event_index = $3::text::smallint
+                   AND proof_claim_token = $6
+                   AND proof_claim_dead_lettered_at IS NULL",
+                &[
+                    &stream_key,
+                    &execution.signature,
+                    &execution.event_index.to_string(),
+                    &reason,
+                    &MAX_REFUND_PROOF_ATTEMPTS,
+                    &lease_token,
+                ],
+            )
+            .await?;
+        transaction.commit().await?;
+        Ok(updated == 1)
     }
 
     pub async fn record_reconciliation(
@@ -8091,6 +8290,36 @@ impl PgStore {
                 "merchant and adjustment identities must be UUIDv7".to_string(),
             ));
         }
+        for attempt in 0..MAX_REFUND_INTENT_RETRY_ATTEMPTS {
+            match self
+                .reserve_refund_claim_nonce_once(merchant_id, adjustment_id)
+                .await
+            {
+                Ok(nonce) => return Ok(nonce),
+                Err(error)
+                    if attempt + 1 < MAX_REFUND_INTENT_RETRY_ATTEMPTS
+                        && is_retryable_refund_intent_error(&error) =>
+                {
+                    tracing::warn!(
+                        attempt = attempt + 1,
+                        max_attempts = MAX_REFUND_INTENT_RETRY_ATTEMPTS,
+                        "retrying refund claim nonce allocation after a transient PostgreSQL conflict"
+                    );
+                    tokio::time::sleep(REFUND_INTENT_RETRY_BACKOFF * (attempt as u32 + 1)).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(StorageError::InvalidConfiguration(
+            "refund intent retry attempt budget must be positive".to_string(),
+        ))
+    }
+
+    async fn reserve_refund_claim_nonce_once(
+        &self,
+        merchant_id: Uuid,
+        adjustment_id: Uuid,
+    ) -> Result<u64, StorageError> {
         let mut client = self
             .pool
             .get()
@@ -8138,6 +8367,32 @@ impl PgStore {
         command: CreateRefundClaimIntentCommand,
     ) -> Result<RefundClaimIntent, StorageError> {
         validate_refund_claim_intent_command(&command)?;
+        for attempt in 0..MAX_REFUND_INTENT_RETRY_ATTEMPTS {
+            match self.create_refund_claim_intent_once(&command).await {
+                Ok(intent) => return Ok(intent),
+                Err(error)
+                    if attempt + 1 < MAX_REFUND_INTENT_RETRY_ATTEMPTS
+                        && is_retryable_refund_intent_error(&error) =>
+                {
+                    tracing::warn!(
+                        attempt = attempt + 1,
+                        max_attempts = MAX_REFUND_INTENT_RETRY_ATTEMPTS,
+                        "retrying refund claim intent after a transient PostgreSQL conflict"
+                    );
+                    tokio::time::sleep(REFUND_INTENT_RETRY_BACKOFF * (attempt as u32 + 1)).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(StorageError::InvalidConfiguration(
+            "refund intent retry attempt budget must be positive".to_string(),
+        ))
+    }
+
+    async fn create_refund_claim_intent_once(
+        &self,
+        command: &CreateRefundClaimIntentCommand,
+    ) -> Result<RefundClaimIntent, StorageError> {
         let unsigned_artifact = command
             .artifact
             .unsigned_artifact()
@@ -8333,6 +8588,32 @@ impl PgStore {
         command: CreateRefundExecuteIntentCommand,
     ) -> Result<RefundExecuteIntent, StorageError> {
         validate_refund_execute_intent_command(&command)?;
+        for attempt in 0..MAX_REFUND_INTENT_RETRY_ATTEMPTS {
+            match self.create_refund_execute_intent_once(&command).await {
+                Ok(intent) => return Ok(intent),
+                Err(error)
+                    if attempt + 1 < MAX_REFUND_INTENT_RETRY_ATTEMPTS
+                        && is_retryable_refund_intent_error(&error) =>
+                {
+                    tracing::warn!(
+                        attempt = attempt + 1,
+                        max_attempts = MAX_REFUND_INTENT_RETRY_ATTEMPTS,
+                        "retrying refund execute intent after a transient PostgreSQL conflict"
+                    );
+                    tokio::time::sleep(REFUND_INTENT_RETRY_BACKOFF * (attempt as u32 + 1)).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(StorageError::InvalidConfiguration(
+            "refund intent retry attempt budget must be positive".to_string(),
+        ))
+    }
+
+    async fn create_refund_execute_intent_once(
+        &self,
+        command: &CreateRefundExecuteIntentCommand,
+    ) -> Result<RefundExecuteIntent, StorageError> {
         let unsigned_artifact = command
             .artifact
             .unsigned_artifact()
@@ -12570,6 +12851,15 @@ mod tests {
         assert!(is_retryable_quote_sql_state("40P01"));
         assert!(!is_retryable_quote_sql_state("57014"));
         assert!(!is_retryable_quote_sql_state("23505"));
+    }
+
+    #[test]
+    fn refund_intent_retries_only_bounded_serialization_and_deadlock_states() {
+        assert_eq!(MAX_REFUND_INTENT_RETRY_ATTEMPTS, 3);
+        assert!(is_retryable_refund_intent_sql_state("40001"));
+        assert!(is_retryable_refund_intent_sql_state("40P01"));
+        assert!(!is_retryable_refund_intent_sql_state("57014"));
+        assert!(!is_retryable_refund_intent_sql_state("23505"));
     }
 
     #[test]

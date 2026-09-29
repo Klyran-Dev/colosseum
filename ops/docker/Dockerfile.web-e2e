@@ -13,4 +13,4 @@ RUN pnpm --dir apps/web install --frozen-lockfile
 COPY --chown=pwuser:pwuser apps/web ./apps/web
 USER pwuser
 
-CMD ["node", "/workspace/apps/web/node_modules/@playwright/test/cli.js", "test", "--config", "/workspace/apps/web/playwright.config.ts"]
+CMD ["/bin/sh", "-c", "/workspace/apps/web/node_modules/.bin/tsc --noEmit -p /workspace/apps/web/tsconfig.e2e.json && node /workspace/apps/web/node_modules/@playwright/test/cli.js test --config /workspace/apps/web/playwright.config.ts"]

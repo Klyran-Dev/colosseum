@@ -11,6 +11,7 @@
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "typecheck:e2e": "tsc --noEmit -p tsconfig.e2e.json",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
