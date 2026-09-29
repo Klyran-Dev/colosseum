@@ -68,6 +68,9 @@ for file in \
   docs/adr/0173-refund-claim-wallet-orchestration.md \
   docs/adr/0174-finalized-refund-funding-topology-verification.md \
   docs/adr/0175-durable-refund-claim-execute-intents.md \
+  docs/adr/0192-real-browser-vault-reconciliation-evidence.md \
+  docs/adr/0193-server-owned-reconciliation-freshness.md \
+  docs/adr/0194-adjustment-wallet-finality-drill.md \
   test-vectors/settlement-adjustment-evidence-v1.json \
   test-vectors/settlement-refund-claim-v1.json \
   docs/operations/slo-error-budget-policy.md \

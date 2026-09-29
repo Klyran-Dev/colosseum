@@ -144,7 +144,11 @@ from hanging a developer or CI job.
   server-owned target/run evidence with explicit stale, mismatch, error,
   unauthorized, timeout, and empty states. Browser target creation and
   opening-balance editing remain prohibited; provisioning ceremony and a
-  separately governed system-wide finance view remain release gates.
+  separately governed system-wide finance view remain release gates. ADR-0192
+  now adds real-browser evidence for server-shaped mismatch, history, and
+  unauthorized states. ADR-0193 adds a server-owned database-clock freshness
+  bit and stale stop state; live-provider, validator, timeout, scheduler SLO,
+  and production identity evidence remain open.
 - [x] Tax-engine golden vectors cover simple, progressive, tax-on-tax,
   cascading, inclusive/exclusive, min/max, threshold, exemption, cumulative
   snapshot, credit, truncation, and rounding cases.
@@ -406,14 +410,17 @@ and operational gates are intentionally not marked complete by unit tests.
   caller-controlled identity by overwrite. The API,
   worker, and indexer now expose bounded Prometheus-compatible metrics and
   Compose provisions Prometheus, Grafana, and an OTLP Collector. ADR-0084 now
-  adds versioned alert rules and pinned-image `promtool` validation, but this
-  gate remains open until scrape access policy, production exporters, receiver
-  delivery, dashboards, alerts, and load-derived SLO evidence are verified.
+  adds versioned alert rules and pinned-image `promtool` validation. ADR-0191
+  and `make alert-delivery-drill` now prove the local Prometheus → Alertmanager
+  → receiver route with a real isolated scrape outage, but this gate remains
+  open until scrape access policy, production exporters, authenticated
+  receiver delivery, dashboards, alerts, and load-derived SLO evidence are
+  verified.
 - [x] ADR-0123 exposes fixed-cardinality queued, leased, dead-lettered, and
   leased-slot-span replay gauges from the configured indexer stream, with
-  Prometheus rules for backlog and dead-letter alerts. Scrape authorization,
-  receiver delivery, lease-expiry/claim-loss counters, and production alert
-  response remain open.
+  Prometheus rules for backlog and dead-letter alerts. ADR-0191 proves local
+  receiver delivery; scrape authorization, lease-expiry/claim-loss counters,
+  and production alert response remain open.
 - [x] ADR-0124 adds a bounded finalized `getSignaturesForAddress` adapter for
   targeted discovery: limits, response size, canonical cursors, duplicate
   signatures, and finalized status are validated. The adapter cannot advance
@@ -443,18 +450,24 @@ and operational gates are intentionally not marked complete by unit tests.
   fixed provider-index label (ADR-0117). Endpoint, merchant, request, and
   signature identity are excluded; production scrape and alert delivery remain
   open.
-- [ ] Indexer backfill and replay are automated.
+- [x] Indexer backfill and replay are automated. ADR-0189 and
+  `make indexer-replay-drill` run two real indexer replicas against PostgreSQL
+  18 and a bounded finalized-RPC fixture, proving automatic lease-fenced gap
+  completion and forward-checkpoint isolation; live provider and production
+  recovery SLO evidence remain open.
 - [ ] Replay gaps have durable leases, dead-letter state, and retry exhaustion
   alerts. ADR-0086 now provides authenticated list/acknowledge/requeue
   operations plus immutable operator-action evidence; operator identity
-  lifecycle, production alert delivery, and replay-drill evidence remain open.
+  lifecycle, and ADR-0190 proves the automatic two-replica retry-exhaustion
+  and dead-letter path. Production alert delivery, on-call response, and live
+  recovery SLO evidence remain open.
 - [x] Retained raw event evidence and normalized `indexed_receipts` rebuild from
   a clean projection with byte-identical results. ADR-0088 defines the
   canonical decoder and bounded keyset-paginated primitive; `make
   projection-rebuild-drill` proves digest equality and checkpoint invariance in
   Docker and CI. Merchant, vault, and reporting projections require separate
   raw-evidence contracts and remain open.
-- [x] Vault balance reconciliation is scheduled and its matched/mismatch fixed-cardinality alert inputs are exercised through the real Docker indexer and synthetic finalized-account RPC boundary by ADR-0136; live provider, opening-balance ceremony, Alertmanager delivery, and Token-2022 extension evidence remain open.
+- [x] Vault balance reconciliation is scheduled and its matched/mismatch fixed-cardinality alert inputs are exercised through the real Docker indexer and synthetic finalized-account RPC boundary by ADR-0136; live provider, opening-balance ceremony, production Alertmanager delivery, and Token-2022 extension evidence remain open.
 - [x] Public-safe runbooks cover policy compromise, upgrade rollback, vault
   release incident, RPC outage, indexer gap, and backup/restore. Production
   role binding, on-call ownership, and measured drills remain deployment
@@ -609,7 +622,12 @@ and operational gates are intentionally not marked complete by unit tests.
   canonical signed `record_adjustment` bytes, bounded retry lifecycle, typed
   finalized event projection, exact intent/event matching, indexer-lag
   handling, wallet-workspace accessibility, and operator-visible
-  unknown/conflict states must pass before production enablement.
+  unknown/conflict states must pass before production enablement. ADR-0194
+  closes the local Docker evidence slice: real wallet-byte serialization,
+  concurrent [200,409] submission, exactly one fixture RPC send, explicit
+  finalized observation, typed event/raw evidence, and proof-envelope replay.
+  Live wallet/provider, Linux validator, production load/SLO, and full
+  assistive-technology evidence remain open.
 - [x] ADR-0184 closes the status-only finalized-response gap for adjustments:
   migration `0048` persists the matched event index/evidence digest, the API
   emits a server-owned typed proof envelope, and the browser rejects finalized

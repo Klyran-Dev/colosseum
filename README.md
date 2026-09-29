@@ -54,7 +54,7 @@ All implementation work follows [AGENTS.md](AGENTS.md): design before code, alte
 
 ## Public repository status
 
-The executable foundation can be checked with `make check`; `make integration-check` additionally builds an isolated Docker stack and verifies authenticated persisted quotes, an isolated synthetic external issuer, quote-bound attestation ingestion and exact replay, conflict/tenant rejection, non-simulation single/Split Plan compilation, quote-bound settlement compilation from server-owned amounts, authenticated replay-gap operator actions, NGINX forwarding and bounded-burst `429` admission, governed vault-release proposal/approval/on-chain-created/executed transitions with append-only evidence and mutation rejection, governed rule rollback through a corrected immutable release, idempotency conflict behavior, and asynchronous outbox publication through NATS JetStream. Run `make bench-tax-engine` for the explicit Criterion hot-path benchmark (record the workload and machine before comparing results). Run `make benchmark-quote-service` for the bounded HTTP workload, including same-key idempotency contention and exact persistence convergence. Run `make backup-restore-drill` for the isolated PostgreSQL logical backup/restore check, `make migration-integrity-drill` for ordered, checksum-verified migration ledger evidence, and `make migration-rollback-rehearsal` for pre-deploy restore, old-schema compatibility, and forward-recovery evidence. Run `make solana-conformance` for the explicit validator-backed release gate: it builds the pinned SBF artifact and executes real legacy SPL, extension-free Token-2022, duplicate-nonce, and unsupported-extension transactions. Start the local stack with `docker compose up --build`, then open `http://localhost:8088`; the direct API port is `18080`, PostgreSQL is `55432`, and NATS is `44222`. On a new named volume, the one-shot Rust migration runner applies the versioned migrations from `db/migrations/`; `make migrate` is safe to rerun. The optional Solana profile requires a Linux runtime with the `io_uring` capabilities required by Agave 4.3.0. Do not infer production support from architecture documents or the simulation endpoint alone.
+The executable foundation can be checked with `make check`; `make integration-check` additionally builds an isolated Docker stack and verifies authenticated persisted quotes, an isolated synthetic external issuer, quote-bound attestation ingestion and exact replay, conflict/tenant rejection, non-simulation single/Split Plan compilation, quote-bound settlement compilation from server-owned amounts, authenticated replay-gap operator actions, NGINX forwarding and bounded-burst `429` admission, governed vault-release proposal/approval/on-chain-created/executed transitions with append-only evidence and mutation rejection, governed rule rollback through a corrected immutable release, idempotency conflict behavior, asynchronous outbox publication through NATS JetStream, and the ADR-0194 wallet-bound adjustment finality drill with real signed instruction serialization, concurrent [200,409] submission, one fixture RPC send, explicit finalized observation, typed event projection, and proof-envelope replay. Run `make bench-tax-engine` for the explicit Criterion hot-path benchmark (record the workload and machine before comparing results). Run `make benchmark-quote-service` for the bounded HTTP workload, including same-key idempotency contention and exact persistence convergence. Run `make backup-restore-drill` for the isolated PostgreSQL logical backup/restore check, `make migration-integrity-drill` for ordered, checksum-verified migration ledger evidence, and `make migration-rollback-rehearsal` for pre-deploy restore, old-schema compatibility, and forward-recovery evidence. Run `make solana-conformance` for the explicit validator-backed release gate: it builds the pinned SBF artifact and executes real legacy SPL, extension-free Token-2022, duplicate-nonce, and unsupported-extension transactions. Start the local stack with `docker compose up --build`, then open `http://localhost:8088`; the direct API port is `18080`, PostgreSQL is `55432`, and NATS is `44222`. On a new named volume, the one-shot Rust migration runner applies the versioned migrations from `db/migrations/`; `make migrate` is safe to rerun. The optional Solana profile requires a Linux runtime with the `io_uring` capabilities required by Agave 4.3.0. Do not infer production support from architecture documents or the simulation endpoint alone.
 
 The conformance client is executed inside a pinned non-root Docker image, so
 the validator gate does not require host Node.js or pnpm. The SBF build also
@@ -113,6 +113,20 @@ providers, approvals, or production readiness are valid.
 Run `make projection-rebuild-drill` for the Dockerized clean-projection
 rebuild and checkpoint-invariance check. It is a synthetic local drill, not a
 claim of production recovery readiness.
+Run `make indexer-replay-drill` for the two-replica automated replay contract:
+the running indexer claims and completes a persisted gap through PostgreSQL 18
+and the bounded RPC fixture without advancing the forward checkpoint. This is
+CI/local recovery evidence, not live-provider or production recovery SLO
+evidence.
+Run `make indexer-replay-dead-letter-drill` for the failure contract: two
+replicas exhaust exactly eight provider-failure attempts, persist bounded
+dead-letter state, release the lease, and leave the forward checkpoint
+unchanged. Production alert delivery and on-call response remain separate
+gates.
+Run `make alert-delivery-drill` for the isolated operational path: it induces
+a bounded worker scrape outage and proves a real Prometheus rule reaches the
+pinned Alertmanager and test-only Rust receiver. This does not claim
+production receiver authentication, escalation, or on-call response.
 Run `make postgres-contention-drill` for the pinned PostgreSQL lock,
 statement-timeout, evidence-index, concurrent refund-nonce, same-key
 refund-claim, lifecycle-event, and outbox-cardinality contract; production
@@ -134,8 +148,9 @@ also proves that both providers were attempted.
 
 Start the local cache and observability profile with `make observability-up`.
 It provides disposable Redis on `46379`, Prometheus on `49090`, Grafana on
-`43000`, and OTLP gRPC/HTTP ingress on `44317`/`44318`; the Grafana dashboard
-is provisioned from checked-in configuration. These services are local
-operator tooling and never become tax or settlement authority. API responses
+`43000`, Alertmanager on `49093`, and OTLP gRPC/HTTP ingress on `44317`/`44318`;
+the Grafana dashboard and Alertmanager route are provisioned from checked-in
+configuration. `make alert-delivery-drill` retains local delivery evidence.
+These services are local operator tooling and never become tax or settlement authority. API responses
 also expose an API-owned UUIDv7 `x-request-id` support reference; caller- and
 edge-supplied values are overwritten.

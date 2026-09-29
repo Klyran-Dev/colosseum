@@ -134,6 +134,70 @@ jobs:
       - name: Run isolated Docker integration checks
         run: ./scripts/verify_local_stack.sh
 
+  indexer-replay:
+    name: Automated indexer replay recovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Run two-replica replay recovery drill
+        run: make indexer-replay-drill
+      - name: Upload replay recovery evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: indexer-replay-${{ github.run_id }}
+          path: test-results/indexer-replay/
+          if-no-files-found: warn
+          retention-days: 14
+
+  refund-proof:
+    name: Transaction-bound refund proof integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Run transaction-bound proof-worker drill
+        run: make refund-proof-integration-drill
+
+  indexer-replay-dead-letter:
+    name: Indexer replay retry exhaustion
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Run two-replica retry-exhaustion drill
+        run: make indexer-replay-dead-letter-drill
+      - name: Upload retry-exhaustion evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: indexer-replay-dead-letter-${{ github.run_id }}
+          path: test-results/indexer-replay-dead-letter/
+          if-no-files-found: warn
+          retention-days: 14
+
+  alert-delivery:
+    name: Alertmanager delivery contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Run Prometheus to Alertmanager delivery drill
+        run: make alert-delivery-drill
+      - name: Upload alert delivery evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: alert-delivery-${{ github.run_id }}
+          path: test-results/alert-delivery/
+          if-no-files-found: warn
+          retention-days: 14
+
   refund-funding-verifier:
     name: Lease-fenced refund-funding verifier drill
     runs-on: ubuntu-24.04

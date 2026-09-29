@@ -13,6 +13,7 @@ export API_SIMULATION_MODE="false"
 export API_ENV="local"
 export API_ALLOW_INSECURE_LOCAL_RPC="true"
 export API_SETTLEMENT_RPC_ENDPOINTS="http://rpc-fixture:8899"
+export RPC_FIXTURE_SIGNATURE_STATUS="finalized"
 export RPC_FIXTURE_REGISTRY_MERCHANT="11111111111111111111111111111114"
 export RPC_FIXTURE_REGISTRY_MINT="SysvarC1ock11111111111111111111111111111111"
 export RPC_FIXTURE_REGISTRY_PROPOSER="AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9"
@@ -250,9 +251,74 @@ reconciliation_targets_status=$(curl --silent --show-error \
     "$base_url/v1/vault/reconciliation/targets?limit=64")
 if [ "$reconciliation_targets_status" != "200" ] || \
     ! grep -q '"opening_balance_atomic":"1000"' "$reconciliation_targets_response_file" || \
-    ! grep -q '"status":"matched"' "$reconciliation_targets_response_file"; then
+    ! grep -q '"status":"matched"' "$reconciliation_targets_response_file" || \
+    ! grep -q '"stale":false' "$reconciliation_targets_response_file"; then
     echo "vault reconciliation target read model failed (HTTP $reconciliation_targets_status)" >&2
     sed -n '1,160p' "$reconciliation_targets_response_file" >&2
+    exit 1
+fi
+
+# Prove the server-owned stale calculation against the real PostgreSQL query,
+# not only through a browser fixture. This second synthetic target has an
+# append-only observation older than the fixed 90-second policy window.
+docker compose -p "$project_name" exec -T postgres \
+    psql -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
+    -c "INSERT INTO settlement_routes
+        (id, merchant_id, route_key, version, status,
+         merchant_account, mint, tax_vault, net_destination, token_program,
+         verification_digest, verification_slot, verification_commitment,
+         verification_evidence, verified_at)
+       VALUES
+        ('01992f1b-4a70-7e30-8ea2-b6e37a9d9d13', '$other_merchant_id',
+         'local-synthetic-stale-usd', 1, 'active',
+         '11111111111111111111111111111114',
+         'SysvarC1ock11111111111111111111111111111111',
+         'Sysvar1nstructions1111111111111111111111111',
+         'SysvarRecentB1ockHashes11111111111111111111',
+         'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+         decode(repeat('08', 32), 'hex'), 0, 'local_synthetic',
+         '{\"source\":\"synthetic-local-fixture\",\"warning\":\"not chain verified\"}'::jsonb,
+         now())
+       ON CONFLICT (id) DO NOTHING"
+stale_reconciliation_target_id=$(docker compose -p "$project_name" exec -T postgres \
+    psql -qAt -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
+    -c "INSERT INTO vault_reconciliation_targets
+        (merchant_id, route_id, stream_key, mint, token_program, tax_vault,
+         opening_balance_atomic, opening_balance_slot, opening_reference)
+       VALUES
+         ('$other_merchant_id',
+         '01992f1b-4a70-7e30-8ea2-b6e37a9d9d13',
+         'integration/vault-reconciliation-stale',
+         'SysvarC1ock11111111111111111111111111111111',
+         'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+         'Sysvar1nstructions1111111111111111111111111',
+         1000, 1, 'integration-stale-opening-balance-INC-42')
+       RETURNING id" | tr -d '[:space:]')
+docker compose -p "$project_name" exec -T postgres \
+    psql -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
+    -c "INSERT INTO vault_reconciliation_runs
+        (target_id, route_id, merchant_id, stream_key, mint, token_program,
+         tax_vault, opening_balance_atomic, receipt_tax_atomic, release_atomic,
+         expected_balance_atomic, observed_balance_atomic, observed_slot, status,
+         created_at)
+       VALUES
+        ('$stale_reconciliation_target_id',
+         '01992f1b-4a70-7e30-8ea2-b6e37a9d9d13', '$other_merchant_id',
+         'integration/vault-reconciliation-stale',
+         'SysvarC1ock11111111111111111111111111111111',
+         'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+         'Sysvar1nstructions1111111111111111111111111',
+         1000, 0, 0, 1000, 1000, 100, 'matched',
+       now() - interval '91 seconds')"
+stale_reconciliation_authorization="$(make_authorization stale-reconciliation-auditor 'tax:vault:read' '["vault_release_auditor"]' "$other_merchant_id")"
+stale_reconciliation_targets_status=$(curl --silent --show-error \
+    --output "$integration_dir/reconciliation-stale-targets-response.json" --write-out '%{http_code}' \
+    -H "Authorization: $stale_reconciliation_authorization" \
+    "$base_url/v1/vault/reconciliation/targets?limit=64")
+if [ "$stale_reconciliation_targets_status" != "200" ] || \
+    ! grep -q '"stale":true' "$integration_dir/reconciliation-stale-targets-response.json"; then
+    echo "vault reconciliation stale read model failed (HTTP $stale_reconciliation_targets_status)" >&2
+    sed -n '1,160p' "$integration_dir/reconciliation-stale-targets-response.json" >&2
     exit 1
 fi
 reconciliation_runs_status=$(curl --silent --show-error \
@@ -733,6 +799,8 @@ if ! printf '%s' "$process_crash_output" | grep -q '"send_transaction_calls":3';
     echo "process-crash recovery unexpectedly resubmitted the transaction" >&2
     exit 1
 fi
+curl --fail --silent --show-error --request POST \
+    "http://127.0.0.1:${RPC_FIXTURE_PORT}/admin/finalized" >/dev/null
 
 expired_calculation_id=$(docker compose -p "$project_name" exec -T postgres \
     psql -U tax_protocol -d tax_protocol -Atc \
@@ -1558,12 +1626,11 @@ if ! printf '%s' "$rollback_simulation_response" \
 fi
 echo "rule_rollback=passed"
 
-# Exercise the durable settlement-adjustment proposal and evidence compiler
-# boundary. This records an immutable signed refund delta and server-verified
-# finalized registry evidence; it deliberately does not submit a token
-# transaction or mark the refund as paid.
+# Exercise the durable settlement-adjustment proposal, wallet-bound record
+# submission, and finalized typed-event proof boundary. The record-only
+# instruction does not move tokens or mark a refund as paid.
 adjustment_proposer_authorization="$(make_authorization adjustment-proposer 'tax:adjustment:propose tax:adjustment:read tax:adjustment:authority:bind' '["settlement_adjustment_proposer"]')"
-adjustment_approver_authorization="$(make_authorization adjustment-approver 'tax:adjustment:approve tax:adjustment:read tax:adjustment:authority:bind tax:adjustment:compile' '["settlement_adjustment_approver"]')"
+adjustment_approver_authorization="$(make_authorization adjustment-approver 'tax:adjustment:approve tax:adjustment:read tax:adjustment:authority:bind tax:adjustment:compile tax:adjustment:submit tax:adjustment:reconcile' '["settlement_adjustment_approver"]')"
 adjustment_reviewer_authorization="$(make_authorization adjustment-reviewer 'tax:adjustment:reject tax:adjustment:read' '["settlement_adjustment_reviewer"]')"
 adjustment_original_settlement_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d13"
 adjustment_source_calculation_id="$calculation_id"
@@ -1679,6 +1746,85 @@ adjustment_compile_replay=$(printf '%s' '{"confirm":true}' | curl --fail --silen
     --data-binary @- "$base_url/v1/settlement/adjustments/$adjustment_id/compile")
 if [ "$adjustment_compile_response" != "$adjustment_compile_replay" ]; then
     echo "adjustment evidence compiler did not return a retry-stable response" >&2
+    exit 1
+fi
+adjustment_digest_hex=$(docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -Atc \
+    "select encode(adjustment_digest, 'hex') from settlement_adjustments where id='$adjustment_id' and merchant_id='$merchant_id';" | sed -n '1p')
+adjustment_evidence_digest_hex=$(docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -Atc \
+    "select encode(evidence_digest, 'hex') from settlement_adjustments where id='$adjustment_id' and merchant_id='$merchant_id';" | sed -n '1p')
+if [ "${#adjustment_digest_hex}" -ne 64 ] || [ "${#adjustment_evidence_digest_hex}" -ne 64 ]; then
+    echo "adjustment immutable digests were not available for the wallet finality drill" >&2
+    exit 1
+fi
+adjustment_initial_send_count=$(curl --fail --silent "http://127.0.0.1:${RPC_FIXTURE_PORT}/admin/send-count" | jq -er '.send_transaction_calls')
+adjustment_submission_output=$(API_BASE="$base_url" \
+    RPC_FIXTURE_URL="http://127.0.0.1:${RPC_FIXTURE_PORT}" \
+    AUTHORIZATION="$adjustment_approver_authorization" \
+    ARTIFACT_FILE="$adjustment_compile_response_file" \
+    APPROVER_SEED_HEX="0202020202020202020202020202020202020202020202020202020202020202" \
+    ADJUSTMENT_DIGEST_HEX="$adjustment_digest_hex" \
+    ADJUSTMENT_EVIDENCE_DIGEST_HEX="$adjustment_evidence_digest_hex" \
+    INITIAL_SEND_COUNT="$adjustment_initial_send_count" \
+    pnpm --dir apps/web exec node scripts/adjustment_submission_finality_drill.mjs)
+printf '%s\n' "$adjustment_submission_output"
+adjustment_signature=$(printf '%s' "$adjustment_submission_output" | jq -er '.signature')
+adjustment_chain_intent_id=$(printf '%s' "$adjustment_submission_output" | jq -er '.chain_intent_id')
+adjustment_event_data_hex=$(printf '%s' "$adjustment_submission_output" | jq -er '.event_data_hex')
+adjustment_event_digest_hex=$(printf '%s' "$adjustment_submission_output" | jq -er '.event_evidence_digest_hex')
+adjustment_pda_hex=$(printf '%s' "$adjustment_submission_output" | jq -er '.adjustment_hex')
+
+docker compose -p "$project_name" exec -T postgres psql \
+    -U tax_protocol -d tax_protocol -v ON_ERROR_STOP=1 -Atc \
+    "INSERT INTO indexed_settlement_adjustments
+        (stream_key, signature, slot, event_index, adjustment, original_receipt,
+         merchant, mint, nonce, kind, gross_sign, gross_magnitude, tax_sign,
+         tax_magnitude, net_sign, net_magnitude, adjustment_digest,
+         evidence_digest, adjustment_evidence_digest, approver)
+     SELECT 'integration/settlement-adjustment', '$adjustment_signature', 42, 0,
+        decode('$adjustment_pda_hex', 'hex'), evidence.original_receipt,
+        evidence.merchant, evidence.mint, evidence.nonce, 1, 1, 250, 1, 25,
+        1, 225, adjustment.adjustment_digest, decode('$adjustment_event_digest_hex', 'hex'),
+        adjustment.evidence_digest, evidence.approver
+       FROM settlement_adjustment_evidence_intents evidence
+       JOIN settlement_adjustments adjustment
+         ON adjustment.id = evidence.adjustment_id
+        AND adjustment.merchant_id = evidence.merchant_id
+      WHERE evidence.adjustment_id = '$adjustment_id'
+        AND evidence.merchant_id = '$merchant_id';
+     INSERT INTO raw_chain_evidence
+        (stream_key, signature, slot, event_index, event_discriminator,
+         event_data, evidence_digest)
+     VALUES ('integration/settlement-adjustment', '$adjustment_signature', 42, 0,
+        decode('d05645b72ccbec4b', 'hex'), decode('$adjustment_event_data_hex', 'hex'),
+        decode('$adjustment_event_digest_hex', 'hex'))
+     ON CONFLICT (stream_key, signature, event_index) DO NOTHING;"
+
+adjustment_finalized_response=$(curl --fail --silent --show-error \
+    --header "authorization: $adjustment_approver_authorization" \
+    --request POST \
+    "$base_url/v1/settlement/adjustment-chain-intents/$adjustment_chain_intent_id/reconcile")
+if ! printf '%s' "$adjustment_finalized_response" | grep -q '"status":"finalized"' \
+    || ! printf '%s' "$adjustment_finalized_response" | grep -q '"event_type":"SettlementAdjustmentRecorded"' \
+    || ! printf '%s' "$adjustment_finalized_response" | grep -q '"event_index":0'; then
+    echo "wallet-bound adjustment did not return the complete finalized proof envelope: $adjustment_finalized_response" >&2
+    exit 1
+fi
+adjustment_finalized_replay=$(curl --fail --silent --show-error \
+    --header "authorization: $adjustment_approver_authorization" \
+    "$base_url/v1/settlement/adjustment-chain-intents/$adjustment_chain_intent_id")
+adjustment_finalized_projection=$(printf '%s' "$adjustment_finalized_response" | jq -c '{chain_intent_id,status,signature,finalized_evidence}')
+adjustment_finalized_replay_projection=$(printf '%s' "$adjustment_finalized_replay" | jq -c '{chain_intent_id,status,signature,finalized_evidence}')
+if [ "$adjustment_finalized_projection" != "$adjustment_finalized_replay_projection" ]; then
+    echo "finalized adjustment proof replay was not stable" >&2
+    exit 1
+fi
+adjustment_finalized_event_count=$(docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -Atc \
+    "select count(*) from indexed_settlement_adjustments where signature='$adjustment_signature';")
+if [ "$adjustment_finalized_event_count" != "1" ]; then
+    echo "wallet-bound adjustment finality drill created duplicate typed projections" >&2
     exit 1
 fi
 adjustment_intent_evidence_count=$(docker compose -p "$project_name" exec -T postgres \

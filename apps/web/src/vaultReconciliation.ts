@@ -12,6 +12,7 @@ export type VaultReconciliationRun = {
   observed_slot: string | null;
   error_code: string | null;
   created_at: string;
+  stale: boolean;
 };
 
 export type VaultReconciliationTarget = {
@@ -71,6 +72,7 @@ function optionalAtomic(value: unknown, name: string): string | null {
 function run(value: unknown): VaultReconciliationRun {
   const source = record(value, "run");
   if (source.status !== "matched" && source.status !== "mismatch" && source.status !== "error") throw malformed("run status is unsupported");
+  if (typeof source.stale !== "boolean") throw malformed("run.stale must be boolean");
   return {
     id: uuid(source.id, "run.id"),
     status: source.status,
@@ -82,6 +84,7 @@ function run(value: unknown): VaultReconciliationRun {
     observed_slot: optionalAtomic(source.observed_slot, "run.observed_slot"),
     error_code: source.error_code === null ? null : text(source.error_code, "run.error_code"),
     created_at: text(source.created_at, "run.created_at"),
+    stale: source.stale,
   };
 }
 

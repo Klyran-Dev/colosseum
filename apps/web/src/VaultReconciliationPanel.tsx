@@ -19,11 +19,13 @@ type VaultReconciliationPanelProps = {
 
 function statusLabel(run: VaultReconciliationRun | null): string {
   if (!run) return "No observation yet";
+  if (run.stale) return "Stale — stop and investigate";
   return run.status === "matched" ? "Matched" : run.status === "mismatch" ? "Mismatch — stop and investigate" : "Observation error — not matched";
 }
 
 function statusClass(run: VaultReconciliationRun | null): string {
   if (!run) return "status-pill status-pill-warning";
+  if (run.stale) return "status-pill status-pill-danger";
   return run.status === "matched" ? "status-pill status-pill-success" : "status-pill status-pill-danger";
 }
 
@@ -119,10 +121,11 @@ export default function VaultReconciliationPanel({ apiBase, serviceOnline, local
       {selected && <article className="panel vault-detail-panel">
         <div className="panel-heading"><div><p className="eyebrow">Immutable target identity</p><h2>Evidence detail</h2></div><span className={statusClass(latest)}>{statusLabel(latest)}</span></div>
         <dl className="summary-list vault-summary"><div><dt>Tax vault</dt><dd><code>{selected.target.tax_vault}</code></dd></div><div><dt>Mint / token program</dt><dd><code>{selected.target.mint}</code><br /><code>{selected.target.token_program}</code></dd></div><div><dt>Opening balance</dt><dd>{formatBalance(selected.target.opening_balance_atomic)} at slot {selected.target.opening_balance_slot}</dd></div><div><dt>Opening reference</dt><dd>{selected.target.opening_reference}</dd></div><div><dt>Finalized receipt tax</dt><dd>{formatBalance(selected.target.receipt_tax_atomic)}</dd></div><div><dt>Finalized governed releases</dt><dd>{formatBalance(selected.target.release_atomic)}</dd></div></dl>
-        {latest?.status === "mismatch" && <p className="inline-error" role="alert">The latest finalized observation does not match the evidence-derived expectation. Stop release operations and follow the vault incident runbook.</p>}
-        {latest?.status === "error" && <p className="inline-error" role="alert">The latest observation could not be proven. Error code: {latest.error_code ?? "unknown"}. This target is not matched.</p>}
+        {latest?.stale && <p className="inline-error" role="alert">The latest finalized observation is stale and cannot prove the current vault balance. Stop release operations until a fresh observation is recorded.</p>}
+        {!latest?.stale && latest?.status === "mismatch" && <p className="inline-error" role="alert">The latest finalized observation does not match the evidence-derived expectation. Stop release operations and follow the vault incident runbook.</p>}
+        {!latest?.stale && latest?.status === "error" && <p className="inline-error" role="alert">The latest observation could not be proven. Error code: {latest.error_code ?? "unknown"}. This target is not matched.</p>}
         <div className="panel-heading vault-history-heading"><div><p className="eyebrow">Append-only history</p><h3>Recent runs</h3></div>{isLoadingRuns && <span className="status-pill">Loading…</span>}</div>
-        {runs.length === 0 && !isLoadingRuns ? <p className="panel-copy">Run history has not been loaded for this target.</p> : <div className="vault-run-list">{runs.map((run) => <div className="vault-run-row" key={run.id}><span className={statusClass(run)}>{run.status}</span><span>expected {run.expected_balance_atomic === null ? "—" : formatBalance(run.expected_balance_atomic)} · observed {run.observed_balance_atomic === null ? "—" : formatBalance(run.observed_balance_atomic)}</span><time dateTime={run.created_at}>{formatTimestamp(run.created_at, locale, timeZone)}</time>{run.error_code && <code>{run.error_code}</code>}</div>)}</div>}
+        {runs.length === 0 && !isLoadingRuns ? <p className="panel-copy">Run history has not been loaded for this target.</p> : <div className="vault-run-list">{runs.map((run) => <div className="vault-run-row" key={run.id}><span className={statusClass(run)}>{run.stale ? "stale" : run.status}</span><span>expected {run.expected_balance_atomic === null ? "—" : formatBalance(run.expected_balance_atomic)} · observed {run.observed_balance_atomic === null ? "—" : formatBalance(run.observed_balance_atomic)}</span><time dateTime={run.created_at}>{formatTimestamp(run.created_at, locale, timeZone)}</time>{run.error_code && <code>{run.error_code}</code>}</div>)}</div>}
       </article>}
     </section>
   );

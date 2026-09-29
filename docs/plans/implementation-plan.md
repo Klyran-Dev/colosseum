@@ -178,6 +178,33 @@ advance a movement to a successful state.
   submissions each produce one fixture RPC send, persist a `submitted` intent,
   and reject the competing replay without changing signed bytes. Finalized
   chain evidence and live-wallet/provider coverage remain separate gates.
+- [x] Add ADR-0189 and `make indexer-replay-drill`: two real indexer service
+  replicas automatically claim and complete one persisted replay gap through
+  PostgreSQL and the bounded RPC fixture, while the drill proves the forward
+  checkpoint is unchanged and fixed-cardinality replay metrics are exported.
+- [x] Add ADR-0190 and `make indexer-replay-dead-letter-drill`: two real
+  replicas exhaust exactly eight deterministic provider-failure attempts,
+  release the lease, persist bounded dead-letter state, and leave the forward
+  checkpoint unchanged.
+- [x] Add ADR-0191, pinned Alertmanager configuration, and
+  `make alert-delivery-drill`: an isolated worker scrape outage fires the real
+  Prometheus availability rule and proves delivery through Alertmanager to a
+  bounded Rust receiver fixture; production authentication, escalation, and
+  on-call response remain separate gates.
+- [x] Add ADR-0192 and extend the real-browser SPA journey with server-shaped
+  vault-reconciliation mismatch, history, and unauthorized fail-closed
+  evidence; live-provider, wallet, validator, and production identity gates
+  remain separate.
+- [x] Add ADR-0193 with a server-owned 90-second database-clock freshness
+  contract for reconciliation reads, including exact API/parser semantics and
+  stale stop-state evidence; production scheduler SLO and live-provider
+  timing remain separate gates.
+- [x] Add ADR-0194 and extend `make integration-check` through the real
+  wallet-byte adjustment boundary: exact single-instruction serialization,
+  concurrent [200,409] idempotency, one fixture RPC send, explicit finalized
+  observation, typed event/raw evidence projection, and proof-envelope replay.
+  Live wallet/provider, Linux validator, load/SLO, and production accessibility
+  evidence remain separate gates.
 - [ ] Add wallet workspace evidence against a live injected wallet, Linux
   validator conformance, load/SLO evidence, and production enablement gates.
 
@@ -1004,10 +1031,12 @@ idempotently, and both restore and clean-stack evidence pass.
 ADR-0084 adds the bounded observability alert contract. Prometheus rules for
 service availability, aggregate request error ratio, quote/compile p95
 latency, and cache pressure are versioned beside the pinned Compose
-configuration. `make observability-config` runs `promtool check config` and
-`promtool check rules` against the exact image used by the local profile and
-CI. Production receiver wiring, scrape authentication, notification delivery,
-and load-derived SLO evidence remain open gates.
+configuration. `make observability-config` runs `promtool check config`,
+`promtool check rules`, and `amtool check-config` against the exact images used
+by the local profile and CI. ADR-0191 and `make alert-delivery-drill` prove
+the local Prometheus-to-Alertmanager-to-receiver path; production receiver
+authentication, notification delivery, and load-derived SLO evidence remain
+open gates.
 
 ADR-0085 strengthens the validator-backed release gate with a bounded,
 public-safe evidence bundle. The conformance runner records the exact source

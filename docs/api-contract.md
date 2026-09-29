@@ -596,10 +596,15 @@ existence.
 Opening balances, receipt tax aggregates, release aggregates, expected and
 observed balances, and observed slots are decimal strings. A latest `mismatch`
 or `error` is an operational stop signal; the API never converts it to a
-healthy status. These endpoints are read-only. Browser clients cannot create
-targets, edit opening balances, execute releases, clear alerts, or advance
-indexer state. Target provisioning requires the independent finalized
-opening-balance ceremony defined by ADR-0127.
+healthy status. Every returned run also contains a server-owned boolean named
+stale. It is computed with the database UTC clock using the fixed 90-second
+ADR-0193 policy; the browser cannot supply or override that threshold. A stale
+observation is an operational stop signal even when its stored status is
+matched, and no latest run is not a matched state. These endpoints are
+read-only. Browser clients cannot create targets, edit opening balances,
+execute releases, clear alerts, or advance indexer state. Target provisioning
+requires the independent finalized opening-balance ceremony defined by
+ADR-0127.
 
 ## Governed vault-release claim lifecycle
 

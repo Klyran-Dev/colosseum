@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/api",
+    "crates/alert-receiver-fixture",
     "crates/attestation-fixture",
     "crates/indexer",
     "crates/indexer-service",

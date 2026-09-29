@@ -35,6 +35,8 @@ const DEFAULT_VAULT_MINT: &str = "So11111111111111111111111111111111111111112";
 const SPL_TOKEN_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const SETTLEMENT_PROGRAM_ID: &str = "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi";
 const ADJUSTMENT_REGISTRY_ACCOUNT_DATA_LEN: usize = 8 + (5 * 32) + 2;
+const REFUND_CLAIM_ACCOUNT_DATA_LEN: usize = 410;
+const ADJUSTMENT_REFUND_EXECUTED_EVENT_DISCRIMINATOR: [u8; 8] = [112, 130, 243, 73, 61, 70, 35, 70];
 const MAX_FAIL_METHODS: usize = 8;
 const MAX_FAIL_METHOD_CONFIG_BYTES: usize = 256;
 const MAX_TRANSACTION_BYTES: usize = 1_232;
@@ -53,6 +55,7 @@ enum SendOutcome {
 enum ObservedStatus {
     Unknown,
     Confirmed,
+    Finalized,
 }
 
 #[derive(Clone)]
@@ -66,6 +69,7 @@ struct FixtureState {
     vault_read_count: Arc<AtomicU64>,
     adjustment_registry: Option<AdjustmentRegistryFixture>,
     refund_funding: Option<RefundFundingFixture>,
+    refund_proof: Option<RefundProofFixture>,
     refund_funding_read_delay: Duration,
     send_delay: Duration,
     send_count: Arc<AtomicU64>,
@@ -94,6 +98,50 @@ struct RefundFundingFixture {
     net_source: String,
     slot: u64,
     mint_decimals: u8,
+}
+
+#[derive(Clone)]
+struct RefundProofFixture {
+    claim: Pubkey,
+    adjustment: Pubkey,
+    original_receipt: Pubkey,
+    merchant: Pubkey,
+    mint: Pubkey,
+    payer: Pubkey,
+    refund_funder: Pubkey,
+    tax_vault: Pubkey,
+    refund_source: Pubkey,
+    payer_destination: Pubkey,
+    approver: Pubkey,
+    signature: String,
+    reference_digest: [u8; 32],
+    nonce: u64,
+    gross_atomic: u64,
+    tax_atomic: u64,
+    net_atomic: u64,
+    slot: u64,
+    tax_vault_before: u64,
+    tax_vault_after: u64,
+    refund_source_before: u64,
+    refund_source_after: u64,
+    payer_destination_before: u64,
+    payer_destination_after: u64,
+}
+
+impl RefundProofFixture {
+    fn vault_authority(&self) -> Pubkey {
+        let program = Pubkey::from_str(SETTLEMENT_PROGRAM_ID)
+            .expect("the checked-in settlement program ID must be valid");
+        Pubkey::find_program_address(
+            &[
+                b"vault-authority",
+                self.merchant.as_ref(),
+                self.mint.as_ref(),
+            ],
+            &program,
+        )
+        .0
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -147,6 +195,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if send_delay_ms > 2_000 {
         return Err("RPC_FIXTURE_SEND_DELAY_MS must be at most 2000ms".into());
     }
+    let configured_status =
+        env::var("RPC_FIXTURE_SIGNATURE_STATUS").unwrap_or_else(|_| "confirmed".to_string());
+    let initial_observed_status = match configured_status.as_str() {
+        "unknown" => ObservedStatus::Unknown,
+        "confirmed" => ObservedStatus::Confirmed,
+        "finalized" => ObservedStatus::Finalized,
+        _ => {
+            return Err(
+                "RPC_FIXTURE_SIGNATURE_STATUS must be unknown, confirmed, or finalized".into(),
+            );
+        }
+    };
     let refund_funding_read_delay_ms = env::var("RPC_FIXTURE_REFUND_FUNDING_READ_DELAY_MS")
         .unwrap_or_else(|_| "0".to_string())
         .parse::<u64>()?;
@@ -169,6 +229,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parse::<u64>()?;
     let adjustment_registry = load_adjustment_registry_fixture()?;
     let refund_funding = load_refund_funding_fixture()?;
+    let refund_proof = load_refund_proof_fixture()?;
     let fail_method_config = env::var("RPC_FIXTURE_FAIL_METHODS").ok();
     let fail_methods = parse_fail_methods(fail_method_config.as_deref())
         .map_err(|error| format!("RPC_FIXTURE_FAIL_METHODS is invalid: {error}"))?;
@@ -182,11 +243,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         vault_read_count: Arc::new(AtomicU64::new(0)),
         adjustment_registry,
         refund_funding,
+        refund_proof,
         refund_funding_read_delay: Duration::from_millis(refund_funding_read_delay_ms),
         send_delay: Duration::from_millis(send_delay_ms),
         send_count: Arc::new(AtomicU64::new(0)),
         send_outcome: Arc::new(RwLock::new(SendOutcome::Success)),
-        observed_status: Arc::new(RwLock::new(ObservedStatus::Unknown)),
+        observed_status: Arc::new(RwLock::new(initial_observed_status)),
         last_signature: Arc::new(RwLock::new(None)),
         hold_send: Arc::new(RwLock::new(false)),
         release_send: Arc::new(Notify::new()),
@@ -196,6 +258,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/healthz", get(healthz))
         .route("/admin/send-count", get(send_count))
         .route("/admin/ambiguous", post(enable_ambiguous_outcome))
+        .route("/admin/finalized", post(mark_finalized))
         .route("/admin/hold", post(hold_send))
         .route("/admin/release", post(release_send))
         .route("/admin/vault-amount", post(set_vault_amount))
@@ -229,6 +292,14 @@ async fn vault_read_count(State(state): State<FixtureState>) -> Json<VaultReadCo
 async fn enable_ambiguous_outcome(State(state): State<FixtureState>) -> StatusCode {
     *state.send_outcome.write().await = SendOutcome::Ambiguous;
     *state.observed_status.write().await = ObservedStatus::Confirmed;
+    StatusCode::NO_CONTENT
+}
+
+/// Marks the last accepted synthetic signature finalized. This endpoint is
+/// intentionally exposed only by the local fixture profile; production code
+/// obtains finality exclusively from the provider coordinator.
+async fn mark_finalized(State(state): State<FixtureState>) -> StatusCode {
+    *state.observed_status.write().await = ObservedStatus::Finalized;
     StatusCode::NO_CONTENT
 }
 
@@ -330,6 +401,7 @@ async fn handle_method(
         "isBlockhashValid" => Ok(json!({"context": {"slot": 1}, "value": true})),
         "getMultipleAccounts" => get_multiple_accounts(state, params),
         "getAccountInfo" => get_account_info(state, params),
+        "getTransaction" => get_refund_proof_transaction(state, params),
         "sendTransaction" => send_transaction(state, params).await,
         "getSignatureStatuses" => signature_statuses(state, params).await,
         _ => Err((-32601, format!("unsupported fixture RPC method: {method}"))),
@@ -467,6 +539,165 @@ fn load_refund_funding_fixture() -> Result<Option<RefundFundingFixture>, Box<dyn
     }))
 }
 
+fn load_refund_proof_fixture() -> Result<Option<RefundProofFixture>, Box<dyn std::error::Error>> {
+    let names = [
+        "RPC_FIXTURE_REFUND_PROOF_CLAIM",
+        "RPC_FIXTURE_REFUND_PROOF_ADJUSTMENT",
+        "RPC_FIXTURE_REFUND_PROOF_ORIGINAL_RECEIPT",
+        "RPC_FIXTURE_REFUND_PROOF_MERCHANT",
+        "RPC_FIXTURE_REFUND_PROOF_MINT",
+        "RPC_FIXTURE_REFUND_PROOF_PAYER",
+        "RPC_FIXTURE_REFUND_PROOF_REFUND_FUNDER",
+        "RPC_FIXTURE_REFUND_PROOF_TAX_VAULT",
+        "RPC_FIXTURE_REFUND_PROOF_REFUND_SOURCE",
+        "RPC_FIXTURE_REFUND_PROOF_PAYER_DESTINATION",
+        "RPC_FIXTURE_REFUND_PROOF_APPROVER",
+        "RPC_FIXTURE_REFUND_PROOF_SIGNATURE",
+        "RPC_FIXTURE_REFUND_PROOF_REFERENCE_DIGEST_HEX",
+    ];
+    let values = names
+        .iter()
+        .map(|name| env::var(name).ok().filter(|value| !value.trim().is_empty()))
+        .collect::<Vec<_>>();
+    if values.iter().all(Option::is_none) {
+        return Ok(None);
+    }
+    if values.iter().any(Option::is_none) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "all RPC_FIXTURE_REFUND_PROOF_* identity and digest values are required together",
+        )
+        .into());
+    }
+    let required = |index: usize| -> Result<&str, Box<dyn std::error::Error>> {
+        values[index].as_deref().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "refund proof fixture value is missing",
+            )
+            .into()
+        })
+    };
+    let parse_key = |index: usize| -> Result<Pubkey, Box<dyn std::error::Error>> {
+        let value = required(index)?;
+        Pubkey::from_str(value).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("refund proof public key is invalid: {value}"),
+            )
+            .into()
+        })
+    };
+    let parse_u64 = |name: &str, default: u64| -> Result<u64, Box<dyn std::error::Error>> {
+        env::var(name)
+            .unwrap_or_else(|_| default.to_string())
+            .parse::<u64>()
+            .map_err(|_| format!("{name} must be a canonical u64").into())
+    };
+    let claim = parse_key(0)?;
+    let adjustment = parse_key(1)?;
+    let original_receipt = parse_key(2)?;
+    let merchant = parse_key(3)?;
+    let mint = parse_key(4)?;
+    let payer = parse_key(5)?;
+    let refund_funder = parse_key(6)?;
+    let tax_vault = parse_key(7)?;
+    let refund_source = parse_key(8)?;
+    let payer_destination = parse_key(9)?;
+    let approver = parse_key(10)?;
+    let signature = required(11)?.to_string();
+    if signature.len() > 128 {
+        return Err("RPC_FIXTURE_REFUND_PROOF_SIGNATURE is too long".into());
+    }
+    let reference_digest = parse_hex_digest(
+        required(12)?,
+        "RPC_FIXTURE_REFUND_PROOF_REFERENCE_DIGEST_HEX",
+    )?;
+    let nonce = parse_u64("RPC_FIXTURE_REFUND_PROOF_NONCE", 11)?;
+    let gross_atomic = parse_u64("RPC_FIXTURE_REFUND_PROOF_GROSS", 100)?;
+    let tax_atomic = parse_u64("RPC_FIXTURE_REFUND_PROOF_TAX", 25)?;
+    let net_atomic = parse_u64("RPC_FIXTURE_REFUND_PROOF_NET", 75)?;
+    let slot = parse_u64("RPC_FIXTURE_REFUND_PROOF_SLOT", 900)?;
+    let tax_vault_before = parse_u64("RPC_FIXTURE_REFUND_PROOF_TAX_VAULT_BEFORE", 1_000)?;
+    let tax_vault_after = parse_u64("RPC_FIXTURE_REFUND_PROOF_TAX_VAULT_AFTER", 975)?;
+    let refund_source_before = parse_u64("RPC_FIXTURE_REFUND_PROOF_SOURCE_BEFORE", 800)?;
+    let refund_source_after = parse_u64("RPC_FIXTURE_REFUND_PROOF_SOURCE_AFTER", 725)?;
+    let payer_destination_before = parse_u64("RPC_FIXTURE_REFUND_PROOF_DESTINATION_BEFORE", 300)?;
+    let payer_destination_after = parse_u64("RPC_FIXTURE_REFUND_PROOF_DESTINATION_AFTER", 400)?;
+    if nonce == 0
+        || slot == 0
+        || gross_atomic == 0
+        || tax_atomic.checked_add(net_atomic) != Some(gross_atomic)
+        || tax_vault_before.checked_sub(tax_atomic) != Some(tax_vault_after)
+        || refund_source_before.checked_sub(net_atomic) != Some(refund_source_after)
+        || payer_destination_before.checked_add(gross_atomic) != Some(payer_destination_after)
+        || claim == adjustment
+        || tax_vault == refund_source
+        || tax_vault == payer_destination
+        || refund_source == payer_destination
+    {
+        return Err("refund proof fixture identity or conserving balances are invalid".into());
+    }
+    let program = Pubkey::from_str(SETTLEMENT_PROGRAM_ID)?;
+    let derived_claim = Pubkey::find_program_address(
+        &[b"refund-claim", adjustment.as_ref(), &nonce.to_le_bytes()],
+        &program,
+    )
+    .0;
+    if claim != derived_claim {
+        return Err("RPC_FIXTURE_REFUND_PROOF_CLAIM is not the derived refund claim PDA".into());
+    }
+    Ok(Some(RefundProofFixture {
+        claim,
+        adjustment,
+        original_receipt,
+        merchant,
+        mint,
+        payer,
+        refund_funder,
+        tax_vault,
+        refund_source,
+        payer_destination,
+        approver,
+        signature,
+        reference_digest,
+        nonce,
+        gross_atomic,
+        tax_atomic,
+        net_atomic,
+        slot,
+        tax_vault_before,
+        tax_vault_after,
+        refund_source_before,
+        refund_source_after,
+        payer_destination_before,
+        payer_destination_after,
+    }))
+}
+
+fn parse_hex_digest(value: &str, name: &str) -> Result<[u8; 32], Box<dyn std::error::Error>> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!("{name} must contain exactly 32 bytes of hex").into());
+    }
+    let mut digest = [0u8; 32];
+    for (index, chunk) in value.as_bytes().chunks_exact(2).enumerate() {
+        digest[index] = (hex_nibble(chunk[0])? << 4) | hex_nibble(chunk[1])?;
+    }
+    if digest == [0; 32] {
+        return Err(format!("{name} must not be zero").into());
+    }
+    Ok(digest)
+}
+
+fn hex_nibble(value: u8) -> Result<u8, Box<dyn std::error::Error>> {
+    match value {
+        b'0'..=b'9' => Ok(value - b'0'),
+        b'a'..=b'f' => Ok(value - b'a' + 10),
+        b'A'..=b'F' => Ok(value - b'A' + 10),
+        _ => Err("invalid hexadecimal value".into()),
+    }
+}
+
 fn parse_fail_methods(value: Option<&str>) -> Result<Vec<String>, &'static str> {
     let raw = value.unwrap_or("").trim();
     if raw.len() > MAX_FAIL_METHOD_CONFIG_BYTES {
@@ -505,6 +736,11 @@ fn get_multiple_accounts(state: &FixtureState, params: &Value) -> Result<Value, 
         .first()
         .and_then(Value::as_array)
         .ok_or((-32602, "account addresses must be an array".to_string()))?;
+    if let Some(fixture) = &state.refund_proof {
+        if addresses.len() == 1 {
+            return get_refund_proof_claim_account(fixture, addresses);
+        }
+    }
     if let Some(fixture) = &state.refund_funding {
         return get_refund_funding_accounts(fixture, addresses, values);
     }
@@ -548,6 +784,145 @@ fn get_multiple_accounts(state: &FixtureState, params: &Value) -> Result<Value, 
             "owner": SPL_TOKEN_PROGRAM_ID,
             "rentEpoch": u64::MAX
         }]
+    }))
+}
+
+fn get_refund_proof_claim_account(
+    fixture: &RefundProofFixture,
+    addresses: &[Value],
+) -> Result<Value, (i64, String)> {
+    if addresses.first().and_then(Value::as_str) != Some(fixture.claim.to_string().as_str()) {
+        return Err((
+            -32602,
+            "fixture refund-proof claim address does not match".to_string(),
+        ));
+    }
+    let mut data = vec![0u8; REFUND_CLAIM_ACCOUNT_DATA_LEN];
+    let mut discriminator = Sha256::new();
+    discriminator.update(b"account:AdjustmentRefundClaim");
+    data[..8].copy_from_slice(&discriminator.finalize()[..8]);
+    for (offset, value) in [
+        (8, fixture.adjustment),
+        (40, fixture.original_receipt),
+        (72, fixture.merchant),
+        (104, fixture.mint),
+        (136, fixture.payer),
+        (168, fixture.refund_funder),
+        (200, fixture.tax_vault),
+        (232, fixture.refund_source),
+        (264, fixture.payer_destination),
+    ] {
+        data[offset..offset + 32].copy_from_slice(value.as_ref());
+    }
+    data[296..304].copy_from_slice(&fixture.nonce.to_le_bytes());
+    data[304..312].copy_from_slice(&fixture.gross_atomic.to_le_bytes());
+    data[312..320].copy_from_slice(&fixture.tax_atomic.to_le_bytes());
+    data[320..328].copy_from_slice(&fixture.net_atomic.to_le_bytes());
+    data[328..360].copy_from_slice(&fixture.reference_digest);
+    data[360..368].copy_from_slice(&1i64.to_le_bytes());
+    data[368..376].copy_from_slice(&9_999_999_999i64.to_le_bytes());
+    data[408] = 1;
+
+    Ok(json!({
+        "context": {"slot": fixture.slot},
+        "value": [{
+            "data": [BASE64.encode(data), "base64"],
+            "executable": false,
+            "lamports": 1_000_000u64,
+            "owner": SETTLEMENT_PROGRAM_ID,
+            "rentEpoch": u64::MAX
+        }]
+    }))
+}
+
+fn get_refund_proof_transaction(
+    state: &FixtureState,
+    params: &Value,
+) -> Result<Value, (i64, String)> {
+    let fixture = state.refund_proof.as_ref().ok_or((
+        -32601,
+        "getTransaction is not configured for this fixture profile".to_string(),
+    ))?;
+    let values = params.as_array().ok_or((
+        -32602,
+        "getTransaction requires an array of parameters".to_string(),
+    ))?;
+    if values.first().and_then(Value::as_str) != Some(fixture.signature.as_str()) {
+        return Ok(Value::Null);
+    }
+    let options = values
+        .get(1)
+        .and_then(Value::as_object)
+        .ok_or((-32602, "getTransaction options are required".to_string()))?;
+    if options.get("commitment").and_then(Value::as_str) != Some("finalized")
+        || options.get("encoding").and_then(Value::as_str) != Some("json")
+        || options
+            .get("maxSupportedTransactionVersion")
+            .and_then(Value::as_u64)
+            != Some(0)
+    {
+        return Err((
+            -32602,
+            "fixture requires finalized json transaction reads with version zero".to_string(),
+        ));
+    }
+    let account_keys = [
+        fixture.tax_vault,
+        fixture.refund_source,
+        fixture.payer_destination,
+    ];
+    let balance = |account_index: u64, owner: Pubkey, amount: u64| {
+        json!({
+            "accountIndex": account_index,
+            "mint": fixture.mint.to_string(),
+            "owner": owner.to_string(),
+            "programId": SPL_TOKEN_PROGRAM_ID,
+            "uiTokenAmount": {
+                "amount": amount.to_string(),
+                "decimals": 6,
+                "uiAmountString": "0"
+            }
+        })
+    };
+    let mut event = Vec::with_capacity(328);
+    event.extend_from_slice(&ADJUSTMENT_REFUND_EXECUTED_EVENT_DISCRIMINATOR);
+    for value in [
+        fixture.claim,
+        fixture.adjustment,
+        fixture.original_receipt,
+        fixture.merchant,
+        fixture.mint,
+    ] {
+        event.extend_from_slice(value.as_ref());
+    }
+    event.extend_from_slice(&fixture.nonce.to_le_bytes());
+    event.extend_from_slice(&fixture.gross_atomic.to_le_bytes());
+    event.extend_from_slice(&fixture.tax_atomic.to_le_bytes());
+    event.extend_from_slice(&fixture.net_atomic.to_le_bytes());
+    event.extend_from_slice(fixture.refund_funder.as_ref());
+    event.extend_from_slice(fixture.payer_destination.as_ref());
+    event.extend_from_slice(fixture.approver.as_ref());
+    event.extend_from_slice(&fixture.reference_digest);
+    Ok(json!({
+        "slot": fixture.slot,
+        "transaction": {
+            "signatures": [fixture.signature],
+            "message": {"accountKeys": account_keys.iter().map(ToString::to_string).collect::<Vec<_>>()}
+        },
+        "meta": {
+            "err": null,
+            "logMessages": [format!("Program data: {}", BASE64.encode(event))],
+            "preTokenBalances": [
+                balance(0, fixture.vault_authority(), fixture.tax_vault_before),
+                balance(1, fixture.refund_funder, fixture.refund_source_before),
+                balance(2, fixture.payer, fixture.payer_destination_before)
+            ],
+            "postTokenBalances": [
+                balance(0, fixture.vault_authority(), fixture.tax_vault_after),
+                balance(1, fixture.refund_funder, fixture.refund_source_after),
+                balance(2, fixture.payer, fixture.payer_destination_after)
+            ]
+        }
     }))
 }
 
@@ -765,7 +1140,11 @@ fn signature_status_value(
         json!({
             "slot": 42,
             "confirmations": null,
-            "confirmationStatus": "confirmed",
+            "confirmationStatus": match observed_status {
+                ObservedStatus::Confirmed => "confirmed",
+                ObservedStatus::Finalized => "finalized",
+                ObservedStatus::Unknown => "unknown",
+            },
             "err": null
         })
     }
@@ -833,6 +1212,16 @@ mod tests {
         assert_eq!(status["slot"], 42);
     }
 
+    #[test]
+    fn finalized_status_is_explicit_and_not_inferred_from_submission() {
+        let status = signature_status_value(
+            Some("accepted-signature"),
+            Some("accepted-signature"),
+            ObservedStatus::Finalized,
+        );
+        assert_eq!(status["confirmationStatus"], "finalized");
+    }
+
     #[tokio::test]
     async fn finalized_block_page_is_empty_for_reconciliation_fixture() {
         let state = FixtureState {
@@ -845,6 +1234,7 @@ mod tests {
             vault_read_count: Arc::new(AtomicU64::new(0)),
             adjustment_registry: None,
             refund_funding: None,
+            refund_proof: None,
             refund_funding_read_delay: Duration::ZERO,
             send_delay: Duration::ZERO,
             send_count: Arc::new(AtomicU64::new(0)),

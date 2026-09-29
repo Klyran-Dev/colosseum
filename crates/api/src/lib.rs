@@ -3591,7 +3591,10 @@ async fn list_vault_reconciliation_targets_inner(
         store
             .list_vault_reconciliation_target_views(principal.merchant_id, limit)
             .await
-            .map_err(ApiError::from)?,
+            .map_err(|error| {
+                tracing::error!(error = ?error, "vault reconciliation target read failed");
+                ApiError::from(error)
+            })?,
     ))
 }
 
@@ -3647,7 +3650,10 @@ async fn list_vault_reconciliation_runs_inner(
         store
             .list_vault_reconciliation_runs(principal.merchant_id, target_id, limit)
             .await
-            .map_err(ApiError::from)?,
+            .map_err(|error| {
+                tracing::error!(error = ?error, "vault reconciliation run read failed");
+                ApiError::from(error)
+            })?,
     ))
 }
 

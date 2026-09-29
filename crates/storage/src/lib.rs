@@ -90,6 +90,7 @@ pub const MAX_REPLAY_OPERATOR_SUBJECT_BYTES: usize = 128;
 pub const MAX_REPLAY_LIST_LIMIT: usize = 100;
 pub const MAX_PROJECTION_REBUILD_BATCH_SIZE: usize = 1_000;
 pub const MAX_VAULT_RECONCILIATION_TARGETS: usize = 64;
+pub const VAULT_RECONCILIATION_STALE_AFTER_SECONDS: i64 = 90;
 pub const DEFAULT_COMPILED_RULE_CACHE_CAPACITY: usize = 256;
 pub const DEFAULT_QUOTE_TTL: Duration = Duration::from_secs(15 * 60);
 pub const ATTESTED_CALCULATION_STATUS: &str = "attested";
@@ -1530,6 +1531,7 @@ pub struct VaultReconciliationRunView {
     pub observed_slot: Option<String>,
     pub error_code: Option<String>,
     pub created_at: String,
+    pub stale: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -3018,7 +3020,7 @@ impl PgStore {
                         latest.expected_balance_atomic::text,
                         latest.observed_balance_atomic::text,
                         latest.observed_slot::text, latest.error_code,
-                        latest.created_at
+                        latest.created_at, latest.stale
                  FROM vault_reconciliation_targets target
                  LEFT JOIN LATERAL (
                     SELECT run.id, run.status, run.opening_balance_atomic,
@@ -3027,7 +3029,9 @@ impl PgStore {
                            run.observed_balance_atomic, run.observed_slot,
                            run.error_code,
                            to_char(run.created_at AT TIME ZONE 'UTC',
-                                   'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS created_at
+                                   'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS created_at,
+                           run.created_at < now() -
+                               ($3::bigint * interval '1 second') AS stale
                     FROM vault_reconciliation_runs run
                     WHERE run.target_id = target.id
                     ORDER BY run.created_at DESC, run.id DESC
@@ -3037,7 +3041,11 @@ impl PgStore {
                    AND target.status = 'active'
                  ORDER BY target.updated_at, target.id
                  LIMIT $2",
-                &[&merchant_id, &(limit as i64)],
+                &[
+                    &merchant_id,
+                    &(limit as i64),
+                    &VAULT_RECONCILIATION_STALE_AFTER_SECONDS,
+                ],
             )
             .await?;
         rows.into_iter()
@@ -3085,12 +3093,18 @@ impl PgStore {
                         observed_balance_atomic::text, observed_slot::text,
                         error_code,
                         to_char(created_at AT TIME ZONE 'UTC',
-                                'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')
+                                'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),
+                        created_at < now() -
+                            ($3::bigint * interval '1 second') AS stale
                  FROM vault_reconciliation_runs
                  WHERE target_id = $1
                  ORDER BY created_at DESC, id DESC
                  LIMIT $2",
-                &[&target_id, &(limit as i64)],
+                &[
+                    &target_id,
+                    &(limit as i64),
+                    &VAULT_RECONCILIATION_STALE_AFTER_SECONDS,
+                ],
             )
             .await?;
         rows.into_iter()
@@ -10943,6 +10957,7 @@ fn parse_vault_reconciliation_run_view_row(
         observed_slot: row.get(7),
         error_code: row.get(8),
         created_at: row.get(9),
+        stale: row.get(10),
     })
 }
 
@@ -10962,6 +10977,7 @@ fn parse_vault_reconciliation_target_view_row(
             observed_slot: row.get(19),
             error_code: row.get(20),
             created_at: row.get(21),
+            stale: row.get(22),
         });
     Ok(VaultReconciliationTargetView {
         target: VaultReconciliationTarget {

@@ -24,18 +24,21 @@ The first executable metric boundary is the Rust `observability` crate and the
 API `/metrics` endpoint. It uses fixed operation names and bounded latency
 histogram buckets; unknown request-derived labels are rejected. This is a
 foundation contract. The Docker `observability` profile adds Prometheus,
-Grafana, and an OpenTelemetry Collector; local dashboards and collection are
-operator aids, not evidence that production scrape authorization, alert
-routing, retention, or SLO evidence are complete.
+Alertmanager, Grafana, and an OpenTelemetry Collector; local dashboards and
+collection are operator aids, not evidence that production scrape
+authorization, alert routing, retention, or SLO evidence are complete.
 
 Prometheus alert rules are versioned in
 `ops/observability/alert-rules.yml`. The pinned-image `promtool` contract
 validates both the Prometheus configuration and rule syntax in CI and through
 `make observability-config`. Rules cover exporter availability, bounded
 aggregate error ratio, quote/compile p95 budgets, and compiled-rule-cache
-pressure. Production must bind these validated rules to an approved
-Alertmanager/on-call receiver; local rule validation and dashboards never
-prove notification delivery.
+pressure. ADR-0191 adds a pinned Alertmanager route and
+`make alert-delivery-drill`, which induces an isolated worker scrape outage
+and proves Prometheus-to-Alertmanager-to-receiver delivery with a bounded
+test-only Rust receiver. Production must bind these validated rules to an
+authenticated approved Alertmanager/on-call receiver; local delivery evidence
+never proves production paging, escalation, or response.
 
 Required metrics:
 
@@ -72,8 +75,8 @@ indexer's configured stream: queued, leased, and dead-lettered gap gauges plus
 the leased slot span. The stream key is deliberately not a metric label. The
 versioned Prometheus rules alert on a sustained queued backlog and any
 dead-lettered work. Lease-expiry recovery and claim-token-loss counters,
-scrape authorization, receiver delivery, and on-call response remain open
-production gates.
+scrape authorization, production receiver delivery, and on-call response
+remain open production gates.
 
 ADR-0124 adds a bounded finalized signature-pagination adapter for targeted
 recovery. It is a discovery signal only: it validates canonical signatures,
@@ -106,6 +109,12 @@ is a mismatch or could not prove a finalized observation. A non-zero value is
 not a tax or legal-compliance conclusion; it is a stop-and-investigate signal.
 Follow the vault-release incident runbook, preserve target/run evidence, and
 do not edit projections or release claims to clear the alert.
+
+ADR-0193 adds a server-owned stale bit to reconciliation read responses.
+PostgreSQL evaluates it against its UTC clock and the fixed 90-second
+freshness policy. A stale or missing observation is not a matched state; stop
+release operations and investigate scheduler/provider health before relying on
+the target.
 
 Replay-gap operator actions are a separate control-plane audit stream. The
 authenticated list, acknowledge, and requeue endpoints emit bounded

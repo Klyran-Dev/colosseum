@@ -131,4 +131,119 @@ test.describe("real-browser SPA journeys", () => {
     await expect(page.getByRole("button", { name: "Create quote", exact: true })).toBeDisabled();
     await expectNoBrowserAxeViolations(page, "API unavailable state");
   });
+
+  test("renders server-owned reconciliation evidence and stops on mismatch", async ({ page }) => {
+    const target = {
+      id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d12",
+      merchant_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d11",
+      route_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d13",
+      stream_key: "mainnet/settlement/v1",
+      mint: "mint-account",
+      token_program: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      tax_vault: "vault-account",
+      opening_balance_atomic: "1000",
+      opening_balance_slot: "20",
+      opening_reference: "opening ceremony INC-42",
+      receipt_tax_atomic: "250",
+      release_atomic: "100",
+    };
+    const latestRun = {
+      id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d14",
+      status: "mismatch",
+      opening_balance_atomic: "1000",
+      receipt_tax_atomic: "250",
+      release_atomic: "100",
+      expected_balance_atomic: "1150",
+      observed_balance_atomic: "1149",
+      observed_slot: "99",
+      error_code: null,
+      created_at: "2026-09-27T00:00:00.000Z",
+      stale: false,
+    };
+    const historyRun = { ...latestRun, id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d15", status: "matched", observed_balance_atomic: "1150" };
+
+    await page.route("**/v1/vault/reconciliation/targets/*/runs*", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([historyRun, latestRun]) });
+    });
+    await page.route("**/v1/vault/reconciliation/targets?*", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ target, latest_run: latestRun }]) });
+    });
+
+    await page.goto("/");
+    await page.getByRole("button", { name: "Vault reconciliation", exact: true }).click();
+    await page.getByLabel("OIDC access token (memory-only)").fill("synthetic-browser-token");
+    await page.getByRole("button", { name: "Load reconciliation targets", exact: true }).click();
+
+    await expect(page.getByText("Mismatch — stop and investigate", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("The latest finalized observation does not match the evidence-derived expectation.", { exact: false })).toBeVisible();
+    await expect(page.getByText("opening ceremony INC-42", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: /vault-account.*Mismatch/, exact: false }).click();
+    await expect(page.getByRole("heading", { name: "Recent runs", exact: true })).toBeVisible();
+    await expect(page.getByText("matched", { exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "vault reconciliation mismatch state");
+  });
+
+  test("does not render an old matched observation as current evidence", async ({ page }) => {
+    const staleRun = {
+      id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d14",
+      status: "matched",
+      opening_balance_atomic: "1000",
+      receipt_tax_atomic: "250",
+      release_atomic: "100",
+      expected_balance_atomic: "1150",
+      observed_balance_atomic: "1150",
+      observed_slot: "99",
+      error_code: null,
+      created_at: "2026-09-27T00:00:00.000Z",
+      stale: true,
+    };
+    const target = {
+      id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d12",
+      merchant_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d11",
+      route_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d13",
+      stream_key: "mainnet/settlement/v1",
+      mint: "mint-account",
+      token_program: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      tax_vault: "vault-account",
+      opening_balance_atomic: "1000",
+      opening_balance_slot: "20",
+      opening_reference: "opening ceremony INC-42",
+      receipt_tax_atomic: "250",
+      release_atomic: "100",
+    };
+    await page.route("**/v1/vault/reconciliation/targets*", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([{ target, latest_run: staleRun }]),
+    }));
+
+    await page.goto("/");
+    await page.getByRole("button", { name: "Vault reconciliation", exact: true }).click();
+    await page.getByLabel("OIDC access token (memory-only)").fill("synthetic-browser-token");
+    await page.getByRole("button", { name: "Load reconciliation targets", exact: true }).click();
+
+    await expect(page.getByText("Stale — stop and investigate", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("The latest finalized observation is stale and cannot prove the current vault balance.", { exact: false })).toBeVisible();
+    await expect(page.getByText("The latest finalized observation does not match the evidence-derived expectation.", { exact: false })).toHaveCount(0);
+    await expectNoBrowserAxeViolations(page, "vault reconciliation stale state");
+  });
+
+  test("fails closed on unauthorized reconciliation reads", async ({ page }) => {
+    await page.route("**/v1/vault/reconciliation/targets*", (route) => route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      headers: { "x-request-id": "01992f1b-4a70-7e30-8ea2-b6e37a9d9d16" },
+      body: JSON.stringify({ error: { code: "FORBIDDEN", message: "vault reconciliation access is not authorized" } }),
+    }));
+
+    await page.goto("/");
+    await page.getByRole("button", { name: "Vault reconciliation", exact: true }).click();
+    await page.getByLabel("OIDC access token (memory-only)").fill("synthetic-browser-token");
+    await page.getByRole("button", { name: "Load reconciliation targets", exact: true }).click();
+
+    await expect(page.getByRole("alert")).toContainText("vault reconciliation access is not authorized");
+    await expect(page.getByText("Evidence not loaded", { exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "vault reconciliation unauthorized state");
+  });
 });

@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-09-29
+
+- Added ADR-0189's two-replica automated indexer replay recovery contract and
+  `make indexer-replay-drill`, proving PostgreSQL 18 lease-fenced completion,
+  checkpoint isolation, and fixed-cardinality replay metrics.
+- Added ADR-0190's retry-exhaustion failure contract and
+  `make indexer-replay-dead-letter-drill`, proving exactly eight bounded
+  provider-failure attempts, lease release, explicit dead-letter state, and
+  unchanged forward checkpoint. Production alert delivery and live recovery
+  SLO evidence remain open.
+- Added ADR-0191's pinned Alertmanager delivery contract and
+  `make alert-delivery-drill`, proving a real isolated Prometheus availability
+  alert reaches Alertmanager and a bounded Rust receiver. Production receiver
+  authentication, escalation, and on-call response remain open.
+- Added ADR-0192's real-browser vault-reconciliation evidence contract,
+  covering server-shaped mismatch/history rendering and unauthorized
+  fail-closed behavior through the built NGINX-served SPA. Live-provider,
+  validator, wallet, and production identity evidence remain separate gates.
+- Added ADR-0193's server-owned reconciliation freshness contract. The API
+  now exposes a database-clock stale bit using a fixed 90-second policy, and
+  the UI treats stale observations as an operational stop state.
+- Added ADR-0194's wallet-bound adjustment finality drill. The isolated Docker
+  path now serializes and signs the exact record-only Solana instruction,
+  proves concurrent [200,409] submission with one RPC send, observes an
+  explicitly finalized fixture status, projects the typed event, and replays
+  the server-owned proof envelope. Live wallet/provider, validator, Linux,
+  load/SLO, and production accessibility evidence remain release gates.
+- Added real component interaction coverage for the claim and execute wallet
+  workspaces, including sequential role signing, unchanged-byte submission, and
+  proof-pending UX. Live wallet/provider/finality evidence remains gated.
+
 ## 2026-09-28
 
 - Added ADR-0148's pinned Docker Playwright browser journey gate through the

@@ -1254,3 +1254,86 @@ bounded and observable.
 | Manual SQL plus an operator replay endpoint | Easy to demonstrate | Does not prove automatic recovery or replica coordination | Rejected |
 | Broker-owned replay queue | Familiar asynchronous delivery model | Adds another authority, duplicate delivery semantics, and settlement-path coupling | Rejected |
 | **Isolated Docker PostgreSQL + RPC fixture + two running indexer replicas** | Exercises durable claim/lease, bounded RPC page recovery, projection persistence, checkpoint isolation, and observable completion | Synthetic chain data and local timing do not replace Linux validator/live-provider SLO evidence | **Selected in ADR-0189** |
+
+### Indexer replay retry-exhaustion contract
+
+**Criteria:** prove that a persistent provider failure cannot create an
+unbounded retry loop, that the exact lease is released into explicit
+dead-letter state after the configured attempt limit, that the last failure is
+observable, and that no forward checkpoint is advanced.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Pure state-machine tests | Fast and deterministic | Misses service polling, SQL lease release, and metric refresh wiring | Rejected as the sole gate |
+| Manual insertion of a pre-dead-letter row | Exercises read/alert UI | Bypasses automatic retry and exhaustion behavior | Rejected |
+| Unbounded retry with operator cancellation | May eventually recover transient provider faults | Retry storms and no finite incident boundary | Rejected |
+| **Two real indexer replicas plus a fixture that fails one finalized RPC method** | Proves bounded automatic attempts, lease cleanup, dead-letter persistence, fixed-cardinality metrics, and checkpoint isolation | Synthetic provider and local timing do not prove production notification delivery | **Selected in ADR-0190** |
+
+### Alertmanager delivery contract
+
+**Criteria:** prove that operational alerts leave Prometheus, preserve bounded
+identity and ownership metadata, reach a receiver, remain outside financial
+authority, and can be tested reproducibly without a production notification
+provider.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Service-local notification calls | Immediate failure proximity | Couples hot paths to notification outages, duplicates policy, and expands the settlement trust boundary | Rejected |
+| Prometheus rules with no receiver drill | Lowest operational cost | Proves evaluation only; delivery regressions remain invisible | Rejected |
+| Direct Prometheus webhook fan-out | Fewer components | Weak grouping, retry, deduplication, silence, and escalation semantics | Rejected |
+| **Prometheus → Alertmanager → approved receiver, with a bounded local Rust fixture for CI** | Standard operational boundary, explicit delivery contract, grouping/deduplication, reproducible evidence, and deployment-owned escalation | Adds an operational component and leaves production receiver selection to deployment | **Selected in ADR-0191** |
+
+### Real-browser vault-reconciliation evidence
+
+**Criteria:** prove the shipped SPA renders server-owned reconciliation
+evidence and fails closed on authorization or mismatch without conflating
+synthetic UI fixtures with live-chain evidence.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Unit/component tests only | Fast and deterministic | Misses the built SPA, lazy imports, browser focus, and network boundary | Rejected as the sole gate |
+| Full live-provider browser test in CI | Closest to production | Requires credentials and unstable external state; mixes UI and chain evidence | Rejected for the deterministic browser gate |
+| Fake success page | Low implementation cost | Can hide unsafe success and failure UX | Rejected |
+| **Real built SPA with bounded network fixtures and explicit failure assertions** | Reproducible browser behavior, safe synthetic data, and explicit mismatch/authorization evidence | Does not replace validator, wallet, live-provider, or production identity evidence | **Selected in ADR-0192** |
+
+### Server-owned reconciliation freshness
+
+**Criteria:** prevent an old matched observation from being rendered as current
+financial evidence while preserving append-only runs, tenant isolation, and a
+bounded low-latency read path.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Browser-local timestamp comparison | No API change | Clock skew and inconsistent caller interpretation | Rejected |
+| Caller-supplied threshold | Operational flexibility | Each caller can redefine evidence validity | Rejected |
+| Mutate historical rows to stale | Simple UI status | Breaks append-only evidence and conflates observation with read-time freshness | Rejected |
+| Timestamps with operator interpretation | Minimal schema | Unsafe ambiguity in a financial control surface | Rejected |
+| **Database-clock server-owned stale boolean with fixed 90-second policy** | Deterministic, append-only compatible, and explicit | Policy changes require a superseding ADR | **Selected in ADR-0193** |
+
+### Wallet-bound adjustment finality evidence
+
+**Criteria:** prove the local path from server-owned instruction compilation
+through real wallet transaction serialization, signed-byte verification,
+bounded submission fencing, finalized observation, and exact typed-event proof
+binding without credentials or nondeterministic public-RPC state.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Unit verifier tests only | Fast and precise | Does not prove API persistence, provider observation, or lifecycle fencing | Rejected as the sole gate |
+| Pre-seeded finalized intent and event rows | Easy to repeat | Bypasses the wallet and submission boundaries that are highest risk | Rejected |
+| Live wallet/provider test in public CI | Production-like | Requires secrets and external state; unsafe and nondeterministic | Rejected for the deterministic gate |
+| **Real API and PostgreSQL with synthetic finalized RPC/indexer contracts plus real wallet serialization** | Complete local authority-boundary evidence, reproducible and credential-free | Does not close validator, live-provider, KMS, or production-SLO gates | **Selected in ADR-0194** |
+
+### Transaction-bound refund proof evidence
+
+| Criterion | Unit/storage-only tests | Direct proof-row seed | Public/live RPC CI | Real indexer + PostgreSQL + synthetic finalized RPC |
+| --- | --- | --- | --- | --- |
+| Exercises claim topology resolution | No | No | Yes, but variable | Yes |
+| Exercises transaction/event/balance parser | Partial | No | Yes, but variable | Yes |
+| Exercises UUIDv7 lease and worker wiring | No | No | No | Yes |
+| Reproducible public CI without credentials | Yes | Yes | No | Yes |
+| Evidence of live provider agreement/validator execution | No | No | Partial | No |
+
+Selected: the deterministic Docker drill in ADR-0195. It closes the local
+service-wiring and proof-persistence boundary without overclaiming live-chain
+or legal evidence.

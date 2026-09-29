@@ -32,6 +32,7 @@ const run = {
   observed_slot: "99",
   error_code: null,
   created_at: "2026-09-27T00:00:00.000Z",
+  stale: false,
 };
 
 describe("vault reconciliation operator contract", () => {
@@ -45,6 +46,7 @@ describe("vault reconciliation operator contract", () => {
     expect(() => parseVaultReconciliationTargetViews([{ target: { ...target, opening_balance_atomic: 1000 }, latest_run: null }])).toThrow(/decimal string/i);
     expect(() => parseVaultReconciliationRuns([{ ...run, status: "healthy" }])).toThrow(/unsupported/i);
     expect(() => parseVaultReconciliationRuns([{ ...run, observed_balance_atomic: "not-a-number" }])).toThrow(/decimal string/i);
+    expect(() => parseVaultReconciliationRuns([{ ...run, stale: "false" }])).toThrow(/stale.*boolean/i);
   });
 
   it("bounds URLs and target identity", () => {

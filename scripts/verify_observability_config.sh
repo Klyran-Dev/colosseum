@@ -15,5 +15,8 @@ docker compose $compose_profiles run --rm --no-deps \
 docker compose $compose_profiles run --rm --no-deps \
     --entrypoint /bin/promtool prometheus \
     check rules /etc/prometheus/alert-rules.yml
+docker compose $compose_profiles run --rm --no-deps \
+    --entrypoint /bin/amtool alertmanager \
+    check-config /etc/alertmanager/alertmanager.yml
 
-echo "Prometheus configuration and alert rules are valid"
+echo "Prometheus, Alertmanager, and alert-rule configuration are valid"

@@ -124,6 +124,8 @@ services:
         condition: service_healthy
       worker:
         condition: service_healthy
+      alertmanager:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:9090/-/ready || exit 1"]
       interval: 10s
@@ -186,6 +188,59 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+
+  alertmanager:
+    profiles: ["observability"]
+    image: prom/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --web.listen-address=0.0.0.0:9093
+    ports:
+      - "${ALERTMANAGER_PORT:-49093}:9093"
+    volumes:
+      - alertmanager-data:/alertmanager
+      - ./ops/observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      alert-receiver:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:9093/-/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 256M
+
+  alert-receiver:
+    profiles: ["observability"]
+    build:
+      context: .
+      dockerfile: ops/docker/Dockerfile.alert-receiver
+    environment:
+      ALERT_RECEIVER_BIND_ADDRESS: 0.0.0.0:8086
+      ALERT_RECEIVER_MAX_EVENTS: "128"
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:8086/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
 
   worker:
     build:
@@ -370,6 +425,7 @@ services:
     environment:
       RPC_FIXTURE_BIND_ADDRESS: 0.0.0.0:8899
       RPC_FIXTURE_SEND_DELAY_MS: ${RPC_FIXTURE_SEND_DELAY_MS:-75}
+      RPC_FIXTURE_SIGNATURE_STATUS: ${RPC_FIXTURE_SIGNATURE_STATUS:-confirmed}
       RPC_FIXTURE_REFUND_FUNDING_READ_DELAY_MS: ${RPC_FIXTURE_REFUND_FUNDING_READ_DELAY_MS:-0}
       RPC_FIXTURE_REFUND_FUNDING_MERCHANT: ${RPC_FIXTURE_REFUND_FUNDING_MERCHANT:-}
       RPC_FIXTURE_REFUND_FUNDING_MINT: ${RPC_FIXTURE_REFUND_FUNDING_MINT:-}
@@ -384,6 +440,31 @@ services:
       RPC_FIXTURE_REGISTRY_PROPOSER: ${RPC_FIXTURE_REGISTRY_PROPOSER:-}
       RPC_FIXTURE_REGISTRY_APPROVER: ${RPC_FIXTURE_REGISTRY_APPROVER:-}
       RPC_FIXTURE_REGISTRY_SLOT: ${RPC_FIXTURE_REGISTRY_SLOT:-777}
+      RPC_FIXTURE_REFUND_PROOF_CLAIM: ${RPC_FIXTURE_REFUND_PROOF_CLAIM:-}
+      RPC_FIXTURE_REFUND_PROOF_ADJUSTMENT: ${RPC_FIXTURE_REFUND_PROOF_ADJUSTMENT:-}
+      RPC_FIXTURE_REFUND_PROOF_ORIGINAL_RECEIPT: ${RPC_FIXTURE_REFUND_PROOF_ORIGINAL_RECEIPT:-}
+      RPC_FIXTURE_REFUND_PROOF_MERCHANT: ${RPC_FIXTURE_REFUND_PROOF_MERCHANT:-}
+      RPC_FIXTURE_REFUND_PROOF_MINT: ${RPC_FIXTURE_REFUND_PROOF_MINT:-}
+      RPC_FIXTURE_REFUND_PROOF_PAYER: ${RPC_FIXTURE_REFUND_PROOF_PAYER:-}
+      RPC_FIXTURE_REFUND_PROOF_REFUND_FUNDER: ${RPC_FIXTURE_REFUND_PROOF_REFUND_FUNDER:-}
+      RPC_FIXTURE_REFUND_PROOF_TAX_VAULT: ${RPC_FIXTURE_REFUND_PROOF_TAX_VAULT:-}
+      RPC_FIXTURE_REFUND_PROOF_REFUND_SOURCE: ${RPC_FIXTURE_REFUND_PROOF_REFUND_SOURCE:-}
+      RPC_FIXTURE_REFUND_PROOF_PAYER_DESTINATION: ${RPC_FIXTURE_REFUND_PROOF_PAYER_DESTINATION:-}
+      RPC_FIXTURE_REFUND_PROOF_APPROVER: ${RPC_FIXTURE_REFUND_PROOF_APPROVER:-}
+      RPC_FIXTURE_REFUND_PROOF_SIGNATURE: ${RPC_FIXTURE_REFUND_PROOF_SIGNATURE:-}
+      RPC_FIXTURE_REFUND_PROOF_REFERENCE_DIGEST_HEX: ${RPC_FIXTURE_REFUND_PROOF_REFERENCE_DIGEST_HEX:-}
+      RPC_FIXTURE_REFUND_PROOF_NONCE: ${RPC_FIXTURE_REFUND_PROOF_NONCE:-11}
+      RPC_FIXTURE_REFUND_PROOF_GROSS: ${RPC_FIXTURE_REFUND_PROOF_GROSS:-100}
+      RPC_FIXTURE_REFUND_PROOF_TAX: ${RPC_FIXTURE_REFUND_PROOF_TAX:-25}
+      RPC_FIXTURE_REFUND_PROOF_NET: ${RPC_FIXTURE_REFUND_PROOF_NET:-75}
+      RPC_FIXTURE_REFUND_PROOF_SLOT: ${RPC_FIXTURE_REFUND_PROOF_SLOT:-900}
+      RPC_FIXTURE_REFUND_PROOF_TAX_VAULT_BEFORE: ${RPC_FIXTURE_REFUND_PROOF_TAX_VAULT_BEFORE:-1000}
+      RPC_FIXTURE_REFUND_PROOF_TAX_VAULT_AFTER: ${RPC_FIXTURE_REFUND_PROOF_TAX_VAULT_AFTER:-975}
+      RPC_FIXTURE_REFUND_PROOF_SOURCE_BEFORE: ${RPC_FIXTURE_REFUND_PROOF_SOURCE_BEFORE:-800}
+      RPC_FIXTURE_REFUND_PROOF_SOURCE_AFTER: ${RPC_FIXTURE_REFUND_PROOF_SOURCE_AFTER:-725}
+      RPC_FIXTURE_REFUND_PROOF_DESTINATION_BEFORE: ${RPC_FIXTURE_REFUND_PROOF_DESTINATION_BEFORE:-300}
+      RPC_FIXTURE_REFUND_PROOF_DESTINATION_AFTER: ${RPC_FIXTURE_REFUND_PROOF_DESTINATION_AFTER:-400}
+      RPC_FIXTURE_FAIL_METHODS: ${RPC_FIXTURE_FAIL_METHODS:-}
     ports:
       - "${RPC_FIXTURE_PORT:-28899}:8899"
     cap_drop: ["ALL"]
@@ -401,3 +482,4 @@ volumes:
   solana-ledger:
   prometheus-data:
   grafana-data:
+  alertmanager-data:

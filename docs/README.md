@@ -83,6 +83,11 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [ADR-0187: Refund-execute idempotent replay authorization](adr/0187-refund-execute-idempotent-replay-authorization.md)
 - [ADR-0188: Refund-execute contention latency evidence](adr/0188-refund-execute-contention-latency-evidence.md)
 - [ADR-0189: Automated indexer replay recovery contract](adr/0189-automated-indexer-replay-recovery-contract.md)
+- [ADR-0190: Indexer replay retry-exhaustion contract](adr/0190-indexer-replay-retry-exhaustion-contract.md)
+- [ADR-0191: Alertmanager delivery contract](adr/0191-alertmanager-delivery-contract.md)
+- [ADR-0192: Real-browser vault-reconciliation evidence](adr/0192-real-browser-vault-reconciliation-evidence.md)
+- [ADR-0193: Server-owned reconciliation freshness](adr/0193-server-owned-reconciliation-freshness.md)
+- [ADR-0194: Wallet-bound adjustment finality drill](adr/0194-adjustment-wallet-finality-drill.md)
 - [Operations runbooks](runbooks/README.md)
 
 ## Status and scope
@@ -93,8 +98,11 @@ The current foundation additionally includes wallet-bound adjustment authority
 proofs, the finalized server-owned adjustment evidence compiler, the durable
 chain-intent submission/reconciliation API, and the accessible browser wallet
 workflow. The authenticated Docker path is covered by
-`make integration-check`; validator registry lifecycle, live wallet/provider
-evidence, and finalized reconciliation remain release gates. ADR-0184 also
+`make integration-check`; ADR-0194 extends that path through real wallet-byte
+serialization, concurrent idempotent submission, explicit finalized fixture
+observation, typed event projection, and proof-envelope replay. Validator
+registry lifecycle, live wallet/provider evidence, and production finalized
+reconciliation remain release gates. ADR-0184 also
 requires a persisted typed finalized-event proof envelope before the browser
 can render an adjustment as finalized; migration `0048` and the clean-stack
 integration contract are implemented, while live-wallet/provider and
@@ -215,10 +223,27 @@ and OpenTelemetry Collector topology. Host ports are Redis `46379`,
 Prometheus `49090`, Grafana `43000`, and OTLP `44317`/`44318`; override them
 with environment variables documented in `compose.yaml`.
 
+Run `make indexer-replay-drill` for the two-replica automated replay contract.
+It proves durable gap claiming, bounded projection recovery, forward-checkpoint
+isolation, and fixed-cardinality replay metrics in Docker; it does not replace
+live provider, validator, or production recovery-SLO evidence.
+Run `make indexer-replay-dead-letter-drill` for the bounded provider-failure
+contract. It proves two replicas exhaust exactly eight attempts, release the
+lease, persist dead-letter state, and refresh the dead-letter metric without
+advancing the forward checkpoint; production alert delivery remains open.
+
 Run `make observability-config` to validate the Prometheus configuration and
-versioned alert rules with the pinned Prometheus image. This validates rule
-syntax and wiring only; production notification delivery still requires the
-approved receiver configuration.
+versioned alert rules with pinned Prometheus and Alertmanager images. Run
+`make alert-delivery-drill` to induce an isolated worker scrape outage and
+prove the real Prometheus rule reaches Alertmanager and the test-only Rust
+receiver. Production receiver authentication, escalation, and on-call
+response remain deployment gates.
+
+The real-browser journey also exercises the built vault-reconciliation SPA
+workspace with synthetic server-shaped evidence, mismatch stop behavior, run
+history loading, and unauthorized fail-closed behavior under
+[ADR-0192](adr/0192-real-browser-vault-reconciliation-evidence.md). This is
+browser-contract evidence, not live-provider or validator evidence.
 
 The first production scope is stablecoin checkout on Solana. Non-stable assets, swaps, fiat off-ramp execution, and jurisdiction-specific legal determinations are separate adapters and are not implicit parts of the settlement hot path.
 
