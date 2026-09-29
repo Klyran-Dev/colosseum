@@ -95,8 +95,10 @@ from a wallet signature, provider acknowledgement, or indexed event alone.
   orchestration, and proof-gated lifecycle transitions. Finalized claim-event
   reconciliation and transaction-bound execute balance proof are implemented;
   operational release gates remain below.
-- [ ] Complete Linux validator conformance, concurrent idempotency/submission
-  evidence, production load/SLO evidence, and production enablement.
+- [x] Complete bounded concurrent idempotency/submission evidence through the
+  authenticated Docker API and synthetic wallet transport drill.
+- [ ] Complete Linux validator conformance, production load/SLO evidence, and
+  production enablement.
 
 ## ADR-0174 — finalized refund-funding topology verification
 
@@ -171,6 +173,11 @@ advance a movement to a successful state.
 - [x] Add ADR-0188 bounded p50/p95/p99 latency evidence to the authenticated
   execute-preparation contention drill; retain production and regional SLO
   gates as separate evidence requirements.
+- [x] Extend the same Docker drill through the real signed-submission boundary
+  with synthetic test-only wallet keypairs: concurrent claim and execute
+  submissions each produce one fixture RPC send, persist a `submitted` intent,
+  and reject the competing replay without changing signed bytes. Finalized
+  chain evidence and live-wallet/provider coverage remain separate gates.
 - [ ] Add wallet workspace evidence against a live injected wallet, Linux
   validator conformance, load/SLO evidence, and production enablement gates.
 
@@ -185,8 +192,10 @@ bytes, and records ambiguous provider outcomes as `unknown`.
   ADR-0177.
 - [x] Add claim recovery and signed-submission routes with durable CAS
   transitions.
-- [ ] Add RPC-fixture integration, contention, and accessibility recovery
-  evidence; the production worker now performs bounded automatic convergence.
+- [x] Add RPC-fixture integration and contention evidence; the production worker
+  now performs bounded automatic convergence, and the browser workspace tests
+  cover role-separated signing and transport-state rendering.
+- [ ] Add full browser accessibility recovery and finalized-proof evidence.
 
 ## ADR-0178 — two-signer refund-claim wallet workspace
 
@@ -198,6 +207,8 @@ versus finalized-proof state semantics.
   in ADR-0178.
 - [x] Add strict browser parsing, two-role signing, submission gating, and
   accessible explicit failure states.
+- [x] Add synthetic injected-wallet multi-account role-signing tests for claim
+  preparation, exact submission, and proof-pending rendering.
 - [ ] Add real injected-wallet multi-account, reload, RPC-fixture, and
   finalized-proof browser evidence. The browser action and indexer worker both
   use the shared proof-driven finality boundary.
@@ -229,9 +240,10 @@ proof.
 - [x] Add migration `0046` short UUIDv7 reconciliation leases with
   `SKIP LOCKED`, stale-lease reclaim, lease-fenced finalization, and fixed
   backlog telemetry; no database lock is held across RPC recovery.
-- [ ] Add concurrent idempotency/submission tests, validator conformance,
-  end-to-end reconciliation fixtures, load evidence, and production
-  enablement gates.
+- [x] Add concurrent idempotency/submission tests through the authenticated API,
+  RPC fixture, and synthetic two-wallet browser boundary.
+- [ ] Add validator conformance, end-to-end finalized reconciliation fixtures,
+  load evidence, and production enablement gates.
 
 ## ADR-0176 — server-owned refund claim preparation API
 
@@ -245,7 +257,7 @@ nonce; and persists the unsigned artifact idempotently before any wallet prompt.
   boundary in ADR-0176.
 - [x] Add server-side loading and claim artifact preparation endpoint; the
   endpoint stops at `prepared_unsubmitted` and does not submit or sign.
-- [ ] Add API contract tests, concurrent idempotency tests, and accessible
+- [x] Add API contract tests, concurrent idempotency tests, and accessible
   wallet-review states.
 
 Migration `0043` hardens the intent mutation guards and requires a funder

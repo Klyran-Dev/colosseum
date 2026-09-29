@@ -71,7 +71,8 @@ by the exact transaction verifier; no private key is held by the API.
 - PostgreSQL compare-and-set contention tests proving one submission fence;
 - API recovery tests proving tenant isolation and persisted-artifact use; and
 - Docker RPC-fixture integration tests for submitted, rejected, and ambiguous
-  claim paths.
+  claim paths, including concurrent synthetic-wallet duplicate submissions
+  proving one provider send and one durable `submitted` transition.
 
 ## Consequences
 

@@ -17,7 +17,10 @@ Extend the isolated Docker refund-execute contention drill to record one
 end-to-end client-observed latency sample for each of 16 concurrent,
 same-merchant, same-idempotency-key execute-preparation requests. The sample
 includes the HTTP status and curl total time. The drill sorts the samples and
-reports p50, p95, and p99 in milliseconds.
+reports p50, p95, and p99 in milliseconds. After preparation, the same drill
+also signs and submits the immutable claim and execute artifacts with
+deterministic synthetic test-only wallets, proving one RPC send per movement
+under concurrent duplicate submission.
 
 The workload is explicitly bounded:
 
@@ -25,6 +28,8 @@ The workload is explicitly bounded:
 - API database pool size 16;
 - 16 concurrent authenticated callers with a 10–16 ms bounded stagger;
 - synthetic server-owned finalized evidence and no external RPC;
+- a bounded RPC fixture for signed claim/execute transport, with no finalized
+  validator or provider evidence;
 - Docker-local wall-clock measurements on the invoking host.
 
 The result is diagnostic capacity evidence. It must not be converted into a

@@ -254,6 +254,12 @@ from hanging a developer or CI job.
   synthetic server-owned finalized evidence; retry telemetry, pool saturation,
   live wallet/provider submission, Linux validator conformance, and
   production-scale SLO evidence remain open.
+- [x] The same drill now signs the server-owned claim and execute artifacts
+  with deterministic synthetic test-only keypairs and submits each exact
+  transaction through the authenticated API to the RPC fixture. Concurrent
+  duplicate submissions produce one additional RPC send per intent and leave
+  both durable intents in `submitted`; this proves transport fencing only and
+  does not establish finalized chain movement or paid state.
 - [x] ADR-0188 extends that drill with 16 client-observed latency samples and
   reports p50/p95/p99 in milliseconds with workload metadata. This is bounded
   Docker-local diagnostic evidence; regional, live-RPC, production-volume,
@@ -620,8 +626,10 @@ and operational gates are intentionally not marked complete by unit tests.
   durable claim/execute intents, exact signed-byte verification, finalized
   claim-event reconciliation, automatic bounded claim worker, and
   transaction-bound execute balance proof are implemented. Linux validator
-  conformance, live wallet evidence, concurrent/load/SLO evidence, and final
-  operational approval remain required before refund movement is enabled.
+  conformance, live wallet evidence, load/SLO evidence, and final operational
+  approval remain required before refund movement is enabled. Bounded
+  concurrent idempotency/submission evidence is now retained by the API and
+  browser wallet-workspace drills, but it is not production-scale evidence.
 - [x] ADR-0186 adds bounded storage-local retries for refund nonce allocation
   and claim/execute intent creation, retrying only PostgreSQL `40001` and
   `40P01` conflicts while preserving immutable request and idempotency bindings.

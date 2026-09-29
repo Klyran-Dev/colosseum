@@ -120,9 +120,10 @@ saturation and regional SLO evidence remain separate.
 Run `make refund-execute-api-contention-drill` for the authenticated Docker API
 contract: real claim and finalized execute preparation with 16 concurrent
 same-key callers converging to one intent, lifecycle event, outbox row, and
-response digest; synthetic evidence does not claim live wallet/provider
-submission or production SLOs. The drill also reports bounded local p50/p95/p99
-latency samples with workload metadata.
+response digest, followed by synthetic wallet-signed claim and execute
+submissions proving one fixture RPC send per movement. Synthetic evidence does
+not claim live wallet/provider finality or production SLOs. The drill also
+reports bounded local p50/p95/p99 latency samples with workload metadata.
 Run `make vault-reconciliation-drill` to exercise the real scheduled indexer
 against a bounded synthetic finalized token-account RPC response. The drill
 proves matched and append-only mismatch runs plus fixed-cardinality alert

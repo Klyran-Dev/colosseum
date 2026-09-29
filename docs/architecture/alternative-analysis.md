@@ -1240,3 +1240,17 @@ bind the response to the exact finalized typed event.
 | **Storage-local bounded retries for refund-intent serializable conflicts** | Preserves atomic idempotency/event/outbox writes while absorbing ordinary `40001`/`40P01` contention | Adds bounded retry latency and requires measured retry telemetry | **Selected in ADR-0186** |
 | **Refund-execute replay authorization** | Compiled approver public key plus immutable adjustment approver subject | Adds one bounded tenant-scoped lookup on replay/read/submit | **Selected in ADR-0187; avoids comparing Solana keys to OIDC subjects** |
 | **Refund-execute contention latency evidence** | Bounded authenticated API samples with p50/p95/p99 and explicit workload metadata | Local-only evidence with a small sample; excludes live wallet/RPC and regional variance | **Selected in ADR-0188** |
+
+### Automated indexer replay recovery contract
+
+**Criteria:** prove that persisted finalized-slot gaps are recovered by the
+running indexer, that multiple replicas coordinate through durable leases, that
+forward checkpoint state is not mutated by replay, and that provider work stays
+bounded and observable.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Unit tests for the pure replay queue only | Fast and deterministic | Does not prove PostgreSQL leases, service wiring, or restart behavior | Rejected as the sole gate |
+| Manual SQL plus an operator replay endpoint | Easy to demonstrate | Does not prove automatic recovery or replica coordination | Rejected |
+| Broker-owned replay queue | Familiar asynchronous delivery model | Adds another authority, duplicate delivery semantics, and settlement-path coupling | Rejected |
+| **Isolated Docker PostgreSQL + RPC fixture + two running indexer replicas** | Exercises durable claim/lease, bounded RPC page recovery, projection persistence, checkpoint isolation, and observable completion | Synthetic chain data and local timing do not replace Linux validator/live-provider SLO evidence | **Selected in ADR-0189** |

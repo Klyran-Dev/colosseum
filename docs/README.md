@@ -82,6 +82,7 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [ADR-0186: Bounded refund-intent serialization retries](adr/0186-bounded-refund-intent-serialization-retries.md)
 - [ADR-0187: Refund-execute idempotent replay authorization](adr/0187-refund-execute-idempotent-replay-authorization.md)
 - [ADR-0188: Refund-execute contention latency evidence](adr/0188-refund-execute-contention-latency-evidence.md)
+- [ADR-0189: Automated indexer replay recovery contract](adr/0189-automated-indexer-replay-recovery-contract.md)
 - [Operations runbooks](runbooks/README.md)
 
 ## Status and scope
@@ -132,10 +133,12 @@ SLO claim.
 Run `make refund-execute-api-contention-drill` for the authenticated API
 contention contract. It drives real claim and finalized execute preparation
 with 16 concurrent same-key callers and verifies one execute intent, one
-lifecycle event, one outbox row, and stable response digests. It is synthetic
-Docker evidence and does not replace live wallet/provider, validator, or
-production SLO evidence. It also reports bounded local p50/p95/p99 latency
-samples with workload metadata.
+lifecycle event, one outbox row, and stable response digests, then signs and
+submits both immutable movement artifacts with synthetic test-only wallets. It
+verifies one fixture RPC send per movement and durable `submitted` state. It is
+synthetic Docker evidence and does not replace live wallet/provider, validator,
+finality, or production SLO evidence. It also reports bounded local p50/p95/p99
+latency samples with workload metadata.
 
 Run `make migration-integrity-drill` for the Rust migration runner's ordered
 PostgreSQL ledger, advisory-lock, idempotent re-run, and historical checksum

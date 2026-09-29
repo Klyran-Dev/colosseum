@@ -80,7 +80,8 @@ legal compliance, filing, payment, or finality.
   Token-2022 input;
 - PostgreSQL migration and integration drills on a clean Docker stack; and
 - browser accessibility tests for review, rejection, timeout, and recovery
-  states before wallet signing is enabled.
+  states, plus wallet-workspace interaction tests for server-owned preparation
+  and role-separated signing before submission.
 
 ## Consequences
 

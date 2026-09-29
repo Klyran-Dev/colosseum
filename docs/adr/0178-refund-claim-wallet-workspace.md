@@ -58,7 +58,9 @@ or claims legal compliance, filing, or refund completion.
 ## Verification
 
 Parser tests cover the shared cross-language claim vector, account substitution,
-canonical decimal values, nullable transport evidence, and accessibility
-checks cover the workspace's keyboard and error surfaces. Real injected-wallet,
-multi-wallet, browser reload, RPC, and finalized-proof evidence remain release
-gates.
+canonical decimal values, nullable transport evidence, and accessibility checks
+cover the workspace's keyboard and error surfaces. Component interaction tests
+now exercise two deterministic injected-wallet identities, sequential role
+signing, exact submission, and the proof-pending transport state for both claim
+and execute workspaces. Real wallet-provider interaction, browser reload,
+validator RPC, and finalized-proof evidence remain release gates.

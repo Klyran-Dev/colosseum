@@ -189,3 +189,4 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0186: Bounded refund-intent serialization retries](0186-bounded-refund-intent-serialization-retries.md)
 - [ADR-0187: Refund-execute idempotent replay authorization](0187-refund-execute-idempotent-replay-authorization.md)
 - [ADR-0188: Refund-execute contention latency evidence](0188-refund-execute-contention-latency-evidence.md)
+- [ADR-0189: Automated indexer replay recovery contract](0189-automated-indexer-replay-recovery-contract.md)

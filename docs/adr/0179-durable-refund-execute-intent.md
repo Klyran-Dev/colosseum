@@ -98,6 +98,9 @@ validator evidence.
 - PostgreSQL contention tests for idempotent creation and submission fencing;
 - API contract and accessibility tests for preparation, wallet recovery,
   unknown provider outcomes, and proof-pending state;
+- Docker RPC-fixture integration covers concurrent synthetic-wallet claim and
+  execute submissions, one-send fencing, and durable `submitted` state; this
+  is transport evidence only and does not establish finalized movement;
 - local-validator conformance for claim-before-execute, replay, wrong source,
   wrong funder, stale configuration, and finalized proof binding; and
 - load/soak evidence for bounded preparation, verification, submission, and
