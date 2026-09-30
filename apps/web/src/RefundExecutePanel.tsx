@@ -37,6 +37,7 @@ export default function RefundExecutePanel({ apiBase, serviceOnline, accessToken
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [walletAddress, setWalletAddress] = useState<PublicKey | null>(null);
 
   function requireToken(): string {
     const token = accessToken.trim();
@@ -169,7 +170,12 @@ export default function RefundExecutePanel({ apiBase, serviceOnline, accessToken
 
       <article className="panel" aria-live="polite">
         <div className="panel-heading"><div><p className="eyebrow">Immutable artifact review</p><h2>Execution authorization</h2></div>{execute && <span className="status-pill">{statusLabel(execute.status)}</span>}</div>
-        <WalletPicker disabled={busy} connectEnabled={Boolean(execute)} />
+        <WalletPicker
+          disabled={busy}
+          connectEnabled={Boolean(execute && (execute.status === "prepared_unsubmitted" || execute.status === "signed"))}
+          connectedAddress={walletAddress?.toBase58()}
+          onConnected={setWalletAddress}
+        />
         {!execute ? <div className="empty-state"><span className="empty-icon">↗</span><strong>No execute artifact loaded</strong><p>Prepare or recover an execute intent to inspect its finalized claim binding.</p></div> : <>
           <dl className="summary-list">
             <div><dt>Claim PDA</dt><dd><code>{execute.claim}</code></dd></div>

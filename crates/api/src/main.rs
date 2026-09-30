@@ -10,16 +10,12 @@ use std::{env, net::SocketAddr};
 use storage::{EvidenceCipher, PgStore};
 use tokio::net::TcpListener;
 use tracing::info;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod config;
 use config::DeploymentConfig;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::from_default_env())
-        .with(tracing_subscriber::fmt::layer().json())
-        .init();
+    let mut telemetry = observability::init_tracing("api")?;
 
     let bind_address = env::var("API_BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:8080".into());
     let address: SocketAddr = bind_address.parse()?;
@@ -239,5 +235,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let listener = TcpListener::bind(address).await?;
     info!(%address, "api listening");
     axum::serve(listener, router().with_state(state)).await?;
+    telemetry.shutdown();
     Ok(())
 }

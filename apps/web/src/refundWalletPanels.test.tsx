@@ -30,6 +30,10 @@ describe("refund wallet workspaces", () => {
     fireEvent.click(screen.getByRole("button", { name: "Prepare server-owned claim" }));
     await screen.findByText(/The server prepared an immutable claim artifact\./);
 
+    fireEvent.click(screen.getByRole("button", { name: "Connect wallet" }));
+    const claimWalletButton = await screen.findByRole("button", { name: "Reconnect wallet" });
+    expect(claimWalletButton.parentElement?.textContent).toContain(proposer.publicKey.toBase58());
+
     fireEvent.click(screen.getByRole("button", { name: "Sign as proposer" }));
     await screen.findByText(/Proposer signature collected\./);
     (window.solana as TestWallet).current = refundFunder;
@@ -52,6 +56,10 @@ describe("refund wallet workspaces", () => {
     fireEvent.change(screen.getByLabelText("Finalized claim intent ID"), { target: { value: claimIntentId } });
     fireEvent.click(screen.getByRole("button", { name: "Prepare server-owned execution" }));
     await screen.findByText(/The server prepared an immutable execute artifact/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect wallet" }));
+    const executeWalletButton = await screen.findByRole("button", { name: "Reconnect wallet" });
+    expect(executeWalletButton.parentElement?.textContent).toContain(approver.publicKey.toBase58());
 
     fireEvent.click(screen.getByRole("button", { name: "Sign as approver" }));
     await screen.findByText(/Approver signature collected\./);

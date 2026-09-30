@@ -22,7 +22,6 @@ use std::{
 use storage::PgStore;
 use tokio::time::interval;
 use tracing::{info, warn};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Clone)]
 struct HealthState {
@@ -55,10 +54,7 @@ async fn metrics(State(state): State<HealthState>) -> Response {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::from_default_env())
-        .with(tracing_subscriber::fmt::layer().json())
-        .init();
+    let mut telemetry = observability::init_tracing("indexer")?;
 
     let config = IndexerConfig::from_env()?;
     let source = config.build_source()?;
@@ -196,5 +192,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
         }
     }
+    telemetry.shutdown();
     Ok(())
 }

@@ -116,9 +116,10 @@ production accessibility evidence remain open.
 
 ADR-0200 adds the production wallet boundary used by checkout, adjustment, and
 refund workspaces: Wallet Standard discovery is capability-filtered, multiple
-providers require explicit selection, selected accounts and returned signed
-bytes are verified, and the legacy injected adapter is used only when no
-compatible standard provider is registered. The local unit/component and
+providers and multi-account sessions require explicit selection, selected
+accounts and returned signed bytes are verified, and the legacy injected
+adapter is used only when no compatible standard provider is registered. The
+local unit/component and
 real-browser suites pass; live provider/account coverage, Linux validator
 evidence, regional RPC performance, and production accessibility review remain
 release gates.

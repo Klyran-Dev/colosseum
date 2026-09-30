@@ -54,7 +54,8 @@
   exact SBF identity, container metadata, and the complete real-RPC conformance
   matrix; Docker Desktop `io_uring` failures remain typed non-zero evidence.
 - Implemented ADR-0200's Wallet Standard discovery, capability filtering,
-  explicit multi-wallet selection, account/signature binding, and legacy
+  explicit multi-wallet and multi-account selection, account/signature
+  binding, selected-account visibility in refund workspaces, and legacy
   fallback while preserving the non-custodial server-owned signed-byte
   boundary. Live provider/account matrix and production enablement evidence
   remain release gates.

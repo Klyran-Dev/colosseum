@@ -489,6 +489,15 @@ quote path were rejected for memory, integrity, and tail-latency reasons.
 | Caller-supplied `x-request-id` | Useful for client correlation | Spoofable and can introduce unbounded or invalid log values | Rejected |
 | UUIDv4 framework helper | Mature middleware integration | Violates the repository’s UUIDv7 correlation policy | Rejected |
 
+### Rust trace export
+
+| Alternative | Strengths | Risks/trade-offs | Decision |
+| --- | --- | --- | --- |
+| **Shared `tracing` + bounded OTLP gRPC exporter** | Uses existing spans, preserves JSON logs, one redaction/configuration boundary, collector portability | Adds pinned OpenTelemetry dependencies and a lifecycle boundary | **Selected; see ADR-0201** |
+| Prometheus-only metrics and JSON logs | Lowest dependency cost | No distributed span context or collector trace evidence | Rejected for Tier-1 operations |
+| Synchronous exporter in request paths | Immediate delivery | Couples business latency and availability to telemetry | Rejected |
+| Per-service custom exporters | Local control | Configuration and privacy drift across services | Rejected |
+
 ### UUIDv7 schema evidence
 
 | Alternative | Strengths | Risks/trade-offs | Decision |
@@ -656,6 +665,8 @@ rejected; see ADR-0059.
 | --- | --- | --- | --- |
 | Legacy `window.solana` only | Minimal bundle and implementation | Cannot enumerate providers or prove advertised capabilities | Rejected |
 | **Wallet Standard discovery with explicit selection and legacy fallback** | Capability-aware multi-wallet support while preserving the existing web3.js and server signed-byte boundary | Adds bounded selection/lifecycle state and exact dependencies | **Selected; ADR-0200** |
+| Implicitly use the first account returned by a provider | Lowest interaction cost | Can authorize the wrong signer and cannot be safely recovered after compilation | Rejected |
+| **Accessible explicit account selector after `standard:connect`** | Preserves signer intent and makes multi-account ambiguity visible before signing | Adds one bounded selection step for multi-account wallets | **Selected; ADR-0200** |
 | Full Solana Wallet Adapter registry | Broad adapter coverage | Larger bundle and lifecycle abstraction than this product boundary requires | Rejected for this slice |
 | Direct browser `sendTransaction` | Fewer API calls | Bypasses durable intent/reconciliation authority | Rejected |
 

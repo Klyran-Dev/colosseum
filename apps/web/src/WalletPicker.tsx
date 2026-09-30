@@ -106,6 +106,7 @@ export default function WalletPicker({ disabled = false, connectEnabled = true, 
         </select>
       </label>}
       {error && <p className="wallet-picker-error" role="alert">{error}</p>}
+      {connectedAddress && <p className="wallet-picker-account" role="status">Selected account: <code>{connectedAddress}</code></p>}
       <button
         type="button"
         onClick={connect}

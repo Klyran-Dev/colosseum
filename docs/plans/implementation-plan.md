@@ -235,11 +235,27 @@ advance a movement to a successful state.
   is registered.
 - [x] Bind the selected standard account and returned signed bytes to the
   existing server-compiled transaction and durable intent contract.
+- [x] Add an accessible account selector for providers exposing multiple
+  signing accounts; refuse implicit first-account selection.
+- [x] Render the selected public key in claim and execute wallet workspaces so
+  operators can compare the active signer with the immutable artifact.
 - [x] Add failing-first capability, rejection, mismatch, browser, and
   accessibility tests before enabling the adapter in production flows.
 - [ ] Add live Wallet Standard provider/account matrix evidence, Linux
   validator/provider conformance, load/SLO evidence, and production
   enablement gates.
+
+## ADR-0201 — bounded OTLP trace-export boundary
+
+- [ ] Add the shared observability bootstrap with opt-in OTLP gRPC traces,
+  bounded queue/batch/timeout configuration, service-name allow-listing, and
+  TLS/insecure endpoint policy.
+- [ ] Replace duplicated Rust binary tracing initialization with the shared
+  bootstrap and add bounded graceful shutdown flush handling.
+- [ ] Add failing-first configuration tests and a Docker collector receipt
+  drill that proves request correlation without financial payload leakage.
+- [ ] Keep production collector authentication, TLS, retention, sampling,
+  dashboards, alert routing, and on-call evidence as release gates.
 
 ## ADR-0177 — exact signed refund-claim submission
 

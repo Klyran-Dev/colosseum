@@ -663,10 +663,11 @@ and operational gates are intentionally not marked complete by unit tests.
 - [x] ADR-0200 implements the Wallet Standard compatibility boundary for
   checkout, adjustment, and refund workspaces: capability-filtered discovery,
   explicit multi-provider selection, selected-account identity checks,
-  returned-byte verification, and legacy fallback only when no compatible
-  standard provider is registered. Unit/component and pinned real-browser
-  evidence pass; live provider/account matrix, Linux validator/provider,
-  production load/SLO, and assistive-technology evidence remain open.
+  an accessible multi-account selector, returned-byte verification, and legacy
+  fallback only when no compatible standard provider is registered.
+  Unit/component and pinned real-browser evidence pass; live provider/account
+  matrix, Linux validator/provider, production load/SLO, and
+  assistive-technology evidence remain open.
 - [ ] ADR-0154 governed refund movement is implemented and proven against the
   pinned Linux validator for the published Refund scope; tax-vault and
   merchant-funder sources, payer-bound destination, claim cancellation,

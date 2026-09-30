@@ -18,7 +18,6 @@ use std::{
 use storage::PgStore;
 use tokio::time::sleep;
 use tracing::{info, warn};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use worker::{
     DEFAULT_STREAM_NAME, NatsJetStreamPublisher, default_lease, dispatch_once, parse_worker_limits,
 };
@@ -51,10 +50,7 @@ async fn metrics(State(state): State<HealthState>) -> Response {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::from_default_env())
-        .with(tracing_subscriber::fmt::layer().json())
-        .init();
+    let mut telemetry = observability::init_tracing("worker")?;
 
     let database_url = env::var("WORKER_DATABASE_URL")?;
     let nats_url = env::var("WORKER_NATS_URL")?;
@@ -117,5 +113,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
         }
     }
+    telemetry.shutdown();
     Ok(())
 }

@@ -201,3 +201,4 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0198: Strict vault-release lifecycle response contract](0198-strict-vault-release-response-contract.md)
 - [ADR-0199: Authoritative Linux validator evidence contract](0199-linux-validator-evidence-contract.md)
 - [ADR-0200: Solana Wallet Standard signing boundary](0200-solana-wallet-standard-boundary.md)
+- [ADR-0201: Bounded OTLP trace-export boundary](0201-otlp-trace-export-boundary.md)

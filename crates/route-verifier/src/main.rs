@@ -11,7 +11,6 @@ use std::{
 };
 use tokio::time::interval;
 use tracing::{info, warn};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Clone)]
 struct HealthState {
@@ -62,10 +61,7 @@ async fn metrics(State(state): State<HealthState>) -> impl axum::response::IntoR
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::from_default_env())
-        .with(tracing_subscriber::fmt::layer().json())
-        .init();
+    let mut telemetry = observability::init_tracing("route_verifier")?;
     let config = RouteVerifierConfig::from_env()?;
     let transports = config.build_transports()?;
     let store = Arc::new(build_store(&config).await?);
@@ -141,5 +137,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
         }
     }
+    telemetry.shutdown();
     Ok(())
 }

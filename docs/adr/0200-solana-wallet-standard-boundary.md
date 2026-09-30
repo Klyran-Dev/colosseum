@@ -32,12 +32,17 @@ second by the legacy injected compatibility adapter.
    display name/icon, supported chains, and only the capability needed by the
    product. If more than one compatible provider is present, the UI requires
    explicit user selection; the adapter never chooses the first implicitly.
-3. Call `standard:connect` to obtain an authorized account, require the
-   selected account's public key to equal the server-compiled signer, and call
-   `solana:signTransaction` with serialized legacy transaction bytes and an
-   explicit Solana chain identifier. Convert returned bytes back to the
-   existing web3.js boundary and verify the expected signer before returning
-   canonical base64.
+3. Call `standard:connect` to obtain authorized accounts. If the wallet
+   exposes more than one Solana signing account, surface a required account
+   selector in the shared wallet component; never choose the first account.
+   After connection, render the selected public key in the same wallet
+   workspace so the operator can compare the active signer with the
+   server-owned artifact before each role-signing action.
+   Require the selected account's public key to equal the server-compiled
+   signer, and call `solana:signTransaction` with serialized legacy
+   transaction bytes and an explicit Solana chain identifier. Convert returned
+   bytes back to the existing web3.js boundary and verify the expected signer
+   before returning canonical base64.
 4. Retain `window.solana` only as a compatibility fallback when no standard
    provider is registered. A discovered but incompatible standard provider is
    reported as unsupported rather than silently bypassed.
@@ -58,7 +63,9 @@ second by the legacy injected compatibility adapter.
 ## Invariants and failure behavior
 
 - No private key, wallet secret, or signed transaction is persisted or logged.
-- No wallet is selected implicitly when multiple compatible providers exist.
+- No wallet is selected implicitly when multiple compatible providers exist;
+  no account is selected implicitly when a provider exposes multiple signing
+  accounts.
 - Only a wallet advertising `solana:signTransaction` can sign this path;
   `signAndSendTransaction` is intentionally not used.
 - The selected account, transaction bytes, program/account policy, and server
@@ -71,16 +78,16 @@ second by the legacy injected compatibility adapter.
 
 ## Verification
 
-- Unit tests cover discovery, capability filtering, explicit selection,
+- Unit tests cover discovery, capability filtering, explicit provider/account selection,
   connection/account binding, returned-byte parsing, mismatch, malformed
-  output, rejection, and legacy fallback (`6` tests passing).
+  output, rejection, and legacy fallback (`7` tests passing).
 - Existing transaction serialization and server signed-message tests remain
   mandatory; no browser test may assert success from a wallet signature alone.
 - The React test suite covers the accessible multi-provider selector and the
   existing pinned NGINX browser suite remains green (`10/10` journeys),
   including wallet rejection and signer-bound transaction workflows.
 - `pnpm --dir apps/web test`, typecheck, and production build pass with
-  `94` tests passing and `6` skipped; targeted wallet/checkout/refund tests
+  `95` tests passing and `6` skipped; targeted wallet/checkout/refund tests
   pass as part of that suite.
 - A real injected-wallet matrix and Linux validator/provider evidence remain
   separate release gates.
