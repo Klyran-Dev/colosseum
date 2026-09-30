@@ -1,4 +1,8 @@
 #![deny(unsafe_code)]
+#![cfg_attr(
+    not(test),
+    deny(clippy::expect_used, clippy::panic, clippy::unwrap_used)
+)]
 
 use axum::{
     Json, Router,
@@ -34,6 +38,7 @@ const DEFAULT_VAULT_ADDRESS: &str = "Sysvar1nstructions1111111111111111111111111
 const DEFAULT_VAULT_MINT: &str = "So11111111111111111111111111111111111111112";
 const SPL_TOKEN_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const SETTLEMENT_PROGRAM_ID: &str = "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi";
+const SETTLEMENT_PROGRAM_BYTES: [u8; 32] = [1; 32];
 const ADJUSTMENT_REGISTRY_ACCOUNT_DATA_LEN: usize = 8 + (5 * 32) + 2;
 const REFUND_CLAIM_ACCOUNT_DATA_LEN: usize = 8 + (9 * 32) + (4 * 8) + 32 + (2 * 8) + 32 + 3;
 const ADJUSTMENT_REFUND_EXECUTED_EVENT_DISCRIMINATOR: [u8; 8] = [112, 130, 243, 73, 61, 70, 35, 70];
@@ -130,8 +135,7 @@ struct RefundProofFixture {
 
 impl RefundProofFixture {
     fn vault_authority(&self) -> Pubkey {
-        let program = Pubkey::from_str(SETTLEMENT_PROGRAM_ID)
-            .expect("the checked-in settlement program ID must be valid");
+        let program = Pubkey::new_from_array(SETTLEMENT_PROGRAM_BYTES);
         Pubkey::find_program_address(
             &[
                 b"vault-authority",
@@ -1170,6 +1174,12 @@ fn error_response(id: Value, code: i64, message: &str) -> RpcResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checked_in_program_bytes_match_the_wire_identifier() {
+        let parsed = Pubkey::from_str(SETTLEMENT_PROGRAM_ID).expect("test constant is valid");
+        assert_eq!(parsed.to_bytes(), SETTLEMENT_PROGRAM_BYTES);
+    }
 
     #[test]
     fn fixture_failure_methods_are_trimmed_and_bounded() {

@@ -67,6 +67,7 @@ for expected_case in \
     'settles legacy SPL' \
     'real v0 address lookup table' \
     'extension-free Token-2022' \
+    'settles a document-bound payment' \
     'immutable two-recipient Split Plan' \
     'real Token-2022 TransferFeeConfig' \
     'revoked policy attestations'; do

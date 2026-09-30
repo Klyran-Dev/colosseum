@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(test),
+    deny(clippy::expect_used, clippy::panic, clippy::unwrap_used)
+)]
+
 //! Deterministic, replayable tax calculation domain logic.
 //!
 //! This crate intentionally has no network, clock, database, filesystem, RPC,
@@ -355,6 +360,7 @@ pub struct CumulativePeriodSnapshot {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TaxLineFacts {
     pub id: String,
     #[serde(with = "serde_i128_string")]
@@ -366,6 +372,7 @@ pub struct TaxLineFacts {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TaxDocumentFacts {
     pub id: String,
     pub currency: String,
@@ -378,7 +385,7 @@ pub struct TaxDocumentFacts {
 }
 
 impl TaxDocumentFacts {
-    fn validate(&self) -> Result<(), TaxError> {
+    pub fn validate(&self) -> Result<(), TaxError> {
         if self.id.trim().is_empty() || self.id.len() > MAX_CODE_BYTES {
             return Err(TaxError::InvalidFacts(
                 "document id is required and must be bounded",
@@ -1164,6 +1171,23 @@ impl CompiledRuleSet {
         resolved_facts.jurisdiction = resolution.jurisdiction_code.clone();
         resolved_facts.jurisdiction_resolution = Some(resolution);
         self.calculate(&resolved_facts)
+    }
+
+    /// Resolves and binds jurisdiction evidence for a document calculation
+    /// while reusing this compiled immutable rule graph.
+    pub fn calculate_document_with_jurisdiction_resolution(
+        &self,
+        facts: &TaxDocumentFacts,
+        policy: &jurisdiction::ResolutionPolicy,
+        candidates: &[jurisdiction::JurisdictionCandidate],
+    ) -> Result<TaxDocumentResult, TaxError> {
+        let resolution = policy
+            .resolve(candidates)
+            .map_err(TaxError::JurisdictionResolution)?;
+        let mut resolved_facts = facts.clone();
+        resolved_facts.jurisdiction = resolution.jurisdiction_code.clone();
+        resolved_facts.jurisdiction_resolution = Some(resolution);
+        self.calculate_document(&resolved_facts)
     }
 }
 

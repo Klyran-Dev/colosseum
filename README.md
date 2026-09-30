@@ -4,7 +4,7 @@ Production-grade architecture for a low-latency Solana payment-routing and Tier-
 
 ## Project status
 
-The repository contains the executable foundation: a deterministic Rust tax-engine crate with immutable compiled rule graphs, authenticated idempotent tenant-scoped rule-draft authoring and an author/reviewer/approver governance workflow with append-only evidence, an immutable settlement-adjustments domain and durable proposal/approval/rejection API plus accessible operator workspace for bounded refund/reversal/correction/chargeback deltas, a persisted published-rule quote boundary with transactional idempotency and scoped EdDSA authentication, a tenant-scoped settlement route registry with deterministic payer ATA derivation, a finalized multi-provider route-verifier service with append-only activation evidence, a deterministic non-custodial settlement instruction compiler, a bounded wallet-signed transaction coordinator, UUIDv7 settlement-intent persistence, an atomic PostgreSQL outbox, a bounded Rust worker with NATS JetStream delivery, a finalized-indexer persistence slice with raw transaction evidence, typed split-settlement evidence, and lease-fenced replay, an isolated preview API, an authenticated React/Vite quote UI, a PostgreSQL 18 migration baseline, bounded Prometheus metrics and validated alert rules, and pinned Docker/NGINX local orchestration. It does not claim production deployment, legal/tax coverage, audit completion, or mainnet readiness. Production submission enablement, adjustment on-chain posting, live identity-provider key rotation, production HSM/KMS attestation issuance, route governance ceremonies, identity-provider governance, RPC-backed indexing, production alert receiver delivery, and local validator slices remain gated by the design, TDD, security, performance, and operational requirements in [AGENTS.md](AGENTS.md). The Docker integration gate does include an isolated synthetic external issuer fixture; its key is generated only for the test run and is never placed in the API image.
+The repository contains the executable foundation: a deterministic Rust tax-engine crate with immutable compiled rule graphs, authenticated idempotent tenant-scoped rule-draft authoring and an author/reviewer/approver governance workflow with append-only evidence, bounded line/invoice document tax facts, dedicated document attestations and document-to-payment authorization, an immutable settlement-adjustments domain and durable proposal/approval/rejection API plus accessible operator workspace for bounded refund/reversal/correction/chargeback deltas, a persisted published-rule quote boundary with transactional idempotency and scoped EdDSA authentication, a tenant-scoped settlement route registry with deterministic payer ATA derivation, a finalized multi-provider route-verifier service with append-only activation evidence, deterministic aggregate, Split Plan, and document settlement instruction compilers, bounded wallet-signed transaction coordinators, UUIDv7 settlement-intent persistence, an atomic PostgreSQL outbox, a bounded Rust worker with NATS JetStream delivery, a finalized-indexer persistence slice with raw transaction evidence, typed split/document-settlement evidence, and lease-fenced replay, an isolated preview API, authenticated React/Vite quote and document-checkout workspaces, a PostgreSQL 18 migration baseline, bounded Prometheus metrics and validated alert rules, and pinned Docker/NGINX local orchestration. It does not claim production deployment, legal/tax coverage, audit completion, or mainnet readiness. Production submission enablement, adjustment on-chain posting, live identity-provider key rotation, production HSM/KMS attestation issuance, route governance ceremonies, identity-provider governance, RPC-backed indexing, production alert receiver delivery, and local validator slices remain gated by the design, TDD, security, performance, and operational requirements in [AGENTS.md](AGENTS.md). The Docker integration gate does include an isolated synthetic external issuer fixture; its key is generated only for the test run and is never placed in the API image.
 
 Adjustment finality responses now carry a server-owned typed event-proof
 envelope; a browser status string alone cannot render an adjustment as
@@ -13,9 +13,10 @@ contract verify this boundary. Live wallet/provider, validator, production
 SLO, and full browser accessibility evidence remain release gates.
 
 The validator conformance command now includes the real bounded Split Plan
-fan-out path, finalized conservation checks, duplicate receipt rejection, and
-wrong-recipient-order failure evidence. It requires the pinned Linux validator
-runtime and remains a release gate rather than a local mock.
+fan-out path, document-bound settlement with on-chain provenance, finalized
+conservation checks, duplicate receipt rejection, and wrong-recipient-order
+failure evidence. It requires the pinned Linux validator runtime and remains a
+release gate rather than a local mock.
 
 ## Architecture
 
@@ -40,6 +41,7 @@ The Solana core uses Rust/Anchor-compatible interfaces. The Tier-1 Tax Engine is
 - [Tax coverage matrix](docs/product/tax-coverage-matrix.md)
 - [Architecture and alternatives](docs/architecture/alternative-analysis.md)
 - [API contract baseline](docs/api-contract.md)
+- [Document quote and checkout ADRs](docs/adr/0204-authoritative-document-quote-boundary.md)
 - [Architecture decision records](docs/adr/README.md)
 - [Public repository release contract](docs/public-repository-release.md)
 - [Source analysis and requirement boundary](docs/source-analysis.md)
@@ -66,6 +68,19 @@ of hanging the gate.
 The quote-load drill runs two independent API containers, alternates requests
 across replicas, and proves cross-replica same-key convergence at the
 PostgreSQL fence; CI uploads its bounded output as a public-safe artifact.
+Run `make benchmark-document-quote-service` for the separate two-line
+document-quote workload defined by ADR-0209; its output is local evidence and
+does not claim a production SLO.
+
+Run `make bootstrap` to start the full Docker topology: PostgreSQL migrations
+and fixtures, API, worker, NATS, Redis, indexer, route verifier, observability,
+the pinned local validator, and the real NGINX-served SPA. Compose waits for
+declared health checks and fails closed when a required runtime capability is
+unavailable. The one-shot conformance and browser gates remain explicit
+commands (`make solana-conformance` and `make web-browser-check`).
+If a host port is already in use, provide an explicit alternate port map (for
+example `REDIS_PORT=46380 SOLANA_RPC_PORT=18899 SOLANA_FAUCET_PORT=18900`)
+and keep the printed endpoints as the client configuration for that stack.
 
 Run `make benchmark-rule-simulation` for the separate facts-only persisted-rule
 simulation workload. It verifies server-owned rule identity and digest binding,

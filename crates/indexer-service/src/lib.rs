@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(test),
+    deny(clippy::expect_used, clippy::panic, clippy::unwrap_used)
+)]
+
 use async_trait::async_trait;
 use indexer::{
     Checkpoint, FailoverPageSource, FailoverRefundBalanceProofSource, FailoverSignaturePageSource,

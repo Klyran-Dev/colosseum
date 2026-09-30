@@ -2,6 +2,25 @@
 
 ## 2026-09-30
 
+- Added ADR-0212's production Rust panic-safety contract. Every Rust crate
+  denies `unwrap`, `expect`, and explicit panic paths in non-test builds, while
+  test fixtures retain isolated assertions. The fixed RPC-fixture program ID
+  now uses checked-in bytes with a compatibility test, and jurisdiction digest
+  parsing no longer relies on a debug-only assertion.
+- Added ADR-0210's Docker full-topology bootstrap. `make bootstrap` builds
+  the pinned SBF artifact through Docker, starts the bounded long-running
+  local topology, waits on Compose health checks, excludes one-shot test jobs,
+  and fails closed on unavailable runtime capabilities. Its dry-run contract
+  is included in `make check`; a successful Linux/amd64 validator run remains
+  a release gate.
+- Added ADR-0211's explicit Compose host-port override policy. Validator RPC
+  and faucet bindings now follow the same deterministic environment override
+  contract as the other published services, allowing parallel local
+  topologies without random port allocation or silent rebinding.
+- Added pinned real-browser document quote and checkout degraded-state
+  evidence. Unavailable document quote and settlement-route APIs now have
+  browser assertions that preserve empty/evidence states, keep compilation and
+  signing disabled, and pass WCAG 2.2 A/AA axe scans.
 - Implemented ADR-0201's shared bounded OTLP trace-export bootstrap for API,
   worker, indexer, and route-verifier, including endpoint security policy,
   bounded exporter settings, sensitive-field exclusions, and graceful flush.
@@ -75,6 +94,14 @@
   fallback while preserving the non-custodial server-owned signed-byte
   boundary. Live provider/account matrix and production enablement evidence
   remain release gates.
+- Extended the pinned NGINX Playwright evidence to exercise Wallet Standard
+  provider registration, mandatory multi-account selection, and reload-state
+  recovery in a real browser. This is synthetic provider evidence only; live
+  wallet/provider matrix evidence remains open.
+- Added a pinned document checkout success journey covering authenticated quote
+  evidence, issuer-attestation verification, server-owned authorization, and
+  the reviewed-artifact signing gate. It deliberately stops before signing or
+  settlement and keeps live-chain evidence as a release gate.
 ## 2026-09-28
 
 - Added ADR-0148's pinned Docker Playwright browser journey gate through the

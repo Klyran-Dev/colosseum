@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import { fetchWithTimeout, REQUEST_TIMEOUT_MS, responseError } from "./api";
 import { createClientUuid } from "./clientIdentity";
 import { DEFAULT_LOCALE, DEFAULT_TIME_ZONE, formatAtomic as formatAtomicValue, formatTimestamp as formatTimestampValue } from "./formatters";
@@ -16,6 +16,7 @@ import {
   RuleWorkbenchDraft,
 } from "./ruleWorkbench";
 import { parseTaxSimulation, TaxSimulation } from "./taxSimulation";
+import TaxDocumentSimulationPanel from "./TaxDocumentSimulationPanel";
 
 const DEFAULT_RULE_DOCUMENT = `{
   "id": "new-sales-tax",
@@ -86,6 +87,13 @@ export default function GovernancePanel({ apiBase, serviceOnline, locale = DEFAU
   const [simulationCurrency, setSimulationCurrency] = useState("USD");
   const [simulation, setSimulation] = useState<TaxSimulation | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
+  const documentRuleSet = useMemo(() => {
+    try {
+      return ruleEditorMode === "structured" ? buildRuleSet(structuredRuleDraft) : JSON.parse(draftRuleDocument);
+    } catch {
+      return null;
+    }
+  }, [draftRuleDocument, ruleEditorMode, structuredRuleDraft]);
 
   async function loadGovernanceFor(id: string, announce = true) {
     if (!id.trim() || !accessToken.trim()) {
@@ -348,7 +356,7 @@ export default function GovernancePanel({ apiBase, serviceOnline, locale = DEFAU
             <p className="field-help full-field">Jurisdiction is bound to the loaded rule ({state?.jurisdiction ?? "load a rule first"}); client-supplied jurisdiction evidence is rejected.</p>
             <button type="submit" disabled={!state || !serviceOnline || isSimulating || !accessToken.trim()}>{isSimulating ? "Simulating persisted rule…" : "Simulate persisted rule"}</button>
           </form>
-          {simulation && <div className="simulation-result" role="status">
+        {simulation && <div className="simulation-result" role="status">
             <div className="governance-current-state"><span>Unattested server result</span><strong>{formatAtomicValue(simulation.result.total_tax_atomic, simulation.result.currency, locale)} tax</strong><small>Calculation reference {simulation.calculation_id} · rule {simulation.result.rule_set_id} v{simulation.result.rule_version}</small></div>
             <dl className="summary-list"><div><dt>Net after tax</dt><dd>{formatAtomicValue(simulation.result.total_net_atomic, simulation.result.currency, locale)}</dd></div><div><dt>Engine</dt><dd>{simulation.result.engine_version}</dd></div><div><dt>Rule digest</dt><dd><code>{simulation.result.rule_digest.slice(0, 8).map((byte) => byte.toString(16).padStart(2, "0")).join("")}…</code></dd></div></dl>
             <div className="trace-list">{simulation.result.components.map((component) => <div className="trace-row" key={component.id}><div><strong>{component.label}</strong><small>{component.explanation}</small></div><strong>{formatAtomicValue(component.tax_atomic, simulation.result.currency, locale)}</strong></div>)}</div>
@@ -357,7 +365,14 @@ export default function GovernancePanel({ apiBase, serviceOnline, locale = DEFAU
         {!state ? <div className="empty-state"><span className="empty-icon">◎</span><strong>No rule snapshot loaded</strong><p>Enter an authenticated rule-set UUID to inspect duties, effective dates, digest, and the append-only decision trail.</p></div> : <div className="governance-evidence-content">
           <dl className="summary-list"><div><dt>Rule identity</dt><dd>{state.external_id} v{state.version}</dd></div><div><dt>Jurisdiction / regime</dt><dd>{state.jurisdiction} / {state.regime}</dd></div><div><dt>Rule digest</dt><dd><code>{state.rule_digest_hex.slice(0, 16)}…</code></dd></div><div><dt>Effective from</dt><dd>{formatTimestampValue(state.effective_from, locale, timeZone)}</dd></div><div><dt>Author</dt><dd>{state.author_subject ?? "Not assigned"}</dd></div><div><dt>Reviewer</dt><dd>{state.reviewer_subject ?? "Not assigned"}</dd></div><div><dt>Approver</dt><dd>{state.approver_subject ?? "Not assigned"}</dd></div></dl>
           <div><h3 className="subheading">Decision trail <span>{state.events.length}</span></h3>{state.events.length === 0 ? <p className="evidence-note">No transition evidence has been recorded for this draft.</p> : <ol className="governance-timeline">{state.events.map((event) => <li key={event.id}><div className="timeline-marker" /><div><strong>{event.from_status} → {event.to_status}</strong><small>{event.action} by {event.actor_subject} · {formatTimestampValue(event.occurred_at, locale, timeZone)}</small><details><summary>Evidence</summary><pre>{JSON.stringify(event.evidence, null, 2)}</pre></details></div></li>)}</ol>}</div>
-        </div>}
+          </div>}
+        <TaxDocumentSimulationPanel
+          apiBase={apiBase}
+          serviceOnline={serviceOnline}
+          ruleSet={documentRuleSet}
+          jurisdiction={state?.jurisdiction ?? draftJurisdiction}
+          locale={locale}
+        />
       </article>
     </section>
   );

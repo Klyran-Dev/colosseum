@@ -2,9 +2,11 @@
 
 ## Status
 
-Accepted for implementation. This adds an explicit document-facts contract; it
-does not claim legal coverage for any jurisdiction, product category, filing,
-registration, or remittance obligation.
+Accepted. The pure domain, bounded simulation API, browser workbench, golden
+vectors, property tests, and 64-line × 16-component benchmark are implemented.
+This does not claim legal coverage for any jurisdiction, product category,
+filing, registration, or remittance obligation; production quote authorization,
+durable evidence, and settlement binding remain open gates.
 
 ## Context
 
@@ -49,6 +51,12 @@ without allowing unbounded user-controlled work.
    semantics requires a new schema/rule version; unknown schemas and unknown
    fields at API boundaries fail closed. Historical aggregate facts remain
    replayable and are never reinterpreted as document facts.
+7. The browser exposes a bounded document simulator beside rule authoring. It
+   edits line identity and decimal-string facts, validates duplicate/empty/
+   over-bound lines before network access, submits only to the explicit
+   simulation route, and renders server-returned canonical lines and trace
+   digests. It never computes a tax total locally, accepts a settlement action,
+   or presents an unattested result as a quote.
 
 ## Alternatives considered
 
@@ -98,4 +106,5 @@ without allowing unbounded user-controlled work.
   and residual allocation invariants.
 - API/storage/UI adapters are separate implementation slices and must not
   publish document results until their own authorization, persistence,
-  accessibility, and load evidence exists.
+  accessibility, and load evidence exists. The current API/UI slice is
+  simulation-only and has no production quote authority.

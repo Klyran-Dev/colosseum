@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(test),
+    deny(clippy::expect_used, clippy::panic, clippy::unwrap_used)
+)]
+
 use axum::{Router, extract::State, http::StatusCode, routing::get};
 use observability::ServiceMetrics;
 use route_verifier::{RouteVerifierConfig, build_store, verify_once, verify_refund_funding_once};

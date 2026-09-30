@@ -15,6 +15,7 @@ members = [
     "crates/split-plan",
     "crates/storage",
     "crates/settlement-client",
+    "crates/document-payment",
     "crates/settlement-adjustments",
     "crates/settlement-coordinator",
     "crates/tax-engine",

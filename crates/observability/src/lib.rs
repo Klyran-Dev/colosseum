@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(test),
+    deny(clippy::expect_used, clippy::panic, clippy::unwrap_used)
+)]
+
 //! Bounded, dependency-free service metrics.
 //!
 //! The registry deliberately accepts a fixed operation set at construction.

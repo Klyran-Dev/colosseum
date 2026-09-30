@@ -17,6 +17,15 @@ This document records the comparison baseline required before implementation. It
 
 ## Decisions
 
+### Production Rust panic safety
+
+| Alternative | Strengths | Risks/trade-offs | Decision |
+| --- | --- | --- | --- |
+| Review checklist only | No build changes | Regressions can be introduced between reviews | Rejected |
+| Text grep over all Rust sources | Easy to run | False positives in tests/benches and no Rust configuration awareness | Rejected |
+| Workspace-wide deny lint with no test distinction | Strong default | Rejects legitimate fixture assertions and obscures the production boundary | Rejected |
+| **Per-crate `cfg_attr(not(test), deny(clippy::expect_used, clippy::panic, clippy::unwrap_used))` plus workspace Clippy** | Enforced at compile time, no runtime cost, test fixtures remain expressive | New crate roots must copy the contract | **Selected in ADR-0212** |
+
 ### Signed-message adversarial verification
 
 | Alternative | Strengths | Risks/trade-offs | Decision |
@@ -253,6 +262,34 @@ This document records the comparison baseline required before implementation. It
 | Accept all Token-2022 extensions through generic CPI | Broad nominal asset coverage | Transfer fees/hooks/delegates/confidential semantics can invalidate amount conservation and authority assumptions | Rejected; fail closed |
 | Legacy SPL only | Smallest current implementation | Cannot make a truthful Token-2022 compatibility claim | Rejected as the target architecture; retained only as the initial historical slice |
 
+### Document quote latency evidence
+
+| Alternative | Strengths | Risks/trade-offs | Decision |
+| --- | --- | --- | --- |
+| Reuse aggregate quote measurements | No new harness work | Hides document payload, rule-scope, storage, and outbox differences | Rejected |
+| Copy the aggregate benchmark into a second script | Isolated document workload | Duplicates timeout, credential, percentile, cleanup, and invariant logic | Rejected |
+| Mixed aggregate/document workload | Capacity mix is closer to a fleet | Per-context regressions and durable attribution become ambiguous | Rejected as the primary gate |
+| **Explicit document mode in the existing bounded Docker harness** | DRY, reproducible, and context-specific with shared safety gates | Adds one bounded CI workload | **Selected in ADR-0209** |
+| External load tool or host-installed binary | Familiar ecosystem | Violates the Docker bootstrap contract and introduces toolchain drift | Rejected |
+
+### Docker full-topology bootstrap
+
+| Alternative | Strengths | Risks/trade-offs | Decision |
+| --- | --- | --- | --- |
+| Default `docker compose up` | Short command | Omits required profiles and has no explicit full-topology readiness contract | Rejected |
+| Enable every Compose profile | Starts all declared services | Also launches one-shot conformance and browser-test jobs | Rejected |
+| Host supervisor with custom polling | Flexible per-service control | Duplicates health semantics and depends on host tooling | Rejected |
+| **Explicit long-running services with Compose `--wait`** | Pinned Docker boundary, health-derived readiness, no host toolchain | Starts more local containers and requires validator capabilities | **Selected in ADR-0210** |
+
+### Docker host-port collision policy
+
+| Alternative | Strengths | Risks/trade-offs | Decision |
+| --- | --- | --- | --- |
+| Fixed host ports | Simple copy/paste URLs | Collides with unrelated stacks even when Compose projects are isolated | Rejected |
+| Random host-port allocation | Avoids most collisions | Breaks reproducible URLs and makes browser/wallet/test configuration unstable | Rejected |
+| Host networking | Fewer published mappings | Removes isolation and broadens local security exposure | Rejected |
+| **Explicit environment-backed host-port overrides** | Stable defaults, parallel topologies, unchanged internal contracts | Operators must choose and record a complete alternate map | **Selected in ADR-0211** |
+
 ### Settlement conformance evidence
 
 | Alternative | Strengths | Risks/trade-offs | Decision |
@@ -477,7 +514,34 @@ of min/max semantics after final rounding.
 | Reuse aggregate `TaxFacts` for invoices | Minimal schema | Loses line identity and makes rounding/replay ambiguous | Rejected |
 | Browser-owned line aggregation | Fast preview | Caller-controlled evidence and cross-language numeric drift | Rejected |
 | **Versioned bounded document facts with explicit line/invoice scope** | Canonical identity, bounded work, conserving allocation, replayable evidence | Adds a separate domain/result contract | **Selected in ADR-0203** |
+
+### Production document quote persistence
+
+| Option | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Reuse aggregate `tax_calculations` | Small migration | Shape confusion and unsafe settlement/attestation reuse | Rejected |
+| Browser/object-storage persistence | Flexible and responsive | Caller-controlled authority and missing transactional evidence | Rejected |
+| **Dedicated PostgreSQL document-calculation adapter** | Explicit type firewall, tenant scope, idempotency, encrypted replay, outbox | Additional schema and API surface | **Selected in ADR-0204** |
 | Unbounded generic line rule graph | Broad expressiveness | Unbounded latency/memory and difficult audit/attestation limits | Rejected |
+
+### Document-calculation attestation
+
+| Option | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Reuse aggregate `CalculationAttestation` | No new signer contract | Cannot distinguish document and aggregate authority; unsafe settlement reuse | Rejected |
+| Add document fields to aggregate schema v1 | One wire type | Breaks existing signed payloads and verifier compatibility | Rejected |
+| Signed ad-hoc JSON envelope | Flexible | Ambiguous canonicalization and domain separation | Rejected |
+| **Dedicated policy contract, persistence table, API route, and outbox event** | Explicit scope firewall and independent replay | Additional audited contract surface | **Selected in ADR-0205** |
+
+### Document-to-payment binding
+
+| Option | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Reuse aggregate `settle` with document totals | Smallest code change | Loses document provenance on chain and permits aggregate/document coercion | Rejected |
+| Put document identity only inside the policy digest | No program instruction change | Chain evidence cannot independently distinguish source and payment scope | Rejected |
+| Prorate arbitrary partial payments from stored totals | Flexible checkout behavior | Incorrect for progressive, thresholded, cascading, capped, credited, or rounded rules | Rejected |
+| Put document lines/rule graph on Solana | On-chain visibility | Unbounded compute/account/packet cost, privacy leakage, and poor rule evolution | Rejected |
+| **Dedicated domain plus `settle_document` and document receipt** | Type firewall, deterministic whole-line semantics, on-chain provenance | Requires a separately audited instruction and event | **Selected in ADR-0206** |
 
 ## Re-evaluation triggers
 
@@ -1391,3 +1455,29 @@ binding without credentials or nondeterministic public-RPC state.
 Selected: the deterministic Docker drill in ADR-0195. It closes the local
 service-wiring and proof-persistence boundary without overclaiming live-chain
 or legal evidence.
+
+### Document-bound checkout workspace
+
+**Criteria:** preserve the document/aggregate authority firewall, expose the
+issuer and scope evidence chain to operators, keep the initial SPA bundle
+bounded, and make wallet/finality failure states unambiguous.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Extend aggregate checkout with a document mode | Reuses the existing form and wallet path | Blurs authority boundaries and makes accidental aggregate compilation easier | Rejected |
+| Operator-only HTTP workflow | Smallest UI change | Not a supportable, accessible product surface; increases evidence-entry errors | Rejected |
+| Browser-side attestation calculation/signing | Low interaction latency | Violates issuer custody and server-owned evidence; unsafe for real money | Rejected |
+| **Dedicated lazy document workspace over typed verification, compilation, wallet, and reconciliation boundaries** | Explicit type firewall, evidence-first UX, code-split delivery, and reusable finality controls | Adds a separately tested workspace | **Selected in ADR-0207** |
+
+### Authenticated document-quote workspace
+
+**Criteria:** keep simulation and production quote authority separate, preserve
+server-owned jurisdiction and amount semantics, support exact idempotent retry,
+and provide a discoverable accessible path into document settlement.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Reuse the simulation form against the production endpoint | Minimal visual duplication | Can accidentally submit caller-owned rule data and blur unattested simulation with persisted evidence | Rejected |
+| Hide document quotes behind aggregate quote UI | Fewer workspaces | Conceals document-specific facts, attestation, and line-scope semantics | Rejected |
+| API-client-only workflow | No SPA implementation | Undocumented, inaccessible, and operationally error-prone | Rejected |
+| **Dedicated authenticated lazy workspace** | Clear authority boundary, exact server evidence, and direct document-checkout handoff | Additional UI and contract tests | **Selected in ADR-0208** |

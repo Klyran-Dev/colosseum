@@ -262,6 +262,7 @@ The implementation must provide a Compose profile for:
 - Run formatting, linting, type checking, tests, audit, SBOM, and reproducible-build checks in CI.
 - `unsafe` Rust, shelling out, dynamic code generation, and dependency additions require justification and review.
 - Never use `unwrap`, `expect`, panic, ignored errors, unbounded retries, or silent fallback in request, settlement, tax, or reconciliation paths without a documented proof that the path is unreachable and a test enforcing it.
+- Every Rust crate root must apply the non-test Clippy panic-safety contract from ADR-0212 (`clippy::expect_used`, `clippy::panic`, and `clippy::unwrap_used` denied) and `cargo clippy --locked --workspace --all-targets -- -D warnings` must remain green. Test-only fixture assertions do not authorize runtime assertions.
 
 ## Security and privacy mandates
 

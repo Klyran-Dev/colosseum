@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { Buffer } from "node:buffer";
 import axe from "axe-core";
 
 async function expectNoBrowserAxeViolations(
@@ -58,6 +59,8 @@ test.describe("real-browser SPA journeys", () => {
       ["Refund claims", "Prepare a refund claim"],
       ["Refund executions", "Prepare execution"],
       ["Checkout authorization", "Review and authorize settlement"],
+      ["Document quote", "Create persisted document evidence"],
+      ["Document checkout", "Authorize a documented payment"],
     ] as const;
 
     for (const [buttonName, headingName] of workspaces) {
@@ -81,6 +84,8 @@ test.describe("real-browser SPA journeys", () => {
       ["Refund claims", "Prepare a refund claim"],
       ["Refund executions", "Prepare execution"],
       ["Checkout authorization", "Review and authorize settlement"],
+      ["Document quote", "Create persisted document evidence"],
+      ["Document checkout", "Authorize a documented payment"],
     ] as const;
 
     for (const [buttonName, headingName] of workspaces) {
@@ -219,6 +224,314 @@ test.describe("real-browser SPA journeys", () => {
     await expect(page.getByRole("alert")).toContainText("User rejected wallet connection");
     await expect(page.getByText("No wallet connected", { exact: true })).toBeVisible();
     await expectNoBrowserAxeViolations(page, "wallet rejection state");
+  });
+
+  test("requires explicit Wallet Standard account selection across a browser reload", async ({ page }) => {
+    await page.addInitScript(() => {
+      const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+      const decodeBase58 = (value: string): Uint8Array => {
+        const bytes = [0];
+        for (const character of value) {
+          const index = alphabet.indexOf(character);
+          if (index < 0) throw new Error("invalid test public key");
+          let carry = index;
+          for (let offset = 0; offset < bytes.length; offset += 1) {
+            const next = bytes[offset] * 58 + carry;
+            bytes[offset] = next & 0xff;
+            carry = next >> 8;
+          }
+          while (carry > 0) {
+            bytes.push(carry & 0xff);
+            carry >>= 8;
+          }
+        }
+        for (let index = 0; value[index] === "1"; index += 1) bytes.push(0);
+        return Uint8Array.from(bytes.reverse());
+      };
+
+      const accounts = [
+        "11111111111111111111111111111111",
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      ].map((address) => ({
+        address,
+        publicKey: decodeBase58(address),
+        chains: ["solana:localnet"],
+        features: ["solana:signTransaction"],
+      }));
+      const wallet = {
+        version: "1.0.0",
+        name: "Browser Standard Test Wallet",
+        icon: "data:image/svg+xml;base64,PHN2Zy8+",
+        chains: ["solana:localnet"],
+        accounts,
+        features: {
+          "standard:connect": {
+            version: "1.0.0",
+            connect: async () => ({ accounts }),
+          },
+          "solana:signTransaction": {
+            version: "1.0.0",
+            signTransaction: async () => [],
+          },
+        },
+      };
+      window.addEventListener("wallet-standard:app-ready", (event) => {
+        const detail = (event as CustomEvent<{ register: (candidate: typeof wallet) => void }>).detail;
+        detail.register(wallet);
+      });
+    });
+
+    await page.goto("/");
+    await expect(page.getByText("Calculation service online")).toBeVisible();
+    await page.getByRole("button", { name: "Checkout authorization", exact: true }).click();
+    await page.getByRole("button", { name: "Connect wallet", exact: true }).click();
+
+    const accountPicker = page.getByRole("combobox", { name: "Wallet account" });
+    await expect(accountPicker).toBeVisible();
+    await expect(page.getByRole("alert")).toContainText("multiple Solana accounts");
+    await expect(accountPicker).toHaveValue("");
+    await accountPicker.selectOption("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+    await page.getByRole("button", { name: "Connect selected account", exact: true }).click();
+    await expect(page.getByText("Selected account: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", { exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "Wallet Standard account selection");
+
+    await page.reload();
+    await expect(page.getByText("Calculation service online")).toBeVisible();
+    await page.getByRole("button", { name: "Checkout authorization", exact: true }).click();
+    await page.getByRole("button", { name: "Connect wallet", exact: true }).click();
+    await expect(page.getByRole("combobox", { name: "Wallet account" })).toHaveValue("");
+    await expectNoBrowserAxeViolations(page, "Wallet Standard account selection after reload");
+  });
+
+  test("fails closed when the authenticated document quote API is unavailable", async ({ page }) => {
+    await page.route("**/api/v1/tax/document-quote", (route) => route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      headers: { "x-request-id": "01992f1b-4a70-7e30-8ea2-b6e37a9d9d31" },
+      body: JSON.stringify({ error: { code: "SERVICE_UNAVAILABLE", message: "document quote service is unavailable" } }),
+    }));
+
+    await page.goto("/");
+    await expect(page.getByText("Calculation service online")).toBeVisible();
+    await page.getByLabel("OIDC access token (memory-only)").fill("synthetic-browser-token");
+    await page.getByRole("button", { name: "Document quote", exact: true }).click();
+    await page.getByLabel("Published rule set ID").fill("operator-document-flat-rate");
+    await page.getByLabel("Provider-signed jurisdiction evidence (JSON array)").fill("[{}]");
+    await page.getByRole("button", { name: "Create document quote", exact: true }).click();
+
+    await expect(page.getByRole("alert")).toContainText("document quote service is unavailable");
+    await expect(page.getByText("No persisted document quote yet", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open document checkout", exact: true })).toHaveCount(0);
+    await expectNoBrowserAxeViolations(page, "document quote API unavailable state");
+  });
+
+  test("renders document checkout route failure without enabling signing", async ({ page }) => {
+    await page.route("**/api/v1/settlement/routes*", (route) => route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      headers: { "x-request-id": "01992f1b-4a70-7e30-8ea2-b6e37a9d9d32" },
+      body: JSON.stringify({ error: { code: "SERVICE_UNAVAILABLE", message: "active settlement routes are unavailable" } }),
+    }));
+
+    await page.goto("/");
+    await expect(page.getByText("Calculation service online")).toBeVisible();
+    await page.getByLabel("OIDC access token (memory-only)").fill("synthetic-browser-token");
+    await page.getByRole("button", { name: "Document checkout", exact: true }).click();
+
+    await expect(page.getByRole("alert")).toContainText("active settlement routes are unavailable");
+    await expect(page.getByRole("combobox", { name: "Active settlement route" })).toHaveValue("");
+    await expect(page.getByRole("button", { name: "Compile document payment for review", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Sign and submit", exact: true })).toHaveCount(0);
+    await expectNoBrowserAxeViolations(page, "document checkout route failure state");
+  });
+
+  test("proves document evidence handoff and keeps signing behind a reviewed artifact", async ({ page }) => {
+    const calculationId = "01992f1b-4a70-7e30-8ea2-b6e37a9d9d41";
+    const routeId = "01992f1b-4a70-7e30-8ea2-b6e37a9d9d42";
+    const intentId = "01992f1b-4a70-7e30-8ea2-b6e37a9d9d43";
+    const payer = "cGfHiC6Kgg3FpFZvgwGcswsCRtp4aBP2fzuXRQPizuN";
+    const programId = "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi";
+    const tokenProgram = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+    const route = {
+      id: routeId,
+      route_key: "local-usdc",
+      version: 1,
+      merchant_account: "8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR",
+      mint: "GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq",
+      tax_vault: "LbUiWL3xVV8hTFYBVdbTNrpDo41NKS6o3LHHuDzjfcY",
+      net_destination: "QWmroo4YnnMqYW3cnxWkFdaTxGD3P7vMSzwMHGbUzwF",
+      token_program: tokenProgram,
+    };
+    const expiresAt = Math.floor(Date.now() / 1000) + 600;
+    const instructionData = Buffer.concat([
+      Buffer.from("XAF7GP/zWDU=", "base64"),
+      Buffer.alloc(40 + 32),
+      Buffer.alloc(32, 8),
+      Buffer.alloc(32, 9),
+    ]).toString("base64");
+    const accounts = [
+      { pubkey: payer, is_signer: true, is_writable: true },
+      { pubkey: "qcfm6jd37nhqmbY6JomQWtdD9S4HieqnmRm49Hum6ir", is_signer: false, is_writable: false },
+      { pubkey: route.merchant_account, is_signer: false, is_writable: false },
+      { pubkey: "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8", is_signer: false, is_writable: true },
+      { pubkey: route.mint, is_signer: false, is_writable: false },
+      { pubkey: route.tax_vault, is_signer: false, is_writable: true },
+      { pubkey: "CsNjEE9EUZUJeAVqSWmbZxT9WB9h4xYvuLNRRPymrGcs", is_signer: false, is_writable: false },
+      { pubkey: "3MUvGdb23Wh2N42NKSiQE1wcRbR3RXSXZde2MPiihHAq", is_signer: false, is_writable: false },
+      { pubkey: route.net_destination, is_signer: false, is_writable: true },
+      { pubkey: "8nGRRJuGoubpUKHVa5paPCvGLQU39nnu3zFWYREbSeNN", is_signer: false, is_writable: true },
+      { pubkey: tokenProgram, is_signer: false, is_writable: false },
+      { pubkey: "11111111111111111111111111111111", is_signer: false, is_writable: false },
+    ];
+
+    await page.addInitScript(({ address }) => {
+      const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+      const decodeBase58 = (value: string): Uint8Array => {
+        const bytes = [0];
+        for (const character of value) {
+          const index = alphabet.indexOf(character);
+          if (index < 0) throw new Error("invalid test public key");
+          let carry = index;
+          for (let offset = 0; offset < bytes.length; offset += 1) {
+            const next = bytes[offset] * 58 + carry;
+            bytes[offset] = next & 0xff;
+            carry = next >> 8;
+          }
+          while (carry > 0) {
+            bytes.push(carry & 0xff);
+            carry >>= 8;
+          }
+        }
+        for (let index = 0; value[index] === "1"; index += 1) bytes.push(0);
+        return Uint8Array.from(bytes.reverse());
+      };
+      const account = {
+        address,
+        publicKey: decodeBase58(address),
+        chains: ["solana:localnet"],
+        features: ["solana:signTransaction"],
+      };
+      const wallet = {
+        version: "1.0.0",
+        name: "Browser Document Test Wallet",
+        icon: "data:image/svg+xml;base64,PHN2Zy8+",
+        chains: ["solana:localnet"],
+        accounts: [account],
+        features: {
+          "standard:connect": { version: "1.0.0", connect: async () => ({ accounts: [account] }) },
+          "solana:signTransaction": { version: "1.0.0", signTransaction: async () => [] },
+        },
+      };
+      window.addEventListener("wallet-standard:app-ready", (event) => {
+        const detail = (event as CustomEvent<{ register: (candidate: typeof wallet) => void }>).detail;
+        detail.register(wallet);
+      });
+    }, { address: payer });
+
+    await page.route("**/api/v1/tax/document-quote", (routeRequest) => routeRequest.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        calculation_id: calculationId,
+        status: "attested",
+        expires_at_unix: expiresAt,
+        schema: "solana-tax-protocol/tax-document/v1",
+        result: {
+          document_id: "invoice-1",
+          rule_set_id: "operator-document-flat-rate",
+          rule_version: 1,
+          engine_version: "tax-engine/v1",
+          currency: "USD",
+          jurisdiction: "US-CA",
+          facts_digest: new Array(32).fill(1),
+          rule_digest: new Array(32).fill(2),
+          gross_atomic: "3000",
+          total_tax_atomic: "247",
+          total_net_atomic: "2753",
+          lines: [{
+            id: "line-a",
+            gross_atomic: "3000",
+            total_tax_atomic: "247",
+            total_net_atomic: "2753",
+            components: [{ id: "sales-tax", label: "Sales tax", tax_atomic: "247", explanation: "Server-owned document trace" }],
+          }],
+        },
+      }),
+    }));
+    await page.route("**/api/v1/settlement/routes", (routeRequest) => routeRequest.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([route]),
+    }));
+    await page.route(`**/api/v1/tax/document-quotes/${calculationId}/attestation/verify`, (routeRequest) => routeRequest.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        status: "document_attested_unsettled",
+        calculation_id: calculationId,
+        payload_digest: new Array(32).fill(8),
+        issuer_public_key: new Array(32).fill(9),
+        expires_at_unix: expiresAt,
+      }),
+    }));
+    await page.route("**/api/v1/settlement/document/compile-from-quote", (routeRequest) => routeRequest.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        status: "prepared_unsubmitted",
+        program_id: programId,
+        instruction_data_base64: instructionData,
+        accounts,
+        protocol_config: accounts[1].pubkey,
+        vault_authority: accounts[6].pubkey,
+        policy_attestation: accounts[7].pubkey,
+        receipt: accounts[9].pubkey,
+        compute_budget_policy: { policy_version: 1, compute_unit_limit: 200000, micro_lamports_per_compute_unit: 1000 },
+        document_attestation_digest: new Array(32).fill(8),
+        payment_scope_digest: new Array(32).fill(9),
+        intent_id: intentId,
+        request_digest: new Array(32).fill(1),
+        instruction_digest: new Array(32).fill(2),
+        route_id: routeId,
+        authorization: {
+          calculation_id: calculationId,
+          route_id: routeId,
+          source_attestation_digest: new Array(32).fill(8),
+          payment_scope_digest: new Array(32).fill(9),
+          scope: { kind: "full_document" },
+          gross_atomic: "3000",
+          tax_atomic: "247",
+          net_atomic: "2753",
+        },
+      }),
+    }));
+
+    await page.goto("/");
+    await expect(page.getByText("Calculation service online")).toBeVisible();
+    await page.getByLabel("OIDC access token (memory-only)").fill("synthetic-browser-token");
+    await page.getByRole("button", { name: "Document quote", exact: true }).click();
+    await page.getByLabel("Published rule set ID").fill("operator-document-flat-rate");
+    await page.getByLabel("Provider-signed jurisdiction evidence (JSON array)").fill("[{}]");
+    await page.getByRole("button", { name: "Create document quote", exact: true }).click();
+    await expect(page.getByText(`Calculation ID ${calculationId}`, { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Open document checkout", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Authorize a documented payment", exact: true })).toBeVisible();
+
+    await page.getByLabel("Issuer-signed document attestation (JSON)").fill('{"issuer":"synthetic-test"}');
+    await page.getByRole("button", { name: "Verify document attestation", exact: true }).click();
+    await expect(page.getByText("Document attested, not settled", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Compile document payment for review", exact: true })).toBeDisabled();
+
+    await page.getByRole("button", { name: "Connect wallet", exact: true }).click();
+    await page.getByLabel("Client nonce").fill("9");
+    await page.getByLabel("Policy sequence").fill("3");
+    await page.getByLabel("Policy digest (hex)").fill("00".repeat(32));
+    await page.getByRole("button", { name: "Compile document payment for review", exact: true }).click();
+    await expect(page.getByText("Server-derived payment authority", { exact: true })).toBeVisible();
+    await expect(page.getByText("3000 atomic units", { exact: true })).toBeVisible();
+    await expect(page.getByText("247 atomic units", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Sign and submit", exact: true })).toBeEnabled();
+    await expectNoBrowserAxeViolations(page, "document evidence handoff and reviewed artifact");
   });
 
   test("renders server-owned reconciliation evidence and stops on mismatch", async ({ page }) => {

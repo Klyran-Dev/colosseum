@@ -229,6 +229,33 @@ describe("checkout settlement boundary", () => {
     });
     expect("split_plan" in splitArtifact).toBe(true);
 
+    const documentArtifact = parseCompiledSettlementArtifact({
+      ...vectorInstruction,
+      instruction_data_base64: Buffer.concat([
+        Buffer.from("XAF7GP/zWDU=", "base64"),
+        Buffer.alloc(40 + 32),
+        Buffer.alloc(32, 8),
+        Buffer.alloc(32, 9),
+      ]).toString("base64"),
+      document_attestation_digest: new Array(32).fill(8),
+      payment_scope_digest: new Array(32).fill(9),
+      authorization: {
+        calculation_id: routeId,
+        route_id: routeId,
+        source_attestation_digest: new Array(32).fill(8),
+        payment_scope_digest: new Array(32).fill(9),
+        scope: { kind: "full_document" },
+        gross_atomic: "1000",
+        tax_atomic: "100",
+        net_atomic: "900",
+      },
+      intent_id: routeId,
+      request_digest: new Array(32).fill(1),
+      instruction_digest: new Array(32).fill(2),
+      route_id: routeId,
+    });
+    expect("document_attestation_digest" in documentArtifact).toBe(true);
+
     expect(() => parseSettlementRoutes([{
       id: routeId,
       route_key: "bad-program",

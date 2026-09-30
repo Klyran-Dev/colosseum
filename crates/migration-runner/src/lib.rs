@@ -1,4 +1,8 @@
 #![deny(unsafe_code)]
+#![cfg_attr(
+    not(test),
+    deny(clippy::expect_used, clippy::panic, clippy::unwrap_used)
+)]
 
 use sha2::{Digest, Sha256};
 use std::{

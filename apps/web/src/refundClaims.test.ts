@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { PublicKey } from "@solana/web3.js";
 import vector from "../../../test-vectors/settlement-refund-claim-v1.json";
 import { parseRefundClaimInstruction, parseRefundClaimResponse } from "./refundClaims";
 
@@ -44,6 +45,39 @@ const response = {
   last_error_code: null,
 };
 
+const finalizedResponse = {
+  ...response,
+  status: "finalized",
+  signature: "5VfY7WmYcR7h9o9E9nP7x5qC2oW6v8m1f3H4jK6pQ8rS",
+  submitted_slot: "77",
+  commitment: "finalized",
+  finalized_evidence: {
+    event_type: "AdjustmentRefundClaimCreated",
+    event_version: "v1",
+    event_discriminator: Array(8).fill(4),
+    commitment: "finalized",
+    signature: "5VfY7WmYcR7h9o9E9nP7x5qC2oW6v8m1f3H4jK6pQ8rS",
+    slot: "77",
+    event_index: 2,
+    claim: Array.from(new PublicKey(vector.expected.claim).toBytes()),
+    adjustment: Array(32).fill(6),
+    original_receipt: Array(32).fill(7),
+    merchant: Array(32).fill(8),
+    mint: Array(32).fill(9),
+    nonce: "3",
+    gross_magnitude: "100",
+    tax_magnitude: "25",
+    net_magnitude: "75",
+    refund_funder: Array(32).fill(10),
+    refund_destination: Array(32).fill(11),
+    proposer: Array(32).fill(12),
+    reference_digest: Array(32).fill(13),
+    execute_after_unix: 1_800_000_000,
+    expires_at_unix: 1_800_000_600,
+    evidence_digest: Array(32).fill(14),
+  },
+};
+
 describe("refund claim wallet contract", () => {
   it("parses the shared claim vector and binds signer/account roles", () => {
     const parsed = parseRefundClaimInstruction(vector.expected);
@@ -60,6 +94,19 @@ describe("refund claim wallet contract", () => {
     expect(parsed.artifact.gross_atomic).toBe("100");
     expect(parsed.signature).toBeNull();
     expect(parsed.submitted_slot).toBeNull();
+  });
+
+  it("parses finalized claim-event evidence and binds it to the lifecycle proof", () => {
+    const parsed = parseRefundClaimResponse(finalizedResponse);
+    expect(parsed.status).toBe("finalized");
+    expect(parsed.finalized_evidence?.commitment).toBe("finalized");
+    expect(parsed.finalized_evidence?.slot).toBe("77");
+    expect(parsed.finalized_evidence?.event_index).toBe(2);
+    expect(parsed.finalized_evidence?.gross_magnitude).toBe("100");
+  });
+
+  it("rejects finalized evidence attached to a non-final lifecycle", () => {
+    expect(() => parseRefundClaimResponse({ ...response, finalized_evidence: finalizedResponse.finalized_evidence })).toThrow(/finalized evidence/);
   });
 
   it("rejects account substitution before a wallet prompt", () => {

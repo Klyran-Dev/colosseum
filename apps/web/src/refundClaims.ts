@@ -82,6 +82,33 @@ export type RefundClaimResponse = {
   submitted_slot: string | null;
   commitment: string | null;
   last_error_code: string | null;
+  finalized_evidence: FinalizedRefundClaimEvidence | null;
+};
+
+export type FinalizedRefundClaimEvidence = {
+  event_type: "AdjustmentRefundClaimCreated";
+  event_version: "v1";
+  event_discriminator: number[];
+  commitment: "finalized";
+  signature: string;
+  slot: string;
+  event_index: number;
+  claim: number[];
+  adjustment: number[];
+  original_receipt: number[];
+  merchant: number[];
+  mint: number[];
+  nonce: string;
+  gross_magnitude: string;
+  tax_magnitude: string;
+  net_magnitude: string;
+  refund_funder: number[];
+  refund_destination: number[];
+  proposer: number[];
+  reference_digest: number[];
+  execute_after_unix: number;
+  expires_at_unix: number;
+  evidence_digest: number[];
 };
 
 export type RefundClaimSubmissionResponse = {
@@ -147,6 +174,88 @@ function base64Bytes(value: unknown, field: string): Uint8Array {
   const bytes = Buffer.from(value, "base64");
   if (bytes.length === 0 || bytes.toString("base64") !== value) throw new Error(`The API returned non-canonical ${field} base64.`);
   return Uint8Array.from(bytes);
+}
+
+function proofNumber(value: unknown, field: string, minimum: number, maximum: number): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`The API returned an invalid ${field}.`);
+  }
+  return value;
+}
+
+function parseFinalizedEvidence(
+  value: unknown,
+  response: Record<string, unknown>,
+  claim: string,
+): FinalizedRefundClaimEvidence {
+  const record = objectValue(value, "The API returned invalid finalized evidence.");
+  if (record.event_type !== "AdjustmentRefundClaimCreated"
+      || record.event_version !== "v1"
+      || record.commitment !== "finalized") {
+    throw new Error("The API returned unsupported finalized evidence.");
+  }
+  const signature = boundedText(record.signature, "finalized claim signature", 128);
+  if (response.signature !== signature || response.commitment !== "finalized") {
+    throw new Error("The finalized evidence is not bound to the claim lifecycle proof.");
+  }
+  const slot = parseCanonicalU64(record.slot, "finalized claim slot");
+  if (response.submitted_slot !== slot) {
+    throw new Error("The finalized evidence slot is not bound to the claim lifecycle.");
+  }
+  const eventDiscriminator = record.event_discriminator;
+  if (!Array.isArray(eventDiscriminator)
+      || eventDiscriminator.length !== 8
+      || eventDiscriminator.some((byte) => typeof byte !== "number" || !Number.isInteger(byte) || byte < 0 || byte > 255)) {
+    throw new Error("The API returned an invalid finalized event discriminator.");
+  }
+  const digestBytes = (field: string): number[] => {
+    const candidate = record[field];
+    if (!Array.isArray(candidate)
+        || candidate.length !== 32
+        || candidate.some((byte) => typeof byte !== "number" || !Number.isInteger(byte) || byte < 0 || byte > 255)
+        || candidate.every((byte) => byte === 0)) {
+      throw new Error(`The API returned an invalid finalized ${field}.`);
+    }
+    return [...candidate] as number[];
+  };
+  const claimBytes = digestBytes("claim");
+  if (new PublicKey(Uint8Array.from(claimBytes)).toBase58() !== claim) {
+    throw new Error("The finalized evidence claim identity is not bound to the response.");
+  }
+  const nonce = parseCanonicalU64(record.nonce, "finalized claim nonce");
+  const grossMagnitude = parseCanonicalU64(record.gross_magnitude, "finalized gross magnitude");
+  const taxMagnitude = parseCanonicalU64(record.tax_magnitude, "finalized tax magnitude");
+  const netMagnitude = parseCanonicalU64(record.net_magnitude, "finalized net magnitude");
+  if (grossMagnitude === "0" || BigInt(taxMagnitude) + BigInt(netMagnitude) !== BigInt(grossMagnitude)) {
+    throw new Error("The finalized claim evidence amounts do not conserve.");
+  }
+  const executeAfter = proofNumber(record.execute_after_unix, "finalized execute-after time", 1, Number.MAX_SAFE_INTEGER);
+  const expiresAt = proofNumber(record.expires_at_unix, "finalized expiry time", executeAfter + 1, Number.MAX_SAFE_INTEGER);
+  return {
+    event_type: "AdjustmentRefundClaimCreated",
+    event_version: "v1",
+    event_discriminator: [...eventDiscriminator] as number[],
+    commitment: "finalized",
+    signature,
+    slot,
+    event_index: proofNumber(record.event_index, "finalized event index", 0, 65535),
+    claim: claimBytes,
+    adjustment: digestBytes("adjustment"),
+    original_receipt: digestBytes("original_receipt"),
+    merchant: digestBytes("merchant"),
+    mint: digestBytes("mint"),
+    nonce,
+    gross_magnitude: grossMagnitude,
+    tax_magnitude: taxMagnitude,
+    net_magnitude: netMagnitude,
+    refund_funder: digestBytes("refund_funder"),
+    refund_destination: digestBytes("refund_destination"),
+    proposer: digestBytes("proposer"),
+    reference_digest: digestBytes("reference_digest"),
+    execute_after_unix: executeAfter,
+    expires_at_unix: expiresAt,
+    evidence_digest: digestBytes("evidence_digest"),
+  };
 }
 
 function parseAccounts(value: unknown): RefundClaimAccount[] {
@@ -229,19 +338,29 @@ export function parseRefundClaimResponse(value: unknown): RefundClaimResponse {
     expires_at_unix: optionalUnix(artifactRecord.expires_at_unix, "expiry time"),
   };
   if (typeof artifact.schema !== "string" || artifact.schema !== "refund-movement-artifact/v1") throw new Error("The API returned an unsupported refund claim artifact schema.");
+  const claim = publicKey(record.claim, "refund claim");
+  const finalizedEvidenceValue = record.finalized_evidence;
+  let finalizedEvidence: FinalizedRefundClaimEvidence | null = null;
+  if (finalizedEvidenceValue !== null && finalizedEvidenceValue !== undefined) {
+    if (record.status !== "finalized") throw new Error("The API returned finalized evidence for a non-finalized claim.");
+    finalizedEvidence = parseFinalizedEvidence(finalizedEvidenceValue, record, claim);
+  } else if (record.status === "finalized") {
+    throw new Error("The API returned a finalized claim without finalized evidence.");
+  }
   return {
     status: record.status as RefundClaimStatus,
     intent_id: uuidV7(record.intent_id, "refund claim intent ID"),
     request_digest: digest(record.request_digest, "refund claim request"),
     instruction_digest: digest(record.instruction_digest, "refund claim instruction"),
     artifact_digest: digest(record.artifact_digest, "refund claim artifact"),
-    claim: publicKey(record.claim, "refund claim"),
+    claim,
     artifact,
     signed_transaction_digest: optionalDigest(record.signed_transaction_digest, "signed transaction"),
     signature: optionalText(record.signature, "refund claim signature", 128),
     submitted_slot: optionalAtomic(record.submitted_slot, "submitted slot"),
     commitment: optionalText(record.commitment, "commitment", 32),
     last_error_code: optionalText(record.last_error_code, "last error code", 128),
+    finalized_evidence: finalizedEvidence,
   };
 }
 

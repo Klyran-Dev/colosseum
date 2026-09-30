@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(test),
+    deny(clippy::expect_used, clippy::panic, clippy::unwrap_used)
+)]
+
 //! PostgreSQL persistence adapter for published rule releases and calculation evidence.
 //!
 //! This crate is an infrastructure adapter. It deliberately does not make
@@ -13,6 +18,7 @@ use deadpool_postgres::{
     Config as PoolConfig, ManagerConfig, Pool, RecyclingMethod, Runtime,
     tokio_postgres::{IsolationLevel, NoTls, types::Json},
 };
+use document_payment::{DocumentPaymentAuthorization, PaymentScope};
 use indexer::{
     BalanceExpectation, BalanceSnapshot, Checkpoint, FinalizedPage, FinalizedRefundClaimEvidence,
     IndexedAdjustmentRefundExecution, IndexedReceipt, IndexedSettlementAdjustment,
@@ -23,7 +29,10 @@ use indexer::{
     rebuild_receipt_from_raw_evidence, rebuild_split_settlement_from_raw_evidence, reconcile,
 };
 use jurisdiction::{JurisdictionCandidate, ResolutionPolicy, candidate_set_digest};
-use policy::CalculationAttestation;
+use policy::{
+    CalculationAttestation, DocumentAttestationBinding, DocumentCalculationAttestation,
+    merchant_identity_digest,
+};
 use refund_workflow::{
     RefundArtifact, RefundClaimServerInputs, RefundExecuteServerInputs, claim_request_digest,
     execute_request_digest, refund_instruction_digest, validate_claim_artifact,
@@ -48,7 +57,10 @@ use std::{
     },
     time::Duration,
 };
-use tax_engine::{CalculationResult, Digest32, RuleSet, RuleSetDocument, TaxError, TaxFacts};
+use tax_engine::{
+    CalculationResult, Digest32, RuleSet, RuleSetDocument, TAX_DOCUMENT_SCHEMA_V1,
+    TaxDocumentFacts, TaxDocumentResult, TaxError, TaxFacts,
+};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -157,12 +169,30 @@ pub enum StorageError {
     IdempotencyConflict,
     #[error("idempotent request is already being completed")]
     IdempotencyInProgress,
+    #[error("document payment authorization was not found")]
+    DocumentPaymentAuthorizationNotFound,
+    #[error("document payment authorization conflicts with the settlement intent")]
+    DocumentPaymentAuthorizationConflict,
+    #[error("document payment authorization failed integrity validation: {0}")]
+    DocumentPaymentAuthorizationIntegrity(String),
     #[error("stored idempotent response is invalid")]
     InvalidStoredResponse,
     #[error("stored tax calculation replay evidence is unavailable")]
     ReplayEvidenceUnavailable,
     #[error("stored tax calculation replay evidence failed integrity validation: {0}")]
     ReplayEvidenceIntegrity(String),
+    #[error("stored document calculation replay evidence is unavailable")]
+    DocumentReplayEvidenceUnavailable,
+    #[error("stored document calculation replay evidence failed integrity validation: {0}")]
+    DocumentReplayEvidenceIntegrity(String),
+    #[error("document quote was not found for this merchant")]
+    DocumentQuoteNotFound,
+    #[error("document quote request is invalid: {0}")]
+    InvalidDocumentQuote(String),
+    #[error("document calculation cannot be used as aggregate authority")]
+    DocumentCalculationScopeMismatch,
+    #[error("aggregate calculation cannot be used as document authority")]
+    AggregateCalculationScopeMismatch,
     #[error("settlement quote was not found for this merchant")]
     QuoteNotFound,
     #[error("settlement quote has expired")]
@@ -568,6 +598,37 @@ impl EvidenceCipher {
         })
     }
 
+    fn encrypt_document_facts(
+        &self,
+        merchant_id: Uuid,
+        facts_digest: &[u8; 32],
+        facts: &TaxDocumentFacts,
+    ) -> Result<EncryptedEvidence, StorageError> {
+        let plaintext = serde_json::to_vec(facts)?;
+        if plaintext.len() > MAX_PERSISTED_FACTS_BYTES {
+            return Err(StorageError::EvidenceTooLarge);
+        }
+        let mut nonce = [0u8; 12];
+        nonce.copy_from_slice(&Uuid::new_v4().as_bytes()[..12]);
+        let key = self.provider.current_key()?;
+        let cipher = Aes256GcmSiv::new_from_slice(&key.key)
+            .map_err(|error| StorageError::EvidenceEncryption(error.to_string()))?;
+        let ciphertext = cipher
+            .encrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: &plaintext,
+                    aad: &evidence_aad(merchant_id, facts_digest),
+                },
+            )
+            .map_err(|error| StorageError::EvidenceEncryption(error.to_string()))?;
+        Ok(EncryptedEvidence {
+            ciphertext,
+            nonce,
+            key_id: key.key_id,
+        })
+    }
+
     fn decrypt_facts(
         &self,
         merchant_id: Uuid,
@@ -784,6 +845,19 @@ pub struct QuoteCommand {
     pub jurisdiction: String,
     pub regime: String,
     pub facts: TaxFacts,
+    pub jurisdiction_candidates: Vec<JurisdictionCandidate>,
+}
+
+#[derive(Clone, Debug)]
+pub struct DocumentQuoteCommand {
+    pub merchant_id: Uuid,
+    pub idempotency_key: String,
+    pub schema: String,
+    pub rule_set_id: String,
+    pub rule_version: u32,
+    pub jurisdiction: String,
+    pub regime: String,
+    pub facts: TaxDocumentFacts,
     pub jurisdiction_candidates: Vec<JurisdictionCandidate>,
 }
 
@@ -1031,12 +1105,30 @@ pub struct StoredQuote {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct StoredDocumentQuote {
+    pub calculation_id: Uuid,
+    pub status: String,
+    pub expires_at_unix: i64,
+    pub schema: String,
+    pub result: TaxDocumentResult,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct StoredCalculationAttestation {
     pub calculation_id: Uuid,
     pub payload_digest: Digest32,
     pub issuer_public_key: [u8; 32],
     pub expires_at_unix: i64,
     pub attestation: CalculationAttestation,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct StoredDocumentCalculationAttestation {
+    pub calculation_id: Uuid,
+    pub payload_digest: Digest32,
+    pub issuer_public_key: [u8; 32],
+    pub expires_at_unix: i64,
+    pub attestation: DocumentCalculationAttestation,
 }
 
 #[derive(Clone, Debug)]
@@ -1565,6 +1657,22 @@ pub enum QuoteOutcome {
     Replay(StoredQuote),
 }
 
+#[derive(Clone, Debug)]
+pub enum DocumentQuoteOutcome {
+    Created(StoredDocumentQuote),
+    Replay(StoredDocumentQuote),
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DocumentQuoteReplayVerification {
+    pub calculation_id: Uuid,
+    pub status: String,
+    pub schema: String,
+    pub engine_version: String,
+    pub facts_digest: Digest32,
+    pub rule_digest: Digest32,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct OutboxEvent {
     pub id: Uuid,
@@ -1671,6 +1779,49 @@ pub struct SettlementIntent {
     pub slot: Option<u64>,
     pub commitment: Option<String>,
     pub last_error_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct DocumentPaymentAuthorizationRecord {
+    pub id: Uuid,
+    pub intent_id: Uuid,
+    pub merchant_id: Uuid,
+    pub calculation_id: Uuid,
+    pub route_id: Uuid,
+    pub mint: String,
+    pub source_attestation_digest: Digest32,
+    pub payment_scope_digest: Digest32,
+    pub scope: PaymentScope,
+    #[serde(with = "policy::serde_u64_string")]
+    pub gross_atomic: u64,
+    #[serde(with = "policy::serde_u64_string")]
+    pub tax_atomic: u64,
+    #[serde(with = "policy::serde_u64_string")]
+    pub net_atomic: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct CreateDocumentPaymentIntentCommand {
+    pub merchant_id: Uuid,
+    pub idempotency_key: String,
+    pub request_digest: Digest32,
+    pub instruction_digest: Digest32,
+    pub calculation_id: Uuid,
+    pub route_id: Uuid,
+    pub mint: String,
+    pub authorization: DocumentPaymentAuthorization,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocumentPaymentIntent {
+    pub intent: SettlementIntent,
+    pub authorization: DocumentPaymentAuthorizationRecord,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DocumentPaymentIntentOutcome {
+    Created(DocumentPaymentIntent),
+    Replay(DocumentPaymentIntent),
 }
 
 /// Server-owned identity and financial evidence for an adjustment's original
@@ -4344,6 +4495,147 @@ impl PgStore {
         Ok(SettlementIntentOutcome::Replay(intent))
     }
 
+    /// Creates the durable, tenant-scoped mapping between a document payment
+    /// authorization and its settlement intent in one serializable
+    /// transaction. A replay must return the original immutable mapping; a
+    /// reused idempotency key can never silently change payment scope.
+    pub async fn create_document_payment_intent(
+        &self,
+        command: CreateDocumentPaymentIntentCommand,
+    ) -> Result<DocumentPaymentIntentOutcome, StorageError> {
+        if command.idempotency_key.trim().is_empty() || command.idempotency_key.len() > 200 {
+            return Err(StorageError::InvalidConfiguration(
+                "document settlement idempotency key must contain 1 to 200 bytes".into(),
+            ));
+        }
+        if command.mint.trim().is_empty() || command.mint.len() > 44 {
+            return Err(StorageError::DocumentPaymentAuthorizationIntegrity(
+                "settlement mint is invalid".into(),
+            ));
+        }
+        let authorization = &command.authorization;
+        if authorization.source_attestation_digest == [0; 32]
+            || authorization.payment_scope_digest == [0; 32]
+            || authorization.gross_atomic == 0
+            || authorization
+                .tax_atomic
+                .checked_add(authorization.net_atomic)
+                != Some(authorization.gross_atomic)
+        {
+            return Err(StorageError::DocumentPaymentAuthorizationIntegrity(
+                "document payment amounts or digests are invalid".into(),
+            ));
+        }
+        let scope_document = serde_json::to_value(&authorization.scope)?;
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let inserted = transaction
+            .query_opt(
+                "INSERT INTO settlement_intents
+                    (merchant_id, idempotency_key, request_digest, instruction_digest)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (merchant_id, idempotency_key) DO NOTHING
+                 RETURNING id, merchant_id, idempotency_key, request_digest,
+                           instruction_digest, status, signed_transaction_digest,
+                           signature, slot::text, commitment, last_error_code",
+                &[
+                    &command.merchant_id,
+                    &command.idempotency_key,
+                    &&command.request_digest[..],
+                    &&command.instruction_digest[..],
+                ],
+            )
+            .await?;
+        let (intent, created) = if let Some(row) = inserted {
+            let intent = parse_settlement_intent_row(row)?;
+            transaction
+                .execute(
+                    "INSERT INTO document_payment_authorizations
+                        (intent_id, merchant_id, calculation_id, route_id, mint,
+                         source_attestation_digest, payment_scope_digest, scope_document,
+                         gross_atomic, tax_atomic, net_atomic)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text::numeric,
+                             $10::text::numeric, $11::text::numeric)",
+                    &[
+                        &intent.id,
+                        &command.merchant_id,
+                        &command.calculation_id,
+                        &command.route_id,
+                        &command.mint,
+                        &&authorization.source_attestation_digest[..],
+                        &&authorization.payment_scope_digest[..],
+                        &scope_document,
+                        &authorization.gross_atomic.to_string(),
+                        &authorization.tax_atomic.to_string(),
+                        &authorization.net_atomic.to_string(),
+                    ],
+                )
+                .await?;
+            (intent, true)
+        } else {
+            let row = transaction
+                .query_one(
+                    "SELECT id, merchant_id, idempotency_key, request_digest,
+                            instruction_digest, status, signed_transaction_digest,
+                            signature, slot::text, commitment, last_error_code
+                     FROM settlement_intents
+                     WHERE merchant_id = $1 AND idempotency_key = $2
+                     FOR UPDATE",
+                    &[&command.merchant_id, &command.idempotency_key],
+                )
+                .await?;
+            (parse_settlement_intent_row(row)?, false)
+        };
+        if intent.request_digest != command.request_digest
+            || intent.instruction_digest != command.instruction_digest
+        {
+            transaction.rollback().await?;
+            return Err(StorageError::IdempotencyConflict);
+        }
+        let authorization_row = transaction
+            .query_opt(
+                "SELECT id, intent_id, merchant_id, calculation_id, route_id, mint,
+                        source_attestation_digest, payment_scope_digest, scope_document,
+                        gross_atomic::text, tax_atomic::text, net_atomic::text
+                 FROM document_payment_authorizations
+                 WHERE intent_id = $1 AND merchant_id = $2",
+                &[&intent.id, &command.merchant_id],
+            )
+            .await?;
+        if !created && authorization_row.is_none() {
+            transaction.rollback().await?;
+            return Err(StorageError::DocumentPaymentAuthorizationConflict);
+        }
+        let authorization = authorization_row
+            .ok_or(StorageError::DocumentPaymentAuthorizationNotFound)
+            .and_then(parse_document_payment_authorization_row)?;
+        transaction.commit().await?;
+        let outcome = DocumentPaymentIntent {
+            intent,
+            authorization,
+        };
+        Ok(if created {
+            DocumentPaymentIntentOutcome::Created(outcome)
+        } else {
+            DocumentPaymentIntentOutcome::Replay(outcome)
+        })
+    }
+
     /// Advances an intent only when the caller still owns the expected state.
     /// The status update and append-only event are one transaction.
     pub async fn transition_settlement_intent(
@@ -6700,6 +6992,308 @@ impl PgStore {
         ))
     }
 
+    /// Persists an authenticated, tenant-scoped document quote without
+    /// widening the aggregate quote/settlement contract.
+    pub async fn document_quote(
+        &self,
+        command: DocumentQuoteCommand,
+    ) -> Result<DocumentQuoteOutcome, StorageError> {
+        validate_document_quote_command(&command)?;
+        let request_digest = document_quote_request_digest(&command)?;
+        for attempt in 0..MAX_QUOTE_RETRY_ATTEMPTS {
+            match self.document_quote_once(&command, request_digest).await {
+                Ok(outcome) => return Ok(outcome),
+                Err(error)
+                    if attempt + 1 < MAX_QUOTE_RETRY_ATTEMPTS
+                        && is_retryable_quote_error(&error) =>
+                {
+                    tracing::warn!(
+                        attempt = attempt + 1,
+                        max_attempts = MAX_QUOTE_RETRY_ATTEMPTS,
+                        "retrying document quote transaction after a transient PostgreSQL conflict"
+                    );
+                    tokio::time::sleep(QUOTE_RETRY_BACKOFF * (attempt as u32 + 1)).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(StorageError::InvalidConfiguration(
+            "document quote retry attempt budget must be positive".to_string(),
+        ))
+    }
+
+    async fn document_quote_once(
+        &self,
+        command: &DocumentQuoteCommand,
+        request_digest: Digest32,
+    ) -> Result<DocumentQuoteOutcome, StorageError> {
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+
+        let inserted = transaction
+            .query_opt(
+                "INSERT INTO idempotency_records
+                    (merchant_id, idempotency_key, request_digest)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (merchant_id, idempotency_key) DO NOTHING
+                 RETURNING id",
+                &[
+                    &command.merchant_id,
+                    &command.idempotency_key,
+                    &&request_digest[..],
+                ],
+            )
+            .await?;
+        if inserted.is_none() {
+            let existing = transaction
+                .query_one(
+                    "SELECT request_digest, response_document
+                     FROM idempotency_records
+                     WHERE merchant_id = $1 AND idempotency_key = $2
+                     FOR UPDATE",
+                    &[&command.merchant_id, &command.idempotency_key],
+                )
+                .await?;
+            let existing_digest: Vec<u8> = existing.get(0);
+            if existing_digest.as_slice() != request_digest {
+                return Err(StorageError::IdempotencyConflict);
+            }
+            let stored_response: Option<Value> = existing.get(1);
+            let Some(stored_response) = stored_response else {
+                return Err(StorageError::IdempotencyInProgress);
+            };
+            let response: StoredDocumentQuote = serde_json::from_value(stored_response)
+                .map_err(|_| StorageError::InvalidStoredResponse)?;
+            transaction.commit().await?;
+            return Ok(DocumentQuoteOutcome::Replay(response));
+        }
+
+        let rule_row = transaction
+            .query_opt(
+                "SELECT r.id, r.rule_document, r.rule_digest,
+                        jp.policy_document, jp.policy_digest
+                 FROM rule_sets r
+                 LEFT JOIN jurisdiction_policies jp
+                   ON jp.rule_set_id = r.id
+                  AND jp.merchant_id = r.merchant_id
+                  AND jp.status = 'published'
+                  AND jp.effective_from <= now()
+                  AND (jp.effective_until IS NULL OR now() < jp.effective_until)
+                 WHERE r.merchant_id = $1
+                   AND r.external_id = $2
+                   AND r.version = $3
+                   AND r.jurisdiction = $4
+                   AND r.regime = $5
+                   AND r.status = 'published'
+                   AND r.effective_from <= now()
+                   AND (r.effective_until IS NULL OR now() < r.effective_until)
+                 ORDER BY r.effective_from DESC
+                 LIMIT 1",
+                &[
+                    &command.merchant_id,
+                    &command.rule_set_id,
+                    &(command.rule_version as i32),
+                    &command.jurisdiction,
+                    &command.regime,
+                ],
+            )
+            .await?;
+        let Some(rule_row) = rule_row else {
+            return Err(StorageError::RuleNotFound);
+        };
+        let database_rule_id: Uuid = rule_row.get(0);
+        let rule_document: Value = rule_row.get(1);
+        let stored_rule_digest: Vec<u8> = rule_row.get(2);
+        let policy_document: Option<Value> = rule_row.get(3);
+        let stored_policy_digest: Option<Vec<u8>> = rule_row.get(4);
+        let policy_document = policy_document.ok_or(StorageError::JurisdictionPolicyNotFound)?;
+        let stored_policy_digest =
+            stored_policy_digest.ok_or(StorageError::JurisdictionPolicyNotFound)?;
+        let policy: ResolutionPolicy = serde_json::from_value(policy_document)?;
+        let computed_policy_digest = policy.canonical_digest().map_err(|error| {
+            StorageError::ReplayEvidenceIntegrity(format!(
+                "jurisdiction policy is invalid: {error}"
+            ))
+        })?;
+        if stored_policy_digest.as_slice() != computed_policy_digest {
+            return Err(StorageError::JurisdictionPolicyDigestMismatch);
+        }
+        let rule_set = decode_persisted_rule_document(rule_document)?;
+        if rule_set.id != command.rule_set_id || rule_set.version != command.rule_version {
+            return Err(StorageError::RuleIdentityMismatch);
+        }
+        let computed_rule_digest = rule_set.canonical_digest()?;
+        if stored_rule_digest.as_slice() != computed_rule_digest {
+            return Err(StorageError::RuleDigestMismatch);
+        }
+        let compiled_rule = self
+            .compiled_rule_cache
+            .get_or_compile(computed_rule_digest, &rule_set)?;
+        let result = compiled_rule.calculate_document_with_jurisdiction_resolution(
+            &command.facts,
+            &policy,
+            &command.jurisdiction_candidates,
+        )?;
+        if result.jurisdiction != command.jurisdiction
+            || result.jurisdiction != command.facts.jurisdiction
+        {
+            return Err(StorageError::JurisdictionMismatch);
+        }
+        let mut persisted_facts = command.facts.clone();
+        persisted_facts.jurisdiction_resolution = result.jurisdiction_resolution.clone();
+        let (calculation_id, expires_at_unix) = insert_document_calculation(
+            &transaction,
+            command,
+            &persisted_facts,
+            database_rule_id,
+            &result,
+            &self.engine_version,
+            self.evidence_cipher.as_ref(),
+        )
+        .await?;
+        let response = StoredDocumentQuote {
+            calculation_id,
+            status: CALCULATION_STATUS.to_string(),
+            expires_at_unix,
+            schema: command.schema.clone(),
+            result,
+        };
+        let response_document = serde_json::to_value(&response)?;
+        transaction
+            .execute(
+                "INSERT INTO outbox_events
+                    (aggregate_type, aggregate_id, event_type, payload)
+                 VALUES ($1, $2, $3, $4)",
+                &[
+                    &"tax_document_calculation",
+                    &calculation_id,
+                    &"tax.document_calculation.created",
+                    &outbox_payload(command.merchant_id, response_document.clone()),
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "UPDATE idempotency_records
+                 SET response_status = 200,
+                     response_document = $3,
+                     completed_at = now()
+                 WHERE merchant_id = $1 AND idempotency_key = $2",
+                &[
+                    &command.merchant_id,
+                    &command.idempotency_key,
+                    &response_document,
+                ],
+            )
+            .await?;
+        transaction.commit().await?;
+        Ok(DocumentQuoteOutcome::Created(response))
+    }
+
+    pub async fn verify_document_quote_replay(
+        &self,
+        merchant_id: Uuid,
+        calculation_id: Uuid,
+    ) -> Result<DocumentQuoteReplayVerification, StorageError> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let row = client
+            .query_opt(
+                "SELECT dc.status, dc.document_schema, dc.engine_version,
+                        dc.facts_digest, dc.result_document,
+                        dc.facts_ciphertext, dc.facts_nonce, dc.facts_key_id,
+                        rs.rule_document, rs.rule_digest
+                 FROM tax_document_calculations dc
+                 JOIN rule_sets rs ON rs.id = dc.rule_set_id
+                    AND rs.merchant_id = dc.merchant_id
+                 WHERE dc.id = $1 AND dc.merchant_id = $2",
+                &[&calculation_id, &merchant_id],
+            )
+            .await?;
+        let Some(row) = row else {
+            if client
+                .query_opt(
+                    "SELECT 1 FROM tax_calculations
+                     WHERE id = $1 AND merchant_id = $2",
+                    &[&calculation_id, &merchant_id],
+                )
+                .await?
+                .is_some()
+            {
+                return Err(StorageError::AggregateCalculationScopeMismatch);
+            }
+            return Err(StorageError::DocumentQuoteNotFound);
+        };
+        let status: String = row.get(0);
+        let schema: String = row.get(1);
+        let engine_version: String = row.get(2);
+        let facts_digest_bytes: Vec<u8> = row.get(3);
+        let result_document: Value = row.get(4);
+        let ciphertext: Vec<u8> = row.get(5);
+        let nonce: Vec<u8> = row.get(6);
+        let key_id: String = row.get(7);
+        let facts_digest: Digest32 = facts_digest_bytes.clone().try_into().map_err(|_| {
+            StorageError::DocumentReplayEvidenceIntegrity(
+                "facts digest is not 32 bytes".to_string(),
+            )
+        })?;
+        let facts = self
+            .evidence_cipher
+            .as_ref()
+            .ok_or(StorageError::EvidenceCipherUnavailable)?
+            .decrypt_facts(merchant_id, &facts_digest, &key_id, &nonce, &ciphertext)
+            .map_err(|error| StorageError::DocumentReplayEvidenceIntegrity(error.to_string()))?;
+        let rule_set = decode_persisted_rule_document(row.get(8))
+            .map_err(|error| StorageError::DocumentReplayEvidenceIntegrity(error.to_string()))?;
+        let stored_rule_digest: Digest32 = row.get::<_, Vec<u8>>(9).try_into().map_err(|_| {
+            StorageError::DocumentReplayEvidenceIntegrity("rule digest is not 32 bytes".into())
+        })?;
+        let document_facts: TaxDocumentFacts = serde_json::from_value(facts)
+            .map_err(|error| StorageError::DocumentReplayEvidenceIntegrity(error.to_string()))?;
+        let result: TaxDocumentResult = serde_json::from_value(result_document)
+            .map_err(|error| StorageError::DocumentReplayEvidenceIntegrity(error.to_string()))?;
+        if schema != TAX_DOCUMENT_SCHEMA_V1
+            || engine_version != self.engine_version
+            || document_facts.canonical_digest()? != facts_digest
+            || rule_set.canonical_digest()? != stored_rule_digest
+            || result.facts_digest != facts_digest
+            || result.rule_digest != stored_rule_digest
+        {
+            return Err(StorageError::DocumentReplayEvidenceIntegrity(
+                "document evidence binding does not match persisted digests".into(),
+            ));
+        }
+        result
+            .verify_replay(&rule_set, &document_facts)
+            .map_err(|error| StorageError::DocumentReplayEvidenceIntegrity(error.to_string()))?;
+        Ok(DocumentQuoteReplayVerification {
+            calculation_id,
+            status,
+            schema,
+            engine_version,
+            facts_digest,
+            rule_digest: stored_rule_digest,
+        })
+    }
+
     async fn quote_once(
         &self,
         command: &QuoteCommand,
@@ -6906,8 +7500,21 @@ impl PgStore {
                  WHERE id = $1 AND merchant_id = $2",
                 &[&calculation_id, &merchant_id],
             )
-            .await?
-            .ok_or(StorageError::QuoteNotFound)?;
+            .await?;
+        let Some(row) = row else {
+            if client
+                .query_opt(
+                    "SELECT 1 FROM tax_document_calculations
+                     WHERE id = $1 AND merchant_id = $2",
+                    &[&calculation_id, &merchant_id],
+                )
+                .await?
+                .is_some()
+            {
+                return Err(StorageError::DocumentCalculationScopeMismatch);
+            }
+            return Err(StorageError::QuoteNotFound);
+        };
         let status: String = row.get(0);
         if status != CALCULATION_STATUS && status != ATTESTED_CALCULATION_STATUS {
             return Err(StorageError::QuoteNotSettleable);
@@ -6922,6 +7529,60 @@ impl PgStore {
             calculation_id,
             status,
             expires_at_unix: row.get(2),
+            result,
+        })
+    }
+
+    /// Loads only a tenant-scoped document quote for document-attestation
+    /// binding. This type is deliberately not accepted by settlement loaders.
+    pub async fn load_document_quote_for_attestation(
+        &self,
+        merchant_id: Uuid,
+        calculation_id: Uuid,
+    ) -> Result<StoredDocumentQuote, StorageError> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let row = client
+            .query_opt(
+                "SELECT status, document_schema, result_document,
+                        floor(extract(epoch FROM expires_at))::bigint,
+                        expires_at <= now()
+                 FROM tax_document_calculations
+                 WHERE id = $1 AND merchant_id = $2",
+                &[&calculation_id, &merchant_id],
+            )
+            .await?;
+        let Some(row) = row else {
+            if client
+                .query_opt(
+                    "SELECT 1 FROM tax_calculations
+                     WHERE id = $1 AND merchant_id = $2",
+                    &[&calculation_id, &merchant_id],
+                )
+                .await?
+                .is_some()
+            {
+                return Err(StorageError::AggregateCalculationScopeMismatch);
+            }
+            return Err(StorageError::DocumentQuoteNotFound);
+        };
+        let status: String = row.get(0);
+        if status != CALCULATION_STATUS && status != ATTESTED_CALCULATION_STATUS {
+            return Err(StorageError::QuoteNotSettleable);
+        }
+        if row.get::<_, bool>(4) {
+            return Err(StorageError::QuoteExpired);
+        }
+        let result: TaxDocumentResult =
+            serde_json::from_value(row.get(2)).map_err(|_| StorageError::InvalidStoredResponse)?;
+        Ok(StoredDocumentQuote {
+            calculation_id,
+            status,
+            expires_at_unix: row.get(3),
+            schema: row.get(1),
             result,
         })
     }
@@ -6991,6 +7652,16 @@ impl PgStore {
             .is_some();
         if exists {
             Ok(())
+        } else if client
+            .query_opt(
+                "SELECT 1 FROM tax_document_calculations
+                 WHERE id = $1 AND merchant_id = $2",
+                &[&calculation_id, &merchant_id],
+            )
+            .await?
+            .is_some()
+        {
+            Err(StorageError::DocumentCalculationScopeMismatch)
         } else {
             Err(StorageError::QuoteNotFound)
         }
@@ -7039,8 +7710,22 @@ impl PgStore {
                  FOR UPDATE",
                 &[&calculation_id, &merchant_id],
             )
-            .await?
-            .ok_or(StorageError::QuoteNotFound)?;
+            .await?;
+        let Some(calculation) = calculation else {
+            if transaction
+                .query_opt(
+                    "SELECT 1 FROM tax_document_calculations
+                     WHERE id = $1 AND merchant_id = $2
+                     FOR SHARE",
+                    &[&calculation_id, &merchant_id],
+                )
+                .await?
+                .is_some()
+            {
+                return Err(StorageError::DocumentCalculationScopeMismatch);
+            }
+            return Err(StorageError::QuoteNotFound);
+        };
         let calculation_status: String = calculation.get(0);
         if calculation_status != CALCULATION_STATUS
             && calculation_status != ATTESTED_CALCULATION_STATUS
@@ -7145,6 +7830,232 @@ impl PgStore {
             expires_at_unix: attestation.unsigned.expires_at_unix,
             attestation: attestation.clone(),
         })
+    }
+
+    /// Persists one externally signed, document-scoped attestation. The
+    /// document evidence, status transition, and first outbox event commit
+    /// atomically; aggregate attestation rows are never touched.
+    pub async fn record_document_calculation_attestation(
+        &self,
+        merchant_id: Uuid,
+        calculation_id: Uuid,
+        asset_mint: Digest32,
+        attestation: &DocumentCalculationAttestation,
+    ) -> Result<StoredDocumentCalculationAttestation, StorageError> {
+        attestation
+            .verify()
+            .map_err(|error| StorageError::InvalidAttestation(error.to_string()))?;
+        let attestation_document = serde_json::to_value(attestation)?;
+        let attestation_document_param = Json(attestation_document.clone());
+        if serde_json::to_vec(&attestation_document)?.len() > 64 * 1024 {
+            return Err(StorageError::AttestationEvidenceTooLarge);
+        }
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+
+        let calculation = transaction
+            .query_opt(
+                "SELECT status, expires_at <= now(), document_schema,
+                        document_id, engine_version, facts_digest, rule_digest,
+                        gross_atomic::text, total_tax_atomic::text,
+                        total_net_atomic::text, result_document
+                 FROM tax_document_calculations
+                 WHERE id = $1 AND merchant_id = $2
+                 FOR UPDATE",
+                &[&calculation_id, &merchant_id],
+            )
+            .await?
+            .ok_or(StorageError::DocumentQuoteNotFound)?;
+        let calculation_status: String = calculation.get(0);
+        if calculation_status != CALCULATION_STATUS
+            && calculation_status != ATTESTED_CALCULATION_STATUS
+        {
+            return Err(StorageError::QuoteNotSettleable);
+        }
+        if calculation.get::<_, bool>(1) {
+            return Err(StorageError::QuoteExpired);
+        }
+        let document_schema: String = calculation.get(2);
+        let document_id: String = calculation.get(3);
+        let engine_version: String = calculation.get(4);
+        let facts_digest: Digest32 = calculation.get::<_, Vec<u8>>(5).try_into().map_err(|_| {
+            StorageError::InvalidAttestation("stored document facts digest is not 32 bytes".into())
+        })?;
+        let rule_digest: Digest32 = calculation.get::<_, Vec<u8>>(6).try_into().map_err(|_| {
+            StorageError::InvalidAttestation("stored document rule digest is not 32 bytes".into())
+        })?;
+        let gross_atomic = parse_attestation_amount(calculation.get(7))?;
+        let tax_atomic = parse_attestation_amount(calculation.get(8))?;
+        let net_atomic = parse_attestation_amount(calculation.get(9))?;
+        let result: TaxDocumentResult = serde_json::from_value(calculation.get(10))
+            .map_err(|error| StorageError::InvalidAttestation(error.to_string()))?;
+        if result.document_id != document_id
+            || result.engine_version != engine_version
+            || result.facts_digest != facts_digest
+            || result.rule_digest != rule_digest
+            || result.gross_atomic != i128::from(gross_atomic)
+            || result.total_tax_atomic != i128::from(tax_atomic)
+            || result.total_net_atomic != i128::from(net_atomic)
+        {
+            return Err(StorageError::InvalidAttestation(
+                "stored document result does not match its binding columns".into(),
+            ));
+        }
+        let binding = DocumentAttestationBinding {
+            document_schema: &document_schema,
+            merchant_id: merchant_identity_digest(merchant_id.as_bytes()),
+            document_id: &document_id,
+            engine_version: &engine_version,
+            rule_set_id: &result.rule_set_id,
+            rule_version: result.rule_version,
+            jurisdiction: &result.jurisdiction,
+            currency: &result.currency,
+            asset_mint,
+            facts_digest,
+            rule_digest,
+            gross_atomic,
+            tax_atomic,
+            net_atomic,
+        };
+        attestation
+            .verify_binding(&binding)
+            .map_err(|error| StorageError::InvalidAttestation(error.to_string()))?;
+
+        let issued_at = attestation.unsigned.issued_at_unix;
+        let expires_at = attestation.unsigned.expires_at_unix;
+        let inserted = transaction
+            .query_opt(
+                "INSERT INTO tax_document_calculation_attestations
+                    (merchant_id, calculation_id, payload_digest, issuer_public_key,
+                     attestation_document, issued_at, expires_at)
+                 VALUES ($1, $2, $3, $4, $5,
+                         TIMESTAMPTZ 'epoch' + ($6::bigint * INTERVAL '1 second'),
+                         TIMESTAMPTZ 'epoch' + ($7::bigint * INTERVAL '1 second'))
+                 ON CONFLICT (merchant_id, calculation_id) DO NOTHING
+                 RETURNING id",
+                &[
+                    &merchant_id,
+                    &calculation_id,
+                    &&attestation.payload_digest[..],
+                    &&attestation.issuer_public_key[..],
+                    &attestation_document_param,
+                    &issued_at,
+                    &expires_at,
+                ],
+            )
+            .await?;
+
+        if inserted.is_none() {
+            let row = transaction
+                .query_one(
+                    "SELECT payload_digest, issuer_public_key,
+                            floor(extract(epoch FROM expires_at))::bigint,
+                            attestation_document
+                     FROM tax_document_calculation_attestations
+                     WHERE merchant_id = $1 AND calculation_id = $2
+                     FOR UPDATE",
+                    &[&merchant_id, &calculation_id],
+                )
+                .await?;
+            let stored = parse_stored_document_calculation_attestation(
+                calculation_id,
+                row.get(0),
+                row.get(1),
+                row.get(2),
+                row.get(3),
+            )?;
+            if stored.attestation != *attestation {
+                return Err(StorageError::AttestationConflict);
+            }
+            transaction.commit().await?;
+            return Ok(stored);
+        }
+
+        transaction
+            .execute(
+                "UPDATE tax_document_calculations
+                 SET status = $3
+                 WHERE id = $1 AND merchant_id = $2 AND status = $4",
+                &[
+                    &calculation_id,
+                    &merchant_id,
+                    &ATTESTED_CALCULATION_STATUS,
+                    &CALCULATION_STATUS,
+                ],
+            )
+            .await?;
+        let event_payload = serde_json::json!({
+            "schema_version": OUTBOX_PAYLOAD_SCHEMA_VERSION,
+            "merchant_id": merchant_id,
+            "calculation_id": calculation_id,
+            "attestation": attestation_document,
+        });
+        transaction
+            .execute(
+                "INSERT INTO outbox_events
+                    (aggregate_type, aggregate_id, event_type, payload)
+                 VALUES ($1, $2, $3, $4)",
+                &[
+                    &"tax_document_calculation",
+                    &calculation_id,
+                    &"tax.document_calculation.attested",
+                    &event_payload,
+                ],
+            )
+            .await?;
+        transaction.commit().await?;
+        Ok(StoredDocumentCalculationAttestation {
+            calculation_id,
+            payload_digest: attestation.payload_digest,
+            issuer_public_key: attestation.issuer_public_key,
+            expires_at_unix: attestation.unsigned.expires_at_unix,
+            attestation: attestation.clone(),
+        })
+    }
+
+    pub async fn load_document_calculation_attestation(
+        &self,
+        merchant_id: Uuid,
+        calculation_id: Uuid,
+    ) -> Result<StoredDocumentCalculationAttestation, StorageError> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let row = client
+            .query_opt(
+                "SELECT payload_digest, issuer_public_key,
+                        floor(extract(epoch FROM expires_at))::bigint,
+                        attestation_document
+                 FROM tax_document_calculation_attestations
+                 WHERE merchant_id = $1 AND calculation_id = $2",
+                &[&merchant_id, &calculation_id],
+            )
+            .await?
+            .ok_or(StorageError::AttestationNotFound)?;
+        parse_stored_document_calculation_attestation(
+            calculation_id,
+            row.get(0),
+            row.get(1),
+            row.get(2),
+            row.get(3),
+        )
     }
 
     pub async fn load_calculation_attestation(
@@ -9684,6 +10595,72 @@ async fn insert_calculation(
     Ok((row.get(0), row.get(1)))
 }
 
+async fn insert_document_calculation(
+    transaction: &deadpool_postgres::Transaction<'_>,
+    command: &DocumentQuoteCommand,
+    persisted_facts: &TaxDocumentFacts,
+    database_rule_id: Uuid,
+    result: &TaxDocumentResult,
+    engine_version: &str,
+    evidence_cipher: Option<&EvidenceCipher>,
+) -> Result<(Uuid, i64), StorageError> {
+    let gross = result.gross_atomic.to_string();
+    let total_tax = result.total_tax_atomic.to_string();
+    let total_net = result.total_net_atomic.to_string();
+    let result_document = serde_json::to_value(result)?;
+    let evidence_cipher = evidence_cipher.ok_or(StorageError::EvidenceCipherUnavailable)?;
+    let encrypted_facts = evidence_cipher.encrypt_document_facts(
+        command.merchant_id,
+        &result.facts_digest,
+        persisted_facts,
+    )?;
+    let evidence_refs = serde_json::json!({
+        "schema": command.schema,
+        "facts_digest": result.facts_digest,
+        "facts_ciphertext": "tax_document_calculations.facts_ciphertext",
+        "facts_key_id": encrypted_facts.key_id,
+        "rule_digest": result.rule_digest,
+        "engine_version": engine_version,
+    });
+    let row = transaction
+        .query_one(
+            "INSERT INTO tax_document_calculations
+                (merchant_id, rule_set_id, document_schema, document_id,
+                 facts_digest, rule_digest, engine_version, currency, jurisdiction,
+                 gross_atomic, total_tax_atomic, total_net_atomic, status,
+                 result_document, facts_ciphertext, facts_nonce, facts_key_id,
+                 evidence_refs, expires_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+                     $10::text::numeric, $11::text::numeric, $12::text::numeric,
+                     $13, $14, $15, $16, $17, $18,
+                     now() + ($19::bigint * interval '1 second'))
+             RETURNING id, floor(extract(epoch FROM expires_at))::bigint",
+            &[
+                &command.merchant_id,
+                &database_rule_id,
+                &command.schema,
+                &result.document_id,
+                &&result.facts_digest[..],
+                &&result.rule_digest[..],
+                &engine_version,
+                &result.currency,
+                &result.jurisdiction,
+                &gross,
+                &total_tax,
+                &total_net,
+                &CALCULATION_STATUS,
+                &result_document,
+                &&encrypted_facts.ciphertext,
+                &&encrypted_facts.nonce[..],
+                &encrypted_facts.key_id,
+                &evidence_refs,
+                &(DEFAULT_QUOTE_TTL.as_secs() as i64),
+            ],
+        )
+        .await?;
+    Ok((row.get(0), row.get(1)))
+}
+
 fn decode_persisted_rule_document(document: Value) -> Result<RuleSet, StorageError> {
     if document.get("schema").is_some() {
         let envelope: RuleSetDocument = serde_json::from_value(document)?;
@@ -9818,6 +10795,55 @@ pub fn quote_request_digest(command: &QuoteCommand) -> Result<[u8; 32], StorageE
     hasher.update(facts_digest);
     hasher.update(candidate_digest);
     Ok(hasher.finalize().into())
+}
+
+pub fn document_quote_request_digest(
+    command: &DocumentQuoteCommand,
+) -> Result<Digest32, StorageError> {
+    let facts_digest = command.facts.canonical_digest()?;
+    let candidate_digest =
+        candidate_set_digest(&command.jurisdiction_candidates).map_err(|error| {
+            StorageError::InvalidDocumentQuote(format!("jurisdiction evidence is invalid: {error}"))
+        })?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"solana-tax-protocol/document-quote-request/v1");
+    write_text(&mut hasher, &command.schema)?;
+    write_text(&mut hasher, &command.rule_set_id)?;
+    hasher.update(command.rule_version.to_le_bytes());
+    write_text(&mut hasher, &command.jurisdiction)?;
+    write_text(&mut hasher, &command.regime)?;
+    hasher.update(facts_digest);
+    hasher.update(candidate_digest);
+    Ok(hasher.finalize().into())
+}
+
+fn validate_document_quote_command(command: &DocumentQuoteCommand) -> Result<(), StorageError> {
+    if command.merchant_id.is_nil()
+        || command.idempotency_key.trim().is_empty()
+        || command.idempotency_key.len() > 200
+        || command.schema != TAX_DOCUMENT_SCHEMA_V1
+        || command.rule_set_id.trim().is_empty()
+        || command.rule_version == 0
+        || command.jurisdiction.trim().is_empty()
+        || command.regime.trim().is_empty()
+        || command.facts.jurisdiction != command.jurisdiction
+    {
+        return Err(StorageError::InvalidDocumentQuote(
+            "merchant, idempotency, schema, selector, or jurisdiction fields are invalid"
+                .to_string(),
+        ));
+    }
+    command
+        .facts
+        .validate()
+        .map_err(|error| StorageError::InvalidDocumentQuote(error.to_string()))?;
+    candidate_set_digest(&command.jurisdiction_candidates).map_err(|error| {
+        StorageError::InvalidDocumentQuote(format!("jurisdiction evidence is invalid: {error}"))
+    })?;
+    i32::try_from(command.rule_version).map_err(|_| {
+        StorageError::InvalidDocumentQuote("rule version exceeds the PostgreSQL range".to_string())
+    })?;
+    Ok(())
 }
 
 fn validate_settlement_adjustment_command(
@@ -10708,6 +11734,53 @@ fn parse_stored_calculation_attestation(
     })
 }
 
+fn parse_stored_document_calculation_attestation(
+    calculation_id: Uuid,
+    payload_digest: Vec<u8>,
+    issuer_public_key: Vec<u8>,
+    expires_at_unix: i64,
+    document: Value,
+) -> Result<StoredDocumentCalculationAttestation, StorageError> {
+    let payload_digest: Digest32 = payload_digest.try_into().map_err(|_| {
+        StorageError::InvalidAttestation(
+            "stored document payload digest is not 32 bytes".to_string(),
+        )
+    })?;
+    let issuer_public_key: [u8; 32] = issuer_public_key.try_into().map_err(|_| {
+        StorageError::InvalidAttestation(
+            "stored document issuer public key is not 32 bytes".to_string(),
+        )
+    })?;
+    let attestation: DocumentCalculationAttestation = serde_json::from_value(document)
+        .map_err(|error| StorageError::InvalidAttestation(error.to_string()))?;
+    attestation
+        .verify()
+        .map_err(|error| StorageError::InvalidAttestation(error.to_string()))?;
+    if attestation.payload_digest != payload_digest
+        || attestation.issuer_public_key != issuer_public_key
+        || attestation.unsigned.expires_at_unix != expires_at_unix
+    {
+        return Err(StorageError::InvalidAttestation(
+            "stored document attestation columns do not match its signed document".to_string(),
+        ));
+    }
+    Ok(StoredDocumentCalculationAttestation {
+        calculation_id,
+        payload_digest,
+        issuer_public_key,
+        expires_at_unix,
+        attestation,
+    })
+}
+
+fn parse_attestation_amount(value: String) -> Result<u64, StorageError> {
+    value.parse::<u64>().map_err(|_| {
+        StorageError::InvalidAttestation(
+            "stored document amount is outside the attestation range".to_string(),
+        )
+    })
+}
+
 fn parse_settlement_intent_row(
     row: deadpool_postgres::tokio_postgres::Row,
 ) -> Result<SettlementIntent, StorageError> {
@@ -10728,6 +11801,44 @@ fn parse_settlement_intent_row(
             .transpose()?,
         commitment: row.get(9),
         last_error_code: row.get(10),
+    })
+}
+
+fn parse_document_payment_authorization_row(
+    row: deadpool_postgres::tokio_postgres::Row,
+) -> Result<DocumentPaymentAuthorizationRecord, StorageError> {
+    let source_attestation_digest = parse_digest(row.get(6))?;
+    let payment_scope_digest = parse_digest(row.get(7))?;
+    let scope: PaymentScope = serde_json::from_value(row.get(8)).map_err(|error| {
+        StorageError::DocumentPaymentAuthorizationIntegrity(format!(
+            "scope document is invalid: {error}"
+        ))
+    })?;
+    let gross_atomic = parse_u64(row.get::<_, String>(9).as_str(), "document gross amount")?;
+    let tax_atomic = parse_u64(row.get::<_, String>(10).as_str(), "document tax amount")?;
+    let net_atomic = parse_u64(row.get::<_, String>(11).as_str(), "document net amount")?;
+    if source_attestation_digest == [0; 32]
+        || payment_scope_digest == [0; 32]
+        || gross_atomic == 0
+        || tax_atomic.checked_add(net_atomic) != Some(gross_atomic)
+    {
+        return Err(StorageError::DocumentPaymentAuthorizationIntegrity(
+            "stored document payment evidence is not conserved".into(),
+        ));
+    }
+    Ok(DocumentPaymentAuthorizationRecord {
+        id: row.get(0),
+        intent_id: row.get(1),
+        merchant_id: row.get(2),
+        calculation_id: row.get(3),
+        route_id: row.get(4),
+        mint: row.get(5),
+        source_attestation_digest,
+        payment_scope_digest,
+        scope,
+        gross_atomic,
+        tax_atomic,
+        net_atomic,
     })
 }
 
@@ -13105,6 +14216,49 @@ mod tests {
             quote_request_digest(&first).unwrap(),
             quote_request_digest(&second).unwrap()
         );
+    }
+
+    #[test]
+    fn document_quote_digest_is_schema_and_selector_bound() {
+        let facts = TaxDocumentFacts {
+            id: "invoice-1".to_string(),
+            currency: "USD".to_string(),
+            jurisdiction: "US-CA".to_string(),
+            jurisdiction_resolution: None,
+            cumulative_period: None,
+            lines: vec![tax_engine::TaxLineFacts {
+                id: "line-1".to_string(),
+                gross_atomic: 1_100,
+                net_atomic: 1_000,
+                exemption_codes: Vec::new(),
+            }],
+        };
+        let mut first = DocumentQuoteCommand {
+            merchant_id: Uuid::now_v7(),
+            idempotency_key: "document-quote-1".to_string(),
+            schema: TAX_DOCUMENT_SCHEMA_V1.to_string(),
+            rule_set_id: "us-ca-sales-tax".to_string(),
+            rule_version: 1,
+            jurisdiction: "US-CA".to_string(),
+            regime: "sales-tax".to_string(),
+            facts,
+            jurisdiction_candidates: vec![JurisdictionCandidate {
+                jurisdiction_code: "US-CA".to_string(),
+                source: jurisdiction::EvidenceSource::ShippingDestination,
+                evidence_digest: [7; 32],
+            }],
+        };
+        validate_document_quote_command(&first).expect("document quote is valid");
+        let digest = document_quote_request_digest(&first).expect("digest");
+        let mut second = first.clone();
+        second.schema = "solana-tax-protocol/tax-document/v0".to_string();
+        assert_ne!(digest, document_quote_request_digest(&second).unwrap());
+        assert!(matches!(
+            validate_document_quote_command(&second),
+            Err(StorageError::InvalidDocumentQuote(_))
+        ));
+        first.rule_version = 2;
+        assert_ne!(digest, document_quote_request_digest(&first).unwrap());
     }
 
     fn persisted_split_plan_fixture() -> (String, String, Vec<split_plan::SplitRecipient>) {

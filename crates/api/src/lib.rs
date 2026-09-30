@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(test),
+    deny(clippy::expect_used, clippy::panic, clippy::unwrap_used)
+)]
+
 mod auth;
 mod jurisdiction;
 pub use auth::JwtAuthenticator;
@@ -15,9 +20,11 @@ use axum::{
     routing::{get, post},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use document_payment::{DocumentPaymentError, PaymentScope, authorize_document_payment};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use indexer::{
-    FinalizedSignaturePageSource, FinalizedTransactionSource, IndexedSettlementAdjustment,
+    FinalizedRefundClaimEvidence, FinalizedSignaturePageSource, FinalizedTransactionSource,
+    IndexedSettlementAdjustment,
 };
 use indexer_service::{
     IndexerServiceError, MAX_TARGETED_RECOVERY_PAGES, recover_targeted_signature,
@@ -25,7 +32,7 @@ use indexer_service::{
 use observability::ServiceMetrics;
 use policy::{
     AttestationBinding, AttestationError, CalculationAttestation, Digest32,
-    merchant_identity_digest,
+    DocumentAttestationBinding, DocumentCalculationAttestation, merchant_identity_digest,
 };
 use refund_workflow::{
     RefundArtifact, RefundClaimServerInputs, RefundExecuteServerInputs, build_claim_artifact,
@@ -35,12 +42,15 @@ use refund_workflow::{
 use serde::{Deserialize, Serialize};
 use settlement_adjustments::{AdjustmentDelta, AdjustmentKind};
 use settlement_client::{
-    CompiledSettlementAdjustmentInstruction, CompiledSettlementInstruction,
-    CompiledSplitSettlementInstruction, SETTLEMENT_PROGRAM_ID,
+    CompiledDocumentSettlementInstruction, CompiledSettlementAdjustmentInstruction,
+    CompiledSettlementInstruction, CompiledSplitSettlementInstruction,
+    DocumentSettlementCompileRequest as ClientDocumentSettlementCompileRequest,
+    SETTLEMENT_PROGRAM_ID,
     SettlementAdjustmentCompileRequest as ClientSettlementAdjustmentCompileRequest,
     SettlementCompileError, SettlementCompileRequest, SplitSettlementCompileRequest,
-    compile_settlement_adjustment_instruction, compile_settlement_instruction,
-    compile_split_settlement_instruction, compiled_instruction_digest, derive_source_token_account,
+    compile_document_settlement_instruction, compile_settlement_adjustment_instruction,
+    compile_settlement_instruction, compile_split_settlement_instruction,
+    compiled_instruction_digest, derive_source_token_account,
 };
 use settlement_coordinator::{
     AdjustmentRegistryVerificationRequest, CoordinatorError, SettlementCoordinator,
@@ -50,21 +60,22 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use storage::{
-    BindAdjustmentAuthority, CreateAdjustmentAuthorityChallenge, CreateJurisdictionPolicyCommand,
+    BindAdjustmentAuthority, CreateAdjustmentAuthorityChallenge,
+    CreateDocumentPaymentIntentCommand, CreateJurisdictionPolicyCommand,
     CreateRefundClaimIntentCommand, CreateRefundExecuteIntentCommand,
     CreateRefundFundingConfigurationCommand, CreateSettlementAdjustmentChainIntent,
     CreateSettlementAdjustmentCommand, CreateSettlementAdjustmentEvidenceIntent,
-    CreateVaultReleaseClaimCommand, DatabasePoolStats, EvidenceAccessAuditCommand,
-    JurisdictionPolicyGovernanceTransition, PgStore, QuoteCommand, QuoteOutcome,
-    RefundClaimIntentTransition, RefundExecuteIntentTransition,
+    CreateVaultReleaseClaimCommand, DatabasePoolStats, DocumentQuoteCommand, DocumentQuoteOutcome,
+    EvidenceAccessAuditCommand, JurisdictionPolicyGovernanceTransition, PgStore, QuoteCommand,
+    QuoteOutcome, RefundClaimIntentTransition, RefundExecuteIntentTransition,
     RefundFundingConfigurationTransition, RuleCacheStats, RuleGovernanceTransition,
     SettlementAdjustmentChainIntent, SettlementAdjustmentChainTransition,
     SettlementAdjustmentEvidenceIntent, SettlementAdjustmentRecord, SettlementAdjustmentTransition,
     SettlementTransition, StorageError, VaultReleaseClaimTransition,
 };
 use tax_engine::{
-    CalculationResult, RuleSet, TaxDocumentFacts, TaxDocumentResult, TaxError, TaxFacts, calculate,
-    calculate_document,
+    CalculationResult, RuleSet, TAX_DOCUMENT_SCHEMA_V1, TaxDocumentFacts, TaxDocumentResult,
+    TaxError, TaxFacts, calculate, calculate_document,
 };
 use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
 use uuid::Uuid;
@@ -106,12 +117,14 @@ pub struct CalculateResponse {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CalculateDocumentRequest {
+    pub schema: String,
     pub facts: TaxDocumentFacts,
     pub rule_set: RuleSet,
 }
 
 #[derive(Debug, Serialize)]
 pub struct CalculateDocumentResponse {
+    pub schema: &'static str,
     pub calculation_id: Uuid,
     pub status: &'static str,
     pub result: TaxDocumentResult,
@@ -125,6 +138,20 @@ pub struct QuoteRequest {
     pub jurisdiction: String,
     pub regime: String,
     pub facts: TaxFacts,
+    #[serde(default)]
+    pub jurisdiction_evidence: Vec<::jurisdiction::JurisdictionEvidenceEnvelope>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocumentQuoteRequest {
+    pub schema: String,
+    pub idempotency_key: String,
+    pub rule_set_id: String,
+    pub rule_version: u32,
+    pub jurisdiction: String,
+    pub regime: String,
+    pub facts: TaxDocumentFacts,
     #[serde(default)]
     pub jurisdiction_evidence: Vec<::jurisdiction::JurisdictionEvidenceEnvelope>,
 }
@@ -272,6 +299,39 @@ pub struct RefundClaimPreparationResponse {
     pub submitted_slot: Option<u64>,
     pub commitment: Option<String>,
     pub last_error_code: Option<String>,
+    pub finalized_evidence: Option<FinalizedRefundClaimEvidenceResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FinalizedRefundClaimEvidenceResponse {
+    pub event_type: &'static str,
+    pub event_version: &'static str,
+    pub event_discriminator: Vec<u8>,
+    pub commitment: &'static str,
+    pub signature: String,
+    #[serde(with = "policy::serde_u64_string")]
+    pub slot: u64,
+    pub event_index: u16,
+    pub claim: Digest32,
+    pub adjustment: Digest32,
+    pub original_receipt: Digest32,
+    pub merchant: Digest32,
+    pub mint: Digest32,
+    #[serde(with = "policy::serde_u64_string")]
+    pub nonce: u64,
+    #[serde(with = "policy::serde_u64_string")]
+    pub gross_magnitude: u64,
+    #[serde(with = "policy::serde_u64_string")]
+    pub tax_magnitude: u64,
+    #[serde(with = "policy::serde_u64_string")]
+    pub net_magnitude: u64,
+    pub refund_funder: Digest32,
+    pub refund_destination: Digest32,
+    pub proposer: Digest32,
+    pub reference_digest: Digest32,
+    pub execute_after_unix: i64,
+    pub expires_at_unix: i64,
+    pub evidence_digest: Digest32,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -718,8 +778,24 @@ pub struct QuoteAttestationVerifyRequest {
     pub attestation: CalculationAttestation,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocumentQuoteAttestationVerifyRequest {
+    pub route_id: Uuid,
+    pub attestation: DocumentCalculationAttestation,
+}
+
 #[derive(Debug, Serialize)]
 pub struct QuoteAttestationVerifyResponse {
+    pub status: &'static str,
+    pub calculation_id: Uuid,
+    pub payload_digest: Digest32,
+    pub issuer_public_key: [u8; 32],
+    pub expires_at_unix: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DocumentQuoteAttestationVerifyResponse {
     pub status: &'static str,
     pub calculation_id: Uuid,
     pub payload_digest: Digest32,
@@ -734,13 +810,12 @@ pub struct SubmitSettlementRequest {
     pub instruction: SubmittedSettlementInstruction,
 }
 
-/// The split variant is listed first because the legacy instruction type is
-/// intentionally forward-compatible during deserialization. The split-only
-/// fields therefore select the stronger typed envelope before the legacy
-/// fallback is considered.
+/// Document and split variants are listed before the legacy fallback because
+/// their provenance fields are part of the signed-message binding contract.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum SubmittedSettlementInstruction {
+    Document(CompiledDocumentSettlementInstruction),
     Split(CompiledSplitSettlementInstruction),
     Legacy(CompiledSettlementInstruction),
 }
@@ -755,6 +830,20 @@ pub struct SettlementCompileFromQuoteRequest {
     pub policy_sequence: u64,
     #[serde(deserialize_with = "deserialize_digest")]
     pub policy_digest: [u8; 32],
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocumentSettlementCompileFromQuoteRequest {
+    pub calculation_id: Uuid,
+    pub route_id: Uuid,
+    pub idempotency_key: String,
+    pub payer: String,
+    pub nonce: u64,
+    pub policy_sequence: u64,
+    #[serde(deserialize_with = "deserialize_digest")]
+    pub policy_digest: [u8; 32],
+    pub scope: PaymentScope,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -786,6 +875,17 @@ pub struct CompiledSettlementResponse {
     pub request_digest: Digest32,
     pub instruction_digest: Digest32,
     pub route_id: Option<Uuid>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CompiledDocumentSettlementResponse {
+    #[serde(flatten)]
+    pub instruction: CompiledDocumentSettlementInstruction,
+    pub intent_id: Option<Uuid>,
+    pub request_digest: Digest32,
+    pub instruction_digest: Digest32,
+    pub route_id: Uuid,
+    pub authorization: storage::DocumentPaymentAuthorizationRecord,
 }
 
 #[derive(Debug, Serialize)]
@@ -894,6 +994,29 @@ impl From<AttestationError> for ApiError {
     }
 }
 
+impl From<DocumentPaymentError> for ApiError {
+    fn from(error: DocumentPaymentError) -> Self {
+        let status = match error {
+            DocumentPaymentError::UseFullDocumentScope => StatusCode::BAD_REQUEST,
+            DocumentPaymentError::EmptySourceAttestationDigest
+            | DocumentPaymentError::EmptyLineSubset
+            | DocumentPaymentError::LineSubsetTooLarge
+            | DocumentPaymentError::InvalidLineId
+            | DocumentPaymentError::DuplicateLineId
+            | DocumentPaymentError::UnknownLineId
+            | DocumentPaymentError::AmountOutOfRange
+            | DocumentPaymentError::AmountConservationViolation
+            | DocumentPaymentError::ArithmeticOverflow
+            | DocumentPaymentError::InvalidDocumentResult => StatusCode::UNPROCESSABLE_ENTITY,
+        };
+        Self {
+            status,
+            code: "INVALID_DOCUMENT_PAYMENT_SCOPE",
+            message: error.to_string(),
+        }
+    }
+}
+
 impl From<StorageError> for ApiError {
     fn from(error: StorageError) -> Self {
         let (status, code, message) = match error {
@@ -920,6 +1043,32 @@ impl From<StorageError> for ApiError {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "QUOTE_REPLAY_EVIDENCE_CORRUPT",
                 "stored quote replay evidence failed integrity validation".to_string(),
+            ),
+            StorageError::DocumentReplayEvidenceUnavailable => (
+                StatusCode::CONFLICT,
+                "DOCUMENT_QUOTE_REPLAY_UNAVAILABLE",
+                "the document quote does not contain sufficient evidence for replay".to_string(),
+            ),
+            StorageError::DocumentReplayEvidenceIntegrity(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DOCUMENT_QUOTE_REPLAY_EVIDENCE_CORRUPT",
+                "stored document quote replay evidence failed integrity validation".to_string(),
+            ),
+            StorageError::DocumentQuoteNotFound => (
+                StatusCode::NOT_FOUND,
+                "DOCUMENT_QUOTE_NOT_FOUND",
+                "the document quote was not found for this merchant".to_string(),
+            ),
+            StorageError::InvalidDocumentQuote(message) => (
+                StatusCode::BAD_REQUEST,
+                "INVALID_DOCUMENT_QUOTE",
+                message,
+            ),
+            StorageError::DocumentCalculationScopeMismatch
+            | StorageError::AggregateCalculationScopeMismatch => (
+                StatusCode::CONFLICT,
+                "CALCULATION_SCOPE_MISMATCH",
+                "the calculation belongs to a different authority boundary".to_string(),
             ),
             StorageError::EvidenceCipherUnavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -1217,6 +1366,21 @@ impl From<StorageError> for ApiError {
                 "IDEMPOTENCY_REQUEST_IN_PROGRESS",
                 "idempotent request is still being completed".to_string(),
             ),
+            StorageError::DocumentPaymentAuthorizationNotFound => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DOCUMENT_PAYMENT_AUTHORIZATION_MISSING",
+                "the durable document payment authorization is missing".to_string(),
+            ),
+            StorageError::DocumentPaymentAuthorizationConflict => (
+                StatusCode::CONFLICT,
+                "DOCUMENT_PAYMENT_AUTHORIZATION_CONFLICT",
+                "the settlement intent is not a document payment intent".to_string(),
+            ),
+            StorageError::DocumentPaymentAuthorizationIntegrity(message) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DOCUMENT_PAYMENT_AUTHORIZATION_CORRUPT",
+                message,
+            ),
             StorageError::AmountOutOfRange => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "AMOUNT_OUT_OF_RANGE",
@@ -1497,6 +1661,11 @@ impl From<SettlementCompileError> for ApiError {
             SettlementCompileError::EmptyPolicyDigest => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "EMPTY_POLICY_DIGEST")
             }
+            SettlementCompileError::EmptyDocumentAttestationDigest
+            | SettlementCompileError::EmptyPaymentScopeDigest => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "EMPTY_DOCUMENT_PROVENANCE_DIGEST",
+            ),
             SettlementCompileError::InvalidNonce => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "INVALID_SETTLEMENT_NONCE")
             }
@@ -1602,6 +1771,7 @@ pub fn router() -> Router<AppState> {
         .route("/v1/tax/calculate", post(calculate_tax))
         .route("/v1/tax/calculate-document", post(calculate_document_tax))
         .route("/v1/tax/quote", post(quote_tax))
+        .route("/v1/tax/document-quote", post(document_quote_tax))
         .route("/v1/tax/rules", post(create_rule_draft))
         .route(
             "/v1/tax/rules/{rule_set_id}/transition",
@@ -1719,8 +1889,16 @@ pub fn router() -> Router<AppState> {
         )
         .route("/v1/tax/quotes/{calculation_id}/replay", get(replay_quote))
         .route(
+            "/v1/tax/document-quotes/{calculation_id}/replay",
+            get(replay_document_quote),
+        )
+        .route(
             "/v1/tax/quotes/{calculation_id}/attestation/verify",
             post(verify_quote_attestation),
+        )
+        .route(
+            "/v1/tax/document-quotes/{calculation_id}/attestation/verify",
+            post(verify_document_quote_attestation),
         )
         .route("/v1/indexer/replay-gaps", get(list_replay_gaps))
         .route(
@@ -1737,6 +1915,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/v1/settlement/compile-from-quote",
             post(compile_settlement_from_quote),
+        )
+        .route(
+            "/v1/settlement/document/compile-from-quote",
+            post(compile_document_settlement_from_quote),
         )
         .route(
             "/v1/settlement/split/compile-from-quote",
@@ -1926,8 +2108,16 @@ async fn calculate_document_tax_inner(
                     .into(),
         });
     }
+    if request.schema != TAX_DOCUMENT_SCHEMA_V1 {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "UNSUPPORTED_DOCUMENT_SCHEMA",
+            message: "document schema is not supported".into(),
+        });
+    }
     let result = calculate_document(&request.rule_set, &request.facts).map_err(ApiError::from)?;
     Ok(Json(CalculateDocumentResponse {
+        schema: TAX_DOCUMENT_SCHEMA_V1,
         calculation_id: Uuid::now_v7(),
         status: "simulated_unattested",
         result,
@@ -2001,6 +2191,87 @@ async fn quote_tax_inner(
         .map_err(ApiError::from)?;
     let response = match outcome {
         QuoteOutcome::Created(response) | QuoteOutcome::Replay(response) => response,
+    };
+    Ok(Json(response))
+}
+
+async fn document_quote_tax(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    payload: Result<Json<DocumentQuoteRequest>, JsonRejection>,
+) -> Result<Json<storage::StoredDocumentQuote>, ApiError> {
+    let metrics = Arc::clone(&state.metrics);
+    let started = Instant::now();
+    let result = document_quote_tax_inner(state, headers, payload).await;
+    let _ = metrics.observe("tax_document_quote", started.elapsed(), result.is_err());
+    result
+}
+
+async fn document_quote_tax_inner(
+    state: AppState,
+    headers: HeaderMap,
+    payload: Result<Json<DocumentQuoteRequest>, JsonRejection>,
+) -> Result<Json<storage::StoredDocumentQuote>, ApiError> {
+    let principal = authenticate_scope(&state, &headers, "tax:quote")?;
+    let Json(request) = payload.map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "INVALID_JSON",
+        message: "request body is invalid".to_string(),
+    })?;
+    if request.schema != TAX_DOCUMENT_SCHEMA_V1 {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "UNSUPPORTED_DOCUMENT_SCHEMA",
+            message: "document schema is not supported".into(),
+        });
+    }
+    let Some(store) = state.storage else {
+        return Err(ApiError {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            code: "QUOTE_STORAGE_UNAVAILABLE",
+            message: "published-rule document quote storage is not configured".into(),
+        });
+    };
+    if request.facts.jurisdiction_resolution.is_some() {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "CLIENT_JURISDICTION_RESOLUTION_FORBIDDEN",
+            message: "jurisdiction resolution evidence is server-owned".to_string(),
+        });
+    }
+    let provider_registry = state
+        .jurisdiction_provider_registry
+        .as_ref()
+        .ok_or(ApiError {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            code: "JURISDICTION_PROVIDER_UNAVAILABLE",
+            message: "jurisdiction provider verification is not configured".to_string(),
+        })?;
+    let facts_digest = request.facts.canonical_digest().map_err(ApiError::from)?;
+    let candidates = provider_registry.verify(
+        &request.jurisdiction_evidence,
+        principal.merchant_id,
+        facts_digest,
+        server_unix_now()?,
+    )?;
+    let outcome = store
+        .document_quote(DocumentQuoteCommand {
+            merchant_id: principal.merchant_id,
+            idempotency_key: request.idempotency_key,
+            schema: request.schema,
+            rule_set_id: request.rule_set_id,
+            rule_version: request.rule_version,
+            jurisdiction: request.jurisdiction,
+            regime: request.regime,
+            facts: request.facts,
+            jurisdiction_candidates: candidates,
+        })
+        .await
+        .map_err(ApiError::from)?;
+    let response = match outcome {
+        DocumentQuoteOutcome::Created(response) | DocumentQuoteOutcome::Replay(response) => {
+            response
+        }
     };
     Ok(Json(response))
 }
@@ -3896,6 +4167,85 @@ async fn replay_quote_inner(
     }))
 }
 
+#[derive(Debug, Serialize)]
+pub struct DocumentQuoteReplayResponse {
+    pub status: &'static str,
+    pub schema: String,
+    pub calculation_id: Uuid,
+    pub engine_version: String,
+    pub facts_digest: Digest32,
+    pub rule_digest: Digest32,
+}
+
+async fn replay_document_quote(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(calculation_id): Path<Uuid>,
+) -> Result<Json<DocumentQuoteReplayResponse>, ApiError> {
+    let metrics = Arc::clone(&state.metrics);
+    let started = Instant::now();
+    let result = replay_document_quote_inner(state, headers, calculation_id).await;
+    let _ = metrics.observe("tax_document_replay", started.elapsed(), result.is_err());
+    result
+}
+
+async fn replay_document_quote_inner(
+    state: AppState,
+    headers: HeaderMap,
+    calculation_id: Uuid,
+) -> Result<Json<DocumentQuoteReplayResponse>, ApiError> {
+    let principal = authenticate_scope(&state, &headers, "tax:quote")?;
+    let Some(store) = state.storage else {
+        return Err(ApiError {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            code: "QUOTE_STORAGE_UNAVAILABLE",
+            message: "published-rule document quote storage is not configured".to_string(),
+        });
+    };
+    let request_id = request_id_from_headers(&headers);
+    let verification = store
+        .verify_document_quote_replay(principal.merchant_id, calculation_id)
+        .await;
+    let audit_result = match &verification {
+        Ok(evidence) => {
+            store
+                .record_evidence_access_audit(EvidenceAccessAuditCommand {
+                    merchant_id: principal.merchant_id,
+                    calculation_id,
+                    actor_subject: principal.subject.clone(),
+                    request_id,
+                    purpose: "tax_document_quote_replay".into(),
+                    outcome: "allowed".into(),
+                    facts_digest: Some(evidence.facts_digest),
+                })
+                .await
+        }
+        Err(_) => {
+            store
+                .record_evidence_access_audit(EvidenceAccessAuditCommand {
+                    merchant_id: principal.merchant_id,
+                    calculation_id,
+                    actor_subject: principal.subject.clone(),
+                    request_id,
+                    purpose: "tax_document_quote_replay".into(),
+                    outcome: "denied".into(),
+                    facts_digest: None,
+                })
+                .await
+        }
+    };
+    audit_result.map_err(ApiError::from)?;
+    let verification = verification.map_err(ApiError::from)?;
+    Ok(Json(DocumentQuoteReplayResponse {
+        status: "replay_verified",
+        schema: verification.schema,
+        calculation_id: verification.calculation_id,
+        engine_version: verification.engine_version,
+        facts_digest: verification.facts_digest,
+        rule_digest: verification.rule_digest,
+    }))
+}
+
 fn request_id_from_headers(headers: &HeaderMap) -> Uuid {
     headers
         .get(&REQUEST_ID_HEADER)
@@ -4057,7 +4407,7 @@ async fn targeted_recovery_inner(
         code: "INVALID_JSON",
         message: "request body is invalid".to_string(),
     })?;
-    let ports = state.targeted_recovery.ok_or_else(|| ApiError {
+    let ports = state.targeted_recovery.as_ref().ok_or_else(|| ApiError {
         status: StatusCode::SERVICE_UNAVAILABLE,
         code: "INDEXER_TARGETED_RECOVERY_UNAVAILABLE",
         message: "targeted recovery is not configured for this API instance".to_string(),
@@ -4554,7 +4904,18 @@ async fn prepare_refund_claim_inner(
                 StorageError::RefundClaimIntentIdempotencyConflict,
             ));
         }
-        return Ok(Json(refund_claim_response(intent, artifact)));
+        let finalized_evidence = load_finalized_refund_claim_evidence_response(
+            &store,
+            state.targeted_recovery.as_deref(),
+            &intent,
+            &artifact,
+        )
+        .await?;
+        return Ok(Json(refund_claim_response(
+            intent,
+            artifact,
+            finalized_evidence,
+        )));
     }
 
     let adjustment = store
@@ -4719,12 +5080,24 @@ async fn prepare_refund_claim_inner(
         })
         .await
         .map_err(ApiError::from)?;
-    Ok(Json(refund_claim_response(intent, artifact)))
+    let finalized_evidence = load_finalized_refund_claim_evidence_response(
+        &store,
+        state.targeted_recovery.as_deref(),
+        &intent,
+        &artifact,
+    )
+    .await?;
+    Ok(Json(refund_claim_response(
+        intent,
+        artifact,
+        finalized_evidence,
+    )))
 }
 
 fn refund_claim_response(
     intent: storage::RefundClaimIntent,
     artifact: RefundArtifact,
+    finalized_evidence: Option<FinalizedRefundClaimEvidenceResponse>,
 ) -> RefundClaimPreparationResponse {
     RefundClaimPreparationResponse {
         status: intent.status.clone(),
@@ -4739,7 +5112,84 @@ fn refund_claim_response(
         submitted_slot: intent.submitted_slot,
         commitment: intent.commitment,
         last_error_code: intent.last_error_code,
+        finalized_evidence,
     }
+}
+
+fn finalized_refund_claim_evidence_response(
+    evidence: FinalizedRefundClaimEvidence,
+) -> FinalizedRefundClaimEvidenceResponse {
+    FinalizedRefundClaimEvidenceResponse {
+        event_type: "AdjustmentRefundClaimCreated",
+        event_version: "v1",
+        event_discriminator: indexer::ADJUSTMENT_REFUND_CLAIM_CREATED_EVENT_DISCRIMINATOR.to_vec(),
+        commitment: "finalized",
+        signature: evidence.signature,
+        slot: evidence.slot,
+        event_index: evidence.event_index,
+        claim: evidence.claim,
+        adjustment: evidence.adjustment,
+        original_receipt: evidence.original_receipt,
+        merchant: evidence.merchant,
+        mint: evidence.mint,
+        nonce: evidence.nonce,
+        gross_magnitude: evidence.gross_magnitude,
+        tax_magnitude: evidence.tax_magnitude,
+        net_magnitude: evidence.net_magnitude,
+        refund_funder: evidence.refund_funder,
+        refund_destination: evidence.refund_destination,
+        proposer: evidence.proposer,
+        reference_digest: evidence.reference_digest,
+        execute_after_unix: evidence.execute_after_unix,
+        expires_at_unix: evidence.expires_at_unix,
+        evidence_digest: evidence.evidence_digest,
+    }
+}
+
+async fn load_finalized_refund_claim_evidence_response(
+    store: &PgStore,
+    ports: Option<&TargetedRecoveryPorts>,
+    intent: &storage::RefundClaimIntent,
+    artifact: &RefundArtifact,
+) -> Result<Option<FinalizedRefundClaimEvidenceResponse>, ApiError> {
+    if intent.status != SettlementStatus::Finalized.as_str() {
+        return Ok(None);
+    }
+    let ports = ports.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "REFUND_CLAIM_RECONCILIATION_UNAVAILABLE",
+        message: "finalized refund claim evidence is not configured".to_string(),
+    })?;
+    let signature = intent.signature.clone().ok_or_else(|| ApiError {
+        status: StatusCode::CONFLICT,
+        code: "REFUND_CLAIM_FINALIZED_PROOF_INCOMPLETE",
+        message: "finalized refund claim is missing its server-bound signature".to_string(),
+    })?;
+    if intent.commitment.as_deref() != Some("finalized") || intent.submitted_slot.is_none() {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REFUND_CLAIM_FINALIZED_PROOF_INCOMPLETE",
+            message: "finalized refund claim is missing its finality binding".to_string(),
+        });
+    }
+    let expected =
+        storage::refund_claim_evidence_expectation(intent, artifact).map_err(|error| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "REFUND_CLAIM_ARTIFACT_CORRUPT",
+            message: error.to_string(),
+        })?;
+    let evidence = store
+        .load_finalized_refund_claim_evidence(&ports.stream_key, &signature, &expected)
+        .await
+        .map_err(ApiError::from)?;
+    if evidence.signature != signature || Some(evidence.slot) != intent.submitted_slot {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REFUND_CLAIM_FINALIZED_PROOF_CONFLICT",
+            message: "finalized refund claim evidence is not bound to the durable intent".into(),
+        });
+    }
+    Ok(Some(finalized_refund_claim_evidence_response(evidence)))
 }
 
 async fn load_refund_claim(
@@ -4774,7 +5224,18 @@ async fn load_refund_claim(
             StorageError::RefundClaimIntentIdempotencyConflict,
         ));
     }
-    Ok(Json(refund_claim_response(intent, artifact)))
+    let finalized_evidence = load_finalized_refund_claim_evidence_response(
+        &store,
+        state.targeted_recovery.as_deref(),
+        &intent,
+        &artifact,
+    )
+    .await?;
+    Ok(Json(refund_claim_response(
+        intent,
+        artifact,
+        finalized_evidence,
+    )))
 }
 
 async fn reconcile_refund_claim(
@@ -4810,7 +5271,18 @@ async fn reconcile_refund_claim(
         ));
     }
     if intent.status == SettlementStatus::Finalized.as_str() {
-        return Ok(Json(refund_claim_response(intent, artifact)));
+        let finalized_evidence = load_finalized_refund_claim_evidence_response(
+            &store,
+            state.targeted_recovery.as_deref(),
+            &intent,
+            &artifact,
+        )
+        .await?;
+        return Ok(Json(refund_claim_response(
+            intent,
+            artifact,
+            finalized_evidence,
+        )));
     }
     if matches!(
         intent.status.as_str(),
@@ -4827,7 +5299,7 @@ async fn reconcile_refund_claim(
         code: "REFUND_CLAIM_SIGNATURE_MISSING",
         message: "claim reconciliation requires the signature fenced at submission".into(),
     })?;
-    let ports = state.targeted_recovery.ok_or_else(|| ApiError {
+    let ports = state.targeted_recovery.as_ref().ok_or_else(|| ApiError {
         status: StatusCode::SERVICE_UNAVAILABLE,
         code: "REFUND_CLAIM_RECONCILIATION_UNAVAILABLE",
         message: "finalized transaction recovery is not configured".to_string(),
@@ -4906,7 +5378,18 @@ async fn reconcile_refund_claim(
         .await
         .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::from(StorageError::RefundClaimIntentNotFound))?;
-    Ok(Json(refund_claim_response(finalized, artifact)))
+    let finalized_evidence = load_finalized_refund_claim_evidence_response(
+        &store,
+        state.targeted_recovery.as_deref(),
+        &finalized,
+        &artifact,
+    )
+    .await?;
+    Ok(Json(refund_claim_response(
+        finalized,
+        artifact,
+        finalized_evidence,
+    )))
 }
 
 async fn submit_refund_claim(
@@ -5755,6 +6238,150 @@ async fn compile_settlement_from_quote_inner(
     .await
 }
 
+async fn compile_document_settlement_from_quote(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    payload: Result<Json<DocumentSettlementCompileFromQuoteRequest>, JsonRejection>,
+) -> Result<Json<CompiledDocumentSettlementResponse>, ApiError> {
+    let metrics = Arc::clone(&state.metrics);
+    let started = Instant::now();
+    let result = compile_document_settlement_from_quote_inner(state, headers, payload).await;
+    let _ = metrics.observe(
+        "settlement_document_compile",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+async fn compile_document_settlement_from_quote_inner(
+    state: AppState,
+    headers: HeaderMap,
+    payload: Result<Json<DocumentSettlementCompileFromQuoteRequest>, JsonRejection>,
+) -> Result<Json<CompiledDocumentSettlementResponse>, ApiError> {
+    let principal = authenticate_scope(&state, &headers, "tax:settlement:compile")?;
+    let Json(request) = payload.map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "INVALID_JSON",
+        message: "request body is invalid".to_string(),
+    })?;
+    let store = state.storage.clone().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "QUOTE_STORAGE_UNAVAILABLE",
+        message: "quote storage is not configured".to_string(),
+    })?;
+    let (document, attestation, route) = tokio::try_join!(
+        store.load_document_quote_for_attestation(principal.merchant_id, request.calculation_id),
+        store.load_document_calculation_attestation(principal.merchant_id, request.calculation_id),
+        store.load_active_settlement_route(principal.merchant_id, request.route_id),
+    )
+    .map_err(ApiError::from)?;
+    if document.schema != TAX_DOCUMENT_SCHEMA_V1 {
+        return Err(ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "DOCUMENT_QUOTE_SCHEMA_CORRUPT",
+            message: "stored document quote schema is not supported".to_string(),
+        });
+    }
+    let asset_mint = Pubkey::from_str(&route.mint).map_err(|_| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        code: "SETTLEMENT_ROUTE_EVIDENCE_CORRUPT",
+        message: "stored route mint is not a valid Solana public key".to_string(),
+    })?;
+    let binding = DocumentAttestationBinding {
+        document_schema: &document.schema,
+        merchant_id: merchant_identity_digest(principal.merchant_id.as_bytes()),
+        document_id: &document.result.document_id,
+        engine_version: &document.result.engine_version,
+        rule_set_id: &document.result.rule_set_id,
+        rule_version: document.result.rule_version,
+        jurisdiction: &document.result.jurisdiction,
+        currency: &document.result.currency,
+        asset_mint: asset_mint.to_bytes(),
+        facts_digest: document.result.facts_digest,
+        rule_digest: document.result.rule_digest,
+        gross_atomic: quote_amount_as_u64(document.result.gross_atomic, "gross_atomic")?,
+        tax_atomic: quote_amount_as_u64(document.result.total_tax_atomic, "total_tax_atomic")?,
+        net_atomic: quote_amount_as_u64(document.result.total_net_atomic, "total_net_atomic")?,
+    };
+    attestation
+        .attestation
+        .verify_at(server_unix_now()?)
+        .map_err(ApiError::from)?;
+    attestation
+        .attestation
+        .verify_binding(&binding)
+        .map_err(ApiError::from)?;
+    let serialized_request = serde_json::to_vec(&request).map_err(|error| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        code: "SETTLEMENT_DIGEST_FAILURE",
+        message: error.to_string(),
+    })?;
+    let authorization = authorize_document_payment(
+        &document.result,
+        attestation.payload_digest,
+        request.scope.clone(),
+    )
+    .map_err(ApiError::from)?;
+    let source = derive_source_token_account(&request.payer, &route.mint, &route.token_program)
+        .map_err(ApiError::from)?;
+    let client_request = ClientDocumentSettlementCompileRequest {
+        program_id: SETTLEMENT_PROGRAM_ID.to_string(),
+        payer: request.payer,
+        merchant: route.merchant_account,
+        source,
+        mint: route.mint.clone(),
+        tax_vault: route.tax_vault,
+        net_destination: route.net_destination,
+        token_program: route.token_program,
+        nonce: request.nonce,
+        policy_sequence: request.policy_sequence,
+        gross_atomic: authorization.gross_atomic.to_string(),
+        tax_atomic: authorization.tax_atomic.to_string(),
+        net_atomic: authorization.net_atomic.to_string(),
+        policy_digest: request.policy_digest,
+        document_attestation_digest: authorization.source_attestation_digest,
+        payment_scope_digest: authorization.payment_scope_digest,
+    };
+    let mut digest_input = b"solana-tax-protocol/document-settlement-request/v1".to_vec();
+    digest_input.extend_from_slice(request.route_id.as_bytes());
+    digest_input.extend_from_slice(&serialized_request);
+    let request_digest = sha256_digest(&digest_input);
+    let instruction =
+        compile_document_settlement_instruction(&client_request).map_err(ApiError::from)?;
+    let instruction_digest =
+        sha256_digest(&serde_json::to_vec(&instruction).map_err(|error| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "SETTLEMENT_DIGEST_FAILURE",
+            message: error.to_string(),
+        })?);
+    let outcome = store
+        .create_document_payment_intent(CreateDocumentPaymentIntentCommand {
+            merchant_id: principal.merchant_id,
+            idempotency_key: request.idempotency_key,
+            request_digest,
+            instruction_digest,
+            calculation_id: request.calculation_id,
+            route_id: request.route_id,
+            mint: client_request.mint,
+            authorization,
+        })
+        .await
+        .map_err(ApiError::from)?;
+    let document_intent = match outcome {
+        storage::DocumentPaymentIntentOutcome::Created(value)
+        | storage::DocumentPaymentIntentOutcome::Replay(value) => value,
+    };
+    Ok(Json(CompiledDocumentSettlementResponse {
+        instruction,
+        intent_id: Some(document_intent.intent.id),
+        request_digest,
+        instruction_digest,
+        route_id: request.route_id,
+        authorization: document_intent.authorization,
+    }))
+}
+
 async fn compile_split_settlement_from_quote(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -6043,6 +6670,24 @@ async fn submit_settlement_inner(
         SignedTransaction::parse(&request.signed_transaction_base64).map_err(ApiError::from)?;
     let signed_digest = sha256_digest(transaction.bytes());
     let (instruction_digest, expected_instruction) = match &request.instruction {
+        SubmittedSettlementInstruction::Document(instruction) => (
+            sha256_digest(&serde_json::to_vec(instruction).map_err(|error| ApiError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "SETTLEMENT_DIGEST_FAILURE",
+                message: error.to_string(),
+            })?),
+            CompiledSettlementInstruction {
+                status: instruction.status.clone(),
+                program_id: instruction.program_id.clone(),
+                instruction_data_base64: instruction.instruction_data_base64.clone(),
+                accounts: instruction.accounts.clone(),
+                protocol_config: instruction.protocol_config.clone(),
+                vault_authority: instruction.vault_authority.clone(),
+                policy_attestation: instruction.policy_attestation.clone(),
+                receipt: instruction.receipt.clone(),
+                compute_budget_policy: instruction.compute_budget_policy.clone(),
+            },
+        ),
         SubmittedSettlementInstruction::Legacy(instruction) => (
             compiled_instruction_digest(instruction).map_err(|error| ApiError {
                 status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -6476,6 +7121,93 @@ async fn verify_quote_attestation(
     }))
 }
 
+async fn verify_document_quote_attestation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(calculation_id): Path<Uuid>,
+    payload: Result<Json<DocumentQuoteAttestationVerifyRequest>, JsonRejection>,
+) -> Result<Json<DocumentQuoteAttestationVerifyResponse>, ApiError> {
+    let principal = authenticate_scope(&state, &headers, "tax:attestation:verify")?;
+    let Json(request) = payload.map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "INVALID_JSON",
+        message: "request body is invalid".to_string(),
+    })?;
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "ATTESTATION_STORAGE_UNAVAILABLE",
+        message: "document attestation storage is not configured".to_string(),
+    })?;
+    let document = store
+        .load_document_quote_for_attestation(principal.merchant_id, calculation_id)
+        .await
+        .map_err(ApiError::from)?;
+    if document.schema != TAX_DOCUMENT_SCHEMA_V1 {
+        return Err(ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "DOCUMENT_QUOTE_SCHEMA_CORRUPT",
+            message: "stored document quote schema is not supported".to_string(),
+        });
+    }
+    let route = store
+        .load_active_settlement_route(principal.merchant_id, request.route_id)
+        .await
+        .map_err(ApiError::from)?;
+    let asset_mint = Pubkey::from_str(&route.mint).map_err(|_| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        code: "SETTLEMENT_ROUTE_EVIDENCE_CORRUPT",
+        message: "stored route mint is not a valid Solana public key".to_string(),
+    })?;
+    let binding = DocumentAttestationBinding {
+        document_schema: &document.schema,
+        merchant_id: merchant_identity_digest(principal.merchant_id.as_bytes()),
+        document_id: &document.result.document_id,
+        engine_version: &document.result.engine_version,
+        rule_set_id: &document.result.rule_set_id,
+        rule_version: document.result.rule_version,
+        jurisdiction: &document.result.jurisdiction,
+        currency: &document.result.currency,
+        asset_mint: asset_mint.to_bytes(),
+        facts_digest: document.result.facts_digest,
+        rule_digest: document.result.rule_digest,
+        gross_atomic: quote_amount_as_u64(document.result.gross_atomic, "gross_atomic")?,
+        tax_atomic: quote_amount_as_u64(document.result.total_tax_atomic, "total_tax_atomic")?,
+        net_atomic: quote_amount_as_u64(document.result.total_net_atomic, "total_net_atomic")?,
+    };
+    request
+        .attestation
+        .verify_at(server_unix_now()?)
+        .map_err(ApiError::from)?;
+    request
+        .attestation
+        .verify_binding(&binding)
+        .map_err(ApiError::from)?;
+    let stored = store
+        .record_document_calculation_attestation(
+            principal.merchant_id,
+            calculation_id,
+            asset_mint.to_bytes(),
+            &request.attestation,
+        )
+        .await
+        .map_err(|error| {
+            tracing::error!(
+                merchant_id = %principal.merchant_id,
+                calculation_id = %calculation_id,
+                error = ?error,
+                "document calculation attestation persistence failed"
+            );
+            ApiError::from(error)
+        })?;
+    Ok(Json(DocumentQuoteAttestationVerifyResponse {
+        status: "document_attested_unsettled",
+        calculation_id: stored.calculation_id,
+        payload_digest: stored.payload_digest,
+        issuer_public_key: stored.issuer_public_key,
+        expires_at_unix: stored.expires_at_unix,
+    }))
+}
+
 fn quote_amount_as_u64(value: i128, field: &str) -> Result<u64, ApiError> {
     u64::try_from(value).map_err(|_| ApiError {
         status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -6521,7 +7253,9 @@ mod tests {
                     "tax_calculate",
                     "tax_document_calculate",
                     "tax_quote",
+                    "tax_document_quote",
                     "tax_replay",
+                    "tax_document_replay",
                     "tax_rule_draft_create",
                     "tax_rule_transition",
                     "tax_rule_governance_read",
@@ -7069,6 +7803,7 @@ mod tests {
     #[tokio::test]
     async fn document_calculation_endpoint_returns_canonical_line_results() {
         let body = serde_json::json!({
+            "schema": "solana-tax-protocol/tax-document/v1",
             "facts": {
                 "id": "invoice-api-1",
                 "currency": "USD",
@@ -7125,6 +7860,7 @@ mod tests {
             .unwrap();
         let response: serde_json::Value = serde_json::from_slice(&response_body).unwrap();
         assert_eq!(response["status"], "simulated_unattested");
+        assert_eq!(response["schema"], "solana-tax-protocol/tax-document/v1");
         assert_eq!(response["result"]["total_tax_atomic"], "1");
         assert_eq!(response["result"]["lines"][0]["id"], "line-a");
         assert_eq!(response["result"]["lines"][1]["id"], "line-b");
@@ -7134,6 +7870,7 @@ mod tests {
     #[tokio::test]
     async fn document_calculation_endpoint_fails_closed_outside_simulation() {
         let body = serde_json::json!({
+            "schema": "solana-tax-protocol/tax-document/v1",
             "facts": {
                 "id": "invoice-api-production-boundary",
                 "currency": "USD",
@@ -7178,6 +7915,47 @@ mod tests {
             response["error"]["code"],
             "PUBLISHED_RULE_REGISTRY_REQUIRED"
         );
+    }
+
+    #[tokio::test]
+    async fn document_calculation_endpoint_rejects_unknown_schema() {
+        let body = serde_json::json!({
+            "schema": "solana-tax-protocol/tax-document/v0",
+            "facts": {
+                "id": "invoice-schema-boundary",
+                "currency": "USD",
+                "jurisdiction": "US-CA",
+                "lines": [{ "id": "line-a", "gross_atomic": "1", "net_atomic": "1", "exemption_codes": [] }]
+            },
+            "rule_set": { "id": "rule", "version": 1, "components": [] }
+        });
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: true,
+                storage: None,
+                authenticator: None,
+                jurisdiction_provider_registry: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/tax/calculate-document")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let response_body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&response_body).unwrap();
+        assert_eq!(response["error"]["code"], "UNSUPPORTED_DOCUMENT_SCHEMA");
     }
 
     #[tokio::test]
@@ -7267,6 +8045,197 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn document_attestation_rejects_missing_bearer_token_before_storage_access() {
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: false,
+                storage: None,
+                authenticator: Some(auth::test_authenticator()),
+                jurisdiction_provider_registry: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!(
+                        "/v1/tax/document-quotes/{}/attestation/verify",
+                        Uuid::now_v7()
+                    ))
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn document_attestation_wire_boundary_rejects_aggregate_attestation() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let (token, _) = auth::test_token_with_scope(now, "tax:attestation:verify");
+        let aggregate = CalculationAttestation::sign(
+            UnsignedAttestation {
+                schema_version: ATTESTATION_SCHEMA_VERSION,
+                merchant_id: [1; 32],
+                rule_set_id: "rule".to_string(),
+                rule_version: 1,
+                jurisdiction: "US-CA".to_string(),
+                currency: "USD".to_string(),
+                asset_mint: [2; 32],
+                facts_digest: [3; 32],
+                rule_digest: [4; 32],
+                gross_atomic: 10,
+                tax_atomic: 1,
+                net_atomic: 9,
+                issued_at_unix: now,
+                expires_at_unix: now + 300,
+                sequence: 1,
+                issuer_key_id: [5; 32],
+            },
+            &SigningKey::from_bytes(&[7; 32]),
+        )
+        .unwrap();
+        let body = serde_json::json!({
+            "route_id": Uuid::now_v7(),
+            "attestation": aggregate,
+        });
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: false,
+                storage: None,
+                authenticator: Some(auth::test_authenticator()),
+                jurisdiction_provider_registry: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!(
+                        "/v1/tax/document-quotes/{}/attestation/verify",
+                        Uuid::now_v7()
+                    ))
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn document_quote_rejects_missing_bearer_token_before_storage_access() {
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: false,
+                storage: None,
+                authenticator: Some(auth::test_authenticator()),
+                jurisdiction_provider_registry: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/tax/document-quote")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"schema":"solana-tax-protocol/tax-document/v1"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn document_quote_rejects_unknown_schema_before_persistence() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let (token, _) = auth::test_token(now);
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: false,
+                storage: None,
+                authenticator: Some(auth::test_authenticator()),
+                jurisdiction_provider_registry: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/tax/document-quote")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"schema":"solana-tax-protocol/tax-document/v0","idempotency_key":"doc-1","rule_set_id":"rule","rule_version":1,"jurisdiction":"US-CA","regime":"sales-tax","facts":{"id":"invoice-1","currency":"USD","jurisdiction":"US-CA","lines":[{"id":"line-1","gross_atomic":"100","net_atomic":"100"}]}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(response.into_body(), 16 * 1024)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"]["code"], "UNSUPPORTED_DOCUMENT_SCHEMA");
+    }
+
+    #[tokio::test]
+    async fn document_quote_requires_durable_storage_after_authentication() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let (token, _) = auth::test_token(now);
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: false,
+                storage: None,
+                authenticator: Some(auth::test_authenticator()),
+                jurisdiction_provider_registry: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/tax/document-quote")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"schema":"solana-tax-protocol/tax-document/v1","idempotency_key":"doc-1","rule_set_id":"rule","rule_version":1,"jurisdiction":"US-CA","regime":"sales-tax","facts":{"id":"invoice-1","currency":"USD","jurisdiction":"US-CA","lines":[{"id":"line-1","gross_atomic":"100","net_atomic":"100"}]}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     #[tokio::test]

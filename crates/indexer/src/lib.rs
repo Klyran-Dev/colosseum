@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(test),
+    deny(clippy::expect_used, clippy::panic, clippy::unwrap_used)
+)]
+
 use anchor_lang::prelude::Pubkey;
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -31,6 +36,7 @@ pub const PROVIDER_COOLDOWN_BASE: Duration = Duration::from_millis(25);
 pub const MAX_PROVIDER_COOLDOWN: Duration = Duration::from_secs(5);
 pub const SETTLEMENT_PROGRAM_ID: &str = "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi";
 pub const SETTLEMENT_EVENT_DISCRIMINATOR: [u8; 8] = [198, 221, 154, 28, 173, 8, 114, 6];
+pub const DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR: [u8; 8] = [101, 58, 10, 108, 29, 185, 246, 2];
 pub const SPLIT_SETTLEMENT_EVENT_DISCRIMINATOR: [u8; 8] = [50, 129, 102, 109, 249, 142, 125, 30];
 pub const PROTOCOL_PAUSE_EVENT_DISCRIMINATOR: [u8; 8] = [67, 33, 235, 73, 71, 124, 172, 110];
 pub const ADJUSTMENT_REFUND_EXECUTED_EVENT_DISCRIMINATOR: [u8; 8] =
@@ -3817,6 +3823,75 @@ pub struct SettlementExecutedEvent {
     pub policy_digest: [u8; 32],
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocumentSettlementExecutedEvent {
+    pub receipt: [u8; 32],
+    pub payer: [u8; 32],
+    pub merchant: [u8; 32],
+    pub mint: [u8; 32],
+    pub nonce: u64,
+    pub gross_atomic: u64,
+    pub tax_atomic: u64,
+    pub net_atomic: u64,
+    pub policy_digest: [u8; 32],
+    pub document_attestation_digest: [u8; 32],
+    pub payment_scope_digest: [u8; 32],
+}
+
+impl DocumentSettlementExecutedEvent {
+    fn decode(data: &[u8]) -> Result<Self, ProviderError> {
+        if data.len() != 8 + (32 * 7) + (8 * 4)
+            || data[..8] != DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR
+        {
+            return Err(ProviderError::InvalidResponse(
+                "document settlement event has an unexpected discriminator or length".to_string(),
+            ));
+        }
+        let mut offset = 8;
+        let receipt = read_array::<32>(data, &mut offset)?;
+        let payer = read_array::<32>(data, &mut offset)?;
+        let merchant = read_array::<32>(data, &mut offset)?;
+        let mint = read_array::<32>(data, &mut offset)?;
+        let nonce = read_u64_le(data, &mut offset)?;
+        let gross_atomic = read_u64_le(data, &mut offset)?;
+        let tax_atomic = read_u64_le(data, &mut offset)?;
+        let net_atomic = read_u64_le(data, &mut offset)?;
+        let policy_digest = read_array::<32>(data, &mut offset)?;
+        let document_attestation_digest = read_array::<32>(data, &mut offset)?;
+        let payment_scope_digest = read_array::<32>(data, &mut offset)?;
+        if offset != data.len()
+            || receipt == [0; 32]
+            || payer == [0; 32]
+            || merchant == [0; 32]
+            || mint == [0; 32]
+            || nonce == 0
+            || gross_atomic == 0
+            || tax_atomic.checked_add(net_atomic) != Some(gross_atomic)
+            || policy_digest == [0; 32]
+            || document_attestation_digest == [0; 32]
+            || payment_scope_digest == [0; 32]
+        {
+            return Err(ProviderError::InvalidResponse(
+                "document settlement event violates identity, provenance, or amount invariants"
+                    .to_string(),
+            ));
+        }
+        Ok(Self {
+            receipt,
+            payer,
+            merchant,
+            mint,
+            nonce,
+            gross_atomic,
+            tax_atomic,
+            net_atomic,
+            policy_digest,
+            document_attestation_digest,
+            payment_scope_digest,
+        })
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct IndexedSplitSettlement {
     pub signature: String,
@@ -4433,6 +4508,20 @@ pub fn rebuild_receipt_from_raw_evidence(
             event.net_atomic,
             event.policy_digest,
         )
+    } else if evidence.event_discriminator == DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR {
+        let event = DocumentSettlementExecutedEvent::decode(&evidence.event_data)
+            .map_err(|_| IndexerError::InvalidEvidence)?;
+        (
+            event.receipt,
+            event.payer,
+            event.merchant,
+            event.mint,
+            event.nonce,
+            event.gross_atomic,
+            event.tax_atomic,
+            event.net_atomic,
+            event.policy_digest,
+        )
     } else if evidence.event_discriminator == SPLIT_SETTLEMENT_EVENT_DISCRIMINATOR {
         let event = SplitSettlementExecutedEvent::decode(&evidence.event_data)
             .map_err(|_| IndexerError::InvalidEvidence)?;
@@ -4604,6 +4693,7 @@ impl ReceiptDecoder for SettlementExecutedDecoder {
                     ProviderError::InvalidResponse("event discriminator is malformed".to_string())
                 })?;
                 if discriminator != SETTLEMENT_EVENT_DISCRIMINATOR
+                    && discriminator != DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR
                     && discriminator != SPLIT_SETTLEMENT_EVENT_DISCRIMINATOR
                     && discriminator != SETTLEMENT_ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR
                     && discriminator != ADJUSTMENT_REFUND_EXECUTED_EVENT_DISCRIMINATOR
@@ -4638,6 +4728,7 @@ impl ReceiptDecoder for SettlementExecutedDecoder {
                     continue;
                 }
                 let is_movement_event = discriminator == SETTLEMENT_EVENT_DISCRIMINATOR
+                    || discriminator == DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR
                     || discriminator == SPLIT_SETTLEMENT_EVENT_DISCRIMINATOR
                     || discriminator == SETTLEMENT_ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR
                     || discriminator == ADJUSTMENT_REFUND_EXECUTED_EVENT_DISCRIMINATOR;
@@ -4761,6 +4852,19 @@ impl ReceiptDecoder for SettlementExecutedDecoder {
                     policy_digest,
                 ) = if discriminator == SETTLEMENT_EVENT_DISCRIMINATOR {
                     let event = SettlementExecutedEvent::decode(&event_data)?;
+                    (
+                        event.receipt,
+                        event.payer,
+                        event.merchant,
+                        event.mint,
+                        event.nonce,
+                        event.gross_atomic,
+                        event.tax_atomic,
+                        event.net_atomic,
+                        event.policy_digest,
+                    )
+                } else if discriminator == DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR {
+                    let event = DocumentSettlementExecutedEvent::decode(&event_data)?;
                     (
                         event.receipt,
                         event.payer,
@@ -6356,6 +6460,23 @@ mod tests {
         BASE64.encode(data)
     }
 
+    fn encoded_document_settlement_event(gross: u64, tax: u64, net: u64) -> String {
+        let mut data = Vec::with_capacity(300);
+        data.extend_from_slice(&DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR);
+        data.extend_from_slice(&[41; 32]);
+        data.extend_from_slice(&[42; 32]);
+        data.extend_from_slice(&[43; 32]);
+        data.extend_from_slice(&[44; 32]);
+        data.extend_from_slice(&29_u64.to_le_bytes());
+        data.extend_from_slice(&gross.to_le_bytes());
+        data.extend_from_slice(&tax.to_le_bytes());
+        data.extend_from_slice(&net.to_le_bytes());
+        data.extend_from_slice(&[45; 32]);
+        data.extend_from_slice(&[46; 32]);
+        data.extend_from_slice(&[47; 32]);
+        BASE64.encode(data)
+    }
+
     fn encoded_split_settlement_event(gross: u64, tax: u64, net: u64) -> String {
         let mut data = Vec::with_capacity(240);
         data.extend_from_slice(&SPLIT_SETTLEMENT_EVENT_DISCRIMINATOR);
@@ -6632,6 +6753,32 @@ mod tests {
         assert_eq!(
             decoded.raw_evidence[0].event_discriminator,
             SPLIT_SETTLEMENT_EVENT_DISCRIMINATOR
+        );
+    }
+
+    #[tokio::test]
+    async fn settlement_decoder_projects_document_provenance_in_raw_evidence() {
+        let decoder = SettlementExecutedDecoder;
+        let block = json!({
+            "transactions": [{
+                "transaction": {"signatures": ["document-signature"]},
+                "meta": {
+                    "err": null,
+                    "logMessages": [
+                        "Program 4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi invoke [1]",
+                        format!("Program data: {}", encoded_document_settlement_event(100, 25, 75))
+                    ]
+                }
+            }]
+        });
+        let decoded = decoder.decode_block(42, block).await.unwrap();
+        assert_eq!(decoded.receipts.len(), 1);
+        assert_eq!(decoded.receipts[0].receipt, [41; 32]);
+        assert_eq!(decoded.receipts[0].gross_atomic, 100);
+        assert_eq!(decoded.raw_evidence.len(), 1);
+        assert_eq!(
+            decoded.raw_evidence[0].event_discriminator,
+            DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR
         );
     }
 

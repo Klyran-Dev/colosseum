@@ -164,6 +164,15 @@ function receipt(mint: PublicKey, nonce: bigint): PublicKey {
   );
 }
 
+function documentReceipt(nonce: bigint): PublicKey {
+  return pda(
+    Buffer.from("document-receipt"),
+    payer.publicKey.toBuffer(),
+    merchant.publicKey.toBuffer(),
+    u64(nonce),
+  );
+}
+
 function instruction(
   name: string,
   keys: { pubkey: PublicKey; isSigner: boolean; isWritable: boolean }[],
@@ -240,6 +249,48 @@ function settleInstruction(
       { pubkey: systemProgram, isSigner: false, isWritable: false },
     ],
     Buffer.concat([u64(nonce), u64(1n), u64(gross), u64(tax), u64(net), digest]),
+  );
+}
+
+function settleDocumentInstruction(
+  mint: PublicKey,
+  source: PublicKey,
+  taxVault: PublicKey,
+  destination: PublicKey,
+  tokenProgram: PublicKey,
+  nonce: bigint,
+  documentAttestationDigest: Buffer,
+  paymentScopeDigest: Buffer,
+): TransactionInstruction {
+  if (documentAttestationDigest.length !== 32 || paymentScopeDigest.length !== 32) {
+    throw new Error("document settlement provenance digests must be 32 bytes");
+  }
+  return instruction(
+    "settle_document",
+    [
+      { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+      { pubkey: protocolConfig(), isSigner: false, isWritable: false },
+      { pubkey: merchant.publicKey, isSigner: false, isWritable: false },
+      { pubkey: source, isSigner: false, isWritable: true },
+      { pubkey: mint, isSigner: false, isWritable: false },
+      { pubkey: taxVault, isSigner: false, isWritable: true },
+      { pubkey: vaultAuthority(mint), isSigner: false, isWritable: false },
+      { pubkey: policyAttestation(mint), isSigner: false, isWritable: false },
+      { pubkey: destination, isSigner: false, isWritable: true },
+      { pubkey: documentReceipt(nonce), isSigner: false, isWritable: true },
+      { pubkey: tokenProgram, isSigner: false, isWritable: false },
+      { pubkey: systemProgram, isSigner: false, isWritable: false },
+    ],
+    Buffer.concat([
+      u64(nonce),
+      u64(1n),
+      u64(gross),
+      u64(tax),
+      u64(net),
+      digest,
+      documentAttestationDigest,
+      paymentScopeDigest,
+    ]),
   );
 }
 
@@ -1012,6 +1063,105 @@ describe("validator-backed settlement conformance", () => {
       getAccount(connection, destination.address, "finalized", TOKEN_2022_PROGRAM_ID),
     ]);
     expect(after.map((account) => account.amount)).toEqual([0n, 25n, 75n]);
+  }, 30_000);
+
+  test("settles a document-bound payment and persists provenance before rejecting replay", async () => {
+    await airdrop(payer.publicKey, 10_000_000_000);
+    await airdrop(merchant.publicKey);
+    await airdrop(issuer.publicKey);
+    if ((await connection.getAccountInfo(protocolConfig(), "finalized")) === null) {
+      await send([
+        instruction(
+          "initialize_protocol_config",
+          [
+            { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+            { pubkey: protocolConfig(), isSigner: false, isWritable: true },
+            { pubkey: systemProgram, isSigner: false, isWritable: false },
+          ],
+          Buffer.alloc(0),
+        ),
+      ], []);
+    }
+
+    const mint = await createMint(
+      connection,
+      payer,
+      payer.publicKey,
+      null,
+      0,
+      undefined,
+      undefined,
+      TOKEN_PROGRAM_ID,
+    );
+    const source = await getOrCreateAssociatedTokenAccount(connection, payer, mint, payer.publicKey);
+    const vault = await getOrCreateAssociatedTokenAccount(
+      connection,
+      payer,
+      mint,
+      vaultAuthority(mint),
+      true,
+    );
+    const destination = await getOrCreateAssociatedTokenAccount(
+      connection,
+      payer,
+      mint,
+      merchant.publicKey,
+    );
+    await mintTo(connection, payer, mint, source.address, payer, 100n);
+    await send([
+      initializeRegistryInstruction(mint, TOKEN_PROGRAM_ID),
+      registerPolicyInstruction(mint, TOKEN_PROGRAM_ID),
+    ], [issuer]);
+
+    const nonce = 40n;
+    const documentAttestationDigest = Buffer.alloc(32, 8);
+    const paymentScopeDigest = Buffer.alloc(32, 9);
+    await send([
+      ...settlementComputeBudgetInstructions(),
+      settleDocumentInstruction(
+        mint,
+        source.address,
+        vault.address,
+        destination.address,
+        TOKEN_PROGRAM_ID,
+        nonce,
+        documentAttestationDigest,
+        paymentScopeDigest,
+      ),
+    ], []);
+
+    const balances = await Promise.all([
+      getAccount(connection, source.address, "finalized"),
+      getAccount(connection, vault.address, "finalized"),
+      getAccount(connection, destination.address, "finalized"),
+    ]);
+    expect(balances.map((account) => account.amount)).toEqual([0n, 25n, 75n]);
+
+    const receiptAccount = await connection.getAccountInfo(documentReceipt(nonce), "finalized");
+    expect(receiptAccount?.owner.toBase58()).toBe(programId.toBase58());
+    expect(receiptAccount?.data.length).toBe(233);
+    expect(receiptAccount?.data.subarray(168, 200)).toEqual(documentAttestationDigest);
+    expect(receiptAccount?.data.subarray(200, 232)).toEqual(paymentScopeDigest);
+
+    await expect(send([
+      ...settlementComputeBudgetInstructions(),
+      settleDocumentInstruction(
+        mint,
+        source.address,
+        vault.address,
+        destination.address,
+        TOKEN_PROGRAM_ID,
+        nonce,
+        documentAttestationDigest,
+        paymentScopeDigest,
+      ),
+    ], [])).rejects.toThrow();
+    const afterReplay = await Promise.all([
+      getAccount(connection, source.address, "finalized"),
+      getAccount(connection, vault.address, "finalized"),
+      getAccount(connection, destination.address, "finalized"),
+    ]);
+    expect(afterReplay.map((account) => account.amount)).toEqual([0n, 25n, 75n]);
   }, 30_000);
 
   test("settles an immutable two-recipient Split Plan and rejects unsafe retries", async () => {

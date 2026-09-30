@@ -2,7 +2,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 use tax_engine::{
     BaseReference, PriceMode, Rate, RateSpec, RoundingMode, RoundingScope, RoundingSpec, RuleSet,
-    TaxBase, TaxComponentRule, TaxFacts,
+    TaxBase, TaxComponentRule, TaxDocumentFacts, TaxFacts, TaxLineFacts,
 };
 
 fn benchmark_rule() -> RuleSet {
@@ -65,10 +65,59 @@ fn benchmark_facts() -> TaxFacts {
     }
 }
 
+fn benchmark_document_rule() -> RuleSet {
+    RuleSet {
+        id: "benchmark-document-invoice".to_string(),
+        version: 1,
+        components: (0..16)
+            .map(|index| TaxComponentRule {
+                id: format!("component-{index:02}"),
+                label: format!("Component {index:02}"),
+                base: TaxBase::single(BaseReference::Net),
+                rate: RateSpec::Flat(Rate::new(7, 100).expect("benchmark rate is valid")),
+                price_mode: PriceMode::Exclusive,
+                credit_atomic: 0,
+                floor_atomic: None,
+                cap_atomic: None,
+                rounding: RoundingSpec {
+                    mode: RoundingMode::HalfEven,
+                    scope: RoundingScope::Invoice,
+                    quantum_atomic: 1,
+                },
+                threshold: None,
+                exemption_codes: Vec::new(),
+            })
+            .collect(),
+    }
+}
+
+fn benchmark_document_facts() -> TaxDocumentFacts {
+    TaxDocumentFacts {
+        id: "benchmark-invoice-64".to_string(),
+        currency: "USD".to_string(),
+        jurisdiction: "US-CA".to_string(),
+        jurisdiction_resolution: None,
+        cumulative_period: None,
+        lines: (0..64)
+            .map(|index| TaxLineFacts {
+                id: format!("line-{index:03}"),
+                gross_atomic: 10_000,
+                net_atomic: 10_000,
+                exemption_codes: Vec::new(),
+            })
+            .collect(),
+    }
+}
+
 fn tax_engine_benchmarks(c: &mut Criterion) {
     let rule = benchmark_rule();
     let facts = benchmark_facts();
     let compiled = rule.compile().expect("benchmark rule compiles");
+    let document_rule = benchmark_document_rule();
+    let document_facts = benchmark_document_facts();
+    let compiled_document_rule = document_rule
+        .compile()
+        .expect("benchmark document rule compiles");
 
     c.bench_function("tax_engine_compile", |b| {
         b.iter(|| black_box(rule.compile().expect("benchmark rule compiles")))
@@ -78,6 +127,9 @@ fn tax_engine_benchmarks(c: &mut Criterion) {
     });
     c.bench_function("tax_engine_compiled_calculate", |b| {
         b.iter(|| black_box(compiled.calculate(black_box(&facts))))
+    });
+    c.bench_function("tax_engine_document_invoice_64x16", |b| {
+        b.iter(|| black_box(compiled_document_rule.calculate_document(black_box(&document_facts))))
     });
 }
 

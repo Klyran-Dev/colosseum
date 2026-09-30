@@ -1,4 +1,8 @@
 #![deny(unsafe_code)]
+#![cfg_attr(
+    not(test),
+    deny(clippy::expect_used, clippy::panic, clippy::unwrap_used)
+)]
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

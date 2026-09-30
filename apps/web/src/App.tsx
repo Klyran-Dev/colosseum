@@ -19,6 +19,8 @@ import {
 } from "./taxResponses";
 
 const CheckoutPanel = lazy(() => import("./CheckoutPanel"));
+const DocumentQuotePanel = lazy(() => import("./DocumentQuotePanel"));
+const DocumentCheckoutPanel = lazy(() => import("./DocumentCheckoutPanel"));
 const GovernancePanel = lazy(() => import("./GovernancePanel"));
 const ReplayOpsPanel = lazy(() => import("./ReplayOpsPanel"));
 const VaultReleasePanel = lazy(() => import("./VaultReleasePanel"));
@@ -27,7 +29,7 @@ const SettlementAdjustmentPanel = lazy(() => import("./SettlementAdjustmentPanel
 const RefundClaimPanel = lazy(() => import("./RefundClaimPanel"));
 const RefundExecutePanel = lazy(() => import("./RefundExecutePanel"));
 
-type Workspace = "quote" | "preview" | "checkout" | "governance" | "replay-ops" | "vault-release" | "vault-reconciliation" | "adjustments" | "refund-claims" | "refund-executions";
+type Workspace = "quote" | "preview" | "document-quote" | "checkout" | "document-checkout" | "governance" | "replay-ops" | "vault-release" | "vault-reconciliation" | "adjustments" | "refund-claims" | "refund-executions";
 type ServiceState = "checking" | "online" | "offline";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
@@ -52,6 +54,7 @@ export default function App() {
   const [accessToken, setAccessToken] = useState("");
   const [idempotencyKey, setIdempotencyKey] = useState<string>(() => createClientUuid());
   const [calculation, setCalculation] = useState<Calculation | null>(null);
+  const [documentCalculationId, setDocumentCalculationId] = useState("");
   const [replayVerification, setReplayVerification] = useState<ReplayVerification | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -210,7 +213,7 @@ export default function App() {
   const serviceLabel = { checking: "Checking service", online: "Calculation service online", offline: "Calculation service unavailable" }[serviceState];
   const submit = workspace === "quote" ? createQuote : calculatePreview;
   const formatAtomic = (value: string, currency: string) => formatAtomicValue(value, currency, locale);
-  const statusLabel = workspace === "governance" ? "Governance workspace" : workspace === "replay-ops" ? "Replay operations" : workspace === "vault-release" ? "Vault release control" : workspace === "vault-reconciliation" ? "Vault reconciliation" : workspace === "adjustments" ? "Settlement adjustments" : workspace === "refund-claims" ? "Refund claim wallet boundary" : workspace === "refund-executions" ? "Refund execution wallet boundary" : calculation?.status === "attested" ? "Attested" : calculation?.status === "calculated_unattested" ? "Calculated" : calculation ? "Preview" : "Awaiting input";
+  const statusLabel = workspace === "governance" ? "Governance workspace" : workspace === "replay-ops" ? "Replay operations" : workspace === "vault-release" ? "Vault release control" : workspace === "vault-reconciliation" ? "Vault reconciliation" : workspace === "adjustments" ? "Settlement adjustments" : workspace === "refund-claims" ? "Refund claim wallet boundary" : workspace === "refund-executions" ? "Refund execution wallet boundary" : workspace === "document-quote" ? "Document quote" : workspace === "document-checkout" ? "Document payment authorization" : calculation?.status === "attested" ? "Attested" : calculation?.status === "calculated_unattested" ? "Calculated" : calculation ? "Preview" : "Awaiting input";
 
   return (
     <div className="app-shell" dir={direction}>
@@ -234,12 +237,13 @@ export default function App() {
       <main className="content" id="main-content">
         <section className="hero">
           <div><p className="eyebrow">Merchant operations / evidence first</p><h1>Make every withheld cent explainable.</h1><p className="hero-copy">Create an authenticated, idempotent quote, inspect a clearly isolated preview, review a governed rule release or adjustment, inspect finalized vault evidence, or repair a bounded indexer projection. The browser never treats a calculation as wallet authorization or settlement confirmation.</p></div>
-          <div className="hero-badge"><span className="badge-label">Current boundary</span><strong>{workspace === "quote" ? "Authenticated quote" : workspace === "preview" ? "Rule preview" : workspace === "governance" ? "Rule governance" : workspace === "replay-ops" ? "Replay operations" : workspace === "vault-release" ? "Vault release control" : workspace === "vault-reconciliation" ? "Vault reconciliation" : workspace === "adjustments" ? "Settlement adjustments" : workspace === "refund-claims" ? "Refund claim wallet" : workspace === "refund-executions" ? "Refund execution wallet" : "Checkout authorization"}</strong><span>{workspace === "quote" ? "Persisted evidence and exact replay." : workspace === "preview" ? "Caller-supplied rules; never settlement authority." : workspace === "governance" ? "Server-owned lifecycle and audit trail." : workspace === "replay-ops" ? "Dead-letter review and bounded repair." : workspace === "vault-release" ? "Two-person claim lifecycle and reconciliation." : workspace === "vault-reconciliation" ? "Finalized read-only balance evidence." : workspace === "adjustments" ? "Governed financial evidence; no token movement." : workspace === "refund-claims" ? "Two wallet signatures; finality remains separate." : workspace === "refund-executions" ? "Proof-gated execution; finality remains separate." : "Wallet review before any signature."}</span></div>
+          <div className="hero-badge"><span className="badge-label">Current boundary</span><strong>{workspace === "quote" ? "Authenticated quote" : workspace === "preview" ? "Rule preview" : workspace === "document-quote" ? "Authenticated document quote" : workspace === "governance" ? "Rule governance" : workspace === "replay-ops" ? "Replay operations" : workspace === "vault-release" ? "Vault release control" : workspace === "vault-reconciliation" ? "Vault reconciliation" : workspace === "adjustments" ? "Settlement adjustments" : workspace === "refund-claims" ? "Refund claim wallet" : workspace === "refund-executions" ? "Refund execution wallet" : workspace === "document-checkout" ? "Document payment authorization" : "Checkout authorization"}</strong><span>{workspace === "quote" ? "Persisted evidence and exact replay." : workspace === "preview" ? "Caller-supplied rules; never settlement authority." : workspace === "document-quote" ? "Facts, jurisdiction evidence, and durable UUIDv7 quote." : workspace === "governance" ? "Server-owned lifecycle and audit trail." : workspace === "replay-ops" ? "Dead-letter review and bounded repair." : workspace === "vault-release" ? "Two-person claim lifecycle and reconciliation." : workspace === "vault-reconciliation" ? "Finalized read-only balance evidence." : workspace === "adjustments" ? "Governed financial evidence; no token movement." : workspace === "refund-claims" ? "Two wallet signatures; finality remains separate." : workspace === "refund-executions" ? "Proof-gated execution; finality remains separate." : workspace === "document-checkout" ? "Attestation, scope, intent, wallet, finality." : "Wallet review before any signature."}</span></div>
         </section>
 
         <nav className="workspace-tabs" aria-label="Tax workspace">
           <button type="button" className={workspace === "quote" ? "tab-active" : ""} aria-pressed={workspace === "quote"} aria-controls="workspace-content" onClick={() => { setWorkspace("quote"); clearResult(); }}>Production quote</button>
           <button type="button" className={workspace === "preview" ? "tab-active" : ""} aria-pressed={workspace === "preview"} aria-controls="workspace-content" onClick={() => { setWorkspace("preview"); clearResult(); }}>Isolated preview</button>
+          <button type="button" className={workspace === "document-quote" ? "tab-active" : ""} aria-pressed={workspace === "document-quote"} aria-controls="workspace-content" onClick={() => setWorkspace("document-quote")}>Document quote</button>
           <button type="button" className={workspace === "governance" ? "tab-active" : ""} aria-pressed={workspace === "governance"} aria-controls="workspace-content" onClick={() => setWorkspace("governance")}>Rule governance</button>
           <button type="button" className={workspace === "replay-ops" ? "tab-active" : ""} aria-pressed={workspace === "replay-ops"} aria-controls="workspace-content" onClick={() => setWorkspace("replay-ops")}>Replay operations</button>
           <button type="button" className={workspace === "vault-release" ? "tab-active" : ""} aria-pressed={workspace === "vault-release"} aria-controls="workspace-content" onClick={() => setWorkspace("vault-release")}>Vault releases</button>
@@ -248,6 +252,7 @@ export default function App() {
           <button type="button" className={workspace === "refund-claims" ? "tab-active" : ""} aria-pressed={workspace === "refund-claims"} aria-controls="workspace-content" onClick={() => setWorkspace("refund-claims")}>Refund claims</button>
           <button type="button" className={workspace === "refund-executions" ? "tab-active" : ""} aria-pressed={workspace === "refund-executions"} aria-controls="workspace-content" onClick={() => setWorkspace("refund-executions")}>Refund executions</button>
           <button type="button" className={workspace === "checkout" ? "tab-active" : ""} aria-pressed={workspace === "checkout"} aria-controls="workspace-content" onClick={() => setWorkspace("checkout")}>Checkout authorization</button>
+          <button type="button" className={workspace === "document-checkout" ? "tab-active" : ""} aria-pressed={workspace === "document-checkout"} aria-controls="workspace-content" onClick={() => setWorkspace("document-checkout")}>Document checkout</button>
         </nav>
 
         <div id="workspace-content" ref={workspaceContentRef} className="workspace-content" role="region" aria-label="Current tax workspace" tabIndex={-1}>
@@ -258,7 +263,22 @@ export default function App() {
           </section>
 
           <WorkspaceErrorBoundary key={workspace} workspace={workspace}>
-          {workspace === "vault-reconciliation" ? <Suspense fallback={<section className="vault-layout" aria-live="polite"><article className="panel empty-state"><strong>Loading vault reconciliation…</strong><p>Finalized evidence is loaded only when selected.</p></article></section>}><VaultReconciliationPanel
+          {workspace === "document-quote" ? <Suspense fallback={<section className="workspace-grid" aria-live="polite"><article className="panel empty-state"><strong>Loading document quote…</strong><p>Authenticated document facts and evidence controls are loaded only when selected.</p></article></section>}><DocumentQuotePanel
+          apiBase={API_BASE}
+          serviceOnline={serviceState === "online"}
+          accessToken={accessToken}
+          formatAtomic={formatAtomic}
+          locale={locale}
+          timeZone={effectiveTimeZone}
+          onOpenCheckout={(calculationId) => { setDocumentCalculationId(calculationId); setWorkspace("document-checkout"); }}
+        /></Suspense> : workspace === "document-checkout" ? <Suspense fallback={<section className="checkout-layout" aria-live="polite"><article className="panel empty-state"><strong>Loading document checkout…</strong><p>Document attestation and payment scope controls are loaded only when selected.</p></article></section>}><DocumentCheckoutPanel
+          apiBase={API_BASE}
+          serviceOnline={serviceState === "online"}
+          accessToken={accessToken}
+          initialCalculationId={documentCalculationId}
+          locale={locale}
+          timeZone={effectiveTimeZone}
+        /></Suspense> : workspace === "vault-reconciliation" ? <Suspense fallback={<section className="vault-layout" aria-live="polite"><article className="panel empty-state"><strong>Loading vault reconciliation…</strong><p>Finalized evidence is loaded only when selected.</p></article></section>}><VaultReconciliationPanel
           apiBase={API_BASE}
           serviceOnline={serviceState === "online"}
           locale={locale}

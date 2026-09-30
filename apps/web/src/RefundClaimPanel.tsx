@@ -27,6 +27,10 @@ function atomicAmount(value: string | null, locale: string): string {
   return value === null ? "Not present" : `${formatInteger(value, locale)} atomic units`;
 }
 
+function digestPreview(bytes: number[]): string {
+  return `${bytes.slice(0, 8).map((byte) => byte.toString(16).padStart(2, "0")).join("")}…`;
+}
+
 export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, locale }: RefundClaimPanelProps) {
   const [adjustmentId, setAdjustmentId] = useState("");
   const [lookupId, setLookupId] = useState("");
@@ -209,6 +213,21 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
             <div><dt>Expiry</dt><dd>{claim.artifact.expires_at_unix ? new Date(claim.artifact.expires_at_unix * 1000).toISOString() : "Not present"}</dd></div>
             <div><dt>Transport signature</dt><dd>{claim.signature ? <code>{claim.signature}</code> : "None recorded"}</dd></div>
           </dl>
+          {claim.status === "finalized" && claim.finalized_evidence && <div className="settlement-status" aria-live="polite">
+            <strong role="status">Finalized claim event evidence matched the durable artifact.</strong>
+            <small>The event proof is bound to the recorded signature, finalized slot, claim PDA, amounts, and immutable evidence digest. Finality is movement evidence, not a legal or compliance determination.</small>
+            <details>
+              <summary>Finalized event proof</summary>
+              <dl className="summary-list">
+                <div><dt>Event</dt><dd>{claim.finalized_evidence.event_type} · {claim.finalized_evidence.event_version}</dd></div>
+                <div><dt>Finalized slot</dt><dd>{claim.finalized_evidence.slot}</dd></div>
+                <div><dt>Event index</dt><dd>{claim.finalized_evidence.event_index}</dd></div>
+                <div><dt>Event signature</dt><dd><code>{claim.finalized_evidence.signature}</code></dd></div>
+                <div><dt>Gross / tax / net</dt><dd>{claim.finalized_evidence.gross_magnitude} / {claim.finalized_evidence.tax_magnitude} / {claim.finalized_evidence.net_magnitude} atomic units</dd></div>
+                <div><dt>Evidence digest</dt><dd><code>{digestPreview(claim.finalized_evidence.evidence_digest)}</code></dd></div>
+              </dl>
+            </details>
+          </div>}
           {(claim.status === "prepared_unsubmitted" || claim.status === "signed") && <div className="evidence-actions">
             <p className="evidence-note">Two distinct signer roles are required: proposer first, then the configured refund funder. The server verifies the exact bytes and signer topology.</p>
             <div className="button-row"><button type="button" onClick={() => sign("proposer")} disabled={busy}>Sign as proposer</button><button type="button" onClick={() => sign("refund_funder")} disabled={busy || (!signedBytes && !recoveryBytes.trim())}>Sign as refund funder</button></div>

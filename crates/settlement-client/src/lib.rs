@@ -1,4 +1,8 @@
 #![deny(unsafe_code)]
+#![cfg_attr(
+    not(test),
+    deny(clippy::expect_used, clippy::panic, clippy::unwrap_used)
+)]
 
 use anchor_lang::prelude::Pubkey;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
@@ -55,6 +59,26 @@ pub struct SettlementCompileRequest {
     pub net_atomic: String,
     #[serde(deserialize_with = "deserialize_digest")]
     pub policy_digest: [u8; 32],
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DocumentSettlementCompileRequest {
+    pub program_id: String,
+    pub payer: String,
+    pub merchant: String,
+    pub source: String,
+    pub mint: String,
+    pub tax_vault: String,
+    pub net_destination: String,
+    pub token_program: String,
+    pub nonce: u64,
+    pub policy_sequence: u64,
+    pub gross_atomic: String,
+    pub tax_atomic: String,
+    pub net_atomic: String,
+    pub policy_digest: [u8; 32],
+    pub document_attestation_digest: [u8; 32],
+    pub payment_scope_digest: [u8; 32],
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -149,6 +173,21 @@ pub struct CompiledSettlementInstruction {
     pub vault_authority: String,
     pub policy_attestation: String,
     pub receipt: String,
+    pub compute_budget_policy: ComputeBudgetPolicy,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CompiledDocumentSettlementInstruction {
+    pub status: String,
+    pub program_id: String,
+    pub instruction_data_base64: String,
+    pub accounts: Vec<CompiledAccountMeta>,
+    pub protocol_config: String,
+    pub vault_authority: String,
+    pub policy_attestation: String,
+    pub receipt: String,
+    pub document_attestation_digest: Vec<u8>,
+    pub payment_scope_digest: Vec<u8>,
     pub compute_budget_policy: ComputeBudgetPolicy,
 }
 
@@ -257,6 +296,10 @@ pub enum SettlementCompileError {
     AmountConservationViolation,
     #[error("policy digest must not be all zeroes")]
     EmptyPolicyDigest,
+    #[error("document attestation digest must not be all zeroes")]
+    EmptyDocumentAttestationDigest,
+    #[error("payment scope digest must not be all zeroes")]
+    EmptyPaymentScopeDigest,
     #[error("settlement nonce must be positive")]
     InvalidNonce,
     #[error("policy sequence must be positive")]
@@ -462,6 +505,120 @@ pub fn compile_settlement_instruction(
         vault_authority: vault_authority.to_string(),
         policy_attestation: policy_attestation.to_string(),
         receipt: receipt.to_string(),
+        compute_budget_policy,
+    })
+}
+
+pub fn compile_document_settlement_instruction(
+    request: &DocumentSettlementCompileRequest,
+) -> Result<CompiledDocumentSettlementInstruction, SettlementCompileError> {
+    let program_id = parse_pubkey("program_id", &request.program_id)?;
+    if program_id != settlement_program_id() {
+        return Err(SettlementCompileError::UnsupportedProgramId);
+    }
+    let payer = parse_pubkey("payer", &request.payer)?;
+    let merchant = parse_pubkey("merchant", &request.merchant)?;
+    let source = parse_pubkey("source", &request.source)?;
+    let mint = parse_pubkey("mint", &request.mint)?;
+    let tax_vault = parse_pubkey("tax_vault", &request.tax_vault)?;
+    let net_destination = parse_pubkey("net_destination", &request.net_destination)?;
+    let token_program = parse_supported_token_program(&request.token_program)?;
+    if request.nonce == 0 {
+        return Err(SettlementCompileError::InvalidNonce);
+    }
+    if request.policy_sequence == 0 {
+        return Err(SettlementCompileError::InvalidPolicySequence);
+    }
+    if request.policy_digest == [0; 32] {
+        return Err(SettlementCompileError::EmptyPolicyDigest);
+    }
+    if request.document_attestation_digest == [0; 32] {
+        return Err(SettlementCompileError::EmptyDocumentAttestationDigest);
+    }
+    if request.payment_scope_digest == [0; 32] {
+        return Err(SettlementCompileError::EmptyPaymentScopeDigest);
+    }
+    let compute_budget_policy = ComputeBudgetPolicy::default();
+    compute_budget_policy.validate()?;
+    let gross_atomic = parse_amount("gross_atomic", &request.gross_atomic)?;
+    let tax_atomic = parse_amount("tax_atomic", &request.tax_atomic)?;
+    let net_atomic = parse_amount("net_atomic", &request.net_atomic)?;
+    if gross_atomic == 0 {
+        return Err(SettlementCompileError::InvalidGrossAmount);
+    }
+    if tax_atomic.checked_add(net_atomic) != Some(gross_atomic) {
+        return Err(SettlementCompileError::AmountConservationViolation);
+    }
+    if source == tax_vault || source == net_destination || tax_vault == net_destination {
+        return Err(SettlementCompileError::AliasedTokenAccounts);
+    }
+
+    let (protocol_config, _) = Pubkey::find_program_address(&[b"protocol-config"], &program_id);
+    let (vault_authority, _) = Pubkey::find_program_address(
+        &[b"vault-authority", merchant.as_ref(), mint.as_ref()],
+        &program_id,
+    );
+    let (policy_attestation, _) = Pubkey::find_program_address(
+        &[
+            b"policy-attestation",
+            merchant.as_ref(),
+            mint.as_ref(),
+            &request.policy_sequence.to_le_bytes(),
+        ],
+        &program_id,
+    );
+    let (receipt, _) = Pubkey::find_program_address(
+        &[
+            b"document-receipt",
+            payer.as_ref(),
+            merchant.as_ref(),
+            &request.nonce.to_le_bytes(),
+        ],
+        &program_id,
+    );
+    let accounts = vec![
+        account(payer, true, true),
+        account(protocol_config, false, false),
+        account(merchant, false, false),
+        account(source, false, true),
+        account(mint, false, false),
+        account(tax_vault, false, true),
+        account(vault_authority, false, false),
+        account(policy_attestation, false, false),
+        account(net_destination, false, true),
+        account(receipt, false, true),
+        account(token_program, false, false),
+        account(
+            parse_pubkey("system_program", SYSTEM_PROGRAM_ID)?,
+            false,
+            false,
+        ),
+    ];
+    ensure_unique_account_keys(&accounts, &program_id)?;
+    let mut instruction_data = instruction_discriminator("global:settle_document");
+    instruction_data.extend_from_slice(&request.nonce.to_le_bytes());
+    instruction_data.extend_from_slice(&request.policy_sequence.to_le_bytes());
+    instruction_data.extend_from_slice(&gross_atomic.to_le_bytes());
+    instruction_data.extend_from_slice(&tax_atomic.to_le_bytes());
+    instruction_data.extend_from_slice(&net_atomic.to_le_bytes());
+    instruction_data.extend_from_slice(&request.policy_digest);
+    instruction_data.extend_from_slice(&request.document_attestation_digest);
+    instruction_data.extend_from_slice(&request.payment_scope_digest);
+    estimate_legacy_settlement_wire_bytes_with_compute_budget(
+        accounts.len(),
+        instruction_data.len(),
+    )?;
+    Ok(CompiledDocumentSettlementInstruction {
+        status: "prepared_unsubmitted".to_string(),
+        program_id: program_id.to_string(),
+        instruction_data_base64: BASE64_STANDARD.encode(instruction_data),
+        accounts,
+        protocol_config: protocol_config.to_string(),
+        vault_authority: vault_authority.to_string(),
+        policy_attestation: policy_attestation.to_string(),
+        receipt: receipt.to_string(),
+        document_attestation_digest: request.document_attestation_digest.to_vec(),
+        payment_scope_digest: request.payment_scope_digest.to_vec(),
         compute_budget_policy,
     })
 }
@@ -1212,6 +1369,67 @@ mod tests {
         assert_eq!(
             compiled.instruction_data_base64,
             "ryq5V5CDZtQJAAAAAAAAAAMAAAAAAAAAZAAAAAAAAAAZAAAAAAAAAEsAAAAAAAAABwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="
+        );
+    }
+
+    fn document_request() -> DocumentSettlementCompileRequest {
+        DocumentSettlementCompileRequest {
+            program_id: settlement_program_id().to_string(),
+            payer: Pubkey::new_unique().to_string(),
+            merchant: Pubkey::new_unique().to_string(),
+            source: Pubkey::new_unique().to_string(),
+            mint: Pubkey::new_unique().to_string(),
+            tax_vault: Pubkey::new_unique().to_string(),
+            net_destination: Pubkey::new_unique().to_string(),
+            token_program: spl_token_program_id().to_string(),
+            nonce: 11,
+            policy_sequence: 3,
+            gross_atomic: "1000".to_string(),
+            tax_atomic: "100".to_string(),
+            net_atomic: "900".to_string(),
+            policy_digest: [7; 32],
+            document_attestation_digest: [8; 32],
+            payment_scope_digest: [9; 32],
+        }
+    }
+
+    #[test]
+    fn compiles_document_settlement_with_provenance_and_document_receipt() {
+        let request = document_request();
+        let compiled = compile_document_settlement_instruction(&request).expect("valid document");
+        assert_eq!(compiled.accounts.len(), 12);
+        assert_eq!(compiled.accounts[9].pubkey, compiled.receipt);
+        assert_eq!(compiled.document_attestation_digest, vec![8; 32]);
+        assert_eq!(compiled.payment_scope_digest, vec![9; 32]);
+        let data = BASE64_STANDARD
+            .decode(compiled.instruction_data_base64)
+            .expect("instruction data");
+        assert_eq!(
+            &data[..8],
+            &instruction_discriminator("global:settle_document")
+        );
+        assert_eq!(data.len(), 8 + (8 * 5) + (32 * 3));
+    }
+
+    #[test]
+    fn document_settlement_rejects_missing_provenance_or_nonconserving_amounts() {
+        let mut request = document_request();
+        request.document_attestation_digest = [0; 32];
+        assert_eq!(
+            compile_document_settlement_instruction(&request),
+            Err(SettlementCompileError::EmptyDocumentAttestationDigest)
+        );
+        let mut request = document_request();
+        request.payment_scope_digest = [0; 32];
+        assert_eq!(
+            compile_document_settlement_instruction(&request),
+            Err(SettlementCompileError::EmptyPaymentScopeDigest)
+        );
+        let mut request = document_request();
+        request.net_atomic = "901".to_string();
+        assert_eq!(
+            compile_document_settlement_instruction(&request),
+            Err(SettlementCompileError::AmountConservationViolation)
         );
     }
 

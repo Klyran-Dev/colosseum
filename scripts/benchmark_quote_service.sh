@@ -6,6 +6,7 @@ set -eu
 # It deliberately owns an isolated Compose project and synthetic credentials.
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 project_name="${COMPOSE_PROJECT_NAME:-solana-tax-protocol-quote-load}"
+benchmark_mode="${BENCHMARK_MODE:-aggregate}"
 load_requests="${LOAD_REQUESTS:-200}"
 load_concurrency="${LOAD_CONCURRENCY:-16}"
 load_timeout_seconds="${LOAD_TIMEOUT_SECONDS:-10}"
@@ -16,8 +17,37 @@ replica_api_port="${API_REPLICA_PORT:-28081}"
 postgres_port="${POSTGRES_PORT:-25432}"
 nats_port="${NATS_PORT:-25433}"
 merchant_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d11"
-idempotency_prefix="load-01J8Q4J0M9M2G7YB8F5N3D6K5T"
 integration_dir="$(mktemp -d)"
+
+case "$benchmark_mode" in
+    aggregate|document) ;;
+    *)
+        echo "BENCHMARK_MODE must be aggregate or document" >&2
+        exit 2
+        ;;
+esac
+
+if [ "$benchmark_mode" = "document" ]; then
+    idempotency_prefix="${IDEMPOTENCY_PREFIX:-document-load-01J8Q4J0M9M2G7YB8F5N3D6K5T}"
+    quote_endpoint="/v1/tax/document-quote"
+    rule_set_id="operator-document-flat-rate"
+    facts_payload='{"id":"document-load-invoice","currency":"USD","jurisdiction":"US-CA","lines":[{"id":"line-a","gross_atomic":"1000","net_atomic":"1000","exemption_codes":[]},{"id":"line-b","gross_atomic":"500","net_atomic":"500","exemption_codes":[]}]}'
+    evidence_facts_payload="{\"facts\":$facts_payload}"
+    calculation_table="tax_document_calculations"
+    outbox_aggregate_type="tax_document_calculation"
+    outbox_event_type="tax.document_calculation.created"
+    evidence_name="document-quote-service-load"
+else
+    idempotency_prefix="${IDEMPOTENCY_PREFIX:-load-01J8Q4J0M9M2G7YB8F5N3D6K5T}"
+    quote_endpoint="/v1/tax/quote"
+    rule_set_id="operator-simulator-flat-rate"
+    facts_payload='{"gross_atomic":"1100","net_atomic":"1000","currency":"USD","jurisdiction":"US-CA"}'
+    evidence_facts_payload="{\"facts\":$facts_payload}"
+    calculation_table="tax_calculations"
+    outbox_aggregate_type="tax_calculation"
+    outbox_event_type="tax.calculation.created"
+    evidence_name="quote-service-load"
+fi
 
 case "$load_requests:$load_concurrency:$load_timeout_seconds:$contention_requests:$database_pool_size:$api_port:$replica_api_port" in
     *[!0-9:]*|0:*|*:[!0-9:]*|*:*:0|*:*:*:0)
@@ -117,12 +147,16 @@ export load_replica_base_url="$replica_base_url"
 export load_authorization="$authorization"
 export load_timeout_seconds
 export load_idempotency_prefix="$idempotency_prefix"
+export load_mode="$benchmark_mode"
+export load_quote_endpoint="$quote_endpoint"
+export load_rule_set_id="$rule_set_id"
+export load_facts_payload="$facts_payload"
 export load_response_dir="$response_dir"
 export contention_response_dir
 export contention_idempotency_key="${idempotency_prefix}-same-key"
 
 jurisdiction_request_fixture="$integration_dir/jurisdiction-request.json"
-printf '%s' '{"facts":{"gross_atomic":"1100","net_atomic":"1000","currency":"USD","jurisdiction":"US-CA"}}' > "$jurisdiction_request_fixture"
+printf '%s' "$evidence_facts_payload" > "$jurisdiction_request_fixture"
 issuer_image="$project_name-attestation-fixture"
 docker build --file ops/docker/Dockerfile.attestation-fixture --tag "$issuer_image" . >/dev/null
 load_jurisdiction_evidence=$(docker run --rm --read-only --network none --cap-drop ALL \
@@ -135,13 +169,17 @@ export load_jurisdiction_evidence
 # Warm the authenticated route, PostgreSQL connection pool, and immutable rule
 # cache before collecting the declared sample. This request is outside the
 # measured prefix and is checked independently.
-warmup_body="{\"idempotency_key\":\"quote-load-warmup\",\"rule_set_id\":\"operator-simulator-flat-rate\",\"rule_version\":1,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"facts\":{\"gross_atomic\":\"1100\",\"net_atomic\":\"1000\",\"currency\":\"USD\",\"jurisdiction\":\"US-CA\"},\"jurisdiction_evidence\":[$load_jurisdiction_evidence]}"
+if [ "$benchmark_mode" = "document" ]; then
+    warmup_body="{\"schema\":\"solana-tax-protocol/tax-document/v1\",\"idempotency_key\":\"document-quote-load-warmup\",\"rule_set_id\":\"$rule_set_id\",\"rule_version\":1,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"facts\":$facts_payload,\"jurisdiction_evidence\":[$load_jurisdiction_evidence]}"
+else
+    warmup_body="{\"idempotency_key\":\"quote-load-warmup\",\"rule_set_id\":\"$rule_set_id\",\"rule_version\":1,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"facts\":$facts_payload,\"jurisdiction_evidence\":[$load_jurisdiction_evidence]}"
+fi
 curl --fail --silent --show-error --max-time "$load_timeout_seconds" \
     --header "content-type: application/json" \
     --header "authorization: $authorization" \
     --data-binary "$warmup_body" \
     --output "$integration_dir/warmup.json" \
-    "$base_url/v1/tax/quote" || {
+    "$base_url$quote_endpoint" || {
     echo "quote-service warmup failed; response and service logs follow" >&2
     sed -n '1,12p' "$integration_dir/warmup.json" >&2 || true
     docker compose -p "$project_name" logs --no-color api postgres >&2 || true
@@ -152,14 +190,18 @@ seq 1 "$load_requests" | xargs -P "$load_concurrency" -n 1 sh -c '
     ordinal="$1"
     request_url="$load_base_url"
     if [ "$((ordinal % 2))" -eq 0 ]; then request_url="$load_replica_base_url"; fi
-    body="{\"idempotency_key\":\"${load_idempotency_prefix}-${ordinal}\",\"rule_set_id\":\"operator-simulator-flat-rate\",\"rule_version\":1,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"facts\":{\"gross_atomic\":\"1100\",\"net_atomic\":\"1000\",\"currency\":\"USD\",\"jurisdiction\":\"US-CA\"},\"jurisdiction_evidence\":[$load_jurisdiction_evidence]}"
+    if [ "$load_mode" = "document" ]; then
+        body="{\"schema\":\"solana-tax-protocol/tax-document/v1\",\"idempotency_key\":\"${load_idempotency_prefix}-${ordinal}\",\"rule_set_id\":\"$load_rule_set_id\",\"rule_version\":1,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"facts\":$load_facts_payload,\"jurisdiction_evidence\":[$load_jurisdiction_evidence]}"
+    else
+        body="{\"idempotency_key\":\"${load_idempotency_prefix}-${ordinal}\",\"rule_set_id\":\"$load_rule_set_id\",\"rule_version\":1,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"facts\":$load_facts_payload,\"jurisdiction_evidence\":[$load_jurisdiction_evidence]}"
+    fi
     curl --silent --show-error --max-time "$load_timeout_seconds" \
         --header "content-type: application/json" \
         --header "authorization: $load_authorization" \
         --data-binary "$body" \
         --output "$load_response_dir/$ordinal.json" \
         --write-out "%{http_code} %{time_total}\n" \
-        "$request_url/v1/tax/quote"
+        "$request_url$load_quote_endpoint"
 ' benchmark > "$request_results"
 
 sample_count="$(wc -l < "$request_results" | tr -d ' ')"
@@ -197,14 +239,18 @@ seq 1 "$contention_requests" | xargs -P "$load_concurrency" -n 1 sh -c '
     ordinal="$1"
     request_url="$load_base_url"
     if [ "$((ordinal % 2))" -eq 0 ]; then request_url="$load_replica_base_url"; fi
-    body="{\"idempotency_key\":\"${contention_idempotency_key}\",\"rule_set_id\":\"operator-simulator-flat-rate\",\"rule_version\":1,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"facts\":{\"gross_atomic\":\"1100\",\"net_atomic\":\"1000\",\"currency\":\"USD\",\"jurisdiction\":\"US-CA\"},\"jurisdiction_evidence\":[$load_jurisdiction_evidence]}"
+    if [ "$load_mode" = "document" ]; then
+        body="{\"schema\":\"solana-tax-protocol/tax-document/v1\",\"idempotency_key\":\"${contention_idempotency_key}\",\"rule_set_id\":\"$load_rule_set_id\",\"rule_version\":1,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"facts\":$load_facts_payload,\"jurisdiction_evidence\":[$load_jurisdiction_evidence]}"
+    else
+        body="{\"idempotency_key\":\"${contention_idempotency_key}\",\"rule_set_id\":\"$load_rule_set_id\",\"rule_version\":1,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"facts\":$load_facts_payload,\"jurisdiction_evidence\":[$load_jurisdiction_evidence]}"
+    fi
     curl --silent --show-error --max-time "$load_timeout_seconds" \
         --header "content-type: application/json" \
         --header "authorization: $load_authorization" \
         --data-binary "$body" \
         --output "$contention_response_dir/$ordinal.json" \
         --write-out "%{http_code}\n" \
-        "$request_url/v1/tax/quote"
+        "$request_url$load_quote_endpoint"
 ' contention > "$integration_dir/contention-results" &
 contention_pid=$!
 pool_peak_waiting=0
@@ -239,15 +285,15 @@ percentile() {
 idempotency_count="$(docker compose -p "$project_name" exec -T postgres psql -U tax_protocol -d tax_protocol -Atc \
     "select count(*) from idempotency_records where merchant_id = '$merchant_id' and idempotency_key like '$idempotency_prefix-%' and idempotency_key <> '${contention_idempotency_key}';")"
 calculation_count="$(docker compose -p "$project_name" exec -T postgres psql -U tax_protocol -d tax_protocol -Atc \
-    "select count(distinct (response_document->>'calculation_id')) from idempotency_records where merchant_id = '$merchant_id' and idempotency_key like '$idempotency_prefix-%' and idempotency_key <> '${contention_idempotency_key}' and response_status = 200;")"
+    "select count(*) from $calculation_table where merchant_id = '$merchant_id' and id in (select (response_document->>'calculation_id')::uuid from idempotency_records where merchant_id = '$merchant_id' and idempotency_key like '$idempotency_prefix-%' and idempotency_key <> '${contention_idempotency_key}' and response_status = 200 and response_document->>'calculation_id' is not null);")"
 outbox_count="$(docker compose -p "$project_name" exec -T postgres psql -U tax_protocol -d tax_protocol -Atc \
-    "select count(*) from outbox_events where aggregate_type = 'tax_calculation' and event_type = 'tax.calculation.created' and aggregate_id in (select (response_document->>'calculation_id')::uuid from idempotency_records where merchant_id = '$merchant_id' and idempotency_key like '$idempotency_prefix-%' and idempotency_key <> '${contention_idempotency_key}' and response_status = 200 and response_document->>'calculation_id' is not null);")"
+    "select count(*) from outbox_events where aggregate_type = '$outbox_aggregate_type' and event_type = '$outbox_event_type' and aggregate_id in (select (response_document->>'calculation_id')::uuid from idempotency_records where merchant_id = '$merchant_id' and idempotency_key like '$idempotency_prefix-%' and idempotency_key <> '${contention_idempotency_key}' and response_status = 200 and response_document->>'calculation_id' is not null);")"
 contention_idempotency_count="$(docker compose -p "$project_name" exec -T postgres psql -U tax_protocol -d tax_protocol -Atc \
     "select count(*) from idempotency_records where merchant_id = '$merchant_id' and idempotency_key = '${contention_idempotency_key}';")"
 contention_calculation_count="$(docker compose -p "$project_name" exec -T postgres psql -U tax_protocol -d tax_protocol -Atc \
-    "select count(distinct (response_document->>'calculation_id')) from idempotency_records where merchant_id = '$merchant_id' and idempotency_key = '${contention_idempotency_key}' and response_status = 200;")"
+    "select count(*) from $calculation_table where merchant_id = '$merchant_id' and id in (select (response_document->>'calculation_id')::uuid from idempotency_records where merchant_id = '$merchant_id' and idempotency_key = '${contention_idempotency_key}' and response_status = 200 and response_document->>'calculation_id' is not null);")"
 contention_outbox_count="$(docker compose -p "$project_name" exec -T postgres psql -U tax_protocol -d tax_protocol -Atc \
-    "select count(*) from outbox_events where aggregate_type = 'tax_calculation' and event_type = 'tax.calculation.created' and aggregate_id in (select (response_document->>'calculation_id')::uuid from idempotency_records where merchant_id = '$merchant_id' and idempotency_key = '${contention_idempotency_key}' and response_status = 200);")"
+    "select count(*) from outbox_events where aggregate_type = '$outbox_aggregate_type' and event_type = '$outbox_event_type' and aggregate_id in (select (response_document->>'calculation_id')::uuid from idempotency_records where merchant_id = '$merchant_id' and idempotency_key = '${contention_idempotency_key}' and response_status = 200);")"
 
 if [ "$idempotency_count" -ne "$load_requests" ] || [ "$calculation_count" -ne "$load_requests" ] || [ "$outbox_count" -ne "$load_requests" ]; then
     echo "persistence invariant failed: idempotency=$idempotency_count calculations=$calculation_count outbox=$outbox_count expected=$load_requests" >&2
@@ -258,17 +304,18 @@ if [ "$contention_idempotency_count" -ne 1 ] || [ "$contention_calculation_count
     exit 1
 fi
 
-printf '%s\n' "quote-service-load-evidence" \
-    "endpoint=$base_url/v1/tax/quote" \
+printf '%s\n' "$evidence_name" \
+    "mode=$benchmark_mode" \
+    "endpoint=$base_url$quote_endpoint" \
     "replicas=2" \
-    "replica_endpoint=$replica_base_url/v1/tax/quote" \
+    "replica_endpoint=$replica_base_url$quote_endpoint" \
     "requests=$load_requests" \
     "concurrency=$load_concurrency" \
     "contention_requests=$contention_requests" \
     "contention_status_counts=$contention_status_counts" \
     "timeout_seconds=$load_timeout_seconds" \
     "tenant=$merchant_id" \
-    "rule=operator-simulator-flat-rate@1" \
+    "rule=$rule_set_id@1" \
     "status_counts=$status_counts" \
     "error_rate=0" \
     "p50_ms=$(percentile 50)" \

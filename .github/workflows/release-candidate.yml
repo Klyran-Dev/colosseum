@@ -117,6 +117,11 @@ jobs:
           mkdir -p release-bundle
           make migration-rollback-rehearsal | tee release-bundle/migration-rollback.txt
 
+      - name: Run bounded document-quote latency workload
+        run: |
+          mkdir -p release-bundle/document-quote-load
+          make benchmark-document-quote-service | tee release-bundle/document-quote-load/evidence.txt
+
       - name: Run encrypted backup artifact drill
         run: |
           mkdir -p release-bundle

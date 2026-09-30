@@ -1,11 +1,17 @@
+#![cfg_attr(
+    not(test),
+    deny(clippy::expect_used, clippy::panic, clippy::unwrap_used)
+)]
+
 use ed25519_dalek::SigningKey;
 use jurisdiction::{
     EvidenceSource, JURISDICTION_EVIDENCE_SCHEMA_VERSION, JurisdictionEvidenceEnvelope,
     UnsignedJurisdictionEvidence,
 };
 use policy::{
-    ATTESTATION_SCHEMA_VERSION, CalculationAttestation, Digest32, UnsignedAttestation,
-    merchant_identity_digest,
+    ATTESTATION_SCHEMA_VERSION, CalculationAttestation,
+    DOCUMENT_CALCULATION_ATTESTATION_SCHEMA_VERSION, Digest32, DocumentCalculationAttestation,
+    UnsignedAttestation, UnsignedDocumentAttestation, merchant_identity_digest,
 };
 use serde_json::{Value, json};
 use solana_pubkey::Pubkey;
@@ -14,12 +20,19 @@ use std::{
     str::FromStr,
     time::{SystemTime, UNIX_EPOCH},
 };
+use tax_engine::RuleSetDocument;
 use uuid::Uuid;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     if args.get(1).map(String::as_str) == Some("jurisdiction-evidence") {
         return emit_jurisdiction_evidence(&args);
+    }
+    if args.get(1).map(String::as_str) == Some("document-attestation") {
+        return emit_document_attestation(&args);
+    }
+    if args.get(1).map(String::as_str) == Some("rule-digest") {
+        return emit_rule_digest(&args);
     }
     if args.len() != 6 {
         return Err("usage: attestation-fixture <quote-json> <route-mint> <merchant-id> <route-id> <seed-hex>".into());
@@ -72,17 +85,91 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn emit_rule_digest(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    if args.len() != 3 {
+        return Err("usage: attestation-fixture rule-digest <rule-document-json>".into());
+    }
+    let document: RuleSetDocument = serde_json::from_str(&fs::read_to_string(&args[2])?)?;
+    document.validate()?;
+    let digest = document.rule_set.canonical_digest()?;
+    println!(
+        "{}",
+        digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
+    Ok(())
+}
+
+fn emit_document_attestation(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    if args.len() != 7 {
+        return Err("usage: attestation-fixture document-attestation <document-quote-json> <route-mint> <merchant-id> <route-id> <seed-hex>".into());
+    }
+    let quote: Value = serde_json::from_str(&fs::read_to_string(&args[2])?)?;
+    let route_mint = Pubkey::from_str(&args[3])?;
+    let merchant_id = Uuid::parse_str(&args[4])?;
+    let route_id = Uuid::parse_str(&args[5])?;
+    let seed = parse_seed(&args[6])?;
+    let signing_key = SigningKey::from_bytes(&seed);
+    let result = quote
+        .get("result")
+        .ok_or("document quote response does not contain result")?;
+    let issued_at_unix = unix_now()? - 1;
+    let expires_at_unix = value_i64(&quote, "expires_at_unix")?;
+    if expires_at_unix <= issued_at_unix {
+        return Err("document quote is already expired for the external issuer fixture".into());
+    }
+    let attestation = DocumentCalculationAttestation::sign(
+        UnsignedDocumentAttestation {
+            schema_version: DOCUMENT_CALCULATION_ATTESTATION_SCHEMA_VERSION,
+            document_schema: value_string(&quote, "schema")?,
+            merchant_id: merchant_identity_digest(merchant_id.as_bytes()),
+            document_id: value_string(result, "document_id")?,
+            engine_version: value_string(result, "engine_version")?,
+            rule_set_id: value_string(result, "rule_set_id")?,
+            rule_version: value_u32(result, "rule_version")?,
+            jurisdiction: value_string(result, "jurisdiction")?,
+            currency: value_string(result, "currency")?,
+            asset_mint: route_mint.to_bytes(),
+            facts_digest: value_digest(result, "facts_digest")?,
+            rule_digest: value_digest(result, "rule_digest")?,
+            gross_atomic: value_amount(result, "gross_atomic")?,
+            tax_atomic: value_amount(result, "total_tax_atomic")?,
+            net_atomic: value_amount(result, "total_net_atomic")?,
+            issued_at_unix,
+            expires_at_unix,
+            sequence: 1,
+            issuer_key_id: [9; 32],
+        },
+        &signing_key,
+    )?;
+    println!(
+        "{}",
+        serde_json::to_string(&json!({
+            "route_id": route_id,
+            "attestation": attestation,
+        }))?
+    );
+    Ok(())
+}
+
 fn emit_jurisdiction_evidence(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     if args.len() != 5 {
         return Err("usage: attestation-fixture jurisdiction-evidence <quote-request-json> <merchant-id> <provider-seed-hex>".into());
     }
     let request: Value = serde_json::from_str(&fs::read_to_string(&args[2])?)?;
-    let facts: tax_engine::TaxFacts = serde_json::from_value(
-        request
-            .get("facts")
-            .ok_or("quote request does not contain facts")?
-            .clone(),
-    )?;
+    let facts_document = request
+        .get("facts")
+        .ok_or("quote request does not contain facts")?
+        .clone();
+    let (facts_digest, jurisdiction) = if facts_document.get("lines").is_some() {
+        let facts: tax_engine::TaxDocumentFacts = serde_json::from_value(facts_document)?;
+        (facts.canonical_digest()?, facts.jurisdiction)
+    } else {
+        let facts: tax_engine::TaxFacts = serde_json::from_value(facts_document)?;
+        (facts.canonical_digest()?, facts.jurisdiction)
+    };
     let merchant_id = Uuid::parse_str(&args[3])?;
     let signing_key = SigningKey::from_bytes(&parse_seed(&args[4])?);
     let issued_at_unix = unix_now()? - 1;
@@ -90,8 +177,8 @@ fn emit_jurisdiction_evidence(args: &[String]) -> Result<(), Box<dyn std::error:
         UnsignedJurisdictionEvidence {
             schema_version: JURISDICTION_EVIDENCE_SCHEMA_VERSION,
             merchant_id: merchant_identity_digest(merchant_id.as_bytes()),
-            facts_digest: facts.canonical_digest()?,
-            jurisdiction_code: facts.jurisdiction,
+            facts_digest,
+            jurisdiction_code: jurisdiction,
             source: EvidenceSource::ShippingDestination,
             evidence_digest: [3; 32],
             issued_at_unix,

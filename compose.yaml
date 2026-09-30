@@ -399,8 +399,8 @@ services:
         --bpf-program 4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi /workspace/target/deploy/settlement.so
         --faucet-port 8900 --faucet-sol 1000000000 --ledger /ledger --log
     ports:
-      - "8899:8899"
-      - "8900:8900"
+      - "${SOLANA_RPC_PORT:-8899}:8899"
+      - "${SOLANA_FAUCET_PORT:-8900}:8900"
     volumes:
       - solana-ledger:/ledger
       - .:/workspace:ro

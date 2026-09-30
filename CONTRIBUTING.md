@@ -32,6 +32,10 @@ Docker Compose is the required development boundary. Host-installed tools may be
 
 The reproducible checks are:
 
+- `make bootstrap` for the full Docker development topology, including the
+  real NGINX-served SPA, PostgreSQL migrations/fixtures, validator, indexer,
+  route verifier, and local observability. It requires the pinned validator's
+  runtime capabilities and fails closed if they are unavailable;
 - `make check` for formatting, linting, Rust and web tests, type checking,
   production web build, security scanning, Compose configuration,
   observability configuration, and public-documentation contracts;

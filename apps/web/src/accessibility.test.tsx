@@ -5,6 +5,8 @@ import { run } from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import CheckoutPanel from "./CheckoutPanel";
+import DocumentCheckoutPanel from "./DocumentCheckoutPanel";
+import DocumentQuotePanel from "./DocumentQuotePanel";
 import GovernancePanel from "./GovernancePanel";
 import ReplayOpsPanel from "./ReplayOpsPanel";
 import VaultReconciliationPanel from "./VaultReconciliationPanel";
@@ -48,6 +50,20 @@ describe("primary product accessibility contract", () => {
         accessToken=""
         calculation={null}
         formatAtomic={(value, currency) => `${currency} ${value}`}
+      />,
+      <DocumentCheckoutPanel
+        key="document-checkout"
+        apiBase="/api"
+        serviceOnline
+        accessToken=""
+      />,
+      <DocumentQuotePanel
+        key="document-quote"
+        apiBase="/api"
+        serviceOnline
+        accessToken=""
+        formatAtomic={(value, currency) => `${currency} ${value}`}
+        onOpenCheckout={() => undefined}
       />,
     ];
 

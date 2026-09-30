@@ -111,9 +111,7 @@ fn decode_hex_digest(value: &str) -> Result<Digest32, ProviderRegistryError> {
         ));
     }
     let mut digest = [0_u8; 32];
-    let (pairs, remainder) = value.as_bytes().as_chunks::<2>();
-    debug_assert!(remainder.is_empty());
-    for (index, pair) in pairs.iter().enumerate() {
+    for (index, pair) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         let high = hex_nibble(pair[0]).ok_or_else(|| {
             ProviderRegistryError::Invalid("key_id must be hexadecimal".to_string())
         })?;

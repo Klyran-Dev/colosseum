@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(test),
+    deny(clippy::expect_used, clippy::panic, clippy::unwrap_used)
+)]
+
 //! Canonical calculation-attestation contract.
 //!
 //! This crate owns the bytes signed by an issuer and the verification rules
@@ -11,11 +16,14 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 pub const ATTESTATION_SCHEMA_VERSION: u16 = 1;
+pub const DOCUMENT_CALCULATION_ATTESTATION_SCHEMA_VERSION: u16 = 1;
+pub const TAX_DOCUMENT_SCHEMA_V1: &str = "solana-tax-protocol/tax-document/v1";
 pub const MAX_ATTESTATION_LIFETIME_SECONDS: i64 = 86_400;
 pub const MAX_TEXT_BYTES: usize = 128;
 pub type Digest32 = [u8; 32];
 
 const DOMAIN_SEPARATOR: &[u8] = b"solana-tax-protocol/calculation-attestation/v1";
+const DOCUMENT_DOMAIN_SEPARATOR: &[u8] = b"solana-tax-protocol/document-calculation-attestation/v1";
 const MERCHANT_ID_DOMAIN: &[u8] = b"solana-tax-protocol/merchant-identity/v1";
 
 /// Derives the canonical digest used in attestation bindings for an
@@ -137,6 +145,59 @@ pub struct CalculationAttestation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttestationBinding<'a> {
     pub merchant_id: Digest32,
+    pub rule_set_id: &'a str,
+    pub rule_version: u32,
+    pub jurisdiction: &'a str,
+    pub currency: &'a str,
+    pub asset_mint: Digest32,
+    pub facts_digest: Digest32,
+    pub rule_digest: Digest32,
+    pub gross_atomic: u64,
+    pub tax_atomic: u64,
+    pub net_atomic: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct UnsignedDocumentAttestation {
+    pub schema_version: u16,
+    pub document_schema: String,
+    pub merchant_id: Digest32,
+    pub document_id: String,
+    pub engine_version: String,
+    pub rule_set_id: String,
+    pub rule_version: u32,
+    pub jurisdiction: String,
+    pub currency: String,
+    pub asset_mint: Digest32,
+    pub facts_digest: Digest32,
+    pub rule_digest: Digest32,
+    #[serde(with = "serde_u64_string")]
+    pub gross_atomic: u64,
+    #[serde(with = "serde_u64_string")]
+    pub tax_atomic: u64,
+    #[serde(with = "serde_u64_string")]
+    pub net_atomic: u64,
+    pub issued_at_unix: i64,
+    pub expires_at_unix: i64,
+    #[serde(with = "serde_u64_string")]
+    pub sequence: u64,
+    pub issuer_key_id: Digest32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DocumentCalculationAttestation {
+    pub unsigned: UnsignedDocumentAttestation,
+    pub issuer_public_key: [u8; 32],
+    pub payload_digest: Digest32,
+    pub signature: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocumentAttestationBinding<'a> {
+    pub document_schema: &'a str,
+    pub merchant_id: Digest32,
+    pub document_id: &'a str,
+    pub engine_version: &'a str,
     pub rule_set_id: &'a str,
     pub rule_version: u32,
     pub jurisdiction: &'a str,
@@ -321,6 +382,160 @@ impl CalculationAttestation {
     }
 }
 
+impl UnsignedDocumentAttestation {
+    pub fn validate(&self) -> Result<(), AttestationError> {
+        if self.schema_version != DOCUMENT_CALCULATION_ATTESTATION_SCHEMA_VERSION
+            || self.document_schema != TAX_DOCUMENT_SCHEMA_V1
+        {
+            return Err(AttestationError::UnsupportedSchemaVersion);
+        }
+        if self.document_id.trim().is_empty()
+            || self.engine_version.trim().is_empty()
+            || self.rule_set_id.trim().is_empty()
+            || self.jurisdiction.trim().is_empty()
+            || self.currency.trim().is_empty()
+            || self.document_id.len() > MAX_TEXT_BYTES
+            || self.engine_version.len() > MAX_TEXT_BYTES
+            || self.rule_set_id.len() > MAX_TEXT_BYTES
+            || self.jurisdiction.len() > MAX_TEXT_BYTES
+            || self.currency.len() > MAX_TEXT_BYTES
+        {
+            return Err(AttestationError::InvalidTextField);
+        }
+        if self.currency.len() != 3 || !self.currency.bytes().all(|byte| byte.is_ascii_uppercase())
+        {
+            return Err(AttestationError::InvalidCurrency);
+        }
+        if self.rule_version == 0 {
+            return Err(AttestationError::InvalidRuleVersion);
+        }
+        if self.merchant_id == [0; 32]
+            || self.asset_mint == [0; 32]
+            || self.facts_digest == [0; 32]
+            || self.rule_digest == [0; 32]
+            || self.issuer_key_id == [0; 32]
+        {
+            return Err(AttestationError::EmptyIdentityOrDigest);
+        }
+        if self.tax_atomic.checked_add(self.net_atomic) != Some(self.gross_atomic) {
+            return Err(AttestationError::AmountConservationViolation);
+        }
+        if self.issued_at_unix < 0
+            || self.expires_at_unix <= self.issued_at_unix
+            || self
+                .expires_at_unix
+                .checked_sub(self.issued_at_unix)
+                .is_none_or(|lifetime| lifetime > MAX_ATTESTATION_LIFETIME_SECONDS)
+        {
+            return Err(AttestationError::InvalidValidityWindow);
+        }
+        if self.sequence == 0 {
+            return Err(AttestationError::InvalidSequence);
+        }
+        Ok(())
+    }
+
+    pub fn canonical_payload(&self) -> Result<Vec<u8>, AttestationError> {
+        self.validate()?;
+        let mut payload = Vec::with_capacity(320);
+        payload.extend_from_slice(DOCUMENT_DOMAIN_SEPARATOR);
+        payload.extend_from_slice(&self.schema_version.to_le_bytes());
+        append_text(&mut payload, &self.document_schema)?;
+        payload.extend_from_slice(&self.merchant_id);
+        append_text(&mut payload, &self.document_id)?;
+        append_text(&mut payload, &self.engine_version)?;
+        append_text(&mut payload, &self.rule_set_id)?;
+        payload.extend_from_slice(&self.rule_version.to_le_bytes());
+        append_text(&mut payload, &self.jurisdiction)?;
+        append_text(&mut payload, &self.currency)?;
+        payload.extend_from_slice(&self.asset_mint);
+        payload.extend_from_slice(&self.facts_digest);
+        payload.extend_from_slice(&self.rule_digest);
+        payload.extend_from_slice(&self.gross_atomic.to_le_bytes());
+        payload.extend_from_slice(&self.tax_atomic.to_le_bytes());
+        payload.extend_from_slice(&self.net_atomic.to_le_bytes());
+        payload.extend_from_slice(&self.issued_at_unix.to_le_bytes());
+        payload.extend_from_slice(&self.expires_at_unix.to_le_bytes());
+        payload.extend_from_slice(&self.sequence.to_le_bytes());
+        payload.extend_from_slice(&self.issuer_key_id);
+        Ok(payload)
+    }
+
+    pub fn payload_digest(&self) -> Result<Digest32, AttestationError> {
+        Ok(hash_bytes(&self.canonical_payload()?))
+    }
+}
+
+impl DocumentCalculationAttestation {
+    pub fn sign(
+        unsigned: UnsignedDocumentAttestation,
+        signing_key: &SigningKey,
+    ) -> Result<Self, AttestationError> {
+        unsigned.validate()?;
+        let payload = unsigned.canonical_payload()?;
+        let payload_digest = hash_bytes(&payload);
+        let signature = signing_key.sign(&payload).to_bytes().to_vec();
+        Ok(Self {
+            unsigned,
+            issuer_public_key: signing_key.verifying_key().to_bytes(),
+            payload_digest,
+            signature,
+        })
+    }
+
+    pub fn verify(&self) -> Result<(), AttestationError> {
+        self.unsigned.validate()?;
+        if self.signature.len() != 64 {
+            return Err(AttestationError::InvalidSignature);
+        }
+        let payload = self.unsigned.canonical_payload()?;
+        if self.payload_digest != hash_bytes(&payload) {
+            return Err(AttestationError::PayloadDigestMismatch);
+        }
+        let public_key = VerifyingKey::from_bytes(&self.issuer_public_key)
+            .map_err(|_| AttestationError::InvalidIssuerKey)?;
+        let signature = Signature::from_slice(&self.signature)
+            .map_err(|_| AttestationError::InvalidSignature)?;
+        public_key
+            .verify(&payload, &signature)
+            .map_err(|_| AttestationError::InvalidSignature)
+    }
+
+    pub fn verify_at(&self, now_unix: i64) -> Result<(), AttestationError> {
+        self.verify()?;
+        if now_unix < self.unsigned.issued_at_unix || now_unix >= self.unsigned.expires_at_unix {
+            return Err(AttestationError::OutsideValidityWindow);
+        }
+        Ok(())
+    }
+
+    pub fn verify_binding(
+        &self,
+        binding: &DocumentAttestationBinding<'_>,
+    ) -> Result<(), AttestationError> {
+        self.verify()?;
+        let actual = &self.unsigned;
+        if actual.document_schema != binding.document_schema
+            || actual.merchant_id != binding.merchant_id
+            || actual.document_id != binding.document_id
+            || actual.engine_version != binding.engine_version
+            || actual.rule_set_id != binding.rule_set_id
+            || actual.rule_version != binding.rule_version
+            || actual.jurisdiction != binding.jurisdiction
+            || actual.currency != binding.currency
+            || actual.asset_mint != binding.asset_mint
+            || actual.facts_digest != binding.facts_digest
+            || actual.rule_digest != binding.rule_digest
+            || actual.gross_atomic != binding.gross_atomic
+            || actual.tax_atomic != binding.tax_atomic
+            || actual.net_atomic != binding.net_atomic
+        {
+            return Err(AttestationError::BindingMismatch);
+        }
+        Ok(())
+    }
+}
+
 fn append_text(payload: &mut Vec<u8>, value: &str) -> Result<(), AttestationError> {
     if value.is_empty() || value.len() > MAX_TEXT_BYTES {
         return Err(AttestationError::EncodingFailure);
@@ -343,6 +558,30 @@ mod tests {
         UnsignedAttestation {
             schema_version: ATTESTATION_SCHEMA_VERSION,
             merchant_id: [1; 32],
+            rule_set_id: "us-ca-sales-tax".to_string(),
+            rule_version: 7,
+            jurisdiction: "US-CA".to_string(),
+            currency: "USD".to_string(),
+            asset_mint: [2; 32],
+            facts_digest: [3; 32],
+            rule_digest: [4; 32],
+            gross_atomic: 1_155,
+            tax_atomic: 155,
+            net_atomic: 1_000,
+            issued_at_unix: 1_800_000_000,
+            expires_at_unix: 1_800_000_300,
+            sequence: 9,
+            issuer_key_id: [5; 32],
+        }
+    }
+
+    fn unsigned_document() -> UnsignedDocumentAttestation {
+        UnsignedDocumentAttestation {
+            schema_version: DOCUMENT_CALCULATION_ATTESTATION_SCHEMA_VERSION,
+            document_schema: TAX_DOCUMENT_SCHEMA_V1.to_string(),
+            merchant_id: [1; 32],
+            document_id: "invoice-1001".to_string(),
+            engine_version: "tax-engine-v1".to_string(),
             rule_set_id: "us-ca-sales-tax".to_string(),
             rule_version: 7,
             jurisdiction: "US-CA".to_string(),
@@ -412,6 +651,56 @@ mod tests {
         assert_eq!(
             attestation.verify_at(1_800_000_300),
             Err(AttestationError::OutsideValidityWindow)
+        );
+    }
+
+    #[test]
+    fn signs_and_verifies_a_document_attestation_with_a_distinct_domain() {
+        let attestation =
+            DocumentCalculationAttestation::sign(unsigned_document(), &signing_key()).unwrap();
+        assert_eq!(
+            attestation.unsigned.payload_digest().unwrap(),
+            attestation.payload_digest
+        );
+        attestation.verify_at(1_800_000_100).unwrap();
+        let binding = DocumentAttestationBinding {
+            document_schema: TAX_DOCUMENT_SCHEMA_V1,
+            merchant_id: [1; 32],
+            document_id: "invoice-1001",
+            engine_version: "tax-engine-v1",
+            rule_set_id: "us-ca-sales-tax",
+            rule_version: 7,
+            jurisdiction: "US-CA",
+            currency: "USD",
+            asset_mint: [2; 32],
+            facts_digest: [3; 32],
+            rule_digest: [4; 32],
+            gross_atomic: 1_155,
+            tax_atomic: 155,
+            net_atomic: 1_000,
+        };
+        attestation.verify_binding(&binding).unwrap();
+    }
+
+    #[test]
+    fn document_attestation_tampering_and_scope_substitution_fail_closed() {
+        let mut attestation =
+            DocumentCalculationAttestation::sign(unsigned_document(), &signing_key()).unwrap();
+        attestation.unsigned.document_id = "invoice-other".to_string();
+        assert_eq!(
+            attestation.verify(),
+            Err(AttestationError::PayloadDigestMismatch)
+        );
+
+        let aggregate = CalculationAttestation::sign(unsigned(), &signing_key()).unwrap();
+        let document_payload = aggregate.unsigned.canonical_payload().unwrap();
+        assert_ne!(
+            document_payload,
+            DocumentCalculationAttestation::sign(unsigned_document(), &signing_key())
+                .unwrap()
+                .unsigned
+                .canonical_payload()
+                .unwrap()
         );
     }
 

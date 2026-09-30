@@ -316,6 +316,26 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  document-quote-load:
+    name: Bounded document-quote service load evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Run the declared document workload
+        run: |
+          mkdir -p test-results/document-quote-load
+          make benchmark-document-quote-service | tee test-results/document-quote-load/evidence.txt
+      - name: Upload document-quote evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: document-quote-load-${{ github.run_id }}
+          path: test-results/document-quote-load/
+          if-no-files-found: warn
+          retention-days: 14
+
   rule-simulation-load:
     name: Bounded persisted-rule simulation latency evidence
     runs-on: ubuntu-24.04

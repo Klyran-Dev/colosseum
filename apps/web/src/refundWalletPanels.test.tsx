@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { Connection, Keypair, Transaction } from "@solana/web3.js";
+import { Connection, Keypair, PublicKey, Transaction } from "@solana/web3.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import vector from "../../../test-vectors/settlement-refund-claim-v1.json";
 import RefundClaimPanel from "./RefundClaimPanel";
@@ -72,6 +72,23 @@ describe("refund wallet workspaces", () => {
     expect(screen.getByText(/Proof pending: provider acknowledgement is not a completed refund/)).toBeTruthy();
     expect(calls.some(({ url }) => url === "/api/v1/settlement/refund-executions/submit")).toBe(true);
     expect((window.solana as TestWallet).signTransaction).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders typed finalized claim-event proof instead of implying completion from a signature", async () => {
+    const proposer = Keypair.fromSeed(new Uint8Array(32).fill(95));
+    const refundFunder = Keypair.fromSeed(new Uint8Array(32).fill(96));
+    installWalletAndFetchMock(proposer, refundFunder, finalizedClaimResponse(proposer, refundFunder), "claim");
+
+    render(<RefundClaimPanel apiBase="/api" serviceOnline accessToken="test-token" locale="en-US" />);
+    fireEvent.change(screen.getByLabelText("Approved adjustment ID"), { target: { value: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d12" } });
+    fireEvent.click(screen.getByRole("button", { name: "Prepare server-owned claim" }));
+
+    await screen.findByText(/Finalized claim event evidence matched/);
+    expect(screen.getByText("AdjustmentRefundClaimCreated · v1")).toBeTruthy();
+    expect(screen.getByText("77")).toBeTruthy();
+    expect(screen.getByText("Event index").parentElement?.textContent).toContain("2");
+    expect(screen.getByText("100 atomic units")).toBeTruthy();
+    expect(screen.getByText("Evidence digest").parentElement?.textContent).toContain("0101010101010101");
   });
 });
 
@@ -166,6 +183,42 @@ function claimResponse(proposer: Keypair, refundFunder: Keypair): Record<string,
     submitted_slot: null,
     commitment: null,
     last_error_code: null,
+  };
+}
+
+function finalizedClaimResponse(proposer: Keypair, refundFunder: Keypair): Record<string, unknown> {
+  const response = claimResponse(proposer, refundFunder);
+  return {
+    ...response,
+    status: "finalized",
+    signature: "5VfY7WmYcR7h9o9E9nP7pQ8rS",
+    submitted_slot: "77",
+    commitment: "finalized",
+    finalized_evidence: {
+      event_type: "AdjustmentRefundClaimCreated",
+      event_version: "v1",
+      event_discriminator: Array(8).fill(4),
+      commitment: "finalized",
+      signature: "5VfY7WmYcR7h9o9E9nP7pQ8rS",
+      slot: "77",
+      event_index: 2,
+      claim: Array.from(new PublicKey(vector.expected.claim).toBytes()),
+      adjustment: Array(32).fill(1),
+      original_receipt: Array(32).fill(2),
+      merchant: Array(32).fill(3),
+      mint: Array(32).fill(4),
+      nonce: "3",
+      gross_magnitude: "100",
+      tax_magnitude: "25",
+      net_magnitude: "75",
+      refund_funder: Array(32).fill(5),
+      refund_destination: Array(32).fill(6),
+      proposer: Array(32).fill(7),
+      reference_digest: Array(32).fill(8),
+      execute_after_unix: 1800000000,
+      expires_at_unix: 1800000600,
+      evidence_digest: Array(32).fill(1),
+    },
   };
 }
 

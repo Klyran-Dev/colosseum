@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(test),
+    deny(clippy::expect_used, clippy::panic, clippy::unwrap_used)
+)]
+
 use indexer::{
     JsonRpcTransport, MAX_PROVIDER_ATTEMPTS, MAX_ROUTE_RPC_RESULT_BYTES,
     RefundFundingTopologyConfig, RefundFundingTopologyVerification, RefundFundingVerificationError,

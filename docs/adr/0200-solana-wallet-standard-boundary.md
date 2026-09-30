@@ -84,13 +84,15 @@ second by the legacy injected compatibility adapter.
 - Existing transaction serialization and server signed-message tests remain
   mandatory; no browser test may assert success from a wallet signature alone.
 - The React test suite covers the accessible multi-provider selector and the
-  existing pinned NGINX browser suite remains green (`10/10` journeys),
-  including wallet rejection and signer-bound transaction workflows.
+  pinned NGINX browser suite remains green (`13/13` journeys), including
+  Wallet Standard provider registration, mandatory multi-account selection,
+  reload behavior, wallet rejection, and signer-bound transaction workflows.
 - `pnpm --dir apps/web test`, typecheck, and production build pass with
   `95` tests passing and `6` skipped; targeted wallet/checkout/refund tests
   pass as part of that suite.
-- A real injected-wallet matrix and Linux validator/provider evidence remain
-  separate release gates.
+- The browser provider is synthetic test infrastructure; a real injected-wallet
+  provider/account matrix and Linux validator/provider evidence remain separate
+  release gates.
 
 ## Consequences
 

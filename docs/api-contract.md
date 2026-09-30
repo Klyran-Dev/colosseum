@@ -78,12 +78,29 @@ attestation, and cannot authorize settlement. It is available only when the
 API is running with `SIMULATION_MODE=true`; otherwise it returns
 `501 PUBLISHED_RULE_REGISTRY_REQUIRED`.
 
-The request contains a `TaxDocumentFacts` value and a caller-supplied
-`RuleSet`. The document has one currency and jurisdiction, one to 256 lines,
+The request contains the exact `schema` identifier, a `TaxDocumentFacts` value,
+and a caller-supplied `RuleSet`. The document has one currency and jurisdiction, one to 256 lines,
 unique line IDs, decimal-string atomic amounts, and optional line exemptions.
 `RoundingScope::Line` rounds and allocates within each line. `Invoice` rounds
 and allocates across the complete canonical `(line_id, component_id)` cell
 set. Caller line order never controls the digest or residual tie-break.
+
+The request envelope is:
+
+```json
+{
+  "schema": "solana-tax-protocol/tax-document/v1",
+  "facts": {
+    "id": "invoice-1001",
+    "currency": "USD",
+    "jurisdiction": "US-CA",
+    "jurisdiction_resolution": null,
+    "cumulative_period": null,
+    "lines": []
+  },
+  "rule_set": {}
+}
+```
 
 The successful response has the following shape; all atomic amounts and
 identifiers that can exceed JavaScript safe-integer precision remain decimal
@@ -91,6 +108,7 @@ strings:
 
 ```json
 {
+  "schema": "solana-tax-protocol/tax-document/v1",
   "calculation_id": "0199f8a8-0000-7abc-8def-0123456789ab",
   "status": "simulated_unattested",
   "result": {
@@ -100,8 +118,8 @@ strings:
     "engine_version": "tax-engine-v1",
     "currency": "USD",
     "jurisdiction": "US-CA",
-    "facts_digest": "<sha256-hex>",
-    "rule_digest": "<sha256-hex>",
+    "facts_digest": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "rule_digest": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     "gross_atomic": "3000",
     "total_tax_atomic": "247",
     "total_net_atomic": "2753",
@@ -416,6 +434,49 @@ return `404 RULE_SIMULATION_RULE_NOT_FOUND`; a jurisdiction mismatch returns
 `422 RULE_SIMULATION_JURISDICTION_MISMATCH`; retired rules return
 `409 RULE_SIMULATION_UNAVAILABLE`.
 
+## Authoritative document quote
+
+`POST /v1/tax/document-quote` is the authenticated production document quote
+boundary introduced by ADR-0204. It requires `tax:quote`, an exact
+`solana-tax-protocol/tax-document/v1` schema, a merchant-scoped idempotency key,
+the published rule selector, and provider-signed jurisdiction evidence. The
+merchant is derived from the JWT; it is never accepted from the request body.
+The route resolves jurisdiction server-side, calculates with the warm compiled
+Rust rule graph, persists the immutable document result and encrypted normalized
+facts in `tax_document_calculations`, and publishes the first outbox record in
+the same serializable transaction. A repeated idempotency key returns the exact
+stored response; a different request for that key returns a conflict.
+
+The response includes the document schema, UUIDv7 `calculation_id`, expiry,
+status, complete line/component trace, facts digest, rule digest, and all atomic
+amounts as decimal strings. This route does not authorize Solana settlement:
+the current attestation and settlement contracts remain aggregate-quote-only
+until a separate document-to-payment binding ADR is accepted.
+
+`GET /v1/tax/document-quotes/{calculation_id}/replay` is an authenticated,
+read-only replay operation. It tenant-scopes the lookup, decrypts the normalized
+facts using the stored key reference, recomputes facts/rule/result digests, and
+compares the complete document trace under the exact engine version. Any missing
+key, tampered ciphertext, schema mismatch, rule mismatch, or replay mismatch
+fails closed and is recorded as a denied evidence-access audit event.
+
+`POST /v1/tax/document-quotes/{calculation_id}/attestation/verify` is the
+document-only attestation boundary from ADR-0205. It requires
+`tax:attestation:verify`, a tenant-scoped active `route_id`, and a signed
+`DocumentCalculationAttestation` with its own canonical schema/domain. The
+server derives document identity, engine/rule/facts digests, amounts, merchant
+identity, and route mint from PostgreSQL; caller-supplied binding values are
+not authority inputs. The document attestation, document status transition,
+and `tax.document_calculation.attested` outbox event commit atomically in the
+dedicated document-attestation table.
+
+The aggregate route
+`/v1/tax/quotes/{calculation_id}/attestation/verify` accepts only the aggregate
+`CalculationAttestation` contract and `tax_calculations` rows. Aggregate
+settlement compilers likewise read only aggregate quote rows. A document ID is
+not coerced into an aggregate quote or accepted by aggregate attestation or
+settlement authority.
+
 `GET /v1/tax/quotes/{calculation_id}/replay` is an authenticated, read-only
 evidence operation requiring `tax:quote`. It loads the calculation by the
 authenticated merchant, verifies the normalized `TaxFacts` document, facts
@@ -483,6 +544,45 @@ Client-provided lookup-table contents or digests are never trusted. v1 remains
 unsupported.
 
 ### Authenticated bounded Split Plan compilation
+
+### Authenticated document-to-payment compilation
+
+`POST /v1/settlement/document/compile-from-quote` is the document authority
+boundary from ADR-0206. It requires `tax:settlement:compile` and accepts a
+document `calculation_id`, active tenant-scoped `route_id`, explicit
+`idempotency_key`, payer wallet, positive nonce/policy sequence, policy digest,
+and one of these scopes:
+
+```json
+{ "kind": "full_document" }
+```
+
+or:
+
+```json
+{ "kind": "line_subset", "line_ids": ["line-a", "line-c"] }
+```
+
+The server loads and verifies the persisted document quote and signed
+`DocumentCalculationAttestation`, binds it to the authenticated merchant and
+active route mint, and derives gross/tax/net from the selected complete lines.
+Line IDs are canonicalized, bounded, unique, and committed into a payment
+scope digest. Full-line subsets must use `full_document`; quantity, partial
+line, arbitrary proration, and client-supplied amounts are rejected because
+progressive, cascading, tax-on-tax, inclusive, and rounded rules cannot be
+scaled safely after calculation. A caller needing a partial line must request a
+new document quote with facts for that payment.
+
+The response is a wallet handoff artifact for the separate `settle_document`
+instruction. It contains the server-derived amounts, document-attestation and
+payment-scope digests, fixed account order, a `document-receipt` PDA, the
+UUIDv7 settlement intent, and the immutable payment authorization record. The
+intent and authorization are inserted atomically; replaying the same
+idempotency key and exact request returns the same evidence, while a different
+scope, route, nonce, or digest conflicts. The instruction carries document
+provenance on-chain and the indexer retains the typed event as finalized raw
+evidence. This is withholding/settlement authorization only, not tax advice,
+filing, reporting, or legal compliance certification.
 
 `POST /v1/settlement/split/compile-from-quote` is the additive Split Plan
 contract from ADR-0092. It requires the same exact
@@ -1085,7 +1185,7 @@ ADR-0179 adds the proof-gated execute transport contract:
 - Production quotes must use `/v1/tax/quote`; `/v1/tax/calculate` is an
   explicitly simulated caller-supplied-rule route and is not a production
   registry substitute.
-- `/v1/tax/calculate-document` is also explicitly simulated and caller-rule
-  driven. It must not be used as a production quote, attestation, or
-  settlement authority until its separate ADR-0203 authorization and storage
-  gates are complete.
+- `/v1/tax/calculate-document` remains explicitly simulated and caller-rule
+  driven. Production document quotes must use `/v1/tax/document-quote`; neither
+  document route currently authorizes aggregate settlement or aggregate
+  attestation.

@@ -116,6 +116,15 @@ describe("structured Tier-1 rule workbench contract", () => {
     expect(buildRuleSet(draft).components[0].rounding).toEqual({ mode: "HalfUp" });
   });
 
+  it("builds explicit line and invoice scopes for document simulation", () => {
+    const draft = defaultRuleWorkbenchDraft();
+    draft.components[0].roundingScope = "Invoice";
+    expect(validateRuleWorkbench(draft)).toEqual([]);
+    expect(buildRuleSet(draft).components[0].rounding).toEqual({ mode: "HalfUp", scope: "Invoice" });
+    draft.components[0].roundingScope = "Line";
+    expect(buildRuleSet(draft).components[0].rounding).toEqual({ mode: "HalfUp", scope: "Line" });
+  });
+
   it("rejects duplicate identifiers, missing dependencies, and non-contiguous brackets", () => {
     const draft = defaultRuleWorkbenchDraft();
     const duplicate = defaultComponentDraft(2);

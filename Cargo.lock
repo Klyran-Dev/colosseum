@@ -321,6 +321,7 @@ dependencies = [
  "anchor-lang",
  "axum",
  "base64 0.23.1",
+ "document-payment",
  "ed25519-dalek",
  "indexer",
  "indexer-service",
@@ -1138,6 +1139,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "document-payment"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "sha2 0.11.0",
+ "tax-engine",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3165,6 +3176,7 @@ version = "0.1.0"
 dependencies = [
  "anchor-lang",
  "base64 0.23.1",
+ "document-payment",
  "policy",
  "serde",
  "serde_json",
@@ -4375,6 +4387,7 @@ dependencies = [
  "aes-gcm-siv",
  "base64 0.23.1",
  "deadpool-postgres",
+ "document-payment",
  "indexer",
  "jurisdiction",
  "policy",

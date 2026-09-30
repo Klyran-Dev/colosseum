@@ -210,7 +210,36 @@ make_authorization() {
     printf 'Bearer %s.%s' "$token_signing_input" "$token_signature"
 }
 
+make_expired_authorization() {
+    subject="$1"
+    scope="$2"
+    roles_json="$3"
+    claimed_merchant_id="${4:-$merchant_id}"
+    now_unix="$(date +%s)"
+    token_header="$(b64url '{"alg":"EdDSA","kid":"integration-key","typ":"JWT"}')"
+    token_claims="$(b64url "{\"iss\":\"$API_AUTH_ISSUER\",\"sub\":\"$subject\",\"aud\":\"$API_AUTH_AUDIENCE\",\"exp\":$((now_unix - 600)),\"iat\":$((now_unix - 1200)),\"nbf\":$((now_unix - 1200)),\"merchant_id\":\"$claimed_merchant_id\",\"scope\":\"$scope\",\"roles\":$roles_json}")"
+    token_signing_input="$token_header.$token_claims"
+    token_signature="$(printf '%s' "$token_signing_input" | openssl pkeyutl -sign -inkey "$integration_dir/signing-key.pem" -rawin -in /dev/stdin 2>/dev/null | b64url_stdin)"
+    printf 'Bearer %s.%s' "$token_signing_input" "$token_signature"
+}
+
 authorization="$(make_authorization integration-user 'tax:quote tax:attestation:verify tax:settlement:compile tax:settlement:submit tax:settlement:read tax:settlement:reconcile' '[]')"
+
+document_missing_auth_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --request POST --header 'content-type: application/json' --data-binary '{}' \
+    "$base_url/v1/tax/document-quote")
+if [ "$document_missing_auth_status" != "401" ]; then
+    echo "expected missing document-quote authentication HTTP 401, received $document_missing_auth_status" >&2
+    exit 1
+fi
+document_expired_auth="$(make_expired_authorization expired-document-quote 'tax:quote' '[]')"
+document_expired_auth_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --request POST --header 'content-type: application/json' --header "authorization: $document_expired_auth" \
+    --data-binary '{}' "$base_url/v1/tax/document-quote")
+if [ "$document_expired_auth_status" != "401" ]; then
+    echo "expected expired document-quote authentication HTTP 401, received $document_expired_auth_status" >&2
+    exit 1
+fi
 
 # Exercise the tenant-scoped, read-only vault reconciliation projection. The
 # target is synthetic local evidence; the endpoint must still return exact
@@ -658,6 +687,219 @@ if [ "$cross_tenant_attestation_status" != "404" ]; then
     exit 1
 fi
 
+# Exercise the authoritative document quote boundary through both API
+# replicas. Document calculations use their own rule/evidence/attestation
+# tables and must converge on one durable UUIDv7 calculation under replay.
+document_facts='{"id":"invoice-integration-1","currency":"USD","jurisdiction":"US-CA","lines":[{"id":"line-a","gross_atomic":"1000","net_atomic":"1000","exemption_codes":[]},{"id":"line-b","gross_atomic":"500","net_atomic":"500","exemption_codes":[]}]}'
+document_request_fixture="$integration_dir/document-jurisdiction-request.json"
+printf '%s' "{\"facts\":$document_facts}" > "$document_request_fixture"
+document_jurisdiction_evidence=$(docker run --rm --read-only --network none --cap-drop ALL \
+    --security-opt no-new-privileges:true \
+    --volume "$document_request_fixture:/fixtures/request.json:ro" \
+    "$issuer_image" jurisdiction-evidence /fixtures/request.json "$merchant_id" \
+    0909090909090909090909090909090909090909090909090909090909090909)
+document_request="{\"schema\":\"solana-tax-protocol/tax-document/v1\",\"idempotency_key\":\"integration-document-01J8Q4J0M9M2G7YB8F5N3D6K5T\",\"rule_set_id\":\"operator-document-flat-rate\",\"rule_version\":1,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"facts\":$document_facts,\"jurisdiction_evidence\":[$document_jurisdiction_evidence]}"
+document_first_response=$(printf '%s' "$document_request" | curl --fail --silent --show-error \
+    --header 'content-type: application/json' \
+    --header "authorization: $authorization" \
+    --data-binary @- "$base_url/v1/tax/document-quote")
+document_replica_response=$(printf '%s' "$document_request" | curl --fail --silent --show-error \
+    --header 'content-type: application/json' \
+    --header "authorization: $authorization" \
+    --data-binary @- "$replica_base_url/v1/tax/document-quote")
+document_calculation_id=$(printf '%s' "$document_first_response" | sed -n 's/.*"calculation_id":"\([^"]*\)".*/\1/p')
+document_replica_calculation_id=$(printf '%s' "$document_replica_response" | sed -n 's/.*"calculation_id":"\([^"]*\)".*/\1/p')
+if [ -z "$document_calculation_id" ] || [ "$document_calculation_id" != "$document_replica_calculation_id" ]; then
+    echo "document quote did not converge across API replicas" >&2
+    exit 1
+fi
+if ! printf '%s' "$document_first_response" | grep -q '"status":"calculated_unattested"'; then
+    echo "document quote did not return calculated_unattested" >&2
+    exit 1
+fi
+document_replay_response=$(curl --fail --silent --show-error \
+    --header "authorization: $authorization" \
+    "$base_url/v1/tax/document-quotes/$document_calculation_id/replay")
+if ! printf '%s' "$document_replay_response" | grep -q '"status":"replay_verified"'; then
+    echo "document quote replay did not verify the complete evidence envelope" >&2
+    exit 1
+fi
+document_replay_audit_count=$(docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -Atc \
+    "select count(*) from evidence_access_audit_events where merchant_id = '$merchant_id' and calculation_id = '$document_calculation_id' and purpose = 'tax_document_quote_replay' and outcome = 'allowed';")
+if [ "$document_replay_audit_count" != "1" ]; then
+    echo "expected one successful document evidence access audit event, found $document_replay_audit_count" >&2
+    exit 1
+fi
+cross_tenant_document_replay_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --header "authorization: $(make_authorization cross-tenant-document-replay 'tax:quote' '[]' "$other_merchant_id")" \
+    "$base_url/v1/tax/document-quotes/$document_calculation_id/replay")
+if [ "$cross_tenant_document_replay_status" != "404" ]; then
+    echo "expected cross-tenant document quote replay to return HTTP 404, received $cross_tenant_document_replay_status" >&2
+    exit 1
+fi
+denied_document_replay_audit_count=$(docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -Atc \
+    "select count(*) from evidence_access_audit_events where merchant_id = '$other_merchant_id' and calculation_id = '$document_calculation_id' and purpose = 'tax_document_quote_replay' and outcome = 'denied';")
+if [ "$denied_document_replay_audit_count" != "1" ]; then
+    echo "expected one denied cross-tenant document evidence audit event, found $denied_document_replay_audit_count" >&2
+    exit 1
+fi
+
+document_conflict_facts='{"id":"invoice-integration-conflict","currency":"USD","jurisdiction":"US-CA","lines":[{"id":"line-a","gross_atomic":"1001","net_atomic":"1001","exemption_codes":[]},{"id":"line-b","gross_atomic":"500","net_atomic":"500","exemption_codes":[]}]}'
+document_conflict_request_fixture="$integration_dir/document-jurisdiction-conflict-request.json"
+printf '%s' "{\"facts\":$document_conflict_facts}" > "$document_conflict_request_fixture"
+document_conflict_jurisdiction_evidence=$(docker run --rm --read-only --network none --cap-drop ALL \
+    --security-opt no-new-privileges:true \
+    --volume "$document_conflict_request_fixture:/fixtures/request.json:ro" \
+    "$issuer_image" jurisdiction-evidence /fixtures/request.json "$merchant_id" \
+    0909090909090909090909090909090909090909090909090909090909090909)
+document_conflict_request="{\"schema\":\"solana-tax-protocol/tax-document/v1\",\"idempotency_key\":\"integration-document-01J8Q4J0M9M2G7YB8F5N3D6K5T\",\"rule_set_id\":\"operator-document-flat-rate\",\"rule_version\":1,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"facts\":$document_conflict_facts,\"jurisdiction_evidence\":[$document_conflict_jurisdiction_evidence]}"
+document_conflict_status=$(printf '%s' "$document_conflict_request" | curl --silent --show-error \
+    --output /dev/null --write-out '%{http_code}' --header 'content-type: application/json' \
+    --header "authorization: $authorization" --data-binary @- "$base_url/v1/tax/document-quote")
+if [ "$document_conflict_status" != "409" ]; then
+    echo "expected document quote idempotency conflict HTTP 409, received $document_conflict_status" >&2
+    exit 1
+fi
+
+document_quote_fixture="$integration_dir/document-quote.json"
+printf '%s' "$document_first_response" > "$document_quote_fixture"
+document_attestation_request=$(docker run --rm --read-only --network none --cap-drop ALL \
+    --security-opt no-new-privileges:true \
+    --volume "$document_quote_fixture:/fixtures/document-quote.json:ro" \
+    "$issuer_image" document-attestation /fixtures/document-quote.json "$route_mint" "$merchant_id" "$route_id" "$issuer_seed")
+document_attestation_response_file="$integration_dir/document-attestation-response.json"
+document_attestation_http_status=$(printf '%s' "$document_attestation_request" | curl --silent --show-error \
+    --output "$document_attestation_response_file" --write-out '%{http_code}' \
+    --request POST \
+    --header 'content-type: application/json' \
+    --header "authorization: $authorization" \
+    --data-binary @- "$base_url/v1/tax/document-quotes/$document_calculation_id/attestation/verify")
+document_attestation_response=$(sed -n '1p' "$document_attestation_response_file")
+if [ "$document_attestation_http_status" -lt 200 ] || [ "$document_attestation_http_status" -ge 300 ] || \
+    ! printf '%s' "$document_attestation_response" | grep -q '"status":"document_attested_unsettled"'; then
+    echo "document-bound attestation ingestion did not return document_attested_unsettled (HTTP $document_attestation_http_status)" >&2
+    sed -n '1,160p' "$document_attestation_response_file" >&2
+    exit 1
+fi
+document_attestation_replay=$(printf '%s' "$document_attestation_request" | curl --fail --silent --show-error \
+    --request POST \
+    --header 'content-type: application/json' \
+    --header "authorization: $authorization" \
+    --data-binary @- "$base_url/v1/tax/document-quotes/$document_calculation_id/attestation/verify")
+if [ "$document_attestation_response" != "$document_attestation_replay" ]; then
+    echo "identical document-calculation attestation ingestion did not replay exactly" >&2
+    exit 1
+fi
+cross_tenant_document_attestation_status=$(printf '%s' "$document_attestation_request" | curl --silent --show-error \
+    --output /dev/null --write-out '%{http_code}' \
+    --request POST \
+    --header 'content-type: application/json' \
+    --header "authorization: $(make_authorization cross-tenant-document-attestation 'tax:attestation:verify' '[]' "$other_merchant_id")" \
+    --data-binary @- "$base_url/v1/tax/document-quotes/$document_calculation_id/attestation/verify")
+if [ "$cross_tenant_document_attestation_status" != "404" ]; then
+    echo "expected cross-tenant document attestation ingestion to return HTTP 404, received $cross_tenant_document_attestation_status" >&2
+    exit 1
+fi
+
+document_policy_digest=$(printf '%s' "$document_attestation_response" | sed -n 's/.*"payload_digest":\[\([^]]*\)\].*/\1/p')
+if [ -z "$document_policy_digest" ]; then
+    echo "document attestation response did not return a payload digest" >&2
+    exit 1
+fi
+document_compile_request="{\"calculation_id\":\"$document_calculation_id\",\"route_id\":\"$route_id\",\"idempotency_key\":\"integration-document-payment-full-01\",\"payer\":\"$settlement_payer\",\"nonce\":11,\"policy_sequence\":3,\"policy_digest\":[$document_policy_digest],\"scope\":{\"kind\":\"full_document\"}}"
+document_compile_response_file="$integration_dir/document-compile-response.json"
+document_compile_http_status=$(printf '%s' "$document_compile_request" | curl --silent --show-error \
+    --output "$document_compile_response_file" --write-out '%{http_code}' \
+    --header 'content-type: application/json' \
+    --header "authorization: $authorization" \
+    --data-binary @- "$base_url/v1/settlement/document/compile-from-quote")
+document_compile_response=$(sed -n '1p' "$document_compile_response_file")
+if [ "$document_compile_http_status" -lt 200 ] || [ "$document_compile_http_status" -ge 300 ] || \
+    ! printf '%s' "$document_compile_response" | grep -q '"status":"prepared_unsubmitted"'; then
+    echo "full-document settlement compilation failed (HTTP $document_compile_http_status): $document_compile_response" >&2
+    exit 1
+fi
+if ! printf '%s' "$document_compile_response" | grep -q "\"route_id\":\"$route_id\"" || \
+    ! printf '%s' "$document_compile_response" | grep -q '"document_attestation_digest"' || \
+    ! printf '%s' "$document_compile_response" | grep -q '"payment_scope_digest"'; then
+    echo "full-document settlement compilation did not expose provenance binding" >&2
+    exit 1
+fi
+document_payment_intent_id=$(printf '%s' "$document_compile_response" | sed -n 's/.*"intent_id":"\([^"]*\)".*/\1/p')
+if [ -z "$document_payment_intent_id" ]; then
+    echo "full-document settlement compilation did not return a durable intent ID" >&2
+    exit 1
+fi
+document_compile_replay=$(printf '%s' "$document_compile_request" | curl --fail --silent --show-error \
+    --header 'content-type: application/json' \
+    --header "authorization: $authorization" \
+    --data-binary @- "$replica_base_url/v1/settlement/document/compile-from-quote")
+if [ "$document_compile_response" != "$document_compile_replay" ]; then
+    echo "full-document settlement compilation did not replay the exact artifact" >&2
+    exit 1
+fi
+document_compile_conflict_request="{\"calculation_id\":\"$document_calculation_id\",\"route_id\":\"$route_id\",\"idempotency_key\":\"integration-document-payment-full-01\",\"payer\":\"$settlement_payer\",\"nonce\":14,\"policy_sequence\":3,\"policy_digest\":[$document_policy_digest],\"scope\":{\"kind\":\"full_document\"}}"
+document_compile_conflict_status=$(printf '%s' "$document_compile_conflict_request" | curl --silent --show-error \
+    --output /dev/null --write-out '%{http_code}' \
+    --header 'content-type: application/json' --header "authorization: $authorization" \
+    --data-binary @- "$base_url/v1/settlement/document/compile-from-quote")
+if [ "$document_compile_conflict_status" != "409" ]; then
+    echo "expected document payment idempotency conflict HTTP 409, received $document_compile_conflict_status" >&2
+    exit 1
+fi
+cross_tenant_document_compile_status=$(printf '%s' "$document_compile_request" | curl --silent --show-error \
+    --output /dev/null --write-out '%{http_code}' \
+    --header 'content-type: application/json' \
+    --header "authorization: $(make_authorization cross-tenant-document-payment 'tax:settlement:compile' '[]' "$other_merchant_id")" \
+    --data-binary @- "$base_url/v1/settlement/document/compile-from-quote")
+if [ "$cross_tenant_document_compile_status" != "404" ]; then
+    echo "expected cross-tenant document payment compilation to return HTTP 404, received $cross_tenant_document_compile_status" >&2
+    exit 1
+fi
+document_subset_request="{\"calculation_id\":\"$document_calculation_id\",\"route_id\":\"$route_id\",\"idempotency_key\":\"integration-document-payment-subset-01\",\"payer\":\"$settlement_payer\",\"nonce\":12,\"policy_sequence\":3,\"policy_digest\":[$document_policy_digest],\"scope\":{\"kind\":\"line_subset\",\"line_ids\":[\"line-a\"]}}"
+document_subset_response=$(printf '%s' "$document_subset_request" | curl --fail --silent --show-error \
+    --header 'content-type: application/json' \
+    --header "authorization: $authorization" \
+    --data-binary @- "$base_url/v1/settlement/document/compile-from-quote")
+if ! printf '%s' "$document_subset_response" | grep -q '"gross_atomic":"1000"' || \
+    ! printf '%s' "$document_subset_response" | grep -q '"tax_atomic":"100"' || \
+    ! printf '%s' "$document_subset_response" | grep -q '"net_atomic":"900"'; then
+    echo "whole-line document payment did not derive the server-owned line amounts" >&2
+    exit 1
+fi
+document_full_subset_request="{\"calculation_id\":\"$document_calculation_id\",\"route_id\":\"$route_id\",\"idempotency_key\":\"integration-document-payment-full-subset-01\",\"payer\":\"$settlement_payer\",\"nonce\":13,\"policy_sequence\":3,\"policy_digest\":[$document_policy_digest],\"scope\":{\"kind\":\"line_subset\",\"line_ids\":[\"line-a\",\"line-b\"]}}"
+document_full_subset_status=$(printf '%s' "$document_full_subset_request" | \
+    curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --header 'content-type: application/json' --header "authorization: $authorization" \
+    --data-binary @- "$base_url/v1/settlement/document/compile-from-quote")
+if [ "$document_full_subset_status" != "400" ]; then
+    echo "expected a complete line subset to require full_document scope, received HTTP $document_full_subset_status" >&2
+    exit 1
+fi
+
+# An aggregate settlement/evidence route must reject a document calculation
+# before attempting to decode it as an aggregate quote.
+aggregate_document_scope_status=$(printf '%s' "$attestation_request" | curl --silent --show-error \
+    --output /dev/null --write-out '%{http_code}' \
+    --request POST \
+    --header 'content-type: application/json' \
+    --header "authorization: $authorization" \
+    --data-binary @- "$base_url/v1/tax/quotes/$document_calculation_id/attestation/verify")
+if [ "$aggregate_document_scope_status" != "409" ]; then
+    echo "expected aggregate attestation route to reject document calculation scope, received HTTP $aggregate_document_scope_status" >&2
+    exit 1
+fi
+aggregate_document_compile_status=$(printf '%s' "{\"calculation_id\":\"$document_calculation_id\",\"route_id\":\"$route_id\",\"payer\":\"$settlement_payer\",\"nonce\":15,\"policy_sequence\":3,\"policy_digest\":[$document_policy_digest]}" | curl --silent --show-error \
+    --output /dev/null --write-out '%{http_code}' \
+    --header 'content-type: application/json' --header "authorization: $authorization" \
+    --data-binary @- "$base_url/v1/settlement/compile-from-quote")
+if [ "$aggregate_document_compile_status" != "409" ]; then
+    echo "expected aggregate settlement compiler to reject document calculation scope, received HTTP $aggregate_document_compile_status" >&2
+    exit 1
+fi
+
 policy_digest=$(printf '%s' "$attestation_request" | sed -n 's/.*"payload_digest":\[\([^]]*\)\].*/\1/p')
 if [ -z "$policy_digest" ]; then
     echo "external issuer fixture did not return a payload digest" >&2
@@ -996,6 +1238,38 @@ if [ "$attested_outbox_count" != "1" ]; then
     exit 1
 fi
 
+document_calculation_count=$(docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -Atc \
+    "select count(*) from tax_document_calculations where merchant_id = '$merchant_id' and id = '$document_calculation_id' and status = 'attested';")
+if [ "$document_calculation_count" != "1" ]; then
+    echo "expected one attested tenant-scoped document calculation, found $document_calculation_count" >&2
+    exit 1
+fi
+
+document_attestation_count=$(docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -Atc \
+    "select count(*) from tax_document_calculation_attestations where merchant_id = '$merchant_id' and calculation_id = '$document_calculation_id';")
+if [ "$document_attestation_count" != "1" ]; then
+    echo "expected one immutable document-calculation attestation, found $document_attestation_count" >&2
+    exit 1
+fi
+
+document_attested_outbox_count=$(docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -Atc \
+    "select count(*) from outbox_events where event_type='tax.document_calculation.attested' and aggregate_id = '$document_calculation_id';")
+if [ "$document_attested_outbox_count" != "1" ]; then
+    echo "expected one transactional document-attestation outbox event, found $document_attested_outbox_count" >&2
+    exit 1
+fi
+
+document_payment_authorization_count=$(docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -Atc \
+    "select count(*) from document_payment_authorizations where merchant_id = '$merchant_id' and calculation_id = '$document_calculation_id';")
+if [ "$document_payment_authorization_count" != "2" ]; then
+    echo "expected two immutable document payment authorizations (full and line subset), found $document_payment_authorization_count" >&2
+    exit 1
+fi
+
 route_count=$(docker compose -p "$project_name" exec -T postgres \
     psql -U tax_protocol -d tax_protocol -Atc \
     "select count(*) from settlement_routes where merchant_id = '$merchant_id' and status = 'active';")
@@ -1150,6 +1424,15 @@ for _attempt in $(seq 1 30); do
 done
 if [ "$published_count" != "2" ]; then
     echo "expected two JetStream-acknowledged calculation outbox events, found $published_count" >&2
+    docker compose -p "$project_name" logs --no-color worker nats
+    exit 1
+fi
+
+document_published_count=$(docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -Atc \
+    "select count(*) from outbox_events where event_type='tax.document_calculation.attested' and aggregate_id = '$document_calculation_id' and published_at is not null;")
+if [ "$document_published_count" != "1" ]; then
+    echo "expected one JetStream-acknowledged document-attestation outbox event, found $document_published_count" >&2
     docker compose -p "$project_name" logs --no-color worker nats
     exit 1
 fi

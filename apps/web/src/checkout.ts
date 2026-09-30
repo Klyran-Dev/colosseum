@@ -33,6 +33,7 @@ export const TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuE
 export const COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111";
 export const SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT = 12;
 const SETTLE_DISCRIMINATOR_BASE64 = "ryq5V5CDZtQ=";
+const DOCUMENT_SETTLE_DISCRIMINATOR_BASE64 = "XAF7GP/zWDU=";
 const SPLIT_SETTLE_DISCRIMINATOR_BASE64 = "A6qY2V4JCdU=";
 const ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR = [208, 86, 69, 183, 44, 203, 236, 75] as const;
 
@@ -243,6 +244,11 @@ export type CompiledSplitSettlementInstruction = {
   compute_budget_policy: ComputeBudgetPolicy;
 };
 
+export type CompiledDocumentSettlementInstruction = CompiledSettlementInstruction & {
+  document_attestation_digest: number[];
+  payment_scope_digest: number[];
+};
+
 export type CompiledSettlementResponse = CompiledSettlementInstruction & {
   intent_id: string | null;
   request_digest: number[];
@@ -258,9 +264,27 @@ export type CompiledSplitSettlementResponse = CompiledSplitSettlementInstruction
   split_plan_id: string;
 };
 
+export type CompiledDocumentSettlementResponse = CompiledDocumentSettlementInstruction & {
+  intent_id: string | null;
+  request_digest: number[];
+  instruction_digest: number[];
+  route_id: string;
+  authorization: {
+    calculation_id: string;
+    route_id: string;
+    source_attestation_digest: number[];
+    payment_scope_digest: number[];
+    scope: { kind: "full_document" } | { kind: "line_subset"; line_ids: string[] };
+    gross_atomic: string;
+    tax_atomic: string;
+    net_atomic: string;
+  };
+};
+
 export type CompiledSettlementArtifact =
   | CompiledSettlementResponse
-  | CompiledSplitSettlementResponse;
+  | CompiledSplitSettlementResponse
+  | CompiledDocumentSettlementResponse;
 
 function parseCompiledAccounts(value: unknown): CompiledAccountMeta[] {
   if (!Array.isArray(value)
@@ -336,6 +360,26 @@ export function parseCompiledSettlementArtifact(value: unknown): CompiledSettlem
   const requestDigest = parseDigestBytes(record.request_digest, "request");
   const instructionDigest = parseDigestBytes(record.instruction_digest, "instruction");
   const base = parseCompiledInstructionFields(record);
+  const documentFieldsPresent = ["document_attestation_digest", "payment_scope_digest", "authorization"]
+    .some((field) => Object.prototype.hasOwnProperty.call(record, field));
+  if (documentFieldsPresent) {
+    if (routeId === null || !Array.isArray(record.document_attestation_digest)
+        || !Array.isArray(record.payment_scope_digest)) {
+      throw new Error("The API returned an incomplete document settlement artifact.");
+    }
+    const document: CompiledDocumentSettlementResponse = {
+      ...base,
+      intent_id: intentId,
+      request_digest: requestDigest,
+      instruction_digest: instructionDigest,
+      route_id: routeId,
+      document_attestation_digest: parseDigestBytes(record.document_attestation_digest, "document attestation"),
+      payment_scope_digest: parseDigestBytes(record.payment_scope_digest, "payment scope"),
+      authorization: parseDocumentPaymentAuthorization(record.authorization),
+    };
+    validateCompiledSettlementInstruction(document, new PublicKey(document.accounts[0].pubkey));
+    return document;
+  }
   const splitFieldsPresent = ["split_plan", "split_plan_digest", "split_plan_id"]
     .some((field) => Object.prototype.hasOwnProperty.call(record, field));
   if (!splitFieldsPresent) {
@@ -366,6 +410,33 @@ export function parseCompiledSettlementArtifact(value: unknown): CompiledSettlem
   };
   validateCompiledSettlementInstruction(splitPlan, new PublicKey(splitPlan.accounts[0].pubkey));
   return splitPlan;
+}
+
+function parseDocumentPaymentAuthorization(value: unknown): CompiledDocumentSettlementResponse["authorization"] {
+  const record = recordValue(value, "The API returned an invalid document payment authorization.");
+  const calculationId = parseUuidV7(record.calculation_id, "document calculation ID");
+  const routeId = parseUuidV7(record.route_id, "document payment route ID");
+  const scopeRecord = recordValue(record.scope, "The API returned an invalid document payment scope.");
+  let scope: CompiledDocumentSettlementResponse["authorization"]["scope"];
+  if (scopeRecord.kind === "full_document") {
+    scope = { kind: "full_document" };
+  } else if (scopeRecord.kind === "line_subset" && Array.isArray(scopeRecord.line_ids)
+      && scopeRecord.line_ids.length > 0 && scopeRecord.line_ids.length <= 256
+      && scopeRecord.line_ids.every((id) => typeof id === "string" && id.length > 0 && id.length <= 64)) {
+    scope = { kind: "line_subset", line_ids: [...scopeRecord.line_ids] as string[] };
+  } else {
+    throw new Error("The API returned an invalid document payment scope.");
+  }
+  return {
+    calculation_id: calculationId,
+    route_id: routeId,
+    source_attestation_digest: parseDigestBytes(record.source_attestation_digest, "source attestation"),
+    payment_scope_digest: parseDigestBytes(record.payment_scope_digest, "payment scope authorization"),
+    scope,
+    gross_atomic: parseCanonicalU64(record.gross_atomic, "document gross amount"),
+    tax_atomic: parseCanonicalU64(record.tax_atomic, "document tax amount"),
+    net_atomic: parseCanonicalU64(record.net_atomic, "document net amount"),
+  };
 }
 
 const RECORD_ADJUSTMENT_DISCRIMINATOR_BASE64 = "UEIK4GeoFyA=";
@@ -682,7 +753,7 @@ function requirePublicKey(value: string, field: string): PublicKey {
  * message; this function never replaces that authority boundary.
  */
 export function validateCompiledSettlementInstruction(
-  instruction: CompiledSettlementInstruction | CompiledSplitSettlementInstruction,
+  instruction: CompiledSettlementInstruction | CompiledSplitSettlementInstruction | CompiledDocumentSettlementInstruction,
   payer: PublicKey,
 ): void {
   if (instruction.status !== "prepared_unsubmitted") {
@@ -692,6 +763,8 @@ export function validateCompiledSettlementInstruction(
     throw new Error("Settlement program identity does not match the configured protocol.");
   }
   const isSplit = "split_plan" in instruction;
+  const isDocument = "document_attestation_digest" in instruction;
+  if (isSplit && isDocument) throw new Error("Settlement artifact cannot be both split and document scoped.");
   const expectedAccountCount = isSplit
     ? SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT + 1
     : SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT;
@@ -782,13 +855,24 @@ export function validateCompiledSettlementInstruction(
   }
 
   const instructionData = decodeBase64(instruction.instruction_data_base64);
-  const expectedDataLength = isSplit ? 88 : 80;
+  const expectedDataLength = isDocument ? 144 : isSplit ? 88 : 80;
   if (instructionData.length !== expectedDataLength) {
     throw new Error("Settlement instruction data has an invalid length.");
   }
   const discriminator = Buffer.from(instructionData.subarray(0, 8)).toString("base64");
-  if (discriminator !== (isSplit ? SPLIT_SETTLE_DISCRIMINATOR_BASE64 : SETTLE_DISCRIMINATOR_BASE64)) {
+  const expectedDiscriminator = isDocument
+    ? DOCUMENT_SETTLE_DISCRIMINATOR_BASE64
+    : isSplit ? SPLIT_SETTLE_DISCRIMINATOR_BASE64 : SETTLE_DISCRIMINATOR_BASE64;
+  if (discriminator !== expectedDiscriminator) {
     throw new Error("Settlement instruction discriminator is not canonical.");
+  }
+  if (isDocument) {
+    const documentDigest = Array.from(instructionData.subarray(80, 112));
+    const scopeDigest = Array.from(instructionData.subarray(112, 144));
+    if (documentDigest.some((byte, index) => byte !== instruction.document_attestation_digest[index])
+        || scopeDigest.some((byte, index) => byte !== instruction.payment_scope_digest[index])) {
+      throw new Error("Document provenance digests do not match the canonical instruction bytes.");
+    }
   }
 }
 
@@ -801,7 +885,7 @@ export function parsePolicyDigest(value: string): number[] {
 }
 
 export function buildSettlementTransaction(
-  instruction: CompiledSettlementInstruction | CompiledSplitSettlementInstruction,
+  instruction: CompiledSettlementInstruction | CompiledSplitSettlementInstruction | CompiledDocumentSettlementInstruction,
   payer: PublicKey,
   connection: Connection,
 ): Promise<Transaction> {
@@ -830,7 +914,7 @@ export function buildSettlementTransaction(
 }
 
 export async function signAndEncodeSettlement(
-  instruction: CompiledSettlementInstruction | CompiledSplitSettlementInstruction,
+  instruction: CompiledSettlementInstruction | CompiledSplitSettlementInstruction | CompiledDocumentSettlementInstruction,
   payer: PublicKey,
   rpcUrl: string,
 ): Promise<string> {

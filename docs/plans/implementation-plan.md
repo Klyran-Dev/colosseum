@@ -240,7 +240,9 @@ advance a movement to a successful state.
 - [x] Render the selected public key in claim and execute wallet workspaces so
   operators can compare the active signer with the immutable artifact.
 - [x] Add failing-first capability, rejection, mismatch, browser, and
-  accessibility tests before enabling the adapter in production flows.
+  accessibility tests before enabling the adapter in production flows. The
+  pinned browser journey now also covers synthetic Wallet Standard registration,
+  explicit multi-account selection, and reload behavior.
 - [ ] Add live Wallet Standard provider/account matrix evidence, Linux
   validator/provider conformance, load/SLO evidence, and production
   enablement gates.
@@ -282,8 +284,115 @@ advance a movement to a successful state.
   quantum-sized residual allocation and aggregate/document API separation.
 - [x] Add Rust tests, property tests, golden vectors, replay coverage, and
   benchmark evidence for bounded document calculations.
-- [ ] Add separately authorized API/storage/UI adapters after the pure domain
-  contract is verified; do not reinterpret aggregate `TaxFacts` as a document.
+- [x] Add separately authorized API/storage/UI adapters after the pure domain
+  contract was verified through ADR-0204–ADR-0208; aggregate `TaxFacts` is not
+  reinterpreted as a document. Production identity, legal ownership, and
+  finalized live-chain evidence remain separate release gates.
+
+## ADR-0204 — authoritative document quote boundary
+
+- [x] Add the dedicated PostgreSQL 18 document-calculation schema with
+  encrypted facts evidence, immutable result storage, status constraints, and
+  indexes scoped by merchant/calculation/document digest.
+- [x] Add the Rust storage adapter with published-rule/provider resolution,
+  UUIDv7 idempotency, transactional outbox creation, encrypted evidence, and
+  exact replay verification.
+- [x] Add authenticated document quote/replay routes; document-specific
+  attestation binding remains a separate gate, and aggregate settlement routes
+  remain aggregate-only until a separate payment-mapping ADR exists.
+- [x] Add document-specific attestation binding and explicit cross-context
+  rejection tests for aggregate attestation/settlement endpoints.
+- [x] Add Docker two-replica contention, tenant isolation, tamper/replay,
+  migration, and operational evidence before enabling production document
+  quotes.
+
+## ADR-0205 — dedicated document-calculation attestation
+
+- [x] Record a separate signed contract and persistence/route decision; do not
+  reuse aggregate calculation attestation bytes.
+- [x] Implement the policy contract, PostgreSQL table, authenticated route,
+  encrypted/replay-safe persistence, and document-specific outbox event.
+- [x] Prove aggregate attestation and settlement paths reject document IDs,
+  with PostgreSQL integration, two-replica contention, tenant-isolation,
+  replay/conflict, and outbox-publication evidence.
+
+## ADR-0206 — document-to-payment binding
+
+- [x] Record document-payment alternatives, invariants, bounded scope
+  semantics, and the partial-line rejection rule before implementation.
+- [x] Implement the pure Rust document-payment domain, authorization
+  persistence, authenticated compiler, typed wallet-submit verification, and
+  browser-side provenance checks.
+- [x] Implement and unit-test the additive Solana `settle_document`
+  instruction and strict document receipt/event decoding. Real validator
+  conformance is now represented by a validator-backed Docker test case;
+  successful Linux/amd64 execution remains an explicit release gate.
+- [x] Add conformance assertions for document receipt provenance bytes,
+  conservation, and duplicate document-receipt rejection; retain the typed
+  `io_uring` startup failure when the local runtime cannot execute Agave.
+
+## ADR-0207 — document-bound checkout workspace
+
+- [x] Record the UI authority boundary, alternatives, evidence states, and
+  accessibility/performance budgets before implementation.
+- [x] Implement the lazy document attestation, document-scope compilation,
+  wallet submission, and reconciliation workspace with browser contract tests.
+- [x] Add real-browser accessibility and degraded-state evidence for the
+  document workflow. The pinned NGINX/Playwright journey now covers document
+  quote API unavailability, settlement-route failure, and successful
+  evidence-to-reviewed-artifact handoff. Failure states keep signing
+  unavailable; the success state enables signing only after server
+  attestation verification and durable compilation. All pass WCAG 2.2 A/AA
+  axe checks; live provider and finalized-chain evidence remain separate gates.
+
+## ADR-0208 — authenticated document-quote workspace
+
+- [x] Record the production quote versus simulation boundary and evidence
+  ownership before implementation.
+- [x] Implement authenticated document facts submission, idempotent replay
+  rendering, jurisdiction-evidence failure states, and handoff to document
+  checkout.
+- [x] Add lazy-workspace and WCAG browser contract coverage for the document
+  quote surface. Docker integration now covers missing/expired authentication,
+  tenant isolation, replay, and idempotency conflict failure journeys.
+- [x] Prove full-document and whole-line subset compilation, replay/conflict,
+  tenant isolation, aggregate/document separation, and durable authorization
+  evidence in Docker/PostgreSQL integration. Finalized live-chain evidence
+  remains open pending the validator conformance gate.
+
+## ADR-0209 — bounded document-quote latency evidence
+
+- [x] Record the document-specific workload, alternatives, safety invariants,
+  and explicit distinction from aggregate quote and production SLO evidence.
+- [x] Add an explicit `BENCHMARK_MODE=document` path to the existing bounded
+  Docker quote harness, using the two-line document rule, document endpoint,
+  document calculation table, and document outbox aggregate while sharing the
+  credential, percentile, timeout, replica, and cleanup logic.
+- [x] Add `make benchmark-document-quote-service` and a dedicated CI evidence
+  artifact for the document workload.
+- [ ] Retain a successful CI run and production-like regional/resource-profile
+  measurements before using document latency as a production SLO claim.
+
+## ADR-0210 — Docker full-topology bootstrap
+
+- [x] Record the explicit-service selection, Compose health-wait contract,
+  one-shot exclusion, and fail-closed capability policy.
+- [x] Add `make bootstrap` and a dry-run contract test that selects the full
+  long-running local topology without starting browser or conformance jobs.
+- [ ] Execute the full bootstrap successfully on a Linux/amd64 Docker runtime;
+  the current macOS Docker runtime remains blocked by Agave's `io_uring`
+  requirement and this failure must remain visible.
+
+## ADR-0211 — Explicit Docker host-port overrides
+
+- [x] Record the collision model, stable-default policy, and rejection of
+  random host-port allocation.
+- [x] Make validator RPC/faucet bindings environment-overridable, preserving
+  fixed internal service ports and fail-closed Compose readiness.
+- [x] Add a bootstrap contract assertion and document parallel-topology
+  operation.
+- [ ] Capture a successful full-topology run on a Linux/amd64 runtime with a
+  recorded non-default port map where parallel stacks are required.
 
 ## ADR-0177 — exact signed refund-claim submission
 

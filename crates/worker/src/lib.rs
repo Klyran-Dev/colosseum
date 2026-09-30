@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(test),
+    deny(clippy::expect_used, clippy::panic, clippy::unwrap_used)
+)]
+
 //! Bounded transactional-outbox delivery worker.
 //!
 //! PostgreSQL is the durable event ledger. NATS JetStream is a downstream,

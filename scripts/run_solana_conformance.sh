@@ -33,6 +33,9 @@ failure_reason="not_completed"
 cleanup() {
     cleanup_status="$run_status"
     printf 'schema_version=solana-tax-protocol/conformance-result/v1\nphase=%s\nstatus=%s\nfailure_reason=%s\n' "$phase" "$cleanup_status" "$failure_reason" > "$evidence_dir/result.env"
+    if [ ! -s "$evidence_dir/localnet-tests.log" ]; then
+        printf 'localnet tests were not started; phase=%s; failure_reason=%s\n' "$phase" "$failure_reason" > "$evidence_dir/localnet-tests.log"
+    fi
     if [ -f "$repo_root/target/deploy/settlement.so" ]; then
         if command -v sha256sum >/dev/null 2>&1; then
             sha256sum "$repo_root/target/deploy/settlement.so" > "$evidence_dir/settlement.so.sha256"

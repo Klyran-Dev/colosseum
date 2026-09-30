@@ -36,6 +36,35 @@ SHA-256 `412a2d66c3edcc25c316377cc85a3bea85c8079d69bb4338d69119136e91457b`
 without the prior 4 KiB stack-frame diagnostics. This is build evidence only;
 the Linux validator and transaction evidence gates remain open.
 
+On 2026-09-30, the conformance suite was extended with a real
+`settle_document` case. The Dockerized builder produced artifact SHA-256
+`0c13536b936cc2d15717ed142b0d55f3c6551c83c0b8f98691fa669089f511ae`; the
+authoritative run then stopped at validator startup because this macOS Docker
+runtime does not provide Agave 4.3.0's required `io_uring` capability. The
+document case is therefore implemented and wired into the evidence verifier,
+but its finalized transaction evidence remains unchecked until Linux/amd64 CI
+executes the full matrix.
+
+On 2026-09-30, `make integration-check` passed the credentialed document
+quote failure matrix: missing and expired JWTs returned 401, two API replicas
+converged on one UUIDv7 calculation, exact replay returned the persisted
+evidence, changed input under the same idempotency key returned 409, and
+cross-tenant replay/attestation/compilation attempts returned 404 with the
+expected denial audit evidence. This closes the local Docker evidence gate;
+staging identity-provider and production authorization evidence remain open.
+
+ADR-0210 adds `make bootstrap`, the explicit Docker full-topology entry point.
+Its dry-run contract is covered by `make check`; a successful runtime bootstrap
+still requires Linux/amd64 validator capability evidence and is intentionally
+not claimed from this macOS host.
+ADR-0211 makes all host-facing Compose bindings, including validator RPC and
+faucet ports, explicitly overridable so a second isolated topology can be
+started without stopping an unrelated stack. A local attempt on this host
+built all images and started every non-validator service healthy on a complete
+alternate port map. Agave 4.3.0 then failed closed with
+`io_uring_supported()` on the Docker Desktop LinuxKit runtime, so no validator
+or full-topology runtime success is claimed from this macOS host.
+
 ADR-0168 closes the local runner reproducibility gap: `make
 solana-conformance` now executes the Vitest RPC client inside a pinned,
 non-root Docker image and no longer depends on host Node.js or pnpm. This
@@ -79,7 +108,10 @@ exists.
   present but requires successful Linux validator/CI execution.
 - [ ] Live settlement CPI execution proves token-balance conservation and
   atomic rollback on the validator-backed localnet.
-- [ ] `u64` overflow, zero amount, cap, rate, and rounding boundaries are covered.
+- [x] `u64` overflow, zero amount, cap, rate, and rounding boundaries are
+  covered by tax-engine unit/property/golden tests and on-chain settlement
+  validation tests. Validator-backed execution remains a separate release
+  gate.
 - [x] ADR-0202 and ADR-0203 make component, settlement, line, and invoice
   rounding explicit, preserve legacy component digests, reject ambiguous
   graphs, and prove conserving largest-remainder allocation, positive
@@ -87,6 +119,58 @@ exists.
   document calculations through Rust/API tests and versioned golden vectors.
   Approved jurisdiction coverage, production document-quote authorization,
   persistence, and legal/tax owner approval remain separate coverage gates.
+- [x] ADR-0204 document quotes have a dedicated authenticated persistence,
+  encrypted replay, idempotency, and outbox boundary. The production
+  `/v1/tax/document-quote` and replay routes are covered by the Docker
+  two-replica, tenant-isolation, tamper/replay, and migration gates. The
+  simulation route remains intentionally separate. Document-to-payment
+  mapping remains open.
+- [x] ADR-0205 document attestations use a dedicated signed contract, storage
+  table, route, replay/conflict semantics, and outbox event. Docker/PostgreSQL
+  evidence proves contention convergence, tenant isolation, publication, and
+  aggregate-path document-ID rejection.
+- [x] ADR-0206 document-to-payment binding has a separate domain, typed
+  authorization, on-chain provenance receipt, wallet-submit verification, and
+  Docker/PostgreSQL replay, conflict, isolation, and scope evidence. Full-
+  document and whole-line subset payments are the bounded initial scope;
+  partial-line re-rating remains a separate future contract.
+- [x] ADR-0206's Docker conformance matrix now includes document-bound
+  settlement, document receipt provenance bytes, amount conservation, and
+  duplicate-receipt rejection.
+- [ ] ADR-0206 finalized live-chain evidence and validator-backed
+  `settle_document` conformance are still required before production release.
+- [x] ADR-0207 adds a separate lazy document checkout workspace with server-
+  verified attestation, explicit full/whole-line scope, typed compilation,
+  exact wallet handoff, durable status recovery, and reconciliation controls.
+  Component, accessibility, production build, and real-browser lazy-loading
+  checks pass.
+- [x] Document quote and checkout degraded-state journeys now have pinned
+  real-browser evidence: unavailable document quote API and unavailable active
+  settlement routes fail closed, preserve empty/evidence states, keep compile
+  and signing unavailable, and pass WCAG 2.2 A/AA axe checks. Real injected-
+  wallet attestation, signed submission, and finalized-chain browser evidence
+  remain separate production gates.
+- [x] The pinned browser suite also proves the successful document evidence
+  handoff: authenticated quote evidence is rendered, issuer attestation is
+  verified before compilation, server-owned authorization amounts are shown,
+  and signing becomes available only after a durable reviewed artifact is
+  returned. The journey uses synthetic API/provider fixtures and never claims
+  submission or finalized settlement.
+- [x] ADR-0208 adds the authenticated document-quote workspace. It validates
+  bounded facts and evidence JSON locally, calls the production quote boundary,
+  renders server-owned UUIDv7/result/expiry evidence, and hands the persisted
+  calculation ID to document checkout. Unit, accessibility, production-build,
+  and real-browser lazy-workspace checks pass.
+- [x] Credentialed document-quote API journeys now prove tenant-isolated
+  provider-signed jurisdiction evidence, two-replica idempotency replay and
+  conflict behavior, cross-tenant denial/audit evidence, and missing/expired
+  authentication responses in the Docker local-stack gate. Staging and live
+  identity-provider evidence remain separate release gates.
+- [x] A fresh local Docker document-quote load run passed 200/200 requests
+  across two API replicas, 32/32 same-key contention responses, exact
+  200/200/200 idempotency/calculation/outbox cardinality, and p50/p95/p99 of
+  5.467/34.901/45.221 ms. This remains local synthetic evidence; retained CI,
+  regional/resource-profile, and production SLO acceptance are still open.
 - [ ] Legacy SPL Token and extension-free Token-2022 account ownership is checked in localnet transactions.
 - [ ] Unsupported Token-2022 extensions are rejected or explicitly tested in localnet transactions.
 - [ ] Policy issuer, sequence, expiry, revocation, merchant binding, and governed issuer-registry scope are enforced.
@@ -352,6 +436,12 @@ exists.
   calculation, and outbox event. This is local Docker evidence, not a
   production SLO claim. The same bounded workload is now a dedicated CI job;
   regional, resource-profile, and chain-finality measurements remain open.
+- [x] ADR-0209 adds a separate two-line document-quote workload with
+  document-specific persistence/outbox invariants. The 2026-09-30 local
+  Docker run completed 200 requests at concurrency 16 across two API replicas
+  with 0% errors, 32/32 same-key contention success, and exact durable counts;
+  p50/p95/p99 was 5.308/24.216/34.742 ms. A successful retained CI artifact
+  and production-like regional/resource-profile measurements remain open.
 - [x] Persisted-rule simulation has a separate facts-only two-replica latency
   workload with server-owned response-binding checks and bounded read
   contention (ADR-0145). Its local p95 diagnostic budget is evidence for the

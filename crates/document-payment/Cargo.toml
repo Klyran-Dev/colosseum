@@ -1,0 +1,13 @@
+[package]
+name = "document-payment"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+sha2.workspace = true
+tax-engine = { path = "../tax-engine" }
+thiserror.workspace = true

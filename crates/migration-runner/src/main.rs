@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(test),
+    deny(clippy::expect_used, clippy::panic, clippy::unwrap_used)
+)]
+
 use migration_runner::{
     DEFAULT_MIGRATIONS_DIR, DEFAULT_STATEMENT_TIMEOUT_MS, apply_migrations_with_seeds,
     discover_migrations,
