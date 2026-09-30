@@ -12422,7 +12422,8 @@ fn parse_replay_gap_view(
 mod tests {
     use super::*;
     use tax_engine::{
-        BaseReference, Rate, RateSpec, RoundingMode, RoundingSpec, TaxBase, TaxComponentRule,
+        BaseReference, Rate, RateSpec, RoundingMode, RoundingScope, RoundingSpec, TaxBase,
+        TaxComponentRule,
     };
 
     fn command() -> QuoteCommand {
@@ -12945,6 +12946,8 @@ mod tests {
                 cap_atomic: None,
                 rounding: RoundingSpec {
                     mode: RoundingMode::HalfUp,
+                    scope: RoundingScope::Component,
+                    quantum_atomic: 1,
                 },
                 threshold: None,
                 exemption_codes: Vec::new(),
@@ -13313,6 +13316,8 @@ mod tests {
                 cap_atomic: None,
                 rounding: RoundingSpec {
                     mode: RoundingMode::HalfUp,
+                    scope: RoundingScope::Component,
+                    quantum_atomic: 1,
                 },
                 threshold: None,
                 exemption_codes: Vec::new(),

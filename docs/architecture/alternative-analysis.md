@@ -448,6 +448,37 @@ invitation to bypass Cargo's version checks.
 | Caller-provided exemption boolean | Simple request shape | Unverifiable and not suitable for audit or attestation | Rejected |
 | Model thresholds as credits | Reuses an existing field | Changes tax output rather than the taxable base and cannot express activation semantics | Rejected |
 
+### Tax rounding scope and residual allocation
+
+| Alternative | Strengths | Risks/trade-offs | Decision |
+| --- | --- | --- | --- |
+| Implicit component rounding | Backward-compatible by omission | Cannot express aggregate settlement rounding and hides the legal calculation scope | Rejected |
+| Mixed component and settlement scopes | Flexible authoring | Dependent components have ambiguous rounded-versus-exact inputs | Rejected |
+| Total rounding with residual discard | Minimal arithmetic | Breaks conservation and creates unexplained atomic-unit loss | Rejected |
+| **Explicit component/settlement scope with bounded largest-remainder allocation** | Deterministic, replayable, conserving, and compatible with tax-on-tax component graphs | Settlement scope is restricted to independent components | **Selected in ADR-0202** |
+| Add line/invoice facts in the rounding change | Broader coverage | Expands the fact, API, storage, UI, and golden-vector contracts beyond one bounded decision | Deferred to a dedicated line-facts ADR |
+
+### Tax decimal-scale representation
+
+| Alternative | Strengths | Risks/trade-offs | Decision |
+| --- | --- | --- | --- |
+| Binary floating-point decimal places | Familiar | Unsafe financial boundaries and cross-runtime drift | Rejected |
+| Adapter-specific decimal strings | Human-readable | Parser and currency-precision divergence | Rejected |
+| **Positive `quantum_atomic` integer** | Exact, asset-precision aware, language-neutral, and bounded | Rule authors must declare the asset's atomic increment | **Selected in ADR-0202** |
+
+Quantum compatibility is also explicit: floor and cap boundaries that are not
+exact multiples of the declared quantum are rejected, preserving the meaning
+of min/max semantics after final rounding.
+
+### Line and invoice tax facts
+
+| Alternative | Strengths | Risks/trade-offs | Decision |
+| --- | --- | --- | --- |
+| Reuse aggregate `TaxFacts` for invoices | Minimal schema | Loses line identity and makes rounding/replay ambiguous | Rejected |
+| Browser-owned line aggregation | Fast preview | Caller-controlled evidence and cross-language numeric drift | Rejected |
+| **Versioned bounded document facts with explicit line/invoice scope** | Canonical identity, bounded work, conserving allocation, replayable evidence | Adds a separate domain/result contract | **Selected in ADR-0203** |
+| Unbounded generic line rule graph | Broad expressiveness | Unbounded latency/memory and difficult audit/attestation limits | Rejected |
+
 ## Re-evaluation triggers
 
 Re-open these decisions when:

@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-09-30
+
+- Implemented ADR-0201's shared bounded OTLP trace-export bootstrap for API,
+  worker, indexer, and route-verifier, including endpoint security policy,
+  bounded exporter settings, sensitive-field exclusions, and graceful flush.
+  Added `make otel-trace-drill`, which proves local API request-span receipt
+  and UUIDv7 correlation through the Docker collector; CI and release
+  candidates now retain that regression evidence. Authenticated production
+  telemetry, retention, alert routing, and SLO evidence remain release gates.
+- Implemented ADR-0202's explicit tax rounding scope. Settlement-scope rules
+  now round independent component totals once and allocate residual atomic
+  units deterministically; mixed, dependent, or mixed-mode settlement rules
+  fail closed. The structured rule workbench exposes the scope and preserves
+  component-scope compatibility. Line/invoice facts remain a separate
+  versioned contract.
+
 ## 2026-09-29
 
 - Added ADR-0189's two-replica automated indexer replay recovery contract and
@@ -59,7 +75,6 @@
   fallback while preserving the non-custodial server-owned signed-byte
   boundary. Live provider/account matrix and production enablement evidence
   remain release gates.
-
 ## 2026-09-28
 
 - Added ADR-0148's pinned Docker Playwright browser journey gate through the

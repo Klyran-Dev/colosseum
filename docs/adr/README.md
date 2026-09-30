@@ -202,3 +202,5 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0199: Authoritative Linux validator evidence contract](0199-linux-validator-evidence-contract.md)
 - [ADR-0200: Solana Wallet Standard signing boundary](0200-solana-wallet-standard-boundary.md)
 - [ADR-0201: Bounded OTLP trace-export boundary](0201-otlp-trace-export-boundary.md)
+- [ADR-0202: Explicit tax rounding scope and deterministic residual allocation](0202-explicit-tax-rounding-scope.md)
+- [ADR-0203: Versioned line and invoice tax facts](0203-versioned-line-invoice-tax-facts.md)

@@ -13,10 +13,12 @@ pub type AtomicAmount = i128;
 pub type Digest32 = [u8; 32];
 pub const MAX_ATOMIC_AMOUNT: AtomicAmount = u64::MAX as AtomicAmount;
 pub const MAX_COMPONENTS: usize = 128;
+pub const MAX_DOCUMENT_LINES: usize = 256;
 pub const MAX_EXEMPTION_CODES: usize = 32;
 pub const MAX_CODE_BYTES: usize = 64;
 pub const MAX_PERIOD_ID_BYTES: usize = 128;
 pub const RULE_SET_DOCUMENT_SCHEMA_V1: &str = "solana-tax-protocol/tax-rule/v1";
+pub const TAX_DOCUMENT_SCHEMA_V1: &str = "solana-tax-protocol/tax-document/v1";
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod serde_i128_string {
@@ -71,9 +73,38 @@ pub enum RoundingMode {
     AwayFromZero,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub enum RoundingScope {
+    #[default]
+    Component,
+    Settlement,
+    Line,
+    Invoice,
+}
+
+fn is_component_scope(scope: &RoundingScope) -> bool {
+    *scope == RoundingScope::Component
+}
+
+fn default_rounding_quantum() -> AtomicAmount {
+    1
+}
+
+fn is_default_rounding_quantum(quantum: &AtomicAmount) -> bool {
+    *quantum == 1
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RoundingSpec {
     pub mode: RoundingMode,
+    #[serde(default, skip_serializing_if = "is_component_scope")]
+    pub scope: RoundingScope,
+    #[serde(
+        default = "default_rounding_quantum",
+        skip_serializing_if = "is_default_rounding_quantum",
+        with = "serde_i128_string"
+    )]
+    pub quantum_atomic: AtomicAmount,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -266,6 +297,21 @@ impl Rational {
             .ok_or(TaxError::ArithmeticOverflow)
     }
 
+    fn round_to_quantum(
+        self,
+        mode: RoundingMode,
+        quantum_atomic: AtomicAmount,
+    ) -> Result<i128, TaxError> {
+        if quantum_atomic <= 0 {
+            return Err(TaxError::InvalidRule("rounding quantum must be positive"));
+        }
+        let quantum = Rational::from_integer(quantum_atomic);
+        self.checked_div(quantum)?
+            .round(mode)?
+            .checked_mul(quantum_atomic)
+            .ok_or(TaxError::ArithmeticOverflow)
+    }
+
     fn parts(self) -> RationalParts {
         RationalParts {
             numerator: self.numerator,
@@ -306,6 +352,137 @@ pub struct CumulativePeriodSnapshot {
     #[serde(with = "serde_i128_string")]
     pub cumulative_base_atomic: AtomicAmount,
     pub evidence_digest: Digest32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TaxLineFacts {
+    pub id: String,
+    #[serde(with = "serde_i128_string")]
+    pub gross_atomic: AtomicAmount,
+    #[serde(with = "serde_i128_string")]
+    pub net_atomic: AtomicAmount,
+    #[serde(default)]
+    pub exemption_codes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TaxDocumentFacts {
+    pub id: String,
+    pub currency: String,
+    pub jurisdiction: String,
+    #[serde(default)]
+    pub jurisdiction_resolution: Option<JurisdictionResolution>,
+    #[serde(default)]
+    pub cumulative_period: Option<CumulativePeriodSnapshot>,
+    pub lines: Vec<TaxLineFacts>,
+}
+
+impl TaxDocumentFacts {
+    fn validate(&self) -> Result<(), TaxError> {
+        if self.id.trim().is_empty() || self.id.len() > MAX_CODE_BYTES {
+            return Err(TaxError::InvalidFacts(
+                "document id is required and must be bounded",
+            ));
+        }
+        if self.lines.is_empty() || self.lines.len() > MAX_DOCUMENT_LINES {
+            return Err(TaxError::InvalidFacts(
+                "document line count is outside the supported bound",
+            ));
+        }
+        TaxFacts {
+            gross_atomic: 0,
+            net_atomic: 0,
+            currency: self.currency.clone(),
+            jurisdiction: self.jurisdiction.clone(),
+            jurisdiction_resolution: self.jurisdiction_resolution.clone(),
+            exemption_codes: Vec::new(),
+            cumulative_period: self.cumulative_period.clone(),
+        }
+        .validate()?;
+
+        let mut ids = HashMap::new();
+        let mut gross_total = 0_i128;
+        let mut net_total = 0_i128;
+        for line in &self.lines {
+            if line.id.trim().is_empty() || line.id.len() > MAX_CODE_BYTES {
+                return Err(TaxError::InvalidFacts(
+                    "line id is required and must be bounded",
+                ));
+            }
+            if ids.insert(line.id.as_str(), true).is_some() {
+                return Err(TaxError::InvalidFacts("line ids must be unique"));
+            }
+            if line.gross_atomic <= 0 || line.net_atomic <= 0 {
+                return Err(TaxError::InvalidFacts(
+                    "line gross and net amounts must be positive",
+                ));
+            }
+            if line.gross_atomic > MAX_ATOMIC_AMOUNT || line.net_atomic > MAX_ATOMIC_AMOUNT {
+                return Err(TaxError::InvalidFacts(
+                    "line amounts must fit Solana u64 atomic units",
+                ));
+            }
+            if line.net_atomic > line.gross_atomic {
+                return Err(TaxError::InvalidFacts(
+                    "line net amount cannot exceed gross amount",
+                ));
+            }
+            if line.exemption_codes.len() > MAX_EXEMPTION_CODES {
+                return Err(TaxError::InvalidFacts("too many line exemption codes"));
+            }
+            for code in &line.exemption_codes {
+                if code.trim().is_empty() || code.len() > MAX_CODE_BYTES {
+                    return Err(TaxError::InvalidFacts("invalid line exemption code"));
+                }
+            }
+            gross_total = gross_total
+                .checked_add(line.gross_atomic)
+                .ok_or(TaxError::ArithmeticOverflow)?;
+            net_total = net_total
+                .checked_add(line.net_atomic)
+                .ok_or(TaxError::ArithmeticOverflow)?;
+        }
+        if gross_total > MAX_ATOMIC_AMOUNT || net_total > MAX_ATOMIC_AMOUNT {
+            return Err(TaxError::InvalidFacts(
+                "document totals must fit Solana u64 atomic units",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn canonical_digest(&self) -> Result<Digest32, TaxError> {
+        self.validate()?;
+        let mut encoder = CanonicalEncoder::new();
+        encoder.text(TAX_DOCUMENT_SCHEMA_V1)?;
+        encoder.text(&self.id)?;
+        encoder.text(&self.currency)?;
+        encoder.text(&self.jurisdiction)?;
+        let mut lines = self.lines.iter().collect::<Vec<_>>();
+        lines.sort_by(|left, right| left.id.cmp(&right.id));
+        encoder.count(lines.len())?;
+        for line in lines {
+            encoder.text(&line.id)?;
+            encoder.i128(line.gross_atomic);
+            encoder.i128(line.net_atomic);
+            let mut exemption_codes = line.exemption_codes.iter().collect::<Vec<_>>();
+            exemption_codes.sort();
+            encoder.count(exemption_codes.len())?;
+            for code in exemption_codes {
+                encoder.text(code)?;
+            }
+        }
+        match &self.cumulative_period {
+            Some(snapshot) => {
+                encoder.u8(1);
+                encoder.text(&snapshot.period_id)?;
+                encoder.i128(snapshot.cumulative_base_atomic);
+                encoder.bytes(&snapshot.evidence_digest);
+            }
+            None => encoder.u8(0),
+        }
+        encode_jurisdiction_resolution(&mut encoder, &self.jurisdiction_resolution)?;
+        Ok(encoder.digest())
+    }
 }
 
 impl TaxFacts {
@@ -384,28 +561,36 @@ impl TaxFacts {
         // Preserve the pre-ADR-0102 canonical bytes for legacy facts without
         // a resolution envelope. Presence of an envelope is an additive
         // versioned suffix, so historical evidence remains replayable.
-        if let Some(resolution) = &self.jurisdiction_resolution {
-            encoder.u8(1);
-            encoder.text(&resolution.policy_id)?;
-            encoder.u32(resolution.policy_version);
-            encoder.bytes(&resolution.policy_digest);
-            encoder.bytes(&resolution.evidence_digest);
-            encoder.text(&resolution.jurisdiction_code)?;
-            encoder.text(&resolution.source.canonical_name())?;
-            encoder.u32(resolution.candidate_count);
-            encoder.count(resolution.trace.len())?;
-            for entry in &resolution.trace {
-                encoder.text(&entry.source.canonical_name())?;
-                encoder.count(entry.jurisdiction_codes.len())?;
-                for code in &entry.jurisdiction_codes {
-                    encoder.text(code)?;
-                }
-                encoder.u32(entry.candidate_count);
-                encoder.u8(u8::from(entry.selected));
-            }
-        }
+        encode_jurisdiction_resolution(&mut encoder, &self.jurisdiction_resolution)?;
         Ok(encoder.digest())
     }
+}
+
+fn encode_jurisdiction_resolution(
+    encoder: &mut CanonicalEncoder,
+    resolution: &Option<JurisdictionResolution>,
+) -> Result<(), TaxError> {
+    if let Some(resolution) = resolution {
+        encoder.u8(1);
+        encoder.text(&resolution.policy_id)?;
+        encoder.u32(resolution.policy_version);
+        encoder.bytes(&resolution.policy_digest);
+        encoder.bytes(&resolution.evidence_digest);
+        encoder.text(&resolution.jurisdiction_code)?;
+        encoder.text(&resolution.source.canonical_name())?;
+        encoder.u32(resolution.candidate_count);
+        encoder.count(resolution.trace.len())?;
+        for entry in &resolution.trace {
+            encoder.text(&entry.source.canonical_name())?;
+            encoder.count(entry.jurisdiction_codes.len())?;
+            for code in &entry.jurisdiction_codes {
+                encoder.text(code)?;
+            }
+            encoder.u32(entry.candidate_count);
+            encoder.u8(u8::from(entry.selected));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -606,6 +791,19 @@ pub struct CompiledRuleSet {
     rule_digest: Digest32,
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct AllocationKey {
+    line_id: String,
+    component_id: String,
+}
+
+#[derive(Clone, Debug)]
+struct PendingComponent {
+    key: AllocationKey,
+    result: ComponentResult,
+    exact: Rational,
+}
+
 impl CompiledRuleSet {
     pub fn rule_set(&self) -> &RuleSet {
         &self.rule_set
@@ -618,6 +816,17 @@ impl CompiledRuleSet {
     pub fn calculate(&self, facts: &TaxFacts) -> Result<CalculationResult, TaxError> {
         facts.validate()?;
         let facts_digest = facts.canonical_digest()?;
+        match self.rule_set.components[0].rounding.scope {
+            RoundingScope::Settlement => {
+                return self.calculate_settlement_scope(facts, facts_digest);
+            }
+            RoundingScope::Line | RoundingScope::Invoice => {
+                return Err(TaxError::UnsupportedDocumentScope(
+                    "line and invoice rules require calculate_document",
+                ));
+            }
+            RoundingScope::Component => {}
+        }
         let mut computed = BTreeMap::<String, AtomicAmount>::new();
         let mut results = BTreeMap::<String, ComponentResult>::new();
         for &index in &self.evaluation_order {
@@ -656,7 +865,8 @@ impl CompiledRuleSet {
                 }
                 _ => with_floor,
             };
-            let tax_atomic = with_cap.round(component.rounding.mode)?;
+            let tax_atomic = with_cap
+                .round_to_quantum(component.rounding.mode, component.rounding.quantum_atomic)?;
             if tax_atomic < 0 {
                 return Err(TaxError::ArithmeticOverflow);
             }
@@ -672,7 +882,8 @@ impl CompiledRuleSet {
                 exemption_applied,
                 raw_tax: raw_tax.parts(),
                 credit_atomic: component.credit_atomic,
-                clamped_tax_atomic: with_cap.round(RoundingMode::Floor)?,
+                clamped_tax_atomic: with_cap
+                    .round_to_quantum(RoundingMode::Floor, component.rounding.quantum_atomic)?,
                 tax_atomic,
                 explanation: format!(
                     "{} calculated from {} atomic units using the versioned rule graph",
@@ -714,6 +925,230 @@ impl CompiledRuleSet {
         })
     }
 
+    fn calculate_settlement_scope(
+        &self,
+        facts: &TaxFacts,
+        facts_digest: Digest32,
+    ) -> Result<CalculationResult, TaxError> {
+        let rounding_mode = self.rule_set.components[0].rounding.mode;
+        let rounding_quantum = self.rule_set.components[0].rounding.quantum_atomic;
+        let pending = self.exact_components(facts)?;
+        let allocated = allocate_pending(pending, rounding_mode, rounding_quantum)?;
+        let total_tax_atomic = allocated.iter().try_fold(0_i128, |total, result| {
+            total
+                .checked_add(result.tax_atomic)
+                .ok_or(TaxError::ArithmeticOverflow)
+        })?;
+        let total_net_atomic = facts
+            .gross_atomic
+            .checked_sub(total_tax_atomic)
+            .ok_or(TaxError::ArithmeticOverflow)?;
+        if total_net_atomic < 0 {
+            return Err(TaxError::InvalidFacts(
+                "total tax cannot exceed gross amount",
+            ));
+        }
+
+        Ok(CalculationResult {
+            rule_set_id: self.rule_set.id.clone(),
+            rule_version: self.rule_set.version,
+            engine_version: ENGINE_VERSION.to_string(),
+            currency: facts.currency.clone(),
+            jurisdiction: facts.jurisdiction.clone(),
+            jurisdiction_resolution: facts.jurisdiction_resolution.clone(),
+            facts_digest,
+            rule_digest: self.rule_digest,
+            gross_atomic: facts.gross_atomic,
+            total_tax_atomic,
+            total_net_atomic,
+            components: allocated,
+        })
+    }
+
+    fn exact_components(&self, facts: &TaxFacts) -> Result<Vec<PendingComponent>, TaxError> {
+        let rounding_quantum = self.rule_set.components[0].rounding.quantum_atomic;
+        let computed = BTreeMap::new();
+        let mut pending = Vec::with_capacity(self.rule_set.components.len());
+        for &index in &self.evaluation_order {
+            let component = &self.rule_set.components[index];
+            let base_atomic = evaluate_base(&component.base, facts, &computed)?;
+            let exemption_applied = component
+                .exemption_codes
+                .iter()
+                .any(|code| facts.exemption_codes.iter().any(|fact| fact == code));
+            let effective_base_atomic = if exemption_applied {
+                0
+            } else {
+                apply_threshold(component, base_atomic, facts)?
+            };
+            let raw_tax = if exemption_applied {
+                Rational::zero()
+            } else {
+                calculate_raw_tax(component, effective_base_atomic)?
+            };
+            let after_credit =
+                raw_tax.checked_sub(Rational::from_integer(component.credit_atomic))?;
+            let non_negative = if after_credit.is_negative() {
+                Rational::zero()
+            } else {
+                after_credit
+            };
+            let floor = component.floor_atomic.unwrap_or(0);
+            let with_floor = if non_negative.is_less_than(Rational::from_integer(floor))? {
+                Rational::from_integer(floor)
+            } else {
+                non_negative
+            };
+            let with_cap = match component.cap_atomic {
+                Some(cap) if with_floor.is_greater_than(Rational::from_integer(cap))? => {
+                    Rational::from_integer(cap)
+                }
+                _ => with_floor,
+            };
+            let clamped_tax_atomic =
+                with_cap.round_to_quantum(RoundingMode::Floor, rounding_quantum)?;
+            if clamped_tax_atomic < 0 {
+                return Err(TaxError::ArithmeticOverflow);
+            }
+            pending.push(PendingComponent {
+                key: AllocationKey {
+                    line_id: String::new(),
+                    component_id: component.id.clone(),
+                },
+                result: ComponentResult {
+                    id: component.id.clone(),
+                    label: component.label.clone(),
+                    base_atomic,
+                    effective_base_atomic,
+                    threshold_atomic: component
+                        .threshold
+                        .as_ref()
+                        .map(|threshold| threshold.amount_atomic),
+                    exemption_applied,
+                    raw_tax: raw_tax.parts(),
+                    credit_atomic: component.credit_atomic,
+                    clamped_tax_atomic,
+                    tax_atomic: clamped_tax_atomic,
+                    explanation: format!(
+                        "{} calculated from {} atomic units using document-scope rounding",
+                        component.label, base_atomic
+                    ),
+                },
+                exact: with_cap,
+            });
+        }
+        Ok(pending)
+    }
+
+    pub fn calculate_document(
+        &self,
+        facts: &TaxDocumentFacts,
+    ) -> Result<TaxDocumentResult, TaxError> {
+        facts.validate()?;
+        let facts_digest = facts.canonical_digest()?;
+        let scope = self.rule_set.components[0].rounding.scope;
+        if !matches!(scope, RoundingScope::Line | RoundingScope::Invoice) {
+            return Err(TaxError::UnsupportedDocumentScope(
+                "document calculation requires line or invoice rounding",
+            ));
+        }
+        let rounding_mode = self.rule_set.components[0].rounding.mode;
+        let rounding_quantum = self.rule_set.components[0].rounding.quantum_atomic;
+        let mut ordered_lines = facts.lines.iter().collect::<Vec<_>>();
+        ordered_lines.sort_by(|left, right| left.id.cmp(&right.id));
+        let mut pending_lines = Vec::with_capacity(ordered_lines.len());
+        for line in ordered_lines {
+            let line_facts = TaxFacts {
+                gross_atomic: line.gross_atomic,
+                net_atomic: line.net_atomic,
+                currency: facts.currency.clone(),
+                jurisdiction: facts.jurisdiction.clone(),
+                jurisdiction_resolution: facts.jurisdiction_resolution.clone(),
+                exemption_codes: line.exemption_codes.clone(),
+                cumulative_period: facts.cumulative_period.clone(),
+            };
+            let mut pending = self.exact_components(&line_facts)?;
+            for component in &mut pending {
+                component.key.line_id = line.id.clone();
+            }
+            pending_lines.push((line, pending));
+        }
+
+        let mut line_results = Vec::with_capacity(pending_lines.len());
+        if scope == RoundingScope::Line {
+            for (line, pending) in pending_lines {
+                let components = allocate_pending(pending, rounding_mode, rounding_quantum)?;
+                line_results.push(build_line_result(
+                    line.id.clone(),
+                    line.gross_atomic,
+                    components,
+                )?);
+            }
+        } else {
+            let all_pending = pending_lines
+                .iter()
+                .flat_map(|(_, pending)| pending.iter().cloned())
+                .collect::<Vec<_>>();
+            let allocated = allocate_pending(all_pending, rounding_mode, rounding_quantum)?;
+            let mut components_by_line = BTreeMap::<String, Vec<ComponentResult>>::new();
+            let mut keys = pending_lines
+                .iter()
+                .flat_map(|(_, pending)| pending.iter().map(|item| item.key.clone()))
+                .collect::<Vec<_>>();
+            keys.sort();
+            for (key, component) in keys.into_iter().zip(allocated) {
+                components_by_line
+                    .entry(key.line_id)
+                    .or_default()
+                    .push(component);
+            }
+            for (line, _) in pending_lines {
+                let components = components_by_line
+                    .remove(&line.id)
+                    .ok_or(TaxError::ArithmeticOverflow)?;
+                line_results.push(build_line_result(
+                    line.id.clone(),
+                    line.gross_atomic,
+                    components,
+                )?);
+            }
+        }
+
+        let gross_atomic = line_results.iter().try_fold(0_i128, |total, line| {
+            total
+                .checked_add(line.gross_atomic)
+                .ok_or(TaxError::ArithmeticOverflow)
+        })?;
+        let total_tax_atomic = line_results.iter().try_fold(0_i128, |total, line| {
+            total
+                .checked_add(line.total_tax_atomic)
+                .ok_or(TaxError::ArithmeticOverflow)
+        })?;
+        let total_net_atomic = gross_atomic
+            .checked_sub(total_tax_atomic)
+            .ok_or(TaxError::ArithmeticOverflow)?;
+        if total_net_atomic < 0 {
+            return Err(TaxError::InvalidFacts(
+                "document tax cannot exceed gross amount",
+            ));
+        }
+        Ok(TaxDocumentResult {
+            document_id: facts.id.clone(),
+            rule_set_id: self.rule_set.id.clone(),
+            rule_version: self.rule_set.version,
+            engine_version: ENGINE_VERSION.to_string(),
+            currency: facts.currency.clone(),
+            jurisdiction: facts.jurisdiction.clone(),
+            jurisdiction_resolution: facts.jurisdiction_resolution.clone(),
+            facts_digest,
+            rule_digest: self.rule_digest,
+            gross_atomic,
+            total_tax_atomic,
+            total_net_atomic,
+            lines: line_results,
+        })
+    }
+
     /// Resolves and binds jurisdiction evidence while reusing this compiled
     /// immutable rule graph in the low-latency quote path.
     pub fn calculate_with_jurisdiction_resolution(
@@ -730,6 +1165,103 @@ impl CompiledRuleSet {
         resolved_facts.jurisdiction_resolution = Some(resolution);
         self.calculate(&resolved_facts)
     }
+}
+
+fn allocate_pending(
+    mut pending: Vec<PendingComponent>,
+    rounding_mode: RoundingMode,
+    rounding_quantum: AtomicAmount,
+) -> Result<Vec<ComponentResult>, TaxError> {
+    pending.sort_by(|left, right| left.key.cmp(&right.key));
+    let exact_total = pending.iter().try_fold(Rational::zero(), |total, item| {
+        total.checked_add(item.exact)
+    })?;
+    let target_total = exact_total.round_to_quantum(rounding_mode, rounding_quantum)?;
+    let floored_total = pending.iter().try_fold(0_i128, |total, item| {
+        total
+            .checked_add(item.result.clamped_tax_atomic)
+            .ok_or(TaxError::ArithmeticOverflow)
+    })?;
+    let residual_atomic = target_total
+        .checked_sub(floored_total)
+        .ok_or(TaxError::ArithmeticOverflow)?;
+    if residual_atomic < 0 || residual_atomic % rounding_quantum != 0 {
+        return Err(TaxError::ArithmeticOverflow);
+    }
+    let mut residual_units = residual_atomic / rounding_quantum;
+    let max_residual_units =
+        i128::try_from(pending.len()).map_err(|_| TaxError::ArithmeticOverflow)?;
+    if residual_units > max_residual_units {
+        return Err(TaxError::ArithmeticOverflow);
+    }
+
+    let mut allocated = vec![false; pending.len()];
+    while residual_units > 0 {
+        let mut selected: Option<usize> = None;
+        for index in 0..pending.len() {
+            if allocated[index] {
+                continue;
+            }
+            let candidate_remainder = pending[index].exact.checked_sub(Rational::from_integer(
+                pending[index].result.clamped_tax_atomic,
+            ))?;
+            let should_select = match selected {
+                None => true,
+                Some(current) => {
+                    let current_remainder = pending[current].exact.checked_sub(
+                        Rational::from_integer(pending[current].result.clamped_tax_atomic),
+                    )?;
+                    candidate_remainder.is_greater_than(current_remainder)?
+                        || (!candidate_remainder.is_greater_than(current_remainder)?
+                            && !current_remainder.is_greater_than(candidate_remainder)?
+                            && pending[index].key < pending[current].key)
+                }
+            };
+            if should_select {
+                selected = Some(index);
+            }
+        }
+        let Some(index) = selected else {
+            return Err(TaxError::ArithmeticOverflow);
+        };
+        pending[index].result.tax_atomic = pending[index]
+            .result
+            .tax_atomic
+            .checked_add(rounding_quantum)
+            .ok_or(TaxError::ArithmeticOverflow)?;
+        allocated[index] = true;
+        residual_units -= 1;
+    }
+
+    Ok(pending.into_iter().map(|item| item.result).collect())
+}
+
+fn build_line_result(
+    id: String,
+    gross_atomic: AtomicAmount,
+    mut components: Vec<ComponentResult>,
+) -> Result<TaxLineResult, TaxError> {
+    components.sort_by(|left, right| left.id.cmp(&right.id));
+    let total_tax_atomic = components.iter().try_fold(0_i128, |total, component| {
+        total
+            .checked_add(component.tax_atomic)
+            .ok_or(TaxError::ArithmeticOverflow)
+    })?;
+    let total_net_atomic = gross_atomic
+        .checked_sub(total_tax_atomic)
+        .ok_or(TaxError::ArithmeticOverflow)?;
+    if total_tax_atomic < 0 || total_net_atomic < 0 {
+        return Err(TaxError::InvalidFacts(
+            "line tax cannot exceed gross amount",
+        ));
+    }
+    Ok(TaxLineResult {
+        id,
+        gross_atomic,
+        total_tax_atomic,
+        total_net_atomic,
+        components,
+    })
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -793,6 +1325,60 @@ impl CalculationResult {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TaxLineResult {
+    pub id: String,
+    #[serde(with = "serde_i128_string")]
+    pub gross_atomic: AtomicAmount,
+    #[serde(with = "serde_i128_string")]
+    pub total_tax_atomic: AtomicAmount,
+    #[serde(with = "serde_i128_string")]
+    pub total_net_atomic: AtomicAmount,
+    pub components: Vec<ComponentResult>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TaxDocumentResult {
+    pub document_id: String,
+    pub rule_set_id: String,
+    pub rule_version: u32,
+    #[serde(default)]
+    pub engine_version: String,
+    pub currency: String,
+    pub jurisdiction: String,
+    #[serde(default)]
+    pub jurisdiction_resolution: Option<JurisdictionResolution>,
+    pub facts_digest: Digest32,
+    pub rule_digest: Digest32,
+    #[serde(with = "serde_i128_string")]
+    pub gross_atomic: AtomicAmount,
+    #[serde(with = "serde_i128_string")]
+    pub total_tax_atomic: AtomicAmount,
+    #[serde(with = "serde_i128_string")]
+    pub total_net_atomic: AtomicAmount,
+    pub lines: Vec<TaxLineResult>,
+}
+
+impl TaxDocumentResult {
+    pub fn verify_replay(
+        &self,
+        rule_set: &RuleSet,
+        facts: &TaxDocumentFacts,
+    ) -> Result<(), TaxError> {
+        if self.engine_version != ENGINE_VERSION {
+            return Err(TaxError::EngineVersionMismatch {
+                expected: ENGINE_VERSION.to_string(),
+                actual: self.engine_version.clone(),
+            });
+        }
+        let replayed = calculate_document(rule_set, facts)?;
+        if replayed != *self {
+            return Err(TaxError::ReplayMismatch);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Error, Eq, PartialEq)]
 pub enum TaxError {
     #[error("invalid rule: {0}")]
@@ -813,6 +1399,8 @@ pub enum TaxError {
     MissingCumulativeSnapshot,
     #[error("unsupported threshold calculation: {0}")]
     UnsupportedThreshold(&'static str),
+    #[error("unsupported document calculation scope: {0}")]
+    UnsupportedDocumentScope(&'static str),
     #[error("calculation result was produced by engine version {actual}, expected {expected}")]
     EngineVersionMismatch { expected: String, actual: String },
     #[error("calculation replay does not match the stored result")]
@@ -823,6 +1411,13 @@ pub enum TaxError {
 
 pub fn calculate(rule_set: &RuleSet, facts: &TaxFacts) -> Result<CalculationResult, TaxError> {
     rule_set.compile()?.calculate(facts)
+}
+
+pub fn calculate_document(
+    rule_set: &RuleSet,
+    facts: &TaxDocumentFacts,
+) -> Result<TaxDocumentResult, TaxError> {
+    rule_set.compile()?.calculate_document(facts)
 }
 
 /// Resolve and bind jurisdiction evidence before calculating.
@@ -943,6 +1538,23 @@ fn encode_component(
         RoundingMode::HalfEven => 3,
         RoundingMode::AwayFromZero => 4,
     });
+    // Preserve the legacy canonical bytes for the default component scope;
+    // non-component scopes are additive digest markers.
+    let scope_marker = match component.rounding.scope {
+        RoundingScope::Component => None,
+        RoundingScope::Settlement => Some(1),
+        RoundingScope::Line => Some(2),
+        RoundingScope::Invoice => Some(3),
+    };
+    if let Some(scope_marker) = scope_marker {
+        encoder.u8(scope_marker);
+    }
+    // Preserve legacy bytes for the default atomic quantum; a non-default
+    // quantum is an explicit semantic change to the rule digest.
+    if component.rounding.quantum_atomic != 1 {
+        encoder.u8(2);
+        encoder.i128(component.rounding.quantum_atomic);
+    }
     match &component.threshold {
         Some(threshold) => {
             encoder.u8(1);
@@ -1183,8 +1795,38 @@ fn validate_rule_set(rule_set: &RuleSet) -> Result<(), TaxError> {
             "component count is outside the supported bound",
         ));
     }
+    let rounding_scope = rule_set.components[0].rounding.scope;
+    let rounding_mode = rule_set.components[0].rounding.mode;
+    let rounding_quantum = rule_set.components[0].rounding.quantum_atomic;
     let mut ids = HashMap::new();
     for component in &rule_set.components {
+        if component.rounding.quantum_atomic <= 0
+            || component.rounding.quantum_atomic > MAX_ATOMIC_AMOUNT
+        {
+            return Err(TaxError::InvalidRule(
+                "rounding quantum must be a positive Solana u64 atomic amount",
+            ));
+        }
+        if component.rounding.scope != rounding_scope {
+            return Err(TaxError::InvalidRule(
+                "all components must use the same rounding scope",
+            ));
+        }
+        if matches!(
+            rounding_scope,
+            RoundingScope::Settlement | RoundingScope::Line | RoundingScope::Invoice
+        ) && (component.rounding.mode != rounding_mode
+            || component.rounding.quantum_atomic != rounding_quantum
+            || component
+                .base
+                .sources
+                .iter()
+                .any(|source| matches!(source, BaseReference::Component(_))))
+        {
+            return Err(TaxError::InvalidRule(
+                "aggregate, line, and invoice rounding cannot use component dependencies, mixed rounding modes, or mixed atomic quanta",
+            ));
+        }
         if component.id.trim().is_empty()
             || component.label.trim().is_empty()
             || component.id.len() > MAX_CODE_BYTES
@@ -1209,6 +1851,17 @@ fn validate_rule_set(rule_set: &RuleSet) -> Result<(), TaxError> {
         {
             return Err(TaxError::InvalidRule(
                 "credit, floor, and cap must fit Solana u64 atomic units",
+            ));
+        }
+        if component
+            .floor_atomic
+            .is_some_and(|floor| floor % component.rounding.quantum_atomic != 0)
+            || component
+                .cap_atomic
+                .is_some_and(|cap| cap % component.rounding.quantum_atomic != 0)
+        {
+            return Err(TaxError::InvalidRule(
+                "floor and cap must be exact multiples of the rounding quantum",
             ));
         }
         if let (Some(floor), Some(cap)) = (component.floor_atomic, component.cap_atomic)
@@ -1301,6 +1954,8 @@ mod tests {
             cap_atomic: None,
             rounding: RoundingSpec {
                 mode: RoundingMode::HalfUp,
+                scope: RoundingScope::Component,
+                quantum_atomic: 1,
             },
             threshold: None,
             exemption_codes: Vec::new(),
@@ -1408,6 +2063,8 @@ mod tests {
                 cap_atomic: None,
                 rounding: RoundingSpec {
                     mode: RoundingMode::HalfUp,
+                    scope: RoundingScope::Component,
+                    quantum_atomic: 1,
                 },
                 threshold: None,
                 exemption_codes: Vec::new(),
@@ -1445,6 +2102,379 @@ mod tests {
         let result = calculate(&rule, &facts(1_155, 1_000)).unwrap();
         assert_eq!(result.total_tax_atomic, 155);
         assert_eq!(result.components[1].base_atomic, 1_100);
+    }
+
+    #[test]
+    fn settlement_scope_rounds_once_and_allocates_residual_by_canonical_id() {
+        let rule = RuleSet {
+            id: "settlement-rounding".to_string(),
+            version: 1,
+            components: vec![
+                TaxComponentRule {
+                    id: "a".to_string(),
+                    label: "A".to_string(),
+                    base: TaxBase::single(BaseReference::Net),
+                    rate: RateSpec::Flat(Rate::new(1, 3).unwrap()),
+                    price_mode: PriceMode::Exclusive,
+                    credit_atomic: 0,
+                    floor_atomic: None,
+                    cap_atomic: None,
+                    rounding: RoundingSpec {
+                        mode: RoundingMode::HalfUp,
+                        scope: RoundingScope::Settlement,
+                        quantum_atomic: 1,
+                    },
+                    threshold: None,
+                    exemption_codes: Vec::new(),
+                },
+                TaxComponentRule {
+                    id: "b".to_string(),
+                    label: "B".to_string(),
+                    base: TaxBase::single(BaseReference::Net),
+                    rate: RateSpec::Flat(Rate::new(1, 3).unwrap()),
+                    price_mode: PriceMode::Exclusive,
+                    credit_atomic: 0,
+                    floor_atomic: None,
+                    cap_atomic: None,
+                    rounding: RoundingSpec {
+                        mode: RoundingMode::HalfUp,
+                        scope: RoundingScope::Settlement,
+                        quantum_atomic: 1,
+                    },
+                    threshold: None,
+                    exemption_codes: Vec::new(),
+                },
+            ],
+        };
+
+        let result = calculate(&rule, &facts(1, 1)).unwrap();
+        assert_eq!(result.total_tax_atomic, 1);
+        assert_eq!(result.total_net_atomic, 0);
+        assert_eq!(result.components[0].id, "a");
+        assert_eq!(result.components[0].clamped_tax_atomic, 0);
+        assert_eq!(result.components[0].tax_atomic, 1);
+        assert_eq!(result.components[1].tax_atomic, 0);
+    }
+
+    #[test]
+    fn settlement_scope_rejects_mixed_or_dependent_rounding_graphs() {
+        let mut settlement = flat_rule(
+            "settlement",
+            TaxBase::single(BaseReference::Net),
+            Rate::new(1, 3).unwrap(),
+            PriceMode::Exclusive,
+        );
+        settlement.rounding.scope = RoundingScope::Settlement;
+        let mut component = flat_rule(
+            "component",
+            TaxBase::single(BaseReference::Net),
+            Rate::new(1, 3).unwrap(),
+            PriceMode::Exclusive,
+        );
+        component.rounding.scope = RoundingScope::Component;
+        let mixed = RuleSet {
+            id: "mixed-rounding".to_string(),
+            version: 1,
+            components: vec![settlement.clone(), component.clone()],
+        };
+        assert!(
+            matches!(mixed.compile(), Err(TaxError::InvalidRule(message)) if message.contains("same rounding scope"))
+        );
+
+        let mut dependent = settlement;
+        dependent.id = "dependent".to_string();
+        dependent.base = TaxBase::single(BaseReference::Component("component".to_string()));
+        let mut settlement_component = component;
+        settlement_component.rounding.scope = RoundingScope::Settlement;
+        let dependent_rule = RuleSet {
+            id: "dependent-rounding".to_string(),
+            version: 1,
+            components: vec![settlement_component, dependent],
+        };
+        assert!(
+            matches!(dependent_rule.compile(), Err(TaxError::InvalidRule(message)) if message.contains("component dependencies"))
+        );
+    }
+
+    #[test]
+    fn component_rounding_uses_declared_atomic_quantum() {
+        let mut rule = flat_rule(
+            "quantized",
+            TaxBase::single(BaseReference::Net),
+            Rate::new(1, 3).unwrap(),
+            PriceMode::Exclusive,
+        );
+        rule.rounding.quantum_atomic = 10;
+
+        let result = calculate(
+            &RuleSet {
+                id: "component-quantum".to_string(),
+                version: 1,
+                components: vec![rule],
+            },
+            &facts(100, 100),
+        )
+        .unwrap();
+
+        assert_eq!(result.total_tax_atomic, 30);
+        assert_eq!(result.components[0].tax_atomic % 10, 0);
+    }
+
+    #[test]
+    fn settlement_rounding_allocates_residual_in_declared_atomic_quantum() {
+        let mut first = flat_rule(
+            "a",
+            TaxBase::single(BaseReference::Net),
+            Rate::new(1, 3).unwrap(),
+            PriceMode::Exclusive,
+        );
+        first.rounding.scope = RoundingScope::Settlement;
+        first.rounding.quantum_atomic = 10;
+        let mut second = first.clone();
+        second.id = "b".to_string();
+
+        let result = calculate(
+            &RuleSet {
+                id: "settlement-quantum".to_string(),
+                version: 1,
+                components: vec![first, second],
+            },
+            &facts(100, 100),
+        )
+        .unwrap();
+
+        assert_eq!(result.total_tax_atomic, 70);
+        assert_eq!(result.components[0].tax_atomic, 40);
+        assert_eq!(result.components[1].tax_atomic, 30);
+        assert!(
+            result
+                .components
+                .iter()
+                .all(|component| component.tax_atomic % 10 == 0)
+        );
+    }
+
+    #[test]
+    fn rejects_non_positive_or_mixed_rounding_quantum() {
+        let mut invalid = flat_rule(
+            "invalid-quantum",
+            TaxBase::single(BaseReference::Net),
+            Rate::new(1, 3).unwrap(),
+            PriceMode::Exclusive,
+        );
+        invalid.rounding.quantum_atomic = 0;
+        assert!(matches!(
+            (RuleSet {
+                id: "invalid-quantum".to_string(),
+                version: 1,
+                components: vec![invalid],
+            })
+            .compile(),
+            Err(TaxError::InvalidRule(message)) if message.contains("quantum")
+        ));
+
+        let mut first = flat_rule(
+            "a",
+            TaxBase::single(BaseReference::Net),
+            Rate::new(1, 3).unwrap(),
+            PriceMode::Exclusive,
+        );
+        first.rounding.scope = RoundingScope::Settlement;
+        first.rounding.quantum_atomic = 10;
+        let mut second = first.clone();
+        second.id = "b".to_string();
+        second.rounding.quantum_atomic = 100;
+        assert!(matches!(
+            (RuleSet {
+                id: "mixed-quantum".to_string(),
+                version: 1,
+                components: vec![first, second],
+            })
+            .compile(),
+            Err(TaxError::InvalidRule(message)) if message.contains("atomic quanta")
+        ));
+
+        let mut incompatible_clamp = flat_rule(
+            "incompatible-clamp",
+            TaxBase::single(BaseReference::Net),
+            Rate::new(1, 3).unwrap(),
+            PriceMode::Exclusive,
+        );
+        incompatible_clamp.rounding.quantum_atomic = 10;
+        incompatible_clamp.floor_atomic = Some(3);
+        assert!(matches!(
+            (RuleSet {
+                id: "incompatible-clamp".to_string(),
+                version: 1,
+                components: vec![incompatible_clamp],
+            })
+            .compile(),
+            Err(TaxError::InvalidRule(message)) if message.contains("exact multiples")
+        ));
+    }
+
+    fn document_facts(lines: Vec<TaxLineFacts>) -> TaxDocumentFacts {
+        TaxDocumentFacts {
+            id: "invoice-1".to_string(),
+            currency: "USD".to_string(),
+            jurisdiction: "US-CA".to_string(),
+            jurisdiction_resolution: None,
+            cumulative_period: None,
+            lines,
+        }
+    }
+
+    fn line(id: &str, amount: i128) -> TaxLineFacts {
+        TaxLineFacts {
+            id: id.to_string(),
+            gross_atomic: amount,
+            net_atomic: amount,
+            exemption_codes: Vec::new(),
+        }
+    }
+
+    fn independent_document_rule(scope: RoundingScope) -> RuleSet {
+        let mut first = flat_rule(
+            "a",
+            TaxBase::single(BaseReference::Net),
+            Rate::new(1, 3).unwrap(),
+            PriceMode::Exclusive,
+        );
+        first.rounding.scope = scope;
+        let mut second = first.clone();
+        second.id = "b".to_string();
+        RuleSet {
+            id: "document-rounding".to_string(),
+            version: 1,
+            components: vec![first, second],
+        }
+    }
+
+    #[test]
+    fn line_scope_rounds_each_line_and_orders_results_by_line_id() {
+        let result = calculate_document(
+            &independent_document_rule(RoundingScope::Line),
+            &document_facts(vec![line("line-b", 1), line("line-a", 1)]),
+        )
+        .unwrap();
+
+        assert_eq!(result.total_tax_atomic, 2);
+        assert_eq!(result.total_net_atomic, 0);
+        assert_eq!(
+            result
+                .lines
+                .iter()
+                .map(|line| line.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["line-a", "line-b"]
+        );
+        assert_eq!(result.lines[0].total_tax_atomic, 1);
+        assert_eq!(result.lines[1].total_tax_atomic, 1);
+        assert_eq!(result.lines[0].components[0].tax_atomic, 1);
+        result
+            .verify_replay(
+                &independent_document_rule(RoundingScope::Line),
+                &document_facts(vec![line("line-a", 1), line("line-b", 1)]),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn invoice_scope_rounds_once_and_allocates_by_line_then_component_id() {
+        let result = calculate_document(
+            &independent_document_rule(RoundingScope::Invoice),
+            &document_facts(vec![line("line-b", 1), line("line-a", 1)]),
+        )
+        .unwrap();
+
+        assert_eq!(result.total_tax_atomic, 1);
+        assert_eq!(result.total_net_atomic, 1);
+        assert_eq!(result.lines[0].id, "line-a");
+        assert_eq!(result.lines[0].total_tax_atomic, 1);
+        assert_eq!(result.lines[1].total_tax_atomic, 0);
+        assert_eq!(result.lines[0].components[0].tax_atomic, 1);
+        assert!(
+            result
+                .lines
+                .iter()
+                .flat_map(|line| line.components.iter())
+                .all(|component| component.tax_atomic >= 0)
+        );
+    }
+
+    #[test]
+    fn document_digest_is_line_order_independent_but_line_identity_bound() {
+        let first = document_facts(vec![line("line-a", 10), line("line-b", 20)]);
+        let second = document_facts(vec![line("line-b", 20), line("line-a", 10)]);
+        assert_eq!(
+            first.canonical_digest().unwrap(),
+            second.canonical_digest().unwrap()
+        );
+
+        let renamed = document_facts(vec![line("line-a", 10), line("line-c", 20)]);
+        assert_ne!(
+            first.canonical_digest().unwrap(),
+            renamed.canonical_digest().unwrap()
+        );
+    }
+
+    #[test]
+    fn document_and_aggregate_scope_boundaries_fail_closed() {
+        let document = document_facts(vec![line("line-a", 1)]);
+        let line_rule = independent_document_rule(RoundingScope::Line);
+        assert!(matches!(
+            calculate(&line_rule, &facts(1, 1)),
+            Err(TaxError::UnsupportedDocumentScope(_))
+        ));
+
+        let aggregate_rule = independent_document_rule(RoundingScope::Settlement);
+        assert!(matches!(
+            calculate_document(&aggregate_rule, &document),
+            Err(TaxError::UnsupportedDocumentScope(_))
+        ));
+
+        let mut duplicate = document_facts(vec![line("line-a", 1), line("line-a", 1)]);
+        assert!(matches!(
+            duplicate.canonical_digest(),
+            Err(TaxError::InvalidFacts(message)) if message.contains("line ids")
+        ));
+        duplicate.lines[1].id = "line-b".to_string();
+        duplicate.lines[1].gross_atomic = 0;
+        assert!(matches!(
+            duplicate.canonical_digest(),
+            Err(TaxError::InvalidFacts(message)) if message.contains("positive")
+        ));
+    }
+
+    #[test]
+    fn omitted_rounding_scope_deserializes_as_component_scope() {
+        let document = serde_json::json!({
+            "mode": "Floor"
+        });
+        let rounding: RoundingSpec = serde_json::from_value(document).unwrap();
+        assert_eq!(rounding.scope, RoundingScope::Component);
+        assert_eq!(rounding.quantum_atomic, 1);
+        assert_eq!(
+            serde_json::to_value(rounding).unwrap(),
+            serde_json::json!({ "mode": "Floor" })
+        );
+    }
+
+    #[test]
+    fn non_default_rounding_quantum_is_bound_to_the_rule_digest() {
+        let mut default_rule = RuleSet {
+            id: "quantum-digest".to_string(),
+            version: 1,
+            components: vec![flat_rule(
+                "tax",
+                TaxBase::single(BaseReference::Net),
+                Rate::new(1, 10).unwrap(),
+                PriceMode::Exclusive,
+            )],
+        };
+        let default_digest = default_rule.canonical_digest().unwrap();
+        default_rule.components[0].rounding.quantum_atomic = 10;
+        assert_ne!(default_digest, default_rule.canonical_digest().unwrap());
     }
 
     #[test]
@@ -2131,6 +3161,126 @@ mod tests {
         }
     }
 
+    #[derive(Deserialize)]
+    struct DocumentGoldenVectorFile {
+        schema: String,
+        vectors: Vec<DocumentGoldenVector>,
+    }
+
+    #[derive(Deserialize)]
+    struct DocumentGoldenVector {
+        id: String,
+        rule_set: RuleSet,
+        facts: TaxDocumentFacts,
+        expected: DocumentGoldenExpected,
+    }
+
+    #[derive(Deserialize)]
+    struct DocumentGoldenExpected {
+        #[serde(with = "serde_i128_string")]
+        gross_atomic: AtomicAmount,
+        #[serde(with = "serde_i128_string")]
+        total_tax_atomic: AtomicAmount,
+        #[serde(with = "serde_i128_string")]
+        total_net_atomic: AtomicAmount,
+        lines: Vec<DocumentGoldenLineExpected>,
+    }
+
+    #[derive(Deserialize)]
+    struct DocumentGoldenLineExpected {
+        id: String,
+        #[serde(with = "serde_i128_string")]
+        gross_atomic: AtomicAmount,
+        #[serde(with = "serde_i128_string")]
+        total_tax_atomic: AtomicAmount,
+        #[serde(with = "serde_i128_string")]
+        total_net_atomic: AtomicAmount,
+        components: Vec<DocumentGoldenComponentExpected>,
+    }
+
+    #[derive(Deserialize)]
+    struct DocumentGoldenComponentExpected {
+        id: String,
+        #[serde(with = "serde_i128_string")]
+        tax_atomic: AtomicAmount,
+    }
+
+    #[test]
+    fn executes_the_versioned_tax_document_golden_vectors() {
+        let file: DocumentGoldenVectorFile =
+            serde_json::from_str(include_str!("../../../test-vectors/tax-document-v1.json"))
+                .expect("tax-document golden vectors must be valid JSON");
+        assert_eq!(file.schema, TAX_DOCUMENT_SCHEMA_V1);
+        assert_eq!(file.vectors.len(), 2);
+
+        for vector in file.vectors {
+            let result = calculate_document(&vector.rule_set, &vector.facts)
+                .unwrap_or_else(|error| panic!("golden document {} failed: {error}", vector.id));
+            assert_eq!(
+                result.gross_atomic, vector.expected.gross_atomic,
+                "{}",
+                vector.id
+            );
+            assert_eq!(
+                result.total_tax_atomic, vector.expected.total_tax_atomic,
+                "{}",
+                vector.id
+            );
+            assert_eq!(
+                result.total_net_atomic, vector.expected.total_net_atomic,
+                "{}",
+                vector.id
+            );
+            assert_eq!(
+                result.lines.len(),
+                vector.expected.lines.len(),
+                "{}",
+                vector.id
+            );
+            for expected_line in vector.expected.lines {
+                let actual_line = result
+                    .lines
+                    .iter()
+                    .find(|line| line.id == expected_line.id)
+                    .unwrap_or_else(|| {
+                        panic!("line {} missing in {}", expected_line.id, vector.id)
+                    });
+                assert_eq!(
+                    actual_line.gross_atomic, expected_line.gross_atomic,
+                    "{}",
+                    vector.id
+                );
+                assert_eq!(
+                    actual_line.total_tax_atomic, expected_line.total_tax_atomic,
+                    "{}",
+                    vector.id
+                );
+                assert_eq!(
+                    actual_line.total_net_atomic, expected_line.total_net_atomic,
+                    "{}",
+                    vector.id
+                );
+                for expected_component in expected_line.components {
+                    let actual_component = actual_line
+                        .components
+                        .iter()
+                        .find(|component| component.id == expected_component.id)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "component {} missing in line {} of {}",
+                                expected_component.id, expected_line.id, vector.id
+                            )
+                        });
+                    assert_eq!(
+                        actual_component.tax_atomic, expected_component.tax_atomic,
+                        "{}",
+                        vector.id
+                    );
+                }
+            }
+        }
+    }
+
     proptest! {
         #[test]
         fn simple_tax_preserves_gross_conservation_for_bounded_inputs(
@@ -2194,6 +3344,28 @@ mod tests {
             prop_assert_eq!(result.total_tax_atomic + result.total_net_atomic, gross);
             prop_assert!(result.total_tax_atomic >= 0);
             prop_assert!(result.total_tax_atomic <= gross);
+        }
+
+        #[test]
+        fn document_rounding_preserves_conservation_for_bounded_line_sets(
+            amounts in prop::collection::vec(1i128..10_000i128, 1..=8),
+        ) {
+            let rule = independent_document_rule(RoundingScope::Invoice);
+            let lines = amounts
+                .iter()
+                .enumerate()
+                .map(|(index, amount)| line(&format!("line-{index:02}"), *amount))
+                .collect::<Vec<_>>();
+            let document = document_facts(lines);
+            let result = calculate_document(&rule, &document)
+                .expect("bounded invoice facts preserve document conservation");
+            prop_assert_eq!(result.total_tax_atomic + result.total_net_atomic, result.gross_atomic);
+            prop_assert!(result.total_tax_atomic >= 0);
+            prop_assert!(result.total_tax_atomic <= result.gross_atomic);
+            for line_result in result.lines {
+                prop_assert_eq!(line_result.total_tax_atomic + line_result.total_net_atomic, line_result.gross_atomic);
+                prop_assert!(line_result.total_tax_atomic >= 0);
+            }
         }
     }
 }

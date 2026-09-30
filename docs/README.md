@@ -94,6 +94,8 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [ADR-0198: Strict vault-release lifecycle response contract](adr/0198-strict-vault-release-response-contract.md)
 - [ADR-0199: Authoritative Linux validator evidence contract](adr/0199-linux-validator-evidence-contract.md)
 - [ADR-0200: Solana Wallet Standard signing boundary](adr/0200-solana-wallet-standard-boundary.md)
+- [ADR-0201: Bounded OTLP trace-export boundary](adr/0201-otlp-trace-export-boundary.md)
+- [ADR-0202: Explicit tax rounding scope and deterministic residual allocation](adr/0202-explicit-tax-rounding-scope.md)
 - [Operations runbooks](runbooks/README.md)
 
 ## Status and scope
@@ -123,6 +125,25 @@ local unit/component and
 real-browser suites pass; live provider/account coverage, Linux validator
 evidence, regional RPC performance, and production accessibility review remain
 release gates.
+
+ADR-0201 adds one bounded tracing bootstrap for the API, worker, indexer, and
+route-verifier. OTLP gRPC export is opt-in, TLS-gated outside local Docker,
+redaction-aware, and flushed during bounded graceful shutdown. Run
+`make otel-trace-drill` to prove local request-span receipt and correlation;
+collector authentication, retention, dashboards, alert routing, and on-call
+evidence remain production gates.
+
+ADR-0202 makes tax rounding scope explicit. Component scope remains the
+backward-compatible default for tax-on-tax graphs; independent components may
+declare settlement-scope rounding with deterministic largest-remainder
+allocation. Positive atomic quanta make decimal-scale/truncation semantics
+explicit, and incompatible floor/cap boundaries fail closed. Ambiguous
+mixed/dependent settlement rules fail closed, and line/invoice aggregation
+remains a separately versioned facts contract.
+
+ADR-0203 defines that document contract: bounded, versioned line facts with
+explicit line/invoice rounding, canonical line identity, deterministic
+residual allocation, and replay separation from aggregate `TaxFacts`.
 
 The current foundation also includes ADR-0145's facts-only, two-replica
 persisted-rule simulation latency harness. The 2026-09-27 Docker run measured
@@ -267,6 +288,12 @@ versioned alert rules with pinned Prometheus and Alertmanager images. Run
 prove the real Prometheus rule reaches Alertmanager and the test-only Rust
 receiver. Production receiver authentication, escalation, and on-call
 response remain deployment gates.
+
+Run `make otel-trace-drill` for the bounded local OTLP receipt check. It starts
+the real API and collector containers, sends a health request, verifies the
+API-owned UUIDv7 request correlation span, and rejects prohibited sensitive
+payload fields in the captured evidence. It is local transport evidence, not
+production telemetry or SLO evidence.
 
 The real-browser journey also exercises the built vault-reconciliation SPA
 workspace with synthetic server-shaped evidence, mismatch stop behavior, run

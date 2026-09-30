@@ -64,9 +64,11 @@ describe("structured Tier-1 rule workbench contract", () => {
     const component = draft.components[0];
     component.priceMode = "Exclusive";
     component.creditAtomic = "25";
-    component.floorAtomic = "3";
+    component.floorAtomic = "20";
     component.capAtomic = "500";
     component.roundingMode = "HalfEven";
+    component.roundingScope = "Settlement";
+    component.roundingQuantumAtomic = "10";
     component.thresholdEnabled = true;
     component.thresholdAtomic = "1000";
     component.thresholdBasis = "PerTransaction";
@@ -77,12 +79,41 @@ describe("structured Tier-1 rule workbench contract", () => {
     expect(rule.components[0]).toMatchObject({
       price_mode: "Exclusive",
       credit_atomic: "25",
-      floor_atomic: "3",
+      floor_atomic: "20",
       cap_atomic: "500",
-      rounding: { mode: "HalfEven" },
+      rounding: { mode: "HalfEven", scope: "Settlement", quantum_atomic: "10" },
       threshold: { amount_atomic: "1000", basis: "PerTransaction", mode: "ExemptUpTo" },
       exemption_codes: ["resale", "charity"],
     });
+  });
+
+  it("rejects settlement rounding for mixed scopes, dependencies, and modes", () => {
+    const draft = defaultRuleWorkbenchDraft();
+    draft.components[0].roundingScope = "Settlement";
+    const dependent = defaultComponentDraft(2);
+    dependent.baseSources = ["Net", "Component:sales-tax"];
+    dependent.roundingScope = "Settlement";
+    dependent.roundingMode = "Floor";
+    draft.components.push(dependent);
+
+    expect(validateRuleWorkbench(draft)).toEqual(expect.arrayContaining([
+      "Aggregate, line, and invoice rounding scopes cannot be used with tax-on-tax component dependencies.",
+      "Aggregate, line, and invoice rounding scopes require one rounding mode for the complete rule set.",
+    ]));
+  });
+
+  it("rejects zero or malformed rounding quanta and preserves the default omission", () => {
+    const draft = defaultRuleWorkbenchDraft();
+    draft.components[0].roundingQuantumAtomic = "0";
+    expect(validateRuleWorkbench(draft)).toContain("Component sales-tax rounding quantum must be positive.");
+    draft.components[0].roundingQuantumAtomic = "1.0";
+    expect(validateRuleWorkbench(draft)).toContain("Component sales-tax rounding quantum must be a non-negative decimal integer.");
+    draft.components[0].roundingQuantumAtomic = "10";
+    draft.components[0].floorAtomic = "3";
+    expect(validateRuleWorkbench(draft)).toContain("Component sales-tax floor must be an exact multiple of the rounding quantum.");
+    draft.components[0].roundingQuantumAtomic = "1";
+    draft.components[0].floorAtomic = "";
+    expect(buildRuleSet(draft).components[0].rounding).toEqual({ mode: "HalfUp" });
   });
 
   it("rejects duplicate identifiers, missing dependencies, and non-contiguous brackets", () => {

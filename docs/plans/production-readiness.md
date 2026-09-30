@@ -80,6 +80,13 @@ exists.
 - [ ] Live settlement CPI execution proves token-balance conservation and
   atomic rollback on the validator-backed localnet.
 - [ ] `u64` overflow, zero amount, cap, rate, and rounding boundaries are covered.
+- [x] ADR-0202 and ADR-0203 make component, settlement, line, and invoice
+  rounding explicit, preserve legacy component digests, reject ambiguous
+  graphs, and prove conserving largest-remainder allocation, positive
+  atomic-quantum semantics, canonical document identity, replay, and bounded
+  document calculations through Rust/API tests and versioned golden vectors.
+  Approved jurisdiction coverage, production document-quote authorization,
+  persistence, and legal/tax owner approval remain separate coverage gates.
 - [ ] Legacy SPL Token and extension-free Token-2022 account ownership is checked in localnet transactions.
 - [ ] Unsupported Token-2022 extensions are rejected or explicitly tested in localnet transactions.
 - [ ] Policy issuer, sequence, expiry, revocation, merchant binding, and governed issuer-registry scope are enforced.
@@ -427,6 +434,14 @@ and operational gates are intentionally not marked complete by unit tests.
   open until scrape access policy, production exporters, authenticated
   receiver delivery, dashboards, alerts, and load-derived SLO evidence are
   verified.
+- [x] ADR-0201 implements the shared opt-in OTLP gRPC trace bootstrap across
+  API, worker, indexer, and route-verifier. Configuration is bounded and
+  insecure HTTP is local-only; `make otel-trace-drill` proves a real API
+  request reaches the Docker collector with UUIDv7 correlation and no
+  prohibited financial payload fields. Authenticated production exporters,
+  retention, dashboards, alert routing, and on-call evidence remain open. CI
+  and release-candidate workflows now retain the drill artifact for regression
+  review without treating it as production telemetry evidence.
 - [x] ADR-0123 exposes fixed-cardinality queued, leased, dead-lettered, and
   leased-slot-span replay gauges from the configured indexer stream, with
   Prometheus rules for backlog and dead-letter alerts. ADR-0191 proves local

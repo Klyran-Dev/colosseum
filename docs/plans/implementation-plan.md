@@ -247,15 +247,43 @@ advance a movement to a successful state.
 
 ## ADR-0201 — bounded OTLP trace-export boundary
 
-- [ ] Add the shared observability bootstrap with opt-in OTLP gRPC traces,
+- [x] Add the shared observability bootstrap with opt-in OTLP gRPC traces,
   bounded queue/batch/timeout configuration, service-name allow-listing, and
   TLS/insecure endpoint policy.
-- [ ] Replace duplicated Rust binary tracing initialization with the shared
+- [x] Replace duplicated Rust binary tracing initialization with the shared
   bootstrap and add bounded graceful shutdown flush handling.
-- [ ] Add failing-first configuration tests and a Docker collector receipt
+- [x] Add failing-first configuration tests and a Docker collector receipt
   drill that proves request correlation without financial payload leakage.
+- [x] Run the collector receipt drill in CI and retain its evidence in the
+  release-candidate bundle.
 - [ ] Keep production collector authentication, TLS, retention, sampling,
   dashboards, alert routing, and on-call evidence as release gates.
+
+## ADR-0202 — explicit tax rounding scope and residual allocation
+
+- [x] Add backward-compatible `Component` and explicit `Settlement` rounding
+  scope to the versioned Rust DSL.
+- [x] Reject mixed scopes, dependent settlement-scope graphs, and mixed
+  settlement rounding modes before compilation.
+- [x] Add deterministic largest-remainder allocation, canonical-ID ties,
+  golden vectors, replay/digest coverage, workbench controls, and exact
+  positive atomic-quantum truncation/rounding.
+- [x] Add the separately versioned line/invoice facts contract, bounded
+  document digest, explicit scope separation, deterministic allocation,
+  replay/property/golden coverage, and a simulation-only document endpoint;
+  approved jurisdiction coverage and production authorization remain separate
+  release gates.
+
+## ADR-0203 — versioned line and invoice tax facts
+
+- [x] Add bounded `TaxDocumentFacts`/`TaxLineFacts` schemas and canonical
+  document digest domain.
+- [x] Add explicit `Line`/`Invoice` rounding scopes with deterministic
+  quantum-sized residual allocation and aggregate/document API separation.
+- [x] Add Rust tests, property tests, golden vectors, replay coverage, and
+  benchmark evidence for bounded document calculations.
+- [ ] Add separately authorized API/storage/UI adapters after the pure domain
+  contract is verified; do not reinterpret aggregate `TaxFacts` as a document.
 
 ## ADR-0177 — exact signed refund-claim submission
 
@@ -1136,10 +1164,11 @@ cache into an authority; concurrent-load, invalidation, and p99 evidence remain
 performance gates.
 
 ADR-0050 adds the first bounded metrics boundary. The API records fixed-series
-`tax_calculate` and `tax_quote` request counts, errors, and latency histograms
-at `/metrics`; unknown operation names cannot create metric series. Worker and
-indexer instrumentation, scrape access policy, OpenTelemetry export, dashboards,
-alert routing, and load-derived percentile evidence remain follow-on gates.
+`tax_calculate`, `tax_document_calculate`, and `tax_quote` request counts,
+errors, and latency histograms at `/metrics`; unknown operation names cannot
+create metric series. Worker and indexer instrumentation, scrape access policy,
+OpenTelemetry export, dashboards, alert routing, and load-derived percentile
+evidence remain follow-on gates.
 
 ADR-0051 now defines the profiled Docker-local topology for Redis, Prometheus,
 Grafana, and OpenTelemetry Collector. The Compose files pin stable image tags

@@ -336,6 +336,108 @@
         "total_net_atomic": "1",
         "components": [{ "id": "rounding", "base_atomic": "1", "effective_base_atomic": "1", "tax_atomic": "1", "exemption_applied": false }]
       }
+    },
+    {
+      "id": "settlement-scope-largest-remainder",
+      "rule_set": {
+        "id": "settlement-scope-largest-remainder",
+        "version": 1,
+        "components": [
+          {
+            "id": "a",
+            "label": "A",
+            "base": { "sources": ["Net"] },
+            "rate": { "Flat": { "numerator": "1", "denominator": "3" } },
+            "price_mode": "Exclusive",
+            "credit_atomic": "0",
+            "floor_atomic": null,
+            "cap_atomic": null,
+            "rounding": { "mode": "HalfUp", "scope": "Settlement" },
+            "threshold": null,
+            "exemption_codes": []
+          },
+          {
+            "id": "b",
+            "label": "B",
+            "base": { "sources": ["Net"] },
+            "rate": { "Flat": { "numerator": "1", "denominator": "3" } },
+            "price_mode": "Exclusive",
+            "credit_atomic": "0",
+            "floor_atomic": null,
+            "cap_atomic": null,
+            "rounding": { "mode": "HalfUp", "scope": "Settlement" },
+            "threshold": null,
+            "exemption_codes": []
+          }
+        ]
+      },
+      "facts": {
+        "gross_atomic": "1",
+        "net_atomic": "1",
+        "currency": "USD",
+        "jurisdiction": "US-CA",
+        "exemption_codes": [],
+        "cumulative_period": null
+      },
+      "expected": {
+        "total_tax_atomic": "1",
+        "total_net_atomic": "0",
+        "components": [
+          { "id": "a", "base_atomic": "1", "effective_base_atomic": "1", "tax_atomic": "1", "exemption_applied": false },
+          { "id": "b", "base_atomic": "1", "effective_base_atomic": "1", "tax_atomic": "0", "exemption_applied": false }
+        ]
+      }
+    },
+    {
+      "id": "settlement-scope-quantum-residual",
+      "rule_set": {
+        "id": "settlement-scope-quantum-residual",
+        "version": 1,
+        "components": [
+          {
+            "id": "a",
+            "label": "A",
+            "base": { "sources": ["Net"] },
+            "rate": { "Flat": { "numerator": "1", "denominator": "3" } },
+            "price_mode": "Exclusive",
+            "credit_atomic": "0",
+            "floor_atomic": null,
+            "cap_atomic": null,
+            "rounding": { "mode": "HalfUp", "scope": "Settlement", "quantum_atomic": "10" },
+            "threshold": null,
+            "exemption_codes": []
+          },
+          {
+            "id": "b",
+            "label": "B",
+            "base": { "sources": ["Net"] },
+            "rate": { "Flat": { "numerator": "1", "denominator": "3" } },
+            "price_mode": "Exclusive",
+            "credit_atomic": "0",
+            "floor_atomic": null,
+            "cap_atomic": null,
+            "rounding": { "mode": "HalfUp", "scope": "Settlement", "quantum_atomic": "10" },
+            "threshold": null,
+            "exemption_codes": []
+          }
+        ]
+      },
+      "facts": {
+        "gross_atomic": "100",
+        "net_atomic": "100",
+        "currency": "USD",
+        "jurisdiction": "US-CA",
+        "exemption_codes": [],
+        "cumulative_period": null
+      },
+      "expected": {
+        "total_tax_atomic": "70",
+        "total_net_atomic": "30",
+        "components": [
+          { "id": "a", "base_atomic": "100", "effective_base_atomic": "100", "tax_atomic": "40", "exemption_applied": false },
+          { "id": "b", "base_atomic": "100", "effective_base_atomic": "100", "tax_atomic": "30", "exemption_applied": false }
+        ]
+      }
     }
   ]
 }

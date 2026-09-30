@@ -1,8 +1,8 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 use tax_engine::{
-    BaseReference, PriceMode, Rate, RateSpec, RoundingMode, RoundingSpec, RuleSet, TaxBase,
-    TaxComponentRule, TaxFacts,
+    BaseReference, PriceMode, Rate, RateSpec, RoundingMode, RoundingScope, RoundingSpec, RuleSet,
+    TaxBase, TaxComponentRule, TaxFacts,
 };
 
 fn benchmark_rule() -> RuleSet {
@@ -21,6 +21,8 @@ fn benchmark_rule() -> RuleSet {
                 cap_atomic: None,
                 rounding: RoundingSpec {
                     mode: RoundingMode::HalfEven,
+                    scope: RoundingScope::Component,
+                    quantum_atomic: 1,
                 },
                 threshold: None,
                 exemption_codes: Vec::new(),
@@ -41,6 +43,8 @@ fn benchmark_rule() -> RuleSet {
                 cap_atomic: Some(10_000),
                 rounding: RoundingSpec {
                     mode: RoundingMode::HalfEven,
+                    scope: RoundingScope::Component,
+                    quantum_atomic: 1,
                 },
                 threshold: None,
                 exemption_codes: Vec::new(),

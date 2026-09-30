@@ -37,6 +37,11 @@ jobs:
       - name: Run repository checks
         run: make check
 
+      - name: Run OTLP trace receipt and redaction drill
+        env:
+          OTEL_TRACE_EVIDENCE_DIR: release-bundle/otel-trace
+        run: make otel-trace-drill
+
       - name: Assert authoritative Linux validator runner
         run: |
           test "$(uname -s)" = Linux

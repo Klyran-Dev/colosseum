@@ -20,10 +20,14 @@ signature lookup, index, and reconciliation. The API overwrites incoming
 values and returns its generated value on every response; this identifier is
 diagnostic metadata, never an authorization or idempotency credential.
 
-The first executable metric boundary is the Rust `observability` crate and the
-API `/metrics` endpoint. It uses fixed operation names and bounded latency
-histogram buckets; unknown request-derived labels are rejected. This is a
-foundation contract. The Docker `observability` profile adds Prometheus,
+The first executable telemetry boundary is the Rust `observability` crate and
+the API `/metrics` endpoint. It uses fixed operation names and bounded latency
+histogram buckets; unknown request-derived labels are rejected. The same crate
+provides opt-in OTLP gRPC traces for every long-running Rust service with
+bounded export queues, explicit endpoint security, redaction rules, and
+graceful shutdown flush. `make otel-trace-drill` proves local request-span
+receipt and correlation. This is a foundation contract. The Docker
+`observability` profile adds Prometheus,
 Alertmanager, Grafana, and an OpenTelemetry Collector; local dashboards and
 collection are operator aids, not evidence that production scrape
 authorization, alert routing, retention, or SLO evidence are complete.
@@ -42,6 +46,8 @@ never proves production paging, escalation, or response.
 
 Required metrics:
 
+- fixed-cardinality API request counts, errors, and latency histograms for
+  `tax_calculate`, `tax_document_calculate`, and `tax_quote`;
 - `settlement_quote_latency_ms` and `settlement_compile_latency_ms`;
 - `settlement_submit_latency_ms` by RPC provider and region;
 - confirmation latency by commitment level;

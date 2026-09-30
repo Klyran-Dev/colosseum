@@ -23,12 +23,12 @@ beyond the scrape path. Unknown operations fail closed and cannot create new
 series. The first histogram buckets are 10, 25, 50, 100, 250, 500, and 1,000
 milliseconds plus `+Inf`.
 
-The API exposes `/metrics` alongside health endpoints and records the
-`tax_calculate` and `tax_quote` operation durations. Metrics are operational
-telemetry only; they never influence tax results, authorization, settlement,
-or readiness. Production deployments must place the endpoint behind network
-policy or a dedicated internal listener and configure scrape authentication
-outside the domain path.
+The API exposes `/metrics` alongside health endpoints and records the fixed
+`tax_calculate`, `tax_document_calculate`, and `tax_quote` operation
+durations. Metrics are operational telemetry only; they never influence tax
+results, authorization, settlement, or readiness. Production deployments must
+place the endpoint behind network policy or a dedicated internal listener and
+configure scrape authentication outside the domain path.
 
 OpenTelemetry traces and a full collector/dashboard topology remain follow-on
 work. This slice establishes the bounded metric contract first so service

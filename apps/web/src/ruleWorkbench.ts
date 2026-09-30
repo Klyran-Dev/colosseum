@@ -6,6 +6,7 @@ const MAX_EXEMPTION_CODES = 32;
 export type RateMode = "flat" | "progressive";
 export type PriceMode = "Exclusive" | "Inclusive";
 export type RoundingMode = "Floor" | "Ceil" | "HalfUp" | "HalfEven" | "AwayFromZero";
+export type RoundingScope = "Component" | "Settlement" | "Line" | "Invoice";
 export type ThresholdBasis = "PerTransaction" | "CumulativePeriod";
 export type ThresholdMode = "ExemptUpTo" | "TriggerAt";
 
@@ -30,6 +31,8 @@ export type RuleComponentDraft = {
   floorAtomic: string;
   capAtomic: string;
   roundingMode: RoundingMode;
+  roundingScope: RoundingScope;
+  roundingQuantumAtomic: string;
   thresholdEnabled: boolean;
   thresholdAtomic: string;
   thresholdBasis: ThresholdBasis;
@@ -59,7 +62,7 @@ export type BuiltRuleSet = {
     credit_atomic: string;
     floor_atomic: string | null;
     cap_atomic: string | null;
-    rounding: { mode: RoundingMode };
+    rounding: { mode: RoundingMode; scope?: RoundingScope; quantum_atomic?: string };
     threshold: { amount_atomic: string; basis: ThresholdBasis; mode: ThresholdMode } | null;
     exemption_codes: string[];
   }>;
@@ -81,6 +84,8 @@ export function defaultComponentDraft(index = 1): RuleComponentDraft {
     floorAtomic: "",
     capAtomic: "",
     roundingMode: "HalfUp",
+    roundingScope: "Component",
+    roundingQuantumAtomic: "1",
     thresholdEnabled: false,
     thresholdAtomic: "0",
     thresholdBasis: "PerTransaction",
@@ -128,8 +133,14 @@ function validateComponent(component: RuleComponentDraft, ids: Set<string>, allI
     const credit = nonNegativeInteger(component.creditAtomic, `Component ${component.id} credit`);
     const floor = nonNegativeInteger(component.floorAtomic, `Component ${component.id} floor`, true);
     const cap = nonNegativeInteger(component.capAtomic, `Component ${component.id} cap`, true);
+    const quantum = nonNegativeInteger(component.roundingQuantumAtomic, `Component ${component.id} rounding quantum`);
     if (floor !== null && cap !== null && floor > cap) errors.push(`Component ${component.id} floor cannot exceed cap.`);
     if (credit === null) errors.push(`Component ${component.id} credit is required.`);
+    if (quantum === 0n) errors.push(`Component ${component.id} rounding quantum must be positive.`);
+    if (quantum !== null && quantum > 0n) {
+      if (floor !== null && floor % quantum !== 0n) errors.push(`Component ${component.id} floor must be an exact multiple of the rounding quantum.`);
+      if (cap !== null && cap % quantum !== 0n) errors.push(`Component ${component.id} cap must be an exact multiple of the rounding quantum.`);
+    }
   } catch (error) { errors.push(errorMessage(error)); }
   if (component.rateMode === "flat") {
     validateRate(component.flatNumerator, component.flatDenominator, `Component ${component.id} flat rate`, errors);
@@ -178,6 +189,14 @@ export function validateRuleWorkbench(draft: RuleWorkbenchDraft): string[] {
   const allIds = new Set(draft.components.map((component) => component.id));
   const ids = new Set<string>();
   for (const component of draft.components) errors.push(...validateComponent(component, ids, allIds));
+  const scopes = new Set(draft.components.map((component) => component.roundingScope));
+  if (scopes.size > 1) errors.push("All components must use the same rounding scope.");
+  if (draft.components.some((component) => ["Settlement", "Line", "Invoice"].includes(component.roundingScope) && component.baseSources.some((source) => source.startsWith("Component:")))) {
+    errors.push("Aggregate, line, and invoice rounding scopes cannot be used with tax-on-tax component dependencies.");
+  }
+  if (draft.components.some((component) => ["Settlement", "Line", "Invoice"].includes(component.roundingScope) && component.roundingMode !== draft.components[0]?.roundingMode)) {
+    errors.push("Aggregate, line, and invoice rounding scopes require one rounding mode for the complete rule set.");
+  }
   return [...new Set(errors)];
 }
 
@@ -202,7 +221,11 @@ export function buildRuleSet(draft: RuleWorkbenchDraft): BuiltRuleSet {
       credit_atomic: component.creditAtomic.trim(),
       floor_atomic: component.floorAtomic.trim() === "" ? null : component.floorAtomic.trim(),
       cap_atomic: component.capAtomic.trim() === "" ? null : component.capAtomic.trim(),
-      rounding: { mode: component.roundingMode },
+      rounding: {
+        mode: component.roundingMode,
+        ...(component.roundingScope !== "Component" ? { scope: component.roundingScope } : {}),
+        ...(component.roundingQuantumAtomic.trim() === "1" ? {} : { quantum_atomic: component.roundingQuantumAtomic.trim() }),
+      },
       threshold: component.thresholdEnabled ? {
         amount_atomic: component.thresholdAtomic.trim(),
         basis: component.thresholdBasis,

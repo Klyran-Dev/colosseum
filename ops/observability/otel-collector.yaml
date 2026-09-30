@@ -22,7 +22,11 @@ processors:
 
 exporters:
   debug:
-    verbosity: basic
+    # This collector configuration is local/test oriented. Detailed output is
+    # intentional so the Docker receipt drill can assert correlation and
+    # payload-redaction properties. Production exporters must use an approved
+    # authenticated backend and retention policy instead of stdout.
+    verbosity: detailed
 
 service:
   extensions: [health_check]

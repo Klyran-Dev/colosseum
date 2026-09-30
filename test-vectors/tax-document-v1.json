@@ -1,0 +1,102 @@
+{
+  "schema": "solana-tax-protocol/tax-document/v1",
+  "vectors": [
+    {
+      "id": "line-scope-per-line-rounding",
+      "rule_set": {
+        "id": "line-scope-per-line-rounding",
+        "version": 1,
+        "components": [
+          {
+            "id": "sales-tax",
+            "label": "Sales tax",
+            "base": { "sources": ["Net"] },
+            "rate": { "Flat": { "numerator": "1", "denominator": "3" } },
+            "price_mode": "Exclusive",
+            "credit_atomic": "0",
+            "floor_atomic": null,
+            "cap_atomic": null,
+            "rounding": { "mode": "HalfUp", "scope": "Line" },
+            "threshold": null,
+            "exemption_codes": []
+          }
+        ]
+      },
+      "facts": {
+        "id": "invoice-line-scope",
+        "currency": "USD",
+        "jurisdiction": "US-CA",
+        "jurisdiction_resolution": null,
+        "cumulative_period": null,
+        "lines": [
+          { "id": "line-b", "gross_atomic": "2", "net_atomic": "2", "exemption_codes": [] },
+          { "id": "line-a", "gross_atomic": "1", "net_atomic": "1", "exemption_codes": [] }
+        ]
+      },
+      "expected": {
+        "gross_atomic": "3",
+        "total_tax_atomic": "1",
+        "total_net_atomic": "2",
+        "lines": [
+          { "id": "line-a", "gross_atomic": "1", "total_tax_atomic": "0", "total_net_atomic": "1", "components": [{ "id": "sales-tax", "tax_atomic": "0" }] },
+          { "id": "line-b", "gross_atomic": "2", "total_tax_atomic": "1", "total_net_atomic": "1", "components": [{ "id": "sales-tax", "tax_atomic": "1" }] }
+        ]
+      }
+    },
+    {
+      "id": "invoice-scope-canonical-cell-allocation",
+      "rule_set": {
+        "id": "invoice-scope-canonical-cell-allocation",
+        "version": 1,
+        "components": [
+          {
+            "id": "a",
+            "label": "A",
+            "base": { "sources": ["Net"] },
+            "rate": { "Flat": { "numerator": "1", "denominator": "3" } },
+            "price_mode": "Exclusive",
+            "credit_atomic": "0",
+            "floor_atomic": null,
+            "cap_atomic": null,
+            "rounding": { "mode": "HalfUp", "scope": "Invoice" },
+            "threshold": null,
+            "exemption_codes": []
+          },
+          {
+            "id": "b",
+            "label": "B",
+            "base": { "sources": ["Net"] },
+            "rate": { "Flat": { "numerator": "1", "denominator": "3" } },
+            "price_mode": "Exclusive",
+            "credit_atomic": "0",
+            "floor_atomic": null,
+            "cap_atomic": null,
+            "rounding": { "mode": "HalfUp", "scope": "Invoice" },
+            "threshold": null,
+            "exemption_codes": []
+          }
+        ]
+      },
+      "facts": {
+        "id": "invoice-rounding",
+        "currency": "USD",
+        "jurisdiction": "US-CA",
+        "jurisdiction_resolution": null,
+        "cumulative_period": null,
+        "lines": [
+          { "id": "line-b", "gross_atomic": "1", "net_atomic": "1", "exemption_codes": [] },
+          { "id": "line-a", "gross_atomic": "1", "net_atomic": "1", "exemption_codes": [] }
+        ]
+      },
+      "expected": {
+        "gross_atomic": "2",
+        "total_tax_atomic": "1",
+        "total_net_atomic": "1",
+        "lines": [
+          { "id": "line-a", "gross_atomic": "1", "total_tax_atomic": "1", "total_net_atomic": "0", "components": [{ "id": "a", "tax_atomic": "1" }, { "id": "b", "tax_atomic": "0" }] },
+          { "id": "line-b", "gross_atomic": "1", "total_tax_atomic": "0", "total_net_atomic": "1", "components": [{ "id": "a", "tax_atomic": "0" }, { "id": "b", "tax_atomic": "0" }] }
+        ]
+      }
+    }
+  ]
+}

@@ -87,6 +87,24 @@ jobs:
       - name: Build the route-verifier image
         run: docker compose --profile route-verifier build route-verifier
 
+  otel-trace:
+    name: OTLP trace receipt and redaction drill
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Run Docker collector receipt drill
+        run: make otel-trace-drill
+      - name: Upload OTLP trace evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: otel-trace-${{ github.run_id }}
+          path: test-results/otel-trace/
+          if-no-files-found: warn
+          retention-days: 14
+
   solana-conformance:
     name: Validator-backed settlement conformance
     runs-on: ubuntu-24.04

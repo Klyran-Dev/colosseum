@@ -214,6 +214,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "api",
             &[
                 "tax_calculate",
+                "tax_document_calculate",
                 "tax_quote",
                 "tax_replay",
                 "tax_rule_transition",
@@ -234,7 +235,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
     let listener = TcpListener::bind(address).await?;
     info!(%address, "api listening");
-    axum::serve(listener, router().with_state(state)).await?;
+    axum::serve(listener, router().with_state(state))
+        .with_graceful_shutdown(async {
+            if let Err(error) = tokio::signal::ctrl_c().await {
+                tracing::warn!(%error, "api shutdown signal listener failed");
+            }
+        })
+        .await?;
     telemetry.shutdown();
     Ok(())
 }

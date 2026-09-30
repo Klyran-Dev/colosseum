@@ -2,16 +2,17 @@
 
 ## Status
 
-Accepted — implementation begins with the shared Rust service bootstrap. A
-live authenticated collector and production backend remain deployment gates.
+Accepted — the shared Rust service bootstrap and local collector receipt drill
+are implemented. A live authenticated collector and production backend remain
+deployment gates.
 
 ## Context
 
 The repository already exposes bounded Prometheus metrics and provisions an
 OpenTelemetry Collector in the Docker observability profile. The API, worker,
-indexer, and route-verifier binaries currently initialize JSON logging only,
-so a production operator cannot correlate request spans across the service
-boundary or verify that the documented OTLP path is executable.
+indexer, and route-verifier now share one bounded JSON-plus-OTLP bootstrap;
+the decision is retained here because the service boundary, CI evidence, and
+production gates must remain explicit and consistent.
 
 Telemetry must not become a settlement, tax, database, wallet, or
 reconciliation dependency. A collector outage must not delay or reject a
@@ -84,6 +85,9 @@ deployments.
 - A Docker collector evidence drill must prove one request span reaches the
   collector with the API-owned UUIDv7 correlation field and without sensitive
   financial payload fields.
+- CI and the release-candidate workflow must run the drill and retain its
+  evidence artifact; this proves regression coverage, not production backend
+  availability.
 - Production collector authentication, TLS, backend retention, sampling
   calibration, dashboards, alert routing, and on-call response remain open
   deployment gates.

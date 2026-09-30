@@ -68,6 +68,55 @@ The calculation result also returns the exact `engine_version` that produced
 the trace. Replay tooling must use the same engine version and compare the
 complete result, not only aggregate tax totals.
 
+## Document calculation simulation
+
+`POST /v1/tax/calculate-document` accepts the versioned
+`solana-tax-protocol/tax-document/v1` contract from ADR-0203. It is a bounded
+simulation route for design and rule-vector validation; it is not an
+authenticated production quote, does not persist a quote, does not issue an
+attestation, and cannot authorize settlement. It is available only when the
+API is running with `SIMULATION_MODE=true`; otherwise it returns
+`501 PUBLISHED_RULE_REGISTRY_REQUIRED`.
+
+The request contains a `TaxDocumentFacts` value and a caller-supplied
+`RuleSet`. The document has one currency and jurisdiction, one to 256 lines,
+unique line IDs, decimal-string atomic amounts, and optional line exemptions.
+`RoundingScope::Line` rounds and allocates within each line. `Invoice` rounds
+and allocates across the complete canonical `(line_id, component_id)` cell
+set. Caller line order never controls the digest or residual tie-break.
+
+The successful response has the following shape; all atomic amounts and
+identifiers that can exceed JavaScript safe-integer precision remain decimal
+strings:
+
+```json
+{
+  "calculation_id": "0199f8a8-0000-7abc-8def-0123456789ab",
+  "status": "simulated_unattested",
+  "result": {
+    "document_id": "invoice-1001",
+    "rule_set_id": "operator-simulator-flat-rate",
+    "rule_set_version": 1,
+    "engine_version": "tax-engine-v1",
+    "currency": "USD",
+    "jurisdiction": "US-CA",
+    "facts_digest": "<sha256-hex>",
+    "rule_digest": "<sha256-hex>",
+    "gross_atomic": "3000",
+    "total_tax_atomic": "247",
+    "total_net_atomic": "2753",
+    "lines": []
+  }
+}
+```
+
+Unknown fields, malformed decimal strings, duplicate line IDs, unsupported
+document scopes, invalid evidence, and requests over the documented bounds
+fail closed. A production document quote must introduce a separately
+authorized route with published-rule selection, tenant scope, durable
+idempotency, evidence persistence, replay, attestation, and settlement
+binding; implementing this simulation route does not satisfy those gates.
+
 ## Persisted production quote
 
 `POST /v1/tax/quote` is the production calculation boundary. It requires an
@@ -1036,3 +1085,7 @@ ADR-0179 adds the proof-gated execute transport contract:
 - Production quotes must use `/v1/tax/quote`; `/v1/tax/calculate` is an
   explicitly simulated caller-supplied-rule route and is not a production
   registry substitute.
+- `/v1/tax/calculate-document` is also explicitly simulated and caller-rule
+  driven. It must not be used as a production quote, attestation, or
+  settlement authority until its separate ADR-0203 authorization and storage
+  gates are complete.

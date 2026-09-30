@@ -62,7 +62,10 @@ use storage::{
     SettlementAdjustmentEvidenceIntent, SettlementAdjustmentRecord, SettlementAdjustmentTransition,
     SettlementTransition, StorageError, VaultReleaseClaimTransition,
 };
-use tax_engine::{CalculationResult, RuleSet, TaxError, TaxFacts, calculate};
+use tax_engine::{
+    CalculationResult, RuleSet, TaxDocumentFacts, TaxDocumentResult, TaxError, TaxFacts, calculate,
+    calculate_document,
+};
 use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
 use uuid::Uuid;
 
@@ -98,6 +101,20 @@ pub struct CalculateResponse {
     pub calculation_id: Uuid,
     pub status: &'static str,
     pub result: CalculationResult,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CalculateDocumentRequest {
+    pub facts: TaxDocumentFacts,
+    pub rule_set: RuleSet,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CalculateDocumentResponse {
+    pub calculation_id: Uuid,
+    pub status: &'static str,
+    pub result: TaxDocumentResult,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -836,6 +853,7 @@ impl From<TaxError> for ApiError {
             TaxError::UnsupportedInclusive(_) => "UNSUPPORTED_INCLUSIVE_RULE",
             TaxError::MissingCumulativeSnapshot => "MISSING_CUMULATIVE_SNAPSHOT",
             TaxError::UnsupportedThreshold(_) => "UNSUPPORTED_THRESHOLD_RULE",
+            TaxError::UnsupportedDocumentScope(_) => "UNSUPPORTED_DOCUMENT_SCOPE",
             TaxError::EngineVersionMismatch { .. } => "ENGINE_VERSION_MISMATCH",
             TaxError::ReplayMismatch => "CALCULATION_REPLAY_MISMATCH",
             TaxError::JurisdictionResolution(_) => "JURISDICTION_RESOLUTION_FAILED",
@@ -1582,6 +1600,7 @@ pub fn router() -> Router<AppState> {
         .route("/readyz", get(readyz))
         .route("/metrics", get(metrics))
         .route("/v1/tax/calculate", post(calculate_tax))
+        .route("/v1/tax/calculate-document", post(calculate_document_tax))
         .route("/v1/tax/quote", post(quote_tax))
         .route("/v1/tax/rules", post(create_rule_draft))
         .route(
@@ -1877,6 +1896,38 @@ async fn calculate_tax_inner(
     }
     let result = calculate(&request.rule_set, &request.facts).map_err(ApiError::from)?;
     Ok(Json(CalculateResponse {
+        calculation_id: Uuid::now_v7(),
+        status: "simulated_unattested",
+        result,
+    }))
+}
+
+async fn calculate_document_tax(
+    State(state): State<AppState>,
+    Json(request): Json<CalculateDocumentRequest>,
+) -> Result<Json<CalculateDocumentResponse>, ApiError> {
+    let metrics = Arc::clone(&state.metrics);
+    let started = Instant::now();
+    let result = calculate_document_tax_inner(state, request).await;
+    let _ = metrics.observe("tax_document_calculate", started.elapsed(), result.is_err());
+    result
+}
+
+async fn calculate_document_tax_inner(
+    state: AppState,
+    request: CalculateDocumentRequest,
+) -> Result<Json<CalculateDocumentResponse>, ApiError> {
+    if !state.simulation_mode {
+        return Err(ApiError {
+            status: StatusCode::NOT_IMPLEMENTED,
+            code: "PUBLISHED_RULE_REGISTRY_REQUIRED",
+            message:
+                "simulation endpoint is disabled until a published rule registry is configured"
+                    .into(),
+        });
+    }
+    let result = calculate_document(&request.rule_set, &request.facts).map_err(ApiError::from)?;
+    Ok(Json(CalculateDocumentResponse {
         calculation_id: Uuid::now_v7(),
         status: "simulated_unattested",
         result,
@@ -6468,6 +6519,7 @@ mod tests {
                 "api",
                 &[
                     "tax_calculate",
+                    "tax_document_calculate",
                     "tax_quote",
                     "tax_replay",
                     "tax_rule_draft_create",
@@ -6971,6 +7023,8 @@ mod tests {
                     cap_atomic: None,
                     rounding: tax_engine::RoundingSpec {
                         mode: tax_engine::RoundingMode::HalfUp,
+                        scope: tax_engine::RoundingScope::Component,
+                        quantum_atomic: 1,
                     },
                     threshold: None,
                     exemption_codes: Vec::new(),
@@ -7009,6 +7063,120 @@ mod tests {
         assert_eq!(
             response["result"]["facts_digest"].as_array().unwrap().len(),
             32
+        );
+    }
+
+    #[tokio::test]
+    async fn document_calculation_endpoint_returns_canonical_line_results() {
+        let body = serde_json::json!({
+            "facts": {
+                "id": "invoice-api-1",
+                "currency": "USD",
+                "jurisdiction": "US-CA",
+                "jurisdiction_resolution": null,
+                "cumulative_period": null,
+                "lines": [
+                    { "id": "line-b", "gross_atomic": "2", "net_atomic": "2", "exemption_codes": [] },
+                    { "id": "line-a", "gross_atomic": "1", "net_atomic": "1", "exemption_codes": [] }
+                ]
+            },
+            "rule_set": {
+                "id": "api-document-test",
+                "version": 1,
+                "components": [{
+                    "id": "sales-tax",
+                    "label": "Sales tax",
+                    "base": { "sources": ["Net"] },
+                    "rate": { "Flat": { "numerator": "1", "denominator": "3" } },
+                    "price_mode": "Exclusive",
+                    "credit_atomic": "0",
+                    "floor_atomic": null,
+                    "cap_atomic": null,
+                    "rounding": { "mode": "HalfUp", "scope": "Line" },
+                    "threshold": null,
+                    "exemption_codes": []
+                }]
+            }
+        });
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: true,
+                storage: None,
+                authenticator: None,
+                jurisdiction_provider_registry: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/tax/calculate-document")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response_body = axum::body::to_bytes(response.into_body(), 128 * 1024)
+            .await
+            .unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&response_body).unwrap();
+        assert_eq!(response["status"], "simulated_unattested");
+        assert_eq!(response["result"]["total_tax_atomic"], "1");
+        assert_eq!(response["result"]["lines"][0]["id"], "line-a");
+        assert_eq!(response["result"]["lines"][1]["id"], "line-b");
+        assert_eq!(response["result"]["lines"][1]["total_tax_atomic"], "1");
+    }
+
+    #[tokio::test]
+    async fn document_calculation_endpoint_fails_closed_outside_simulation() {
+        let body = serde_json::json!({
+            "facts": {
+                "id": "invoice-api-production-boundary",
+                "currency": "USD",
+                "jurisdiction": "US-CA",
+                "jurisdiction_resolution": null,
+                "cumulative_period": null,
+                "lines": [{ "id": "line-a", "gross_atomic": "1", "net_atomic": "1", "exemption_codes": [] }]
+            },
+            "rule_set": {
+                "id": "caller-rule-must-not-be-authoritative",
+                "version": 1,
+                "components": []
+            }
+        });
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: false,
+                storage: None,
+                authenticator: None,
+                jurisdiction_provider_registry: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/tax/calculate-document")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        let response_body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&response_body).unwrap();
+        assert_eq!(
+            response["error"]["code"],
+            "PUBLISHED_RULE_REGISTRY_REQUIRED"
         );
     }
 

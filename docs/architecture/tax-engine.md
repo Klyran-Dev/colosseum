@@ -116,11 +116,29 @@ Supported semantics are explicit enums, not language defaults:
 
 - `floor`, `ceil`, `half_up`, `half_even`, `away_from_zero`;
 - decimal scale and target currency precision;
-- rounding scope: `component`, `line`, `invoice`, `settlement`;
+- positive `quantum_atomic` output increment in asset atomic units, which is
+  the canonical representation of decimal-scale policy;
+- floor and cap amounts must be exact multiples of `quantum_atomic`, so a
+  final quantization step cannot silently undercut a declared minimum or
+  change a maximum boundary;
+- rounding scope: `component` or `settlement` in the current aggregate-facts
+  DSL. Component scope is the backward-compatible default and is required for
+  tax-on-tax dependencies. Settlement scope rounds the complete independent
+  component set once and allocates residual atomic units by largest fractional
+  remainder with canonical component-ID ties;
+- line and invoice scopes use ADR-0203's separately versioned, bounded
+  `TaxDocumentFacts` contract; they are never inferred from aggregate
+  `TaxFacts`. Line scope allocates within each line, while invoice scope
+  allocates across canonical `(line_id, component_id)` cells;
 - truncation before/after percentage multiplication;
 - residual allocation strategy and recipient ordering.
 
 No floating-point values may cross the domain boundary. Use fixed-point integers or exact rational intermediates, then convert once to the declared atomic currency unit.
+
+ADR-0202 records aggregate scope, compatibility, rejection, and
+residual-allocation semantics. ADR-0203 records the document facts and
+line/invoice aggregation contract. A missing scope is serialized as the legacy
+component behavior so existing published rules retain their canonical digest.
 
 ## Rule lifecycle
 
@@ -191,6 +209,9 @@ Each component includes its base, dependencies, rate/bracket, pre-clamp value, c
   contract is executed by Rust and covers simple, progressive, cascading,
   tax-on-tax, inclusive/exclusive, thresholds, cumulative snapshots,
   exemptions, credits, min/max, truncation, and explicit rounding.
+- The versioned [`tax-document-v1.json`](../../test-vectors/tax-document-v1.json)
+  contract covers bounded line facts, line-scope rounding, invoice-scope
+  rounding, canonical line ordering, and quantum residual allocation.
 - Golden vectors for every scenario family and boundary.
 - Property tests for monotonicity where a rule declares monotonic behavior.
 - Metamorphic tests: line reordering, equivalent aggregation, currency precision, and zero-rate components.
