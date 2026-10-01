@@ -25,11 +25,15 @@ do
       grep -Fq 'shutdown_result?;' "$source" \
         || fail "$source does not propagate shutdown-signal failure"
     else
-      grep -Fq 'let (shutdown_sender, shutdown_receiver) = mpsc::sync_channel(1);' "$source" \
-        || fail "$source does not retain a bounded shutdown-result channel"
-      grep -Fq '.with_graceful_shutdown(shutdown)' "$source" \
-        || fail "$source does not own its graceful-shutdown future"
-      grep -Fq 'tax engine server ended before a shutdown signal result was recorded' "$source" \
+      grep -Fq 'let mut shutdown = Box::pin(tokio::signal::ctrl_c());' "$source" \
+        || fail "$source does not own the shutdown signal future"
+      grep -Fq 'shutdown_result = &mut shutdown' "$source" \
+        || fail "$source does not branch on shutdown-signal failure"
+      grep -Fq 'shutdown_result?;' "$source" \
+        || fail "$source does not propagate shutdown-signal failure"
+      grep -Fq 'handle.graceful_shutdown' "$source" \
+        || fail "$source does not request bounded graceful shutdown"
+      grep -Fq 'tax engine server ended before a shutdown signal was recorded' "$source" \
         || fail "$source does not fail closed on premature server termination"
     fi
   if grep -Fq 'tokio::signal::ctrl_c().await.ok()' "$source"; then

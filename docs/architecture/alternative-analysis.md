@@ -1055,6 +1055,77 @@ deployment approvals, provider health, or live staging evidence.
 | Tax Engine-only checker | Narrow ownership | Duplicates shared deployment policy and can drift | Rejected |
 | **Shared preflight plus Tax Engine runtime validation** | Cross-service parity, early local-default rejection, independent process safety | Secret validity, mTLS, and rotation remain deployment-owned | **Selected in ADR-0226** |
 
+### Tax Engine service transport
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Plain HTTP plus private network policy | Lowest handshake overhead | No cryptographic workload identity or confidentiality at the service boundary | Rejected |
+| NGINX/sidecar-only mTLS termination | Centralized certificate operations | Extra hop and bypassable proxy authority on the internal calculation path | Rejected as the default |
+| Bearer token over externally terminated TLS | Simple application integration | Does not protect a bypassed/internal plaintext hop from token replay | Rejected as the sole control |
+| **Direct Rustls mTLS in the Tax Engine process** | Explicit client CA verification, no non-local plaintext fallback, bounded path | Certificate provisioning and rotation remain deployment work | **Selected in ADR-0227** |
+
+Rustls provider selection is explicit: automatic feature-based selection is
+rejected because the workspace contains both AWS-LC and ring feature paths;
+AWS-LC is installed process-wide before the Tax Engine constructs TLS configs.
+Changing that provider requires a compatibility and compliance ADR.
+
+### Tax Engine mTLS certificate rotation
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Restart the process for every rotation | Simple lifecycle | Connection churn and a larger emergency blast radius | Rejected as the only mechanism |
+| Poll or watch certificate files | Automatic detection | Partial-write races, platform-specific semantics, hidden operator action | Rejected |
+| Sidecar-only reload and proxy termination | Centralized certificate operations | Extra hop and a second internal transport authority | Rejected as the default |
+| **Explicit SIGHUP with validated atomic Rustls snapshot replacement** | Bounded, auditable, no extra hop, retains last known-good config | Requires Unix signal and atomic secret-delivery ceremony | **Selected in ADR-0228** |
+
+The reload path validates certificate, key, client CA, verifier, and ALPN in a
+blocking task before swapping the live snapshot. Invalid replacements are
+observable but cannot displace a valid configuration.
+
+### Tax Engine observability identity
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Accept both `tax-engine` and `tax_engine` | Transitional compatibility | Splits fixed-cardinality dashboards, alerts, and evidence queries | Rejected |
+| Accept arbitrary service names | Flexible reuse | Allows unreviewed telemetry identities and cardinality drift | Rejected |
+| **Use one explicit `tax_engine` identity** | Matches existing metrics and preserves the allow-list boundary | Requires one canonical spelling in operations | **Selected in ADR-0229** |
+
+### Tax Engine container runtime verification
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Unit tests only | Fast and deterministic | Misses image entrypoint, environment, and listener drift | Rejected as the sole gate |
+| Full end-to-end stack only | Broad system coverage | Slow and poor failure localization for the Tax Engine boundary | Rejected as the only service contract |
+| Host-process smoke test | Simple to run | Does not verify the Docker production boundary | Rejected |
+| **Isolated pinned Docker runtime contract** | Exercises the real image with bounded focused assertions and cleanup | Requires Docker in CI/local verification | **Selected in ADR-0230** |
+
+### Tax Engine request-rejection semantics
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Preserve Axum's default `422` response | No handler code | Diverges from the repository API contract | Rejected |
+| Map every JSON rejection to `400` | Simple and predictable | Masks body-limit admission control | Rejected |
+| Broad global rejection middleware | Centralized | Couples unrelated routes and obscures rejection provenance | Rejected |
+| **Explicit typed-boundary mapping with body-limit `413`** | Preserves client and operational semantics with bounded error detail | Small explicit mapping function | **Selected in ADR-0231** |
+
+### Warm Tax Engine service concurrency evidence
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Pure Criterion benchmark only | Fast and stable | Omits HTTP, container, authentication, scheduler, and serialization costs | Rejected as the sole service gate |
+| Full API quote benchmark | Exercises durable storage and tenant paths | Does not isolate the warm Tax Engine adapter | Rejected for this boundary |
+| Unbounded external load generator | Broad traffic shapes | Non-reproducible, resource-heavy, and difficult to keep synthetic | Rejected |
+| **Bounded local Docker concurrency contract** | Measures the real image with explicit workload and cleanup | Local-only evidence and Docker dependency | **Selected in ADR-0232** |
+
+### Real-container Tax Engine mTLS
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Rustls unit tests only | Fast and deterministic | Misses image paths, process startup, listener, and signal delivery | Rejected as the sole gate |
+| Plaintext runtime contract only | Simple and portable | Cannot detect non-local plaintext fallback or missing client authentication | Rejected |
+| Sidecar/proxy-only mTLS test | Matches one deployment topology | Leaves direct Rustls configuration and image behavior unverified | Rejected as the service contract |
+| **Ephemeral CA plus real pinned-container mTLS probe** | Exercises deployed binary, certificate files, client verification, ALPN, and reload | Requires Docker and host OpenSSL | **Selected in ADR-0233** |
+
 ### JWKS deployment representation
 
 | Alternative | Strengths | Risks / trade-offs | Decision |
@@ -1606,3 +1677,18 @@ reported complete.
 | Hash source Compose files | Easy to inspect | Does not bind profiles, interpolation, or resolved image configuration | Rejected |
 | Detached configuration hash file | Small change | Creates a second source of truth outside the manifest | Rejected |
 | **Named manifest integrity fields plus the common checksum set** | Explicit, reproducible, machine-readable, and reviewable | Requires resolved configuration as a bundle input | **Selected in ADR-0218** |
+
+### API JWKS rotation
+
+**Criteria:** preserve zero network and filesystem work on the JWT request
+path, rotate identity keys without avoidable process downtime, retain the last
+known-good configuration on failure, and make the operational boundary
+auditable.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Restart-only key rotation | Simple deployment model | Adds downtime and makes emergency rotation depend on rollout scheduling | Rejected |
+| Identity-provider JWKS fetch on every request | Immediate provider changes | Unbounded hot-path latency and external availability dependency | Rejected |
+| Periodic background JWKS polling | Automatic rotation | Requires stale-cache, provider-authentication, backoff, and split-brain policy before safe production use | Rejected for this contract |
+| Mutable `RwLock` key map | No extra dependency | Adds request-path contention and couples hot-path cost to reloads | Rejected |
+| **Immutable key snapshot with atomic file reload on `SIGHUP`** | No request-path I/O, bounded validation, deterministic last-known-good behavior, explicit secret-manager ownership | Requires atomic delivery and signal/runbook discipline | **Selected in ADR-0234** |

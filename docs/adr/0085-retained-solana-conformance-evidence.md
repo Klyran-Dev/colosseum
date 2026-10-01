@@ -29,10 +29,14 @@ bundle to `test-results/solana-conformance/`:
   phase.
 
 The trap collects logs before tearing down the isolated Compose project and
-preserves the original exit code. The GitHub Actions conformance job uploads
-the evidence bundle with a bounded retention period on both success and
-failure. The bundle contains only synthetic localnet data; it must not contain
-wallet secrets, credentials, or private jurisdiction evidence.
+preserves the original exit code. The GitHub Actions conformance job always
+runs the postcondition verifier after the attempt and uploads the evidence
+bundle with a bounded retention period on both success and failure. The
+release-candidate workflow also uploads the validator bundle immediately when
+a release attempt fails, before later bundle steps can be skipped. Missing
+evidence is a hard upload error rather than a warning. The bundle contains
+only synthetic localnet data; it must not contain wallet secrets, credentials,
+or private jurisdiction evidence.
 
 This evidence is necessary but not sufficient for production enablement. A
 successful CI run proves the pinned validator and test cases executed in that
@@ -61,6 +65,8 @@ production RPC behavior, or key governance.
    an approved artifact hash separately when required by the release policy.
 6. No private key, token, raw sensitive tax evidence, or production endpoint is
    written to the bundle.
+7. The CI verifier runs even when the conformance command fails, so a failed
+   attempt cannot silently bypass evidence-shape validation.
 
 ## Evidence
 

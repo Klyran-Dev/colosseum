@@ -3,14 +3,33 @@
     deny(clippy::expect_used, clippy::panic, clippy::unwrap_used)
 )]
 
-use std::{env, net::SocketAddr, sync::mpsc};
+use std::{
+    env,
+    error::Error,
+    fs::File,
+    future::Future,
+    io::{self, BufReader},
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    pin::Pin,
+    sync::Arc,
+    time::Duration,
+};
 
+use axum_server::{Handle, tls_rustls::RustlsConfig};
+use rustls::{RootCertStore, ServerConfig, server::WebPkiClientVerifier};
+use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use tax_engine_service::{
     DEFAULT_CACHE_CAPACITY, DEFAULT_MAX_CONCURRENCY, EngineService, MAX_CACHE_CAPACITY,
     MAX_CONCURRENCY,
 };
-use tokio::net::TcpListener;
-use tracing::info;
+use tracing::{info, warn};
+
+const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(10);
+
+type ServiceResult = Result<(), Box<dyn Error + Send + Sync>>;
+type ServerFuture = Pin<Box<dyn Future<Output = io::Result<()>> + Send>>;
+type ReloadFuture = Pin<Box<dyn Future<Output = ServiceResult> + Send>>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Config {
@@ -19,6 +38,14 @@ struct Config {
     auth_token: String,
     cache_capacity: usize,
     max_concurrency: usize,
+    tls: Option<TlsFiles>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TlsFiles {
+    certificate: PathBuf,
+    private_key: PathBuf,
+    client_ca: PathBuf,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -46,6 +73,7 @@ impl Config {
         auth_token: &str,
         cache_capacity: &str,
         max_concurrency: &str,
+        tls_files: (Option<&str>, Option<&str>, Option<&str>),
     ) -> Result<Self, String> {
         let environment = Environment::parse(environment)?;
         let auth_token = auth_token.trim();
@@ -74,6 +102,18 @@ impl Config {
                 "TAX_ENGINE_MAX_CONCURRENCY must be between 1 and {MAX_CONCURRENCY}"
             ));
         }
+        let tls = TlsFiles::from_values(tls_files.0, tls_files.1, tls_files.2)?;
+        if environment != Environment::Local && tls.is_none() {
+            return Err(
+                "TAX_ENGINE_TLS_CERT_FILE, TAX_ENGINE_TLS_KEY_FILE, and TAX_ENGINE_MTLS_CA_FILE are required outside local"
+                    .to_string(),
+            );
+        }
+        if environment == Environment::Local && tls.is_some() {
+            return Err(
+                "Tax Engine TLS files are only enabled for staging or production".to_string(),
+            );
+        }
         Ok(Self {
             environment,
             bind_address: bind_address.parse().map_err(|_| {
@@ -82,10 +122,14 @@ impl Config {
             auth_token: auth_token.to_string(),
             cache_capacity,
             max_concurrency,
+            tls,
         })
     }
 
     fn from_env() -> Result<Self, String> {
+        let tls_certificate = env::var("TAX_ENGINE_TLS_CERT_FILE").ok();
+        let tls_private_key = env::var("TAX_ENGINE_TLS_KEY_FILE").ok();
+        let tls_client_ca = env::var("TAX_ENGINE_MTLS_CA_FILE").ok();
         Self::from_values(
             &required_env("TAX_ENGINE_ENV")?,
             &env::var("TAX_ENGINE_BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:8084".to_string()),
@@ -94,7 +138,46 @@ impl Config {
                 .unwrap_or_else(|_| DEFAULT_CACHE_CAPACITY.to_string()),
             &env::var("TAX_ENGINE_MAX_CONCURRENCY")
                 .unwrap_or_else(|_| DEFAULT_MAX_CONCURRENCY.to_string()),
+            (
+                tls_certificate.as_deref(),
+                tls_private_key.as_deref(),
+                tls_client_ca.as_deref(),
+            ),
         )
+    }
+}
+
+impl TlsFiles {
+    fn from_values(
+        certificate: Option<&str>,
+        private_key: Option<&str>,
+        client_ca: Option<&str>,
+    ) -> Result<Option<Self>, String> {
+        match (certificate, private_key, client_ca) {
+            (None, None, None) => Ok(None),
+            (Some(certificate), Some(private_key), Some(client_ca)) => {
+                let certificate = non_empty_path("TAX_ENGINE_TLS_CERT_FILE", certificate)?;
+                let private_key = non_empty_path("TAX_ENGINE_TLS_KEY_FILE", private_key)?;
+                let client_ca = non_empty_path("TAX_ENGINE_MTLS_CA_FILE", client_ca)?;
+                Ok(Some(Self {
+                    certificate,
+                    private_key,
+                    client_ca,
+                }))
+            }
+            _ => Err(
+                "TAX_ENGINE_TLS_CERT_FILE, TAX_ENGINE_TLS_KEY_FILE, and TAX_ENGINE_MTLS_CA_FILE must be configured together"
+                    .to_string(),
+            ),
+        }
+    }
+}
+
+fn non_empty_path(name: &str, value: &str) -> Result<PathBuf, String> {
+    if value.trim().is_empty() {
+        Err(format!("{name} must not be empty"))
+    } else {
+        Ok(PathBuf::from(value))
     }
 }
 
@@ -116,48 +199,335 @@ fn validate_required(name: &str, value: &str) -> Result<String, String> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut telemetry = observability::init_tracing("tax-engine")?;
+    ensure_crypto_provider()?;
+    let mut telemetry = observability::init_tracing("tax_engine")?;
     let config = Config::from_env()?;
     let service = EngineService::with_limits(config.cache_capacity, config.max_concurrency)?;
-    let listener = TcpListener::bind(config.bind_address).await?;
+    let handle = Handle::<SocketAddr>::new();
+    let router = service.router(&config.auth_token);
     info!(
         address = %config.bind_address,
         environment = ?config.environment,
         cache_capacity = config.cache_capacity,
         max_concurrency = config.max_concurrency,
+        transport = if config.tls.is_some() { "rustls-mtls" } else { "plain-local" },
         "tax engine service listening"
     );
 
-    let (shutdown_sender, shutdown_receiver) = mpsc::sync_channel(1);
-    let shutdown = async move {
-        let result = tokio::signal::ctrl_c()
-            .await
-            .map_err(|error| error.to_string());
-        if shutdown_sender.send(result).is_err() {
-            tracing::warn!("tax engine shutdown result could not be recorded");
+    let mut tls_reload: Option<ReloadFuture> = None;
+    let server: ServerFuture = match config.tls {
+        Some(tls_files) => {
+            let tls_config = build_mtls_config(&tls_files)?;
+            tls_reload = Some(build_tls_reload_future(tls_config.clone(), tls_files));
+            Box::pin(
+                axum_server::bind_rustls(config.bind_address, tls_config)
+                    .handle(handle.clone())
+                    .serve(router.into_make_service()),
+            )
         }
+        None => Box::pin(
+            axum_server::bind(config.bind_address)
+                .handle(handle.clone())
+                .serve(router.into_make_service()),
+        ),
     };
-    axum::serve(listener, service.router(&config.auth_token))
-        .with_graceful_shutdown(shutdown)
-        .await?;
-    match shutdown_receiver.recv() {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => {
-            return Err(format!("tax engine shutdown signal listener failed: {error}").into());
-        }
-        Err(_) => {
-            return Err(
-                "tax engine server ended before a shutdown signal result was recorded".into(),
-            );
-        }
-    }
+    run_server_until_shutdown(server, handle, tls_reload).await?;
     telemetry.shutdown();
     Ok(())
 }
 
+fn read_certificates(path: &Path) -> Result<Vec<CertificateDer<'static>>, String> {
+    let file = File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    rustls_pemfile::certs(&mut BufReader::new(file))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("{}: invalid certificate PEM: {error}", path.display()))
+}
+
+fn read_private_key(path: &Path) -> Result<PrivateKeyDer<'static>, String> {
+    let file = File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    rustls_pemfile::private_key(&mut BufReader::new(file))
+        .map_err(|error| format!("{}: invalid private-key PEM: {error}", path.display()))?
+        .ok_or_else(|| format!("{}: no private key found", path.display()))
+}
+
+fn ensure_crypto_provider() -> Result<(), String> {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    }
+    if rustls::crypto::CryptoProvider::get_default().is_some() {
+        Ok(())
+    } else {
+        Err("no Rustls cryptographic provider is available".to_string())
+    }
+}
+
+fn build_mtls_server_config(files: &TlsFiles) -> Result<ServerConfig, String> {
+    ensure_crypto_provider()?;
+    let certificates = read_certificates(&files.certificate)?;
+    if certificates.is_empty() {
+        return Err(format!(
+            "{}: server certificate chain is empty",
+            files.certificate.display()
+        ));
+    }
+    let private_key = read_private_key(&files.private_key)?;
+    let client_ca = read_certificates(&files.client_ca)?;
+    if client_ca.is_empty() {
+        return Err(format!(
+            "{}: client CA bundle is empty",
+            files.client_ca.display()
+        ));
+    }
+    let mut roots = RootCertStore::empty();
+    for certificate in client_ca {
+        roots.add(certificate).map_err(|error| {
+            format!("{}: invalid client CA: {error}", files.client_ca.display())
+        })?;
+    }
+    let verifier = WebPkiClientVerifier::builder(Arc::new(roots))
+        .build()
+        .map_err(|error| format!("client CA verifier could not be built: {error}"))?;
+    let mut server_config = ServerConfig::builder()
+        .with_client_cert_verifier(verifier)
+        .with_single_cert(certificates, private_key)
+        .map_err(|error| format!("server certificate/key could not be loaded: {error}"))?;
+    server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    Ok(server_config)
+}
+
+fn build_mtls_config(files: &TlsFiles) -> Result<RustlsConfig, String> {
+    Ok(RustlsConfig::from_config(Arc::new(
+        build_mtls_server_config(files)?,
+    )))
+}
+
+fn install_mtls_config(config: &RustlsConfig, replacement: ServerConfig) {
+    config.reload_from_config(Arc::new(replacement));
+}
+
+#[cfg(test)]
+fn reload_mtls_config(config: &RustlsConfig, files: &TlsFiles) -> Result<(), String> {
+    let replacement = build_mtls_server_config(files)?;
+    install_mtls_config(config, replacement);
+    Ok(())
+}
+
+async fn reload_mtls_config_async(config: RustlsConfig, files: TlsFiles) -> Result<(), String> {
+    let replacement = tokio::task::spawn_blocking(move || build_mtls_server_config(&files))
+        .await
+        .map_err(|error| format!("mTLS configuration validation task failed: {error}"))??;
+    install_mtls_config(&config, replacement);
+    Ok(())
+}
+
+fn build_tls_reload_future(config: RustlsConfig, files: TlsFiles) -> ReloadFuture {
+    #[cfg(unix)]
+    {
+        Box::pin(async move {
+            let mut hangup =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
+            loop {
+                if hangup.recv().await.is_none() {
+                    return Err("SIGHUP stream ended before shutdown".into());
+                }
+                match reload_mtls_config_async(config.clone(), files.clone()).await {
+                    Ok(()) => info!("Tax Engine mTLS configuration reloaded"),
+                    Err(error) => {
+                        warn!(%error, "Tax Engine mTLS reload rejected; active configuration retained")
+                    }
+                }
+            }
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (config, files);
+        Box::pin(async { Err("mTLS certificate reload requires a Unix SIGHUP signal".into()) })
+    }
+}
+
+async fn run_server_until_shutdown(
+    server: ServerFuture,
+    handle: Handle<SocketAddr>,
+    tls_reload: Option<ReloadFuture>,
+) -> ServiceResult {
+    tokio::pin!(server);
+    let mut shutdown = Box::pin(tokio::signal::ctrl_c());
+    let tls_reload = tls_reload
+        .unwrap_or_else(|| Box::pin(std::future::pending::<ServiceResult>()) as ReloadFuture);
+    tokio::pin!(tls_reload);
+    tokio::select! {
+        result = &mut server => {
+            result?;
+            Err("tax engine server ended before a shutdown signal was recorded".into())
+        }
+        shutdown_result = &mut shutdown => {
+            shutdown_result?;
+            handle.graceful_shutdown(Some(SHUTDOWN_GRACE_PERIOD));
+            server.await?;
+            Ok(())
+        }
+        reload_result = &mut tls_reload => {
+            reload_result?;
+            Err("Tax Engine mTLS reload task ended before shutdown".into())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Config, Environment, validate_required};
+    use std::{
+        fs,
+        io::{Read, Write},
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
+
+    use rcgen::{
+        BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
+    };
+    use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConnection};
+    use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName};
+
+    use super::{
+        Config, Environment, TlsFiles, build_mtls_config, build_mtls_server_config,
+        reload_mtls_config, validate_required,
+    };
+
+    struct MemoryPipe {
+        bytes: Vec<u8>,
+    }
+
+    impl MemoryPipe {
+        fn is_empty(&self) -> bool {
+            self.bytes.is_empty()
+        }
+    }
+
+    impl Read for MemoryPipe {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let length = buffer.len().min(self.bytes.len());
+            buffer[..length].copy_from_slice(&self.bytes[..length]);
+            self.bytes.drain(..length);
+            Ok(length)
+        }
+    }
+
+    impl Write for MemoryPipe {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.bytes.extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct CertificateFixture {
+        certificate_pem: String,
+        private_key_pem: String,
+        certificate_der: CertificateDer<'static>,
+        private_key: PrivateKeyDer<'static>,
+    }
+
+    fn ca_issuer() -> (CertificateDer<'static>, String, Issuer<'static, KeyPair>) {
+        let mut ca_params = CertificateParams::new(Vec::<String>::new()).expect("CA parameters");
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        let ca_key = KeyPair::generate().expect("CA key");
+        let ca_certificate = ca_params
+            .self_signed(&ca_key)
+            .expect("self-signed CA certificate");
+        let ca_pem = ca_certificate.pem();
+        let issuer = Issuer::new(ca_params, ca_key);
+        (ca_certificate.der().clone(), ca_pem, issuer)
+    }
+
+    fn issued_certificate(
+        issuer: &Issuer<'static, KeyPair>,
+        common_name: &str,
+        extended_key_usage: ExtendedKeyUsagePurpose,
+    ) -> CertificateFixture {
+        let mut params = CertificateParams::new(vec![common_name.to_string()])
+            .expect("leaf certificate parameters");
+        params.extended_key_usages = vec![extended_key_usage];
+        let key = KeyPair::generate().expect("leaf key");
+        let certificate = params.signed_by(&key, issuer).expect("leaf certificate");
+        CertificateFixture {
+            certificate_pem: certificate.pem(),
+            private_key_pem: key.serialize_pem(),
+            certificate_der: certificate.der().clone(),
+            private_key: PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der())),
+        }
+    }
+
+    fn write_tls_fixture(
+        server: &CertificateFixture,
+        client_ca_pem: &str,
+    ) -> (TlsFiles, Vec<std::path::PathBuf>) {
+        static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
+        let directory = std::env::temp_dir().join(format!(
+            "solana-tax-protocol-tax-engine-mtls-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&directory).expect("fixture directory");
+        let paths = vec![
+            directory.join("server.crt"),
+            directory.join("server.key"),
+            directory.join("client-ca.crt"),
+        ];
+        fs::write(&paths[0], &server.certificate_pem).expect("server certificate");
+        fs::write(&paths[1], &server.private_key_pem).expect("server key");
+        fs::write(&paths[2], client_ca_pem).expect("client CA");
+        (
+            TlsFiles {
+                certificate: paths[0].clone(),
+                private_key: paths[1].clone(),
+                client_ca: paths[2].clone(),
+            },
+            paths,
+        )
+    }
+
+    fn cleanup_tls_fixture(paths: Vec<std::path::PathBuf>) {
+        if let Some(directory) = paths.first().and_then(|path| path.parent()) {
+            fs::remove_dir_all(directory).expect("remove fixture directory");
+        }
+    }
+
+    fn complete_handshake(
+        server_config: Arc<rustls::ServerConfig>,
+        client_config: Arc<ClientConfig>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut server = ServerConnection::new(server_config)?;
+        let mut client =
+            ClientConnection::new(client_config, ServerName::try_from("localhost")?.to_owned())?;
+        let mut client_to_server = MemoryPipe { bytes: Vec::new() };
+        let mut server_to_client = MemoryPipe { bytes: Vec::new() };
+        for _ in 0..32 {
+            if client.wants_write() {
+                client.write_tls(&mut client_to_server)?;
+            }
+            if !client_to_server.is_empty() {
+                server.read_tls(&mut client_to_server)?;
+                server.process_new_packets()?;
+            }
+            if server.wants_write() {
+                server.write_tls(&mut server_to_client)?;
+            }
+            if !server_to_client.is_empty() {
+                client.read_tls(&mut server_to_client)?;
+                client.process_new_packets()?;
+            }
+            if !client.is_handshaking() && !server.is_handshaking() {
+                return Ok(());
+            }
+        }
+        Err("TLS handshake did not converge within 32 flights".into())
+    }
 
     #[test]
     fn environment_is_explicit_and_bounded() {
@@ -171,19 +541,83 @@ mod tests {
 
     #[test]
     fn configuration_rejects_missing_or_unsafe_values() {
-        assert!(Config::from_values("local", "0.0.0.0:8084", "", "64", "32").is_err());
-        assert!(Config::from_values("local", "not-an-address", "token", "64", "32").is_err());
-        assert!(Config::from_values("local", "0.0.0.0:8084", "token", "0", "32").is_err());
-        assert!(Config::from_values("local", "0.0.0.0:8084", "token", "64", "0").is_err());
+        assert!(
+            Config::from_values("local", "0.0.0.0:8084", "", "64", "32", (None, None, None))
+                .is_err()
+        );
+        assert!(
+            Config::from_values(
+                "local",
+                "not-an-address",
+                "token",
+                "64",
+                "32",
+                (None, None, None)
+            )
+            .is_err()
+        );
+        assert!(
+            Config::from_values(
+                "local",
+                "0.0.0.0:8084",
+                "token",
+                "0",
+                "32",
+                (None, None, None)
+            )
+            .is_err()
+        );
+        assert!(
+            Config::from_values(
+                "local",
+                "0.0.0.0:8084",
+                "token",
+                "64",
+                "0",
+                (None, None, None)
+            )
+            .is_err()
+        );
         assert!(
             Config::from_values(
                 "staging",
                 "0.0.0.0:8084",
                 "local-development-only",
                 "64",
-                "32"
+                "32",
+                (None, None, None),
             )
             .is_err()
+        );
+        assert!(
+            Config::from_values(
+                "staging",
+                "0.0.0.0:8084",
+                "token",
+                "64",
+                "32",
+                (None, None, None)
+            )
+            .is_err()
+        );
+        assert!(
+            Config::from_values(
+                "staging",
+                "0.0.0.0:8084",
+                "token",
+                "64",
+                "32",
+                (Some("cert.pem"), Some("key.pem"), None)
+            )
+            .is_err()
+        );
+        assert_eq!(
+            TlsFiles::from_values(Some("cert.pem"), Some("key.pem"), Some("ca.pem")),
+            Ok(Some(TlsFiles {
+                certificate: "cert.pem".into(),
+                private_key: "key.pem".into(),
+                client_ca: "ca.pem".into(),
+            }))
         );
     }
 
@@ -194,5 +628,140 @@ mod tests {
             validate_required("TAX_ENGINE_ENV", "local"),
             Ok("local".to_string())
         );
+    }
+
+    #[test]
+    fn malformed_tls_material_fails_closed_before_listener_creation() {
+        let path = std::env::temp_dir().join(format!(
+            "solana-tax-protocol-invalid-tax-engine-cert-{}",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"not-a-certificate").expect("test fixture writes");
+        let files = TlsFiles {
+            certificate: path.clone(),
+            private_key: path.clone(),
+            client_ca: path.clone(),
+        };
+        assert!(super::build_mtls_config(&files).is_err());
+        std::fs::remove_file(path).expect("test fixture removes");
+    }
+
+    #[test]
+    fn trusted_client_certificate_completes_the_mtls_handshake() {
+        let (ca_der, ca_pem, issuer) = ca_issuer();
+        let server = issued_certificate(&issuer, "localhost", ExtendedKeyUsagePurpose::ServerAuth);
+        let client = issued_certificate(
+            &issuer,
+            "tax-engine-client",
+            ExtendedKeyUsagePurpose::ClientAuth,
+        );
+        let (files, paths) = write_tls_fixture(&server, &ca_pem);
+        let server_config =
+            Arc::new(build_mtls_server_config(&files).expect("valid server mTLS configuration"));
+        let mut roots = RootCertStore::empty();
+        roots.add(ca_der).expect("server CA root");
+        let client_config = Arc::new(
+            ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_client_auth_cert(vec![client.certificate_der], client.private_key)
+                .expect("valid client mTLS configuration"),
+        );
+        complete_handshake(server_config, client_config).expect("trusted mTLS handshake");
+        cleanup_tls_fixture(paths);
+    }
+
+    #[test]
+    fn untrusted_client_certificate_is_rejected_before_http_authentication() {
+        let (trusted_ca_der, trusted_ca_pem, trusted_issuer) = ca_issuer();
+        let (_, _, untrusted_issuer) = ca_issuer();
+        let server = issued_certificate(
+            &trusted_issuer,
+            "localhost",
+            ExtendedKeyUsagePurpose::ServerAuth,
+        );
+        let client = issued_certificate(
+            &untrusted_issuer,
+            "untrusted-client",
+            ExtendedKeyUsagePurpose::ClientAuth,
+        );
+        let (files, paths) = write_tls_fixture(&server, &trusted_ca_pem);
+        let server_config =
+            Arc::new(build_mtls_server_config(&files).expect("valid server mTLS configuration"));
+        let mut roots = RootCertStore::empty();
+        roots.add(trusted_ca_der).expect("server CA root");
+        let client_config = Arc::new(
+            ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_client_auth_cert(vec![client.certificate_der], client.private_key)
+                .expect("valid client mTLS configuration"),
+        );
+        assert!(complete_handshake(server_config, client_config).is_err());
+        cleanup_tls_fixture(paths);
+    }
+
+    #[test]
+    fn valid_mtls_reload_atomically_swaps_the_server_configuration() {
+        let (ca_der, ca_pem, issuer) = ca_issuer();
+        let server_v1 =
+            issued_certificate(&issuer, "localhost", ExtendedKeyUsagePurpose::ServerAuth);
+        let client = issued_certificate(
+            &issuer,
+            "tax-engine-client",
+            ExtendedKeyUsagePurpose::ClientAuth,
+        );
+        let (files, paths) = write_tls_fixture(&server_v1, &ca_pem);
+        let tls_config = build_mtls_config(&files).expect("valid initial mTLS configuration");
+        let previous = tls_config.get_inner();
+        let server_v2 =
+            issued_certificate(&issuer, "localhost", ExtendedKeyUsagePurpose::ServerAuth);
+        fs::write(&files.certificate, &server_v2.certificate_pem).expect("replacement certificate");
+        fs::write(&files.private_key, &server_v2.private_key_pem).expect("replacement key");
+
+        reload_mtls_config(&tls_config, &files).expect("valid replacement mTLS configuration");
+
+        let current = tls_config.get_inner();
+        assert!(!Arc::ptr_eq(&previous, &current));
+        let mut roots = RootCertStore::empty();
+        roots.add(ca_der).expect("server CA root");
+        let client_config = Arc::new(
+            ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_client_auth_cert(vec![client.certificate_der], client.private_key)
+                .expect("valid client mTLS configuration"),
+        );
+        complete_handshake(current, client_config).expect("reloaded mTLS handshake");
+        cleanup_tls_fixture(paths);
+    }
+
+    #[test]
+    fn invalid_mtls_reload_retains_the_previous_server_configuration() {
+        let (ca_der, ca_pem, issuer) = ca_issuer();
+        let server = issued_certificate(&issuer, "localhost", ExtendedKeyUsagePurpose::ServerAuth);
+        let client = issued_certificate(
+            &issuer,
+            "tax-engine-client",
+            ExtendedKeyUsagePurpose::ClientAuth,
+        );
+        let (files, paths) = write_tls_fixture(&server, &ca_pem);
+        let tls_config = build_mtls_config(&files).expect("valid initial mTLS configuration");
+        let previous = tls_config.get_inner();
+        fs::write(&files.certificate, b"not-a-certificate")
+            .expect("invalid replacement certificate");
+
+        assert!(reload_mtls_config(&tls_config, &files).is_err());
+
+        let current = tls_config.get_inner();
+        assert!(Arc::ptr_eq(&previous, &current));
+        let mut roots = RootCertStore::empty();
+        roots.add(ca_der).expect("server CA root");
+        let client_config = Arc::new(
+            ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_client_auth_cert(vec![client.certificate_der], client.private_key)
+                .expect("valid client mTLS configuration"),
+        );
+        complete_handshake(current, client_config)
+            .expect("previous mTLS configuration remains live");
+        cleanup_tls_fixture(paths);
     }
 }

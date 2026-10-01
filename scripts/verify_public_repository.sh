@@ -57,6 +57,13 @@ for file in \
   docs/adr/0224-cross-language-calculation-attestation-vector.md \
   docs/adr/0225-dedicated-warm-tax-engine-service.md \
   docs/adr/0226-tax-engine-deployment-preflight.md \
+  docs/adr/0227-tax-engine-rustls-mtls-transport.md \
+  docs/adr/0228-tax-engine-mtls-certificate-reload.md \
+  docs/adr/0229-tax-engine-observability-identity.md \
+  docs/adr/0230-tax-engine-runtime-contract.md \
+  docs/adr/0231-tax-engine-request-rejection-semantics.md \
+  docs/adr/0232-tax-engine-service-concurrency-evidence.md \
+  docs/adr/0234-api-jwks-atomic-reload.md \
   ops/docker/Dockerfile.tax-engine \
   docs/adr/0142-spa-workspace-focus-management.md \
   docs/adr/0143-structured-tier-1-rule-workbench.md \
@@ -96,6 +103,7 @@ for file in \
   docs/operations/slo-error-budget-policy.md \
   docs/operations/dependency-register.md \
   docs/runbooks/incident-severity-and-error-budget.md \
+  docs/runbooks/tax-engine-mtls-rotation.md \
   docs/adr/0129-release-artifact-provenance-and-dependency-automation.md \
   .github/dependabot.yml \
   .github/workflows/release-candidate.yml \
@@ -106,11 +114,15 @@ for file in \
   scripts/vault_reconciliation_drill.sh \
   scripts/refund_proof_integration_drill.sh \
   scripts/benchmark_rule_simulation.sh \
+  scripts/benchmark_tax_engine_service.sh \
+  scripts/verify_tax_engine_mtls_runtime_contract.sh \
+  scripts/verify_api_auth_jwks_reload_contract.sh \
   scripts/migration_integrity_drill.sh \
   db/verification/settlement_route_mint_precision.sql \
   scripts/verify_deployment_config.sh \
   scripts/verify_deployment_config_contract.sh \
-  scripts/verify_service_lifecycle_contract.sh
+  scripts/verify_service_lifecycle_contract.sh \
+  scripts/verify_tax_engine_runtime_contract.sh
 do
   require_file "$file"
 done
@@ -152,6 +164,7 @@ require_text docs/public-repository-release.md 'ADR-0129'
 require_text docs/README.md 'operations/slo-error-budget-policy.md'
 require_text docs/README.md 'operations/dependency-register.md'
 require_text docs/runbooks/README.md 'incident-severity-and-error-budget.md'
+require_text docs/runbooks/README.md 'tax-engine-mtls-rotation.md'
 require_text docs/plans/production-readiness.md 'SLOs, error budgets, RTO/RPO, support ownership, and incident severity policy are published under ADR-0135'
 
 tracked_secret_names=$(git ls-files | grep -E '(^|/)(\.env|\.env\.|id_rsa|id_ed25519|credentials\.json|service-account.*\.json|.*\.pem|.*\.key)$' || true)

@@ -19,6 +19,7 @@ unknown state for reconciliation.
 - [RPC outage or provider disagreement](rpc-outage.md)
 - [Indexer gap and projection repair](indexer-gap.md)
 - [Backup and restore](backup-restore.md)
+- [Tax Engine mTLS certificate rotation](tax-engine-mtls-rotation.md)
 - [Incident severity and error-budget response](incident-severity-and-error-budget.md)
 
 ## Required incident record

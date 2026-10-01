@@ -1,6 +1,9 @@
 use axum::{
     Router,
-    extract::{Json, Request, State},
+    extract::{
+        Json, Request, State,
+        rejection::{BytesRejection, FailedToBufferBody, JsonRejection},
+    },
     http::{HeaderMap, StatusCode, header::AUTHORIZATION},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -46,6 +49,8 @@ pub enum ServiceError {
     Unauthorized,
     #[error("invalid tax calculation request: {0}")]
     InvalidRequest(String),
+    #[error("tax calculation request body exceeds the maximum size")]
+    PayloadTooLarge,
     #[error("tax engine service is overloaded")]
     Overloaded,
     #[error("tax engine worker failed")]
@@ -57,6 +62,7 @@ impl IntoResponse for ServiceError {
         let status = match self {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::InvalidRequest(_) => StatusCode::BAD_REQUEST,
+            Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::Overloaded | Self::WorkerFailed => StatusCode::SERVICE_UNAVAILABLE,
         };
         (
@@ -288,16 +294,28 @@ async fn metrics(State(state): State<AppState>) -> Response {
 
 async fn calculate(
     State(state): State<AppState>,
-    Json(request): Json<CalculateRequest>,
+    payload: Result<Json<CalculateRequest>, JsonRejection>,
 ) -> Result<Json<CalculationResult>, ServiceError> {
+    let Json(request) = payload.map_err(map_json_rejection)?;
     Ok(Json(state.engine.calculate(request).await?))
 }
 
 async fn calculate_document(
     State(state): State<AppState>,
-    Json(request): Json<CalculateDocumentRequest>,
+    payload: Result<Json<CalculateDocumentRequest>, JsonRejection>,
 ) -> Result<Json<TaxDocumentResult>, ServiceError> {
+    let Json(request) = payload.map_err(map_json_rejection)?;
     Ok(Json(state.engine.calculate_document(request).await?))
+}
+
+fn map_json_rejection(rejection: JsonRejection) -> ServiceError {
+    if let JsonRejection::BytesRejection(BytesRejection::FailedToBufferBody(
+        FailedToBufferBody::LengthLimitError(_),
+    )) = rejection
+    {
+        return ServiceError::PayloadTooLarge;
+    }
+    ServiceError::InvalidRequest("request body is invalid".to_string())
 }
 
 async fn authenticate(State(state): State<AppState>, request: Request, next: Next) -> Response {
@@ -464,6 +482,26 @@ mod tests {
         .expect("calculation result");
         assert_eq!(second, first);
         assert_eq!(service.cache_len(), 1);
+    }
+
+    #[tokio::test]
+    async fn malformed_json_is_a_bad_request_after_authentication() {
+        let service = EngineService::new(2).expect("bounded cache configuration");
+        let response = service
+            .router("local-development-only")
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/calculate")
+                    .header("authorization", "Bearer local-development-only")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{not-json"))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[test]

@@ -11,7 +11,7 @@ use indexer_service::{MAX_TARGETED_RECOVERY_PAGES, build_targeted_recovery_sourc
 use observability::ServiceMetrics;
 use settlement_coordinator::{DEFAULT_ATTEMPT_TIMEOUT, SettlementCoordinator};
 use std::sync::{Arc, mpsc};
-use std::{env, net::SocketAddr};
+use std::{env, net::SocketAddr, path::PathBuf};
 use storage::{EvidenceCipher, PgStore};
 use tokio::net::TcpListener;
 use tracing::info;
@@ -48,8 +48,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             );
         }
     };
-    let storage = match env::var("API_DATABASE_URL") {
-        Ok(database_url) => Some(Arc::new(PgStore::from_url_with_evidence_cipher(
+    let storage = match env_value("API_DATABASE_URL") {
+        Some(database_url) => Some(Arc::new(PgStore::from_url_with_evidence_cipher(
             &database_url,
             env::var("API_DATABASE_POOL_SIZE")
                 .ok()
@@ -61,44 +61,65 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 "an evidence key ring or API_EVIDENCE_KEY_ID/API_EVIDENCE_KEY_B64 is required when API_DATABASE_URL is configured",
             )?),
         )?)),
-        Err(_) => None,
+        None => None,
     };
     if let Some(store) = &storage {
         store.ping().await?;
     }
     let issuer = env::var("API_AUTH_ISSUER").ok();
     let audience = env::var("API_AUTH_AUDIENCE").ok();
-    let jwks_json = match env::var("API_AUTH_JWKS_JSON") {
-        Ok(jwks_json) => Some(jwks_json),
-        Err(_) => {
-            match (
-                env::var("API_AUTH_JWKS_KID"),
-                env::var("API_AUTH_JWKS_PUBLIC_KEY"),
-            ) {
-                (Ok(kid), Ok(public_key)) => Some(
-                    serde_json::json!({
-                        "keys": [{
-                            "kid": kid,
-                            "kty": "OKP",
-                            "crv": "Ed25519",
-                            "alg": "EdDSA",
-                            "x": public_key
-                        }]
-                    })
-                    .to_string(),
-                ),
-                (Err(_), Err(_)) => None,
-                _ => {
-                    return Err("API_AUTH_JWKS_KID and API_AUTH_JWKS_PUBLIC_KEY must be configured together".into());
-                }
-            }
+    let jwks_file = match env::var("API_AUTH_JWKS_FILE") {
+        Ok(path) if path.trim().is_empty() => {
+            return Err("API_AUTH_JWKS_FILE cannot be empty".into());
+        }
+        Ok(path) => Some(PathBuf::from(path)),
+        Err(_) => None,
+    };
+    let jwks_json = match (
+        env_value("API_AUTH_JWKS_JSON"),
+        env_value("API_AUTH_JWKS_KID"),
+        env_value("API_AUTH_JWKS_PUBLIC_KEY"),
+    ) {
+        (Some(jwks_json), None, None) => Some(jwks_json),
+        (None, Some(kid), Some(public_key)) => Some(
+            serde_json::json!({
+                "keys": [{
+                    "kid": kid,
+                    "kty": "OKP",
+                    "crv": "Ed25519",
+                    "alg": "EdDSA",
+                    "x": public_key
+                }]
+            })
+            .to_string(),
+        ),
+        (None, None, None) => None,
+        _ => {
+            return Err("API_AUTH_JWKS_JSON or the API_AUTH_JWKS_KID/API_AUTH_JWKS_PUBLIC_KEY pair must be configured exclusively".into());
         }
     };
-    let authenticator = match (issuer, audience, jwks_json) {
-        (Some(issuer), Some(audience), Some(jwks_json)) => Some(JwtAuthenticator::from_jwks_json(
-            issuer, audience, &jwks_json,
-        )?),
-        (None, None, None) => None,
+    if jwks_file.is_some()
+        && (env_value("API_AUTH_JWKS_JSON").is_some()
+            || env_value("API_AUTH_JWKS_KID").is_some()
+            || env_value("API_AUTH_JWKS_PUBLIC_KEY").is_some())
+    {
+        return Err(
+            "API_AUTH_JWKS_FILE cannot be combined with inline authentication key configuration"
+                .into(),
+        );
+    }
+    let (authenticator, auth_jwks_file) = match (issuer, audience, jwks_file, jwks_json) {
+        (Some(issuer), Some(audience), Some(path), None) => (
+            Some(JwtAuthenticator::from_jwks_file(issuer, audience, &path)?),
+            Some(path),
+        ),
+        (Some(issuer), Some(audience), None, Some(jwks_json)) => (
+            Some(JwtAuthenticator::from_jwks_json(
+                issuer, audience, &jwks_json,
+            )?),
+            None,
+        ),
+        (None, None, None, None) => (None, None),
         _ => {
             return Err("API_AUTH_ISSUER, API_AUTH_AUDIENCE, and authentication keys must be configured together".into());
         }
@@ -204,6 +225,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
         None => None,
     };
+    let shutdown_authenticator = authenticator.clone();
+    let shutdown_jwks_file = auth_jwks_file.clone();
     let state = AppState {
         ready: storage.is_some()
             && authenticator.is_some()
@@ -242,9 +265,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!(%address, "api listening");
     let (shutdown_sender, shutdown_receiver) = mpsc::sync_channel(1);
     let shutdown = async move {
-        let result = tokio::signal::ctrl_c()
-            .await
-            .map_err(|error| error.to_string());
+        let result = wait_for_shutdown(shutdown_authenticator, shutdown_jwks_file).await;
         if shutdown_sender.send(result).is_err() {
             tracing::warn!("api shutdown result could not be recorded");
         }
@@ -263,4 +284,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     telemetry.shutdown();
     Ok(())
+}
+
+async fn wait_for_shutdown(
+    authenticator: Option<JwtAuthenticator>,
+    jwks_file: Option<PathBuf>,
+) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let mut hangup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
+            .map_err(|error| format!("api SIGHUP listener failed: {error}"))?;
+        loop {
+            tokio::select! {
+                result = tokio::signal::ctrl_c() => {
+                    return result.map_err(|error| format!("api shutdown signal listener failed: {error}"));
+                }
+                signal = hangup.recv() => {
+                    if signal.is_none() {
+                        return Err("api SIGHUP listener ended unexpectedly".into());
+                    }
+                    let (Some(authenticator), Some(path)) =
+                        (authenticator.clone(), jwks_file.clone()) else {
+                        tracing::warn!("api received SIGHUP without a file-backed JWKS configuration");
+                        continue;
+                    };
+                    let reload = tokio::task::spawn_blocking(move || {
+                        authenticator.reload_from_jwks_file(&path)
+                    })
+                    .await
+                    .map_err(|error| format!("api JWKS reload task failed: {error}"))?;
+                    match reload {
+                        Ok(key_count) => {
+                            tracing::info!(key_count, "api authentication JWKS reloaded");
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %error, "api authentication JWKS reload rejected; retaining last known-good snapshot");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = (authenticator, jwks_file);
+        tokio::signal::ctrl_c()
+            .await
+            .map_err(|error| format!("api shutdown signal listener failed: {error}"))
+    }
 }

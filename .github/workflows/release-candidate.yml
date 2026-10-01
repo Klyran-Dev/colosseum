@@ -55,7 +55,16 @@ jobs:
           SOLANA_USE_DOCKER_BUILDER: true
         run: make solana-conformance
       - name: Verify validator conformance evidence
+        if: always()
         run: ./scripts/verify_solana_conformance_evidence.sh
+      - name: Upload validator failure evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-validator-conformance-failure-${{ github.run_id }}
+          path: test-results/solana-conformance/
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Run scheduled vault-reconciliation drill
         run: |

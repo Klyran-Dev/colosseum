@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 
-.PHONY: fmt lint test bench-tax-engine benchmark-quote-service benchmark-document-quote-service benchmark-rule-simulation postgres-pool-drill postgres-index-plan-drill postgres-pitr-drill vault-reconciliation-drill migration-integrity-drill migration-rollback-rehearsal adjustment-authority-drill refund-funding-verifier-drill refund-proof-lease-drill refund-execute-api-contention-drill refund-proof-integration-drill indexer-replay-drill indexer-replay-dead-letter-drill alert-delivery-drill otel-trace-drill web-install web-check web-browser-check security-scan observability-config public-docs-check environment-contract deployment-config-contract migration-bootstrap-contract bootstrap-contract release-bundle-integrity-contract service-lifecycle-contract tax-engine-service-contract check compose-config migrate backup-restore-drill encrypted-backup-restore-drill projection-rebuild-drill postgres-contention-drill integration-check solana-build solana-conformance solana-up solana-down indexer-up indexer-down route-verifier-up route-verifier-down observability-up observability-down bootstrap up down logs
+.PHONY: fmt lint test bench-tax-engine benchmark-tax-engine-service benchmark-quote-service benchmark-document-quote-service benchmark-rule-simulation postgres-pool-drill postgres-index-plan-drill postgres-pitr-drill vault-reconciliation-drill migration-integrity-drill migration-rollback-rehearsal adjustment-authority-drill refund-funding-verifier-drill refund-proof-lease-drill refund-execute-api-contention-drill refund-proof-integration-drill indexer-replay-drill indexer-replay-dead-letter-drill alert-delivery-drill otel-trace-drill web-install web-check web-browser-check security-scan observability-config public-docs-check environment-contract deployment-config-contract migration-bootstrap-contract bootstrap-contract release-bundle-integrity-contract service-lifecycle-contract tax-engine-service-contract tax-engine-runtime-contract tax-engine-mtls-runtime-contract api-auth-jwks-reload-contract check compose-config migrate backup-restore-drill encrypted-backup-restore-drill projection-rebuild-drill postgres-contention-drill integration-check solana-build solana-conformance solana-up solana-down indexer-up indexer-down route-verifier-up route-verifier-down observability-up observability-down bootstrap up down logs
 
 fmt:
 	cargo fmt --all
@@ -13,6 +13,9 @@ test:
 
 bench-tax-engine:
 	cargo bench --locked -p tax-engine --bench tax_engine
+
+benchmark-tax-engine-service:
+	./scripts/benchmark_tax_engine_service.sh
 
 benchmark-quote-service:
 	./scripts/benchmark_quote_service.sh
@@ -74,6 +77,15 @@ service-lifecycle-contract:
 
 tax-engine-service-contract:
 	cargo test --locked -p tax-engine-service --all-targets
+
+tax-engine-runtime-contract:
+	./scripts/verify_tax_engine_runtime_contract.sh
+
+tax-engine-mtls-runtime-contract:
+	./scripts/verify_tax_engine_mtls_runtime_contract.sh
+
+api-auth-jwks-reload-contract:
+	./scripts/verify_api_auth_jwks_reload_contract.sh
 
 compose-config:
 	docker compose --profile browser --profile cache --profile observability --profile indexer --profile route-verifier --profile solana config --quiet
@@ -165,7 +177,7 @@ observability-up:
 observability-down:
 	docker compose --profile observability stop grafana prometheus alertmanager alert-receiver otel-collector redis
 
-check: lint test web-check security-scan compose-config observability-config public-docs-check environment-contract deployment-config-contract migration-bootstrap-contract bootstrap-contract service-lifecycle-contract tax-engine-service-contract
+check: lint test web-check security-scan compose-config observability-config public-docs-check environment-contract deployment-config-contract migration-bootstrap-contract bootstrap-contract service-lifecycle-contract tax-engine-service-contract tax-engine-runtime-contract tax-engine-mtls-runtime-contract api-auth-jwks-reload-contract
 
 bootstrap:
 	./scripts/bootstrap_local.sh

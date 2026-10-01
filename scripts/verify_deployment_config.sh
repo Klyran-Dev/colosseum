@@ -86,6 +86,13 @@ require_env TAX_ENGINE_AUTH_TOKEN
 case "$(read_env TAX_ENGINE_AUTH_TOKEN)" in
   local-development-only) fail "TAX_ENGINE_AUTH_TOKEN uses the local development token" ;;
 esac
+for tax_engine_tls_name in \
+  TAX_ENGINE_TLS_CERT_FILE \
+  TAX_ENGINE_TLS_KEY_FILE \
+  TAX_ENGINE_MTLS_CA_FILE
+do
+  require_env "$tax_engine_tls_name"
+done
 
 for database_name in \
   DATABASE_URL \
@@ -122,7 +129,16 @@ esac
 require_env API_AUTH_AUDIENCE
 
 auth_jwks_json=$(read_env API_AUTH_JWKS_JSON)
-if [ -n "$auth_jwks_json" ]; then
+auth_jwks_file=$(read_env API_AUTH_JWKS_FILE)
+if [ -n "$auth_jwks_file" ]; then
+  case "$auth_jwks_file" in
+    /*) ;;
+    *) fail "API_AUTH_JWKS_FILE must be an absolute deployment path" ;;
+  esac
+  [ -z "$auth_jwks_json" ] || fail "API_AUTH_JWKS_FILE cannot accompany API_AUTH_JWKS_JSON"
+  [ -z "$(read_env API_AUTH_JWKS_KID)" ] || fail "API_AUTH_JWKS_FILE cannot accompany API_AUTH_JWKS_KID"
+  [ -z "$(read_env API_AUTH_JWKS_PUBLIC_KEY)" ] || fail "API_AUTH_JWKS_FILE cannot accompany API_AUTH_JWKS_PUBLIC_KEY"
+elif [ -n "$auth_jwks_json" ]; then
   case "$auth_jwks_json" in
     \{*\}) ;;
     *) fail "API_AUTH_JWKS_JSON must be a non-empty JSON object" ;;
@@ -139,7 +155,7 @@ else
     require_env "$auth_name"
   done
 fi
-if [ -z "$auth_jwks_json" ]; then
+if [ -z "$auth_jwks_json" ] && [ -z "$auth_jwks_file" ]; then
   case "$(read_env API_AUTH_JWKS_KID)" in
     *local-development*) fail "API_AUTH_JWKS_KID uses a local development key" ;;
   esac

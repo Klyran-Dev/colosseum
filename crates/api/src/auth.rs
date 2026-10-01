@@ -1,13 +1,15 @@
+use arc_swap::ArcSwap;
 use axum::http::HeaderValue;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::Deserialize;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, fs::File, io::Read, path::Path, sync::Arc};
 use thiserror::Error;
 use uuid::Uuid;
 
 const MAX_AUTHORIZATION_BYTES: usize = 8 * 1024;
 const MAX_JWKS_KEYS: usize = 32;
+pub const MAX_JWKS_DOCUMENT_BYTES: usize = 64 * 1024;
 const MAX_TOKEN_LIFETIME_SECONDS: i64 = 3_600;
 const CLOCK_SKEW_SECONDS: i64 = 30;
 const MAX_SCOPES: usize = 32;
@@ -18,7 +20,7 @@ const MAX_CLAIM_VALUE_BYTES: usize = 128;
 pub struct JwtAuthenticator {
     issuer: Arc<str>,
     audience: Arc<str>,
-    keys: Arc<HashMap<String, VerifyingKey>>,
+    keys: Arc<ArcSwap<HashMap<String, VerifyingKey>>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -177,52 +179,102 @@ impl JwtAuthenticator {
                 "issuer and audience are required".to_string(),
             ));
         }
-        let jwks: JsonWebKeySet = serde_json::from_str(jwks_json).map_err(|error| {
-            AuthError::InvalidConfiguration(format!("JWKS JSON is invalid: {error}"))
-        })?;
-        if jwks.keys.is_empty() || jwks.keys.len() > MAX_JWKS_KEYS {
-            return Err(AuthError::InvalidConfiguration(
-                "JWKS must contain between 1 and 32 keys".to_string(),
-            ));
-        }
-        let mut keys = HashMap::with_capacity(jwks.keys.len());
-        for key in jwks.keys {
-            if key.kid.trim().is_empty()
-                || key.kty != "OKP"
-                || key.crv != "Ed25519"
-                || key.alg != "EdDSA"
-            {
-                return Err(AuthError::InvalidConfiguration(
-                    "JWKS contains an unsupported Ed25519 key".to_string(),
-                ));
-            }
-            let public_key_bytes = URL_SAFE_NO_PAD.decode(key.x.as_bytes()).map_err(|_| {
-                AuthError::InvalidConfiguration("JWKS public key is not base64url".to_string())
-            })?;
-            let public_key: [u8; 32] = public_key_bytes.try_into().map_err(|_| {
-                AuthError::InvalidConfiguration("JWKS public key must be 32 bytes".to_string())
-            })?;
-            if keys
-                .insert(
-                    key.kid,
-                    VerifyingKey::from_bytes(&public_key).map_err(|_| {
-                        AuthError::InvalidConfiguration("JWKS public key is invalid".to_string())
-                    })?,
-                )
-                .is_some()
-            {
-                return Err(AuthError::InvalidConfiguration(
-                    "JWKS contains duplicate key identifiers".to_string(),
-                ));
-            }
-        }
+        let keys = parse_jwks(jwks_json)?;
         Ok(Self {
             issuer: Arc::from(issuer),
             audience: Arc::from(audience),
-            keys: Arc::new(keys),
+            keys: Arc::new(ArcSwap::from_pointee(keys)),
         })
     }
 
+    pub fn from_jwks_file(
+        issuer: impl Into<String>,
+        audience: impl Into<String>,
+        path: &Path,
+    ) -> Result<Self, AuthError> {
+        let document = read_jwks_file(path)?;
+        Self::from_jwks_json(issuer, audience, &document)
+    }
+
+    pub fn reload_from_jwks_file(&self, path: &Path) -> Result<usize, AuthError> {
+        let document = read_jwks_file(path)?;
+        let keys = parse_jwks(&document)?;
+        let key_count = keys.len();
+        self.keys.store(Arc::new(keys));
+        Ok(key_count)
+    }
+
+    pub fn key_count(&self) -> usize {
+        self.keys.load().len()
+    }
+}
+
+fn read_jwks_file(path: &Path) -> Result<String, AuthError> {
+    let file = File::open(path).map_err(|_| {
+        AuthError::InvalidConfiguration("JWKS file could not be opened".to_string())
+    })?;
+    let mut bytes = Vec::new();
+    file.take((MAX_JWKS_DOCUMENT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| AuthError::InvalidConfiguration("JWKS file could not be read".to_string()))?;
+    if bytes.len() > MAX_JWKS_DOCUMENT_BYTES {
+        return Err(AuthError::InvalidConfiguration(
+            "JWKS file exceeds the bounded document size".to_string(),
+        ));
+    }
+    String::from_utf8(bytes)
+        .map_err(|_| AuthError::InvalidConfiguration("JWKS file is not UTF-8".to_string()))
+}
+
+fn parse_jwks(jwks_json: &str) -> Result<HashMap<String, VerifyingKey>, AuthError> {
+    if jwks_json.len() > MAX_JWKS_DOCUMENT_BYTES {
+        return Err(AuthError::InvalidConfiguration(
+            "JWKS document exceeds the bounded document size".to_string(),
+        ));
+    }
+    let jwks: JsonWebKeySet = serde_json::from_str(jwks_json).map_err(|error| {
+        AuthError::InvalidConfiguration(format!("JWKS JSON is invalid: {error}"))
+    })?;
+    if jwks.keys.is_empty() || jwks.keys.len() > MAX_JWKS_KEYS {
+        return Err(AuthError::InvalidConfiguration(
+            "JWKS must contain between 1 and 32 keys".to_string(),
+        ));
+    }
+    let mut keys = HashMap::with_capacity(jwks.keys.len());
+    for key in jwks.keys {
+        if key.kid.trim().is_empty()
+            || key.kty != "OKP"
+            || key.crv != "Ed25519"
+            || key.alg != "EdDSA"
+        {
+            return Err(AuthError::InvalidConfiguration(
+                "JWKS contains an unsupported Ed25519 key".to_string(),
+            ));
+        }
+        let public_key_bytes = URL_SAFE_NO_PAD.decode(key.x.as_bytes()).map_err(|_| {
+            AuthError::InvalidConfiguration("JWKS public key is not base64url".to_string())
+        })?;
+        let public_key: [u8; 32] = public_key_bytes.try_into().map_err(|_| {
+            AuthError::InvalidConfiguration("JWKS public key must be 32 bytes".to_string())
+        })?;
+        if keys
+            .insert(
+                key.kid,
+                VerifyingKey::from_bytes(&public_key).map_err(|_| {
+                    AuthError::InvalidConfiguration("JWKS public key is invalid".to_string())
+                })?,
+            )
+            .is_some()
+        {
+            return Err(AuthError::InvalidConfiguration(
+                "JWKS contains duplicate key identifiers".to_string(),
+            ));
+        }
+    }
+    Ok(keys)
+}
+
+impl JwtAuthenticator {
     pub fn authenticate(
         &self,
         authorization: Option<&HeaderValue>,
@@ -258,10 +310,8 @@ impl JwtAuthenticator {
         if jwt_header.typ != "JWT" || jwt_header.alg != "EdDSA" || jwt_header.kid.is_empty() {
             return Err(AuthError::InvalidToken);
         }
-        let verifying_key = self
-            .keys
-            .get(&jwt_header.kid)
-            .ok_or(AuthError::UnknownKey)?;
+        let keys = self.keys.load();
+        let verifying_key = keys.get(&jwt_header.kid).ok_or(AuthError::UnknownKey)?;
         let signature_bytes = URL_SAFE_NO_PAD
             .decode(signature_segment.as_bytes())
             .map_err(|_| AuthError::MalformedToken)?;
@@ -422,6 +472,8 @@ pub(crate) fn test_token_with_scope_and_roles(
 mod tests {
     use super::*;
     use axum::http::HeaderValue;
+    use ed25519_dalek::Signer;
+    use std::fs;
 
     #[test]
     fn accepts_string_and_array_audience() {
@@ -459,6 +511,108 @@ mod tests {
             ),
             Err(AuthError::ExpiredToken)
         ));
+    }
+
+    #[test]
+    fn valid_file_rotation_replaces_snapshot_and_invalid_reload_retains_it() {
+        let first_key = ed25519_dalek::SigningKey::from_bytes(&[7; 32]);
+        let second_key = ed25519_dalek::SigningKey::from_bytes(&[8; 32]);
+        let path = std::env::temp_dir().join(format!(
+            "solana-tax-api-jwks-{}-{}.json",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let first_document = jwks_document("first-key", &first_key);
+        let second_document = jwks_document("second-key", &second_key);
+        fs::write(&path, &first_document).expect("first JWKS fixture");
+
+        let authenticator =
+            JwtAuthenticator::from_jwks_file("https://issuer.test", "tax-api", &path)
+                .expect("file-backed authenticator");
+        let first_token = token_for_key("first-key", &first_key, 1_800_000_000);
+        let second_token = token_for_key("second-key", &second_key, 1_800_000_000);
+        assert!(
+            authenticator
+                .authenticate(
+                    Some(&HeaderValue::from_str(&format!("Bearer {first_token}")).unwrap()),
+                    1_800_000_100,
+                )
+                .is_ok()
+        );
+
+        fs::write(&path, &second_document).expect("second JWKS fixture");
+        assert!(matches!(authenticator.reload_from_jwks_file(&path), Ok(1)));
+        assert!(matches!(
+            authenticator.authenticate(
+                Some(&HeaderValue::from_str(&format!("Bearer {first_token}")).unwrap()),
+                1_800_000_100,
+            ),
+            Err(AuthError::UnknownKey)
+        ));
+        assert!(
+            authenticator
+                .authenticate(
+                    Some(&HeaderValue::from_str(&format!("Bearer {second_token}")).unwrap()),
+                    1_800_000_100,
+                )
+                .is_ok()
+        );
+
+        fs::write(&path, "{not-json").expect("invalid JWKS fixture");
+        assert!(matches!(
+            authenticator.reload_from_jwks_file(&path),
+            Err(AuthError::InvalidConfiguration(_))
+        ));
+        assert!(
+            authenticator
+                .authenticate(
+                    Some(&HeaderValue::from_str(&format!("Bearer {second_token}")).unwrap()),
+                    1_800_000_100,
+                )
+                .is_ok()
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    fn jwks_document(kid: &str, signing_key: &ed25519_dalek::SigningKey) -> String {
+        serde_json::json!({
+            "keys": [{
+                "kid": kid,
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "alg": "EdDSA",
+                "x": URL_SAFE_NO_PAD.encode(signing_key.verifying_key().to_bytes())
+            }]
+        })
+        .to_string()
+    }
+
+    fn token_for_key(kid: &str, signing_key: &ed25519_dalek::SigningKey, now_unix: i64) -> String {
+        let header = URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&serde_json::json!({
+                "alg": "EdDSA", "kid": kid, "typ": "JWT"
+            }))
+            .expect("test header"),
+        );
+        let claims = URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&serde_json::json!({
+                "iss": "https://issuer.test",
+                "sub": "rotation-user",
+                "aud": "tax-api",
+                "exp": now_unix + 300,
+                "iat": now_unix - 100,
+                "nbf": now_unix - 100,
+                "merchant_id": "12345678-1234-5678-1234-567812345678",
+                "scope": "tax:quote",
+                "roles": []
+            }))
+            .expect("test claims"),
+        );
+        let signing_input = format!("{header}.{claims}");
+        format!(
+            "{signing_input}.{}",
+            URL_SAFE_NO_PAD.encode(signing_key.sign(signing_input.as_bytes()).to_bytes())
+        )
     }
 
     #[test]

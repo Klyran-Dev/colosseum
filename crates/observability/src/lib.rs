@@ -140,7 +140,7 @@ impl TelemetryConfig {
     ) -> Result<Self, TelemetryConfigError> {
         if !matches!(
             service_name,
-            "api" | "worker" | "indexer" | "route_verifier"
+            "api" | "worker" | "indexer" | "route_verifier" | "tax_engine"
         ) {
             return Err(TelemetryConfigError::InvalidServiceName);
         }
@@ -538,6 +538,24 @@ mod tests {
             config.scheduled_delay,
             Duration::from_millis(DEFAULT_TRACE_DELAY_MS)
         );
+    }
+
+    #[test]
+    fn accepts_the_tax_engine_service_name_used_by_metrics() {
+        let config = TelemetryConfig::from_values(
+            "tax_engine",
+            None,
+            "local",
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("tax_engine is a supported service identity");
+
+        assert_eq!(config.service_name, "tax_engine");
     }
 
     #[test]

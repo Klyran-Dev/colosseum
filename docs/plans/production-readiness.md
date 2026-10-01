@@ -348,9 +348,45 @@ exists.
   staging/production service identity, TLS/mTLS, rotation, regional SLO, and
   load evidence remain release gates.
 - [x] ADR-0226 extends the shared non-local deployment preflight to require
-  Tax Engine environment parity and reject the local service token. Secret
-  validity, service identity, TLS/mTLS, rotation, network policy, and
-  production SLO evidence remain separate release gates.
+  Tax Engine environment parity, complete mTLS paths, and rejection of the
+  local service token. Secret validity, service identity, certificate rotation,
+  network policy, and production SLO evidence remain separate release gates.
+- [x] ADR-0227 adds direct Rustls mTLS serving to the Tax Engine adapter;
+  non-local startup requires a server certificate/key and client CA, and
+  malformed or incomplete material fails closed without plaintext fallback.
+  Explicit provider selection and trusted/untrusted client-handshake tests
+  cover the transport boundary; production certificate lifecycle, CA rotation,
+  compromise response, and regional mTLS/SLO evidence remain open.
+- [x] ADR-0228 adds a Unix `SIGHUP` reload path that validates replacement
+  certificate, key, client CA, verifier, and ALPN in a blocking task before an
+  atomic Rustls snapshot swap. Valid and malformed replacement tests prove the
+  new identity is usable and the last known-good identity remains live after a
+  failed reload.
+- [ ] Prove production secret-manager atomic file delivery, permissions,
+  certificate/key rotation, CA overlap and compromise response, regional
+  reload latency, connection-drain behavior, and rejected-reload alert/on-call
+  evidence.
+- [x] ADR-0230 adds an isolated real-container Tax Engine contract for image
+  startup, liveness/readiness authentication, exact calculation, body limits,
+  and canonical metrics. Linux/amd64 retention, production mTLS, resource
+  profiles, regional SLOs, and service-consumer authorization remain open.
+- [x] ADR-0231 makes Tax Engine request rejection explicit: malformed JSON is
+  `400` while the 128 KiB admission limit remains `413`, with focused and
+  pinned-container evidence. Production gateway preservation and retry
+  telemetry remain open.
+- [x] ADR-0232 adds a real-image warm Tax Engine concurrency contract: 256
+  authenticated aggregate requests at concurrency 32, exact response checks,
+  bounded timeouts, and p50/p95/p99 metadata. The 2026-10-01 local arm64 run
+  returned 256/256 HTTP 200 responses with p50/p95/p99 of 1.344/3.650/10.302
+  ms. This is local synthetic service evidence; Linux/amd64 retention,
+  resource profiles, regional SLOs, mTLS, and service-consumer authorization
+  remain open.
+- [x] ADR-0233 adds a real pinned-image staging-mode mTLS contract covering
+  trusted/untrusted client certificates, no-client rejection, bearer auth,
+  exact calculation, h2 ALPN, invalid CA reload retention, and valid reload.
+  Production secret-manager delivery, certificate lifecycle/revocation, CA
+  overlap, regional reload SLO, identity mapping, and on-call evidence remain
+  open.
 - [x] Compiled-rule cache hit/miss/eviction/entry metrics are exported with
   fixed labels and bounded cardinality; concurrent-load and invalidation
   performance evidence remains open.
@@ -719,7 +755,11 @@ and operational gates are intentionally not marked complete by unit tests.
   acknowledge/requeue actions, and explicit acknowledgement-versus-repair
   state language. Production browser accessibility automation and identity
   provider exercises remain open.
-- [ ] UI meets WCAG 2.2 AA, supports keyboard navigation, screen readers, responsive layouts, localization, currencies, time zones, and RTL.
+- [ ] UI meets the complete WCAG 2.2 AA product gate, including manual screen-
+  reader/assistive-technology review, responsive behavior, complete
+  localization catalogs, currencies, time zones, and RTL. The deterministic
+  automated portion is now evidenced separately by the pinned
+  `make web-browser-check` contract.
 - [x] SPA workspace navigation now has a skip link, active-state semantics,
   stable controlled landmark, and tested post-navigation focus management under
   ADR-0142; full WCAG 2.2 AA/browser/assistive-technology evidence remains open.
@@ -738,9 +778,13 @@ and operational gates are intentionally not marked complete by unit tests.
 - [x] The primary quote and lazy operational workspaces have a rendered
   axe-core WCAG A/AA regression contract in
   `apps/web/src/accessibility.test.tsx`, run explicitly in CI by ADR-0111.
-  This is an automated baseline; full WCAG 2.2 AA evidence across real
-  keyboard/focus journeys, RTL, localization, and assistive technologies
-  remains open.
+  The 2026-10-01 pinned NGINX/Playwright run also passed 15/15 real-browser
+  journeys, including keyboard/focus, narrow RTL, reduced-motion, lazy-load
+  recovery, API failure states, quote expiry, wallet rejection, document
+  evidence handoff, and reconciliation mismatch/authorization states. This is
+  strong automated evidence, but manual screen-reader/assistive-technology,
+  complete localization, live-wallet/provider, and production identity review
+  remain open.
 - [x] ADR-0146 centralizes exact `BigInt` atomic formatting, locale-aware
   timestamps, explicit IANA time-zone validation, bounded locale selection,
   and RTL direction handling. Formatter and rendered settings tests cover

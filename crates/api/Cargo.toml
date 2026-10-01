@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 document-payment = { path = "../document-payment" }
 anchor-lang.workspace = true
+arc-swap.workspace = true
 axum.workspace = true
 observability = { path = "../observability" }
 base64.workspace = true

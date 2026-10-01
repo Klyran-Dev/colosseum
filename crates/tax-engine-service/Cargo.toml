@@ -8,9 +8,13 @@ publish = false
 
 [dependencies]
 axum.workspace = true
+axum-server.workspace = true
 observability = { path = "../observability" }
 serde.workspace = true
 serde_json.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
+rustls-pki-types.workspace = true
 tax-engine = { path = "../tax-engine" }
 thiserror.workspace = true
 tokio.workspace = true
@@ -18,4 +22,5 @@ tower-http.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+rcgen = "=0.14.10"
 tower.workspace = true

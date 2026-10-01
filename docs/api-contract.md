@@ -85,16 +85,46 @@ Protected endpoints require `Authorization: Bearer <service-token>`:
 `GET /healthz` and `GET /metrics` are available only on the private service
 network. Metrics are fixed-cardinality Prometheus text and contain no tax facts,
 tenant identifiers, rule contents, or credentials; the NGINX edge does not
-publish this listener. Request bodies are limited to 128 KiB, compiled-rule
-cache capacity is bounded, and calculation admission has a 500 ms queue
-deadline. Overload, invalid rules/facts, unsupported schemas, malformed
-decimal values, and worker failures fail closed without partial results.
+publish this listener. Local Docker development uses plain HTTP on that private
+network. Staging and production require Rustls mutual TLS with a configured
+server certificate, private key, and client-CA bundle; the bearer token remains
+defense in depth. Request bodies are limited to 128 KiB, compiled-rule cache
+capacity is bounded, and calculation admission has a 500 ms queue deadline.
+Overload, invalid rules/facts, unsupported schemas, malformed decimal values,
+and worker failures fail closed without partial results.
+Malformed JSON, missing JSON content type, and JSON shape errors return `400`;
+the request-body limit returns `413`; these responses do not echo request
+content. The same rejection semantics apply to aggregate and document
+calculation endpoints.
 
 The API keeps quote, attestation, transaction compilation, and settlement
-critical paths in-process. A future service consumer must add an ADR covering
-identity, transport security, version compatibility, latency, failure
-behavior, and replay evidence before depending on this adapter for an
-authoritative workflow.
+critical paths in-process. The service is not an authoritative settlement or
+attestation boundary. Certificate issuance, rotation, revocation, client
+identity mapping, and production secret delivery remain deployment gates and
+must be evidenced by the relevant runbooks before production activation.
+
+`make tax-engine-runtime-contract` builds the pinned service image and probes
+the real listener for liveness, authenticated readiness, exact calculation,
+malformed/oversized request rejection, and fixed-cardinality metrics. It is a
+synthetic local/CI runtime contract and does not claim production identity,
+mTLS, live provider, or settlement authority.
+
+On Unix staging and production deployments, an operator or secret-delivery
+controller may send `SIGHUP` after atomically replacing the configured TLS
+files. The service validates the complete replacement off the async executor
+and atomically swaps it for new connections; malformed material is rejected
+and the last known-good configuration remains active. This signal changes
+transport identity only and is not an authorization boundary. Certificate
+issuance, CA overlap/revocation, permissions, and alerting remain deployment
+responsibilities.
+
+`make tax-engine-mtls-runtime-contract` builds and runs the pinned service
+image with synthetic staging certificates and verifies client-certificate
+rejection, trusted mTLS health/readiness, bearer authentication, exact
+calculation output, `h2` negotiation, and atomic invalid/valid CA replacement
+across `SIGHUP`. This is a local/CI transport contract; production CA
+issuance, identity mapping, revocation, secret delivery, regional trust
+configuration, and operator evidence remain release gates.
 
 ## Document calculation simulation
 
@@ -251,6 +281,22 @@ it never enables an unauthenticated quote fallback. Scopes are exact,
 case-sensitive OAuth-style tokens in the JWT `scope` claim; an authenticated
 principal without `tax:quote` receives `403 INSUFFICIENT_SCOPE`. Authorization
 is enforced in the API even when an edge gateway also applies policy.
+
+For deployment-owned key rotation, `API_AUTH_JWKS_FILE` may replace the
+inline key representations. The API loads and fully validates the bounded
+file at startup; inline and file representations are mutually exclusive. On
+Unix, an operator or secret-delivery controller must atomically replace the
+file and send `SIGHUP`. The API validates the complete replacement outside
+the request executor and atomically swaps the immutable key snapshot. Invalid
+or unreadable replacements retain the last known-good snapshot and never
+enable an unauthenticated fallback. The JWT request path performs no file or
+network I/O. Key overlap, secret-manager permissions, revocation timing,
+process targeting, and alert/on-call evidence remain deployment gates.
+
+`make api-auth-jwks-reload-contract` exercises the real API binary's valid
+rotation, removed-key rejection, and invalid-replacement retention with
+synthetic EdDSA material. It is a local/CI runtime contract and does not
+prove production identity-provider or secret-manager ceremonies.
 The response status is `calculated_unattested`; it is not an attestation,
 wallet authorization, settlement, filing, or legal determination.
 

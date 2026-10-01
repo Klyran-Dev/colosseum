@@ -843,11 +843,103 @@ release gates.
 ## ADR-0226 — Tax Engine deployment preflight boundary
 
 - [x] Extend the shared staging/production preflight with exact
-  `TAX_ENGINE_ENV` parity and non-local token requirements.
+  `TAX_ENGINE_ENV` parity, non-local token, and complete mTLS path
+  requirements.
 - [x] Add positive and negative executable deployment-contract cases without
   printing secret values or changing local Compose defaults.
 - [ ] Complete production service identity, TLS/mTLS termination, secret
   rotation, network policy, and regional SLO evidence.
+
+## ADR-0227 — Rustls mTLS transport for the Tax Engine service
+
+- [x] Add direct Rustls mTLS serving for staging/production with explicit
+  certificate, private-key, client-CA, and ALPN configuration. The service
+  explicitly selects the AWS-LC provider when the workspace exposes multiple
+  Rustls providers, and deterministic in-memory handshakes prove both trusted
+  client acceptance and untrusted client rejection.
+- [x] Reject partial/malformed TLS material and never downgrade non-local
+  startup to plaintext or local configuration.
+- [ ] Exercise production certificate provisioning, rotation/reload, CA
+  compromise response, regional mTLS load, and service SLO evidence.
+
+## ADR-0228 — atomic Tax Engine mTLS certificate reload
+
+- [x] Add explicit Unix `SIGHUP` handling with one sequential reload cycle per
+  delivered signal and structured ownership with server shutdown.
+- [x] Validate replacement certificate, key, client CA, verifier, and ALPN in
+  a blocking task before atomically swapping the Rustls configuration.
+- [x] Retain the last known-good configuration on malformed replacement
+  material and cover valid/invalid reloads with deterministic tests.
+- [ ] Prove production secret-manager atomic file delivery, permissions,
+  certificate/key rotation, CA overlap and compromise response, regional
+  reload latency, connection behavior, and alert/on-call evidence.
+
+## ADR-0229 — canonical Tax Engine observability identity
+
+- [x] Use the single `tax_engine` identity across tracing initialization,
+  fixed-cardinality metrics, telemetry allow-lists, dashboards, and alerts.
+- [x] Add a regression test proving the identity is accepted and dynamic or
+  alternate service names remain rejected.
+- [ ] Retain production dashboard/alert query evidence and review any future
+  metric-identity migration as an explicit compatibility change.
+
+## ADR-0230 — executable Tax Engine container runtime contract
+
+- [x] Add a bounded isolated Docker runtime probe for health, authenticated
+  readiness, exact aggregate calculation, authentication failure, body limits,
+  and canonical fixed-cardinality metrics.
+- [x] Keep synthetic credentials/facts local to the probe and clean only its
+  own Compose project state.
+- [x] Include the runtime contract in the standard repository check and public
+  documentation/ADR indexes.
+- [ ] Retain Linux/amd64 CI runtime evidence and production resource-profile,
+  mTLS, regional SLO, and consumer-authorization evidence.
+
+## ADR-0231 — explicit Tax Engine request-rejection semantics
+
+- [x] Normalize malformed JSON and JSON shape/content-type failures to bounded
+  `400 Bad Request` responses at both calculation endpoints.
+- [x] Preserve the request-body admission layer's `413 Payload Too Large`
+  response instead of masking it as a JSON error.
+- [x] Cover both status boundaries with focused tests and the real pinned
+  Docker runtime contract.
+- [ ] Retain production gateway/client retry telemetry and confirm that
+  deployment-specific proxies preserve the documented status contract.
+
+## ADR-0232 — warm Tax Engine service concurrency evidence
+
+- [x] Add the bounded Docker benchmark with warm-up, exact response checks,
+  bounded request timeout, scoped cleanup, and p50/p95/p99 calculation.
+- [x] Execute the default workload on 2026-10-01: 256/256 HTTP 200 responses
+  at concurrency 32 on the pinned local arm64 image, with p50/p95/p99 of
+  1.344/3.650/10.302 ms.
+- [ ] Retain Linux/amd64 CI evidence, resource-profile samples, regional
+  measurements, mTLS/client-identity evidence, and production SLO approval.
+
+## ADR-0233 — real-container Tax Engine mTLS contract
+
+- [x] Add the pinned-image mTLS probe with ephemeral CA/client/server
+  certificates, trusted and untrusted-client checks, bearer authorization,
+  exact calculation, ALPN negotiation, and bounded cleanup.
+- [x] Exercise invalid and valid atomic CA replacement through the real
+  process `SIGHUP` path; retain the last known-good configuration after an
+  invalid replacement.
+- [ ] Retain Linux/amd64 CI transport evidence, secret-manager delivery,
+  certificate issuance/revocation, CA overlap, regional reload latency,
+  client-identity mapping, and production alert/on-call evidence.
+
+## ADR-0234 — atomic API JWKS reload for bounded identity rotation
+
+- [ ] Add an optional file-backed JWKS source that is mutually exclusive with
+  inline key configuration and is fully validated before startup.
+- [ ] Add lock-free immutable key-snapshot replacement on Unix `SIGHUP`; read
+  and parse the bounded file in a blocking task outside the request executor,
+  and retain the last known-good snapshot after every invalid replacement.
+- [ ] Add focused rotation/rejection tests and a real API runtime contract for
+  valid replacement, removed-key rejection, and invalid-replacement retention.
+- [ ] Retain production identity-provider overlap/revocation ceremony,
+  secret-manager atomic delivery and permissions, regional reload timing, and
+  alert/on-call evidence before production activation.
 
 ## ADR-0160 — clean-stack Docker drill migration gate
 
@@ -1262,6 +1354,14 @@ uncached calculation, and immutable compiled-graph calculation. The explicit
 `make bench-tax-engine` target provides hot-path evidence; service-level
 concurrency and regional p50/p95/p99 evidence remain separate release gates.
 
+ADR-0232 adds `make benchmark-tax-engine-service`, a bounded Docker workload
+against the real warm Tax Engine image. It warms one immutable rule digest,
+drives 256 authenticated requests at concurrency 32 by default, validates
+exact tax/net outputs for every response, and reports p50/p95/p99 with image,
+architecture, timeout, and service-limit metadata. This is local synthetic
+service evidence; regional, resource-profile, mTLS, consumer-authorization,
+and production SLO evidence remain separate gates.
+
 ADR-0078 adds `make benchmark-quote-service`, a bounded Docker-isolated HTTP
 workload with ephemeral EdDSA credentials, unique idempotency keys, explicit
 status/error accounting, PostgreSQL duplicate-prevention checks, and p50/p95/p99
@@ -1380,8 +1480,11 @@ ADR-0085 strengthens the validator-backed release gate with a bounded,
 public-safe evidence bundle. The conformance runner records the exact source
 revision, runtime and Compose metadata, SBF hash, validator logs, Compose
 configuration, and browser test output before isolated cleanup; CI retains
-the bundle on both success and failure. A successful retained bundle is still
-required before live settlement correctness gates can be closed.
+the bundle on both success and failure, always runs the postcondition verifier,
+and treats missing evidence as a hard upload error. The release-candidate
+workflow retains the validator bundle immediately on failure before later
+release steps can be skipped. A successful retained bundle is still required
+before live settlement correctness gates can be closed.
 
 ADR-0086 adds the Indexer Operations bounded context. Operators inspect
 bounded replay-gap projections and acknowledge or requeue dead-lettered work

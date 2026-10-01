@@ -88,6 +88,24 @@ two-replica read contention, and p50/p95/p99 latency without creating financial
 rows. The SPA also exposes bounded locale, IANA time-zone, and RTL display
 settings; these are display concerns and never alter tax or settlement inputs.
 
+Run `make tax-engine-runtime-contract` to build the pinned Tax Engine image
+and exercise its real private HTTP listener for liveness, authenticated
+readiness, exact calculation, malformed/oversized request rejection, and
+fixed-cardinality metrics. The contract is also included in `make check` and
+uses synthetic local-only credentials and facts.
+
+Run `make benchmark-tax-engine-service` for the bounded warm-service workload.
+It measures the real pinned image with 256 authenticated aggregate requests at
+concurrency 32 by default, validates exact results for every response, and
+prints local p50/p95/p99 metadata. It is diagnostic synthetic evidence, not a
+regional production SLO or settlement-path benchmark.
+
+Run `make tax-engine-mtls-runtime-contract` to exercise the real pinned Tax
+Engine image in non-local staging mode with synthetic mutual TLS. It verifies
+client certificate rejection/acceptance, bearer authorization, exact
+calculation, ALPN, and bounded SIGHUP reload behavior. It does not claim
+production certificate lifecycle or secret-manager evidence.
+
 Run `make refund-funding-verifier-drill` for the Docker-only synthetic
 two-replica refund-funding verification evidence. It proves lease-fenced single
 activation, one finalized RPC read under contention, and stale-lease reclaim

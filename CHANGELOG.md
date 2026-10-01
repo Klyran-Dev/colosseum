@@ -49,6 +49,43 @@
 - Added ADR-0226 to extend the staging/production deployment preflight with
   Tax Engine environment parity and local-token rejection without exposing
   secret values or changing local Compose defaults.
+- Added ADR-0227 to make the Tax Engine listener direct Rustls mTLS outside
+  local development, with explicit client-CA verification, bounded ALPN, and
+  fail-closed certificate configuration. The service now explicitly selects
+  the AWS-LC Rustls provider when multiple providers are present and has
+  deterministic trusted-client and untrusted-client handshake coverage.
+- Added ADR-0228 for bounded Unix `SIGHUP` Tax Engine mTLS rotation. Complete
+  replacement material is validated off the async executor before an atomic
+  Rustls snapshot swap; malformed replacements retain the last known-good
+  configuration, with deterministic valid/invalid reload coverage.
+- Added the public Tax Engine mTLS rotation runbook covering atomic secret
+  delivery, controlled reload, trusted-client verification, fail-closed
+  rollback, CA overlap, incident escalation, and evidence redaction.
+- Added ADR-0229 and aligned Tax Engine tracing with the existing canonical
+  `tax_engine` metrics identity, preventing startup failure and telemetry
+  dashboard/alert fragmentation.
+- Added ADR-0230 and a Docker runtime contract that exercises the real pinned
+  Tax Engine image for health, authentication, exact calculation, body limits,
+  cleanup, and fixed-cardinality metrics.
+- Added ADR-0231 and explicit Tax Engine request-rejection semantics: malformed
+  JSON is `400 Bad Request` while the bounded request body remains `413
+  Payload Too Large`, with focused tests and pinned-container verification.
+- Added ADR-0232 and `make benchmark-tax-engine-service`, a bounded warm-image
+  concurrency contract that validates every response and reports local
+  p50/p95/p99 latency with workload metadata.
+- Added ADR-0233 and `make tax-engine-mtls-runtime-contract`, proving the real
+  pinned image's non-local Rustls mTLS boundary, ALPN, exact calculation,
+  trusted/untrusted clients, and atomic reload behavior with synthetic keys.
+- Added ADR-0234 and an API JWKS rotation contract. The API now supports an
+  optional bounded file-backed JWKS source, lock-free immutable key snapshots,
+  Unix `SIGHUP` rotation, and last-known-good retention after invalid
+  replacements; a real container contract proves old-key rejection, new-key
+  acceptance, and invalid-replacement safety.
+- Tightened the Linux validator-conformance workflow so evidence verification
+  runs after both successful and failed attempts and missing retained evidence
+  fails the artifact step instead of being warning-only.
+- Applied the same always-verify and immediate failure-evidence retention
+  contract to release-candidate validator runs.
 
 ## 2026-09-30
 
