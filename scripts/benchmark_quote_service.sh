@@ -16,8 +16,17 @@ api_port="${API_PORT:-28080}"
 replica_api_port="${API_REPLICA_PORT:-28081}"
 postgres_port="${POSTGRES_PORT:-25432}"
 nats_port="${NATS_PORT:-25433}"
+resource_profile_output="${BENCHMARK_RESOURCE_PROFILE_OUTPUT:-}"
 merchant_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d11"
 integration_dir="$(mktemp -d)"
+resource_profile_file="$integration_dir/docker-stats.ndjson"
+resource_profile_epoch_file="$integration_dir/docker-stats-epochs"
+resource_profile_pid=""
+resource_profile_containers=""
+resource_profile_sample_count=0
+resource_profile_epoch_count=0
+run_status=1
+failure_reason="not_completed"
 
 case "$benchmark_mode" in
     aggregate|document) ;;
@@ -58,12 +67,86 @@ esac
 
 replica_container_id=""
 
+stop_resource_profile() {
+    if [ -n "$resource_profile_pid" ]; then
+        kill "$resource_profile_pid" >/dev/null 2>&1 || true
+        wait "$resource_profile_pid" >/dev/null 2>&1 || true
+        resource_profile_pid=""
+    fi
+    if [ -s "$resource_profile_file" ]; then
+        resource_profile_sample_count="$(wc -l < "$resource_profile_file" | tr -d ' ')"
+    else
+        resource_profile_sample_count=0
+    fi
+    if [ -s "$resource_profile_epoch_file" ]; then
+        resource_profile_epoch_count="$(wc -l < "$resource_profile_epoch_file" | tr -d ' ')"
+    else
+        resource_profile_epoch_count=0
+    fi
+}
+
+capture_resource_profile_snapshot() {
+    snapshot_file="$integration_dir/docker-stats.snapshot"
+    if docker stats --no-stream --format '{{json .}}' $resource_profile_containers \
+        > "$snapshot_file" 2>/dev/null && [ -s "$snapshot_file" ]; then
+        sampled_at_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        while IFS= read -r stats_record; do
+            printf '{"sampled_at_utc":"%s","stats":%s}\n' \
+                "$sampled_at_utc" "$stats_record" >> "$resource_profile_file"
+        done < "$snapshot_file"
+        printf '%s\n' "$sampled_at_utc" >> "$resource_profile_epoch_file"
+    fi
+}
+
+start_resource_profile() {
+    if [ -z "$resource_profile_output" ]; then
+        return
+    fi
+    resource_profile_containers="$(docker compose -p "$project_name" ps -q api postgres nats | tr '\n' ' ')$replica_container_id"
+    if [ -z "$(printf '%s' "$resource_profile_containers" | tr -d ' ')" ]; then
+        echo "resource profiling was enabled but no benchmark containers were found" >&2
+        exit 1
+    fi
+    if ! rm -f "$resource_profile_output"; then
+        echo "resource profiling could not clear its previous output" >&2
+        exit 1
+    fi
+    : > "$resource_profile_file"
+    : > "$resource_profile_epoch_file"
+    capture_resource_profile_snapshot
+    (
+        trap 'exit 0' INT TERM
+        while :; do
+            capture_resource_profile_snapshot
+            sleep 1
+        done
+    ) &
+    resource_profile_pid="$!"
+}
+
 cleanup() {
+    stop_resource_profile
     if [ -n "$replica_container_id" ]; then
         docker rm --force "$replica_container_id" >/dev/null 2>&1 || true
     fi
+    if [ -n "$resource_profile_output" ]; then
+        if [ "$run_status" -eq 0 ] && [ "$resource_profile_sample_count" -eq 0 ]; then
+            run_status=1
+            failure_reason="resource_profile_empty"
+        fi
+        if [ "$resource_profile_sample_count" -gt 0 ]; then
+            if ! mkdir -p "$(dirname "$resource_profile_output")" \
+                || ! cp "$resource_profile_file" "$resource_profile_output"; then
+                if [ "$run_status" -eq 0 ]; then
+                    run_status=1
+                    failure_reason="resource_profile_persist_failed"
+                fi
+            fi
+        fi
+    fi
     docker compose -p "$project_name" down --volumes --remove-orphans >/dev/null 2>&1 || true
     rm -rf "$integration_dir"
+    exit "$run_status"
 }
 trap cleanup EXIT INT TERM
 
@@ -186,6 +269,8 @@ curl --fail --silent --show-error --max-time "$load_timeout_seconds" \
     exit 1
 }
 
+start_resource_profile
+
 seq 1 "$load_requests" | xargs -P "$load_concurrency" -n 1 sh -c '
     ordinal="$1"
     request_url="$load_base_url"
@@ -264,6 +349,7 @@ while kill -0 "$contention_pid" >/dev/null 2>&1; do
     sleep 0.005
 done
 wait "$contention_pid"
+stop_resource_profile
 
 contention_sample_count="$(wc -l < "$integration_dir/contention-results" | tr -d ' ')"
 contention_status_counts="$(sort "$integration_dir/contention-results" | uniq -c | sed 's/^ *//')"
@@ -303,6 +389,12 @@ if [ "$contention_idempotency_count" -ne 1 ] || [ "$contention_calculation_count
     echo "same-key contention did not converge to one durable calculation: idempotency=$contention_idempotency_count calculations=$contention_calculation_count outbox=$contention_outbox_count" >&2
     exit 1
 fi
+if [ -n "$resource_profile_output" ] && [ "$resource_profile_sample_count" -eq 0 ]; then
+    echo "resource profiling was enabled but captured no Docker stats records" >&2
+    exit 1
+fi
+
+resource_profile_container_count="$(printf '%s\n' $resource_profile_containers | awk 'NF { count += 1 } END { print count + 0 }')"
 
 printf '%s\n' "$evidence_name" \
     "mode=$benchmark_mode" \
@@ -328,4 +420,13 @@ printf '%s\n' "$evidence_name" \
     "contention_tax_calculations=$contention_calculation_count" \
     "contention_outbox_events=$contention_outbox_count" \
     "database_pool_max_size=$database_pool_size" \
-    "database_pool_peak_waiting=$pool_peak_waiting"
+    "database_pool_peak_waiting=$pool_peak_waiting" \
+    "resource_profile_enabled=$(if [ -n "$resource_profile_output" ]; then printf 'true'; else printf 'false'; fi)" \
+    "resource_profile_sampling_interval_seconds=1" \
+    "resource_profile_container_count=$resource_profile_container_count" \
+    "resource_profile_records=$resource_profile_sample_count" \
+    "resource_profile_sampling_epochs=$resource_profile_epoch_count" \
+    "resource_profile_output=${resource_profile_output:-temporary-cleanup}"
+
+run_status=0
+failure_reason="none"

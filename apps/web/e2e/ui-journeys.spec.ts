@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { Buffer } from "node:buffer";
 import axe from "axe-core";
+import { PublicKey } from "@solana/web3.js";
 
 async function expectNoBrowserAxeViolations(
   page: Page,
@@ -182,6 +183,7 @@ test.describe("real-browser SPA journeys", () => {
         version: 1,
         merchant_account: "8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR",
         mint: "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8",
+        mint_decimals: 6,
         tax_vault: "8nGRRJuGoubpUKHVa5paPCvGLQU39nnu3zFWYREbSeNN",
         net_destination: "QWmroo4YnnMqYW3cnxWkFdaTxGD3P7vMSzwMHGbUzwF",
         token_program: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
@@ -303,6 +305,41 @@ test.describe("real-browser SPA journeys", () => {
     await expectNoBrowserAxeViolations(page, "Wallet Standard account selection after reload");
   });
 
+  test("renders and reloads server-bound finalized refund evidence", async ({ page }) => {
+    const response = finalizedRefundClaimResponse();
+    await page.route("**/api/v1/settlement/refund-claims**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(response),
+      });
+    });
+
+    await page.goto("/");
+    await expect(page.getByText("Calculation service online")).toBeVisible();
+    await page.getByLabel("OIDC access token (memory-only)").fill("synthetic-browser-token");
+    await page.getByRole("button", { name: "Refund claims", exact: true }).click();
+    await page.getByLabel("Approved adjustment ID").fill("01992f1b-4a70-7e30-8ea2-b6e37a9d9d12");
+    await page.getByRole("button", { name: "Prepare server-owned claim", exact: true }).click();
+
+    await expect(page.getByText("Finalized claim event evidence matched the durable artifact.", { exact: true })).toBeVisible();
+    await page.getByText("Finalized event proof", { exact: true }).click();
+    await expect(page.getByText("AdjustmentRefundClaimCreated · v1", { exact: true })).toBeVisible();
+    await expect(page.getByText("100 / 25 / 75 atomic units", { exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "finalized refund proof");
+
+    await page.reload();
+    await expect(page.getByText("Calculation service online")).toBeVisible();
+    await page.getByLabel("OIDC access token (memory-only)").fill("synthetic-browser-token");
+    await page.getByRole("button", { name: "Refund claims", exact: true }).click();
+    await page.getByLabel("Recover intent ID").fill("01992f1b-4a70-7e30-8ea2-b6e37a9d9d14");
+    await page.getByRole("button", { name: "Load durable state", exact: true }).click();
+    await expect(page.getByText("Finalized claim event evidence matched the durable artifact.", { exact: true })).toBeVisible();
+    await page.getByText("Finalized event proof", { exact: true }).click();
+    await expect(page.getByText("77", { exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "finalized refund proof after reload");
+  });
+
   test("fails closed when the authenticated document quote API is unavailable", async ({ page }) => {
     await page.route("**/api/v1/tax/document-quote", (route) => route.fulfill({
       status: 503,
@@ -358,6 +395,7 @@ test.describe("real-browser SPA journeys", () => {
       version: 1,
       merchant_account: "8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR",
       mint: "GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq",
+      mint_decimals: 6,
       tax_vault: "LbUiWL3xVV8hTFYBVdbTNrpDo41NKS6o3LHHuDzjfcY",
       net_destination: "QWmroo4YnnMqYW3cnxWkFdaTxGD3P7vMSzwMHGbUzwF",
       token_program: tokenProgram,
@@ -649,3 +687,97 @@ test.describe("real-browser SPA journeys", () => {
     await expectNoBrowserAxeViolations(page, "vault reconciliation unauthorized state");
   });
 });
+
+function finalizedRefundClaimResponse(): Record<string, unknown> {
+  const instruction = {
+    status: "prepared_unsubmitted",
+    program_id: "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+    instruction_data_base64: "eYjG9eQLZXMDAAAAAAAAAAkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJANJJawAAAABY1ElrAAAAAA==",
+    accounts: [
+      { pubkey: "11157t3sqMV725NVRLrVQbAu98Jjfk1uCKehJnXXQs", is_signer: true, is_writable: true },
+      { pubkey: "1117mWrzzrZr312ebPDHu8tbfMwFNvCvMbr6WepCNG", is_signer: true, is_writable: false },
+      { pubkey: "1119DWteoLSdjvrT6g6L8C2PfDD2faiTQUpsjY2RiF", is_signer: false, is_writable: false },
+      { pubkey: "111BuZ6b86gm7XhxjvTakhRvxSMjXp2GqgifkNUmDK", is_signer: false, is_writable: false },
+      { pubkey: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", is_signer: false, is_writable: false },
+      { pubkey: "qcfm6jd37nhqmbY6JomQWtdD9S4HieqnmRm49Hum6ir", is_signer: false, is_writable: false },
+      { pubkey: "4fuGSLS5aka44BPDqoH7RSg1HLvy4bMU4zY551u2Dnts", is_signer: false, is_writable: false },
+      { pubkey: "Fk3Z5sqgXWRYu3dFuQqshGmgGJoSxQSnxTHSFt9CKM5T", is_signer: false, is_writable: false },
+      { pubkey: "111FJo4zLAGU9nzTWa6EnbV4VAmtG4FR8kcokrtZYr", is_signer: false, is_writable: false },
+      { pubkey: "111A4R8Vf7xP4Rz7ZkYd8H7f4Q5J4h4Y4V4w4U4T4S", is_signer: false, is_writable: false },
+      { pubkey: "HL3Hhyp81PHGgfQQXmAbJy7ZmEi9MJX3ex4UFAunH2g5", is_signer: false, is_writable: false },
+      { pubkey: "111B4R8Vf7xP4Rz7ZkYd8H7f4Q5J4h4Y4V4w4U4T4S", is_signer: false, is_writable: false },
+      { pubkey: "111C4R8Vf7xP4Rz7ZkYd8H7f4Q5J4h4Y4V4w4U4T4S", is_signer: false, is_writable: false },
+      { pubkey: "4DqbTd6EtCebWaXDpCRmoSRVjeHB1k6B3CFYQ89dunAK", is_signer: false, is_writable: true },
+      { pubkey: "11111111111111111111111111111111", is_signer: false, is_writable: false },
+    ],
+    registry: "4fuGSLS5aka44BPDqoH7RSg1HLvy4bMU4zY551u2Dnts",
+    adjustment: "Fk3Z5sqgXWRYu3dFuQqshGmgGJoSxQSnxTHSFt9CKM5T",
+    original_receipt: "111FJo4zLAGU9nzTWa6EnbV4VAmtG4FR8kcokrtZYr",
+    claim: "4DqbTd6EtCebWaXDpCRmoSRVjeHB1k6B3CFYQ89dunAK",
+    claim_nonce: "3",
+  };
+  return {
+    status: "finalized",
+    intent_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d14",
+    request_digest: Array(32).fill(3),
+    instruction_digest: Array(32).fill(1),
+    artifact_digest: Array(32).fill(2),
+    claim: instruction.claim,
+    artifact: {
+      schema: "refund-movement-artifact/v1",
+      instruction,
+      instruction_digest: Array(32).fill(1),
+      artifact_digest: Array(32).fill(2),
+      refund_destination: instruction.accounts[12].pubkey,
+      merchant_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d11",
+      adjustment_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d12",
+      funding_configuration_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d13",
+      receipt_signature: "5VfY7WmYcR7h9o9E9nP7pQ8rS",
+      receipt_slot: "42",
+      proposer_subject: "proposer",
+      refund_funder_subject: "refund-funder",
+      proposer: instruction.accounts[0].pubkey,
+      refund_funder: instruction.accounts[1].pubkey,
+      merchant: instruction.accounts[2].pubkey,
+      mint: instruction.accounts[3].pubkey,
+      token_program: instruction.accounts[4].pubkey,
+      tax_vault: instruction.accounts[9].pubkey,
+      net_source: instruction.accounts[11].pubkey,
+      gross_atomic: "100",
+      tax_atomic: "25",
+      net_atomic: "75",
+      execute_after_unix: 1800000000,
+      expires_at_unix: 1800000600,
+    },
+    signed_transaction_digest: null,
+    signature: "5VfY7WmYcR7h9o9E9nP7pQ8rS",
+    submitted_slot: "77",
+    commitment: "finalized",
+    last_error_code: null,
+    finalized_evidence: {
+      event_type: "AdjustmentRefundClaimCreated",
+      event_version: "v1",
+      event_discriminator: Array(8).fill(4),
+      commitment: "finalized",
+      signature: "5VfY7WmYcR7h9o9E9nP7pQ8rS",
+      slot: "77",
+      event_index: 2,
+      claim: Array.from(new PublicKey(instruction.claim).toBytes()),
+      adjustment: Array(32).fill(1),
+      original_receipt: Array(32).fill(2),
+      merchant: Array(32).fill(3),
+      mint: Array(32).fill(4),
+      nonce: "3",
+      gross_magnitude: "100",
+      tax_magnitude: "25",
+      net_magnitude: "75",
+      refund_funder: Array(32).fill(5),
+      refund_destination: Array(32).fill(6),
+      proposer: Array(32).fill(7),
+      reference_digest: Array(32).fill(8),
+      execute_after_unix: 1800000000,
+      expires_at_unix: 1800000600,
+      evidence_digest: Array(32).fill(1),
+    },
+  };
+}

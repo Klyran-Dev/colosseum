@@ -12,6 +12,18 @@ describe("locale-aware financial and evidence formatting", () => {
     expect(formatAtomic("900719925474099312345", "USD", "en-US")).toBe("USD\u00a09,007,199,254,740,993,123.45");
   });
 
+  it("formats zero, six, and nine decimal Solana assets from BigInt atomic units", () => {
+    expect(formatAtomic("1234", "TOKEN", "en-US", 0)).toBe("TOKEN\u00a01,234");
+    expect(formatAtomic("123456", "USDC", "en-US", 6)).toBe("USDC\u00a00.123456");
+    expect(formatAtomic("1", "SOL", "en-US", 9)).toBe("SOL\u00a00.000000001");
+  });
+
+  it("rejects an unbounded or fractional asset precision", () => {
+    expect(() => formatAtomic("1", "TOKEN", "en-US", -1)).toThrow(/between 0 and 9/);
+    expect(() => formatAtomic("1", "TOKEN", "en-US", 10)).toThrow(/between 0 and 9/);
+    expect(() => formatAtomic("1", "TOKEN", "en-US", 2.5)).toThrow(/between 0 and 9/);
+  });
+
   it("uses locale grouping and decimal conventions", () => {
     expect(formatAtomic("123456", "EUR", "de-DE")).toBe("1.234,56 EUR");
   });

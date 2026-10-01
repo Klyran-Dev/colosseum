@@ -517,7 +517,9 @@ ADR-0100.
 authenticated tenant-scoped `route_id`, the payer wallet public key, a 32-byte
 policy digest represented as a JSON byte array, and a positive payer
 nonce/policy sequence. `GET /v1/settlement/routes` exposes only active routes
-for the authenticated tenant. The API loads the quote and route, verifies
+for the authenticated tenant. Each route includes the server-owned
+`mint_decimals` value (`0..=9`) obtained from finalized route-verification
+evidence; clients must not infer a two-decimal default. The API loads the quote and route, verifies
 their status/effective windows, derives the decimal-string amounts from
 server-owned evidence, fixes the settlement program ID, and derives the
 payer's canonical associated token account locally. Caller-supplied merchant,
@@ -1133,6 +1135,18 @@ claims a refund until later finalized event and balance proof.
 The recovery response exposes the persisted signed-transaction digest,
 signature, submitted slot, commitment, and bounded error code when present;
 these are transport evidence only and are not a refund-success assertion.
+
+When the durable lifecycle is `finalized`, the recovery response also includes
+`finalized_evidence`. This is a server-derived typed projection of the exact
+finalized `AdjustmentRefundClaimCreated` event: event identity, discriminator,
+signature, slot, event index, claim/artifact bindings, execution window,
+conserved gross/tax/net amounts, and the immutable evidence digest. It is
+returned only after the server has matched the stored event against the
+persisted signature and immutable artifact. All `u64` fields are canonical
+decimal JSON strings. A finalized response without matching evidence is an
+error; the browser never supplies or replaces these fields. The UI exposes
+the proof as movement evidence only and does not claim filing, reporting,
+legal compliance, or tax advice. See ADR-0213.
 
 `POST /v1/settlement/refund-claims/{intent_id}/reconcile` requires the exact
 `tax:refund:claim:reconcile` scope and `settlement_adjustment_proposer` role.

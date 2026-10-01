@@ -148,6 +148,9 @@ fi
 docker exec -i "$postgres_container" psql -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
     < db/verification/refund_funding_verification_leases.sql >/dev/null
 
+docker exec -i "$postgres_container" psql -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
+    < db/verification/settlement_route_mint_precision.sql >/dev/null
+
 echo "migration-integrity-drill"
 echo "concurrent_run_a=$concurrent_a"
 echo "concurrent_run_b=$concurrent_b"
@@ -156,3 +159,4 @@ echo "failed_migration=rolled_back"
 echo "checksum_drift=failed_closed"
 echo "ledger_count=$ledger_count"
 echo "refund_funding_verification_lease_contract=passed"
+echo "settlement_route_mint_precision_contract=passed"

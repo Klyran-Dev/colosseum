@@ -373,6 +373,59 @@ advance a movement to a successful state.
 - [ ] Retain a successful CI run and production-like regional/resource-profile
   measurements before using document latency as a production SLO claim.
 
+## ADR-0215 — bounded load-test resource-profile evidence
+
+- [x] Record the bounded sampling scope, alternatives, privacy constraints, and
+  diagnostic-only release boundary in ADR-0215.
+- [x] Add bounded Docker JSON resource sampling to the aggregate/document load
+  harness and retain the profile beside CI latency evidence.
+- [x] Re-run the aggregate and document workloads locally with retained
+  profiles; both preserved the declared latency, contention, and durable
+  invariants. Production-like regional/resource-budget review remains open.
+- [ ] Review retained CI and production-like regional CPU/memory/runtime
+  evidence against the declared budgets before accepting production SLOs.
+
+## ADR-0216 — server-owned mint precision at the settlement-route boundary
+
+- [x] Persist finalized verifier-derived `mint_decimals` on settlement routes
+  through migration `0053`, enforce the `0..=9` bound, and prevent mutation on
+  active, suspended, or retired route versions.
+- [x] Expose and strictly validate route precision in the authenticated API and
+  browser checkout; amount presentation uses `BigInt` scaling and never
+  converts atomic values through JavaScript `number` arithmetic.
+- [x] Add zero-, six-, and nine-decimal formatter vectors plus missing,
+  fractional, and out-of-range route rejection tests.
+- [ ] Retain Docker/PostgreSQL migration evidence and Linux validator-backed
+  route activation evidence before treating precision support as a production
+  release gate.
+
+## ADR-0217 — retained Docker integration evidence
+
+- [x] Record the public-safe evidence boundary, retention period, alternatives,
+  and failure semantics in ADR-0217.
+- [x] Retain the authoritative Docker integration stream for successful and
+  failed CI runs with `pipefail` and bounded artifact retention.
+- [ ] Review retained Linux CI artifacts for the exact release commit before
+  using synthetic integration evidence in a release decision.
+
+## ADR-0218 — explicit release integrity hashes
+
+- [x] Require and copy the resolved Compose configuration into the release
+  bundle and include it in the common checksum set.
+- [x] Add named machine-readable SHA-256 fields for the final Solana program
+  binary and effective configuration, with a failing-first contract test.
+- [ ] Retain a successful Linux release-candidate artifact and independently
+  review its program/configuration hashes before production enablement.
+
+## ADR-0219 — JWKS JSON deployment-preflight parity
+
+- [x] Align the staging/production preflight with the API's supported
+  structured `API_AUTH_JWKS_JSON` or compatibility-key-pair contract.
+- [x] Reject mixed, empty, malformed-shape, and known local-development key
+  representations without printing secret material.
+- [ ] Exercise provider-managed key rotation and HSM/KMS-backed identity
+  provisioning in a controlled staging environment.
+
 ## ADR-0210 — Docker full-topology bootstrap
 
 - [x] Record the explicit-service selection, Compose health-wait contract,
@@ -408,7 +461,10 @@ bytes, and records ambiguous provider outcomes as `unknown`.
 - [x] Add RPC-fixture integration and contention evidence; the production worker
   now performs bounded automatic convergence, and the browser workspace tests
   cover role-separated signing and transport-state rendering.
-- [ ] Add full browser accessibility recovery and finalized-proof evidence.
+- [x] Add the typed server-derived finalized claim-event response, strict
+  browser parser, progressive-disclosure proof display, and browser contract
+  coverage. Live injected-wallet, reload, and production-provider evidence
+  remain separate release gates.
 
 ## ADR-0178 — two-signer refund-claim wallet workspace
 
@@ -422,9 +478,15 @@ versus finalized-proof state semantics.
   accessible explicit failure states.
 - [x] Add synthetic injected-wallet multi-account role-signing tests for claim
   preparation, exact submission, and proof-pending rendering.
-- [ ] Add real injected-wallet multi-account, reload, RPC-fixture, and
-  finalized-proof browser evidence. The browser action and indexer worker both
-  use the shared proof-driven finality boundary.
+- [x] Add synthetic injected-wallet multi-account finalized-proof rendering;
+  the browser action and indexer worker both use the shared proof-driven
+  finality boundary.
+- [x] Add a pinned NGINX/Playwright journey for server-bound finalized claim
+  proof disclosure, axe validation, reload, and durable intent recovery. The
+  journey uses synthetic API evidence and does not claim live wallet or chain
+  finality.
+- [ ] Add real injected-wallet multi-account, reload, RPC-fixture, and live
+  finalized-proof browser evidence.
 
 ## ADR-0179 — durable, proof-gated refund-execute intent
 
@@ -521,9 +583,11 @@ Implement only the first explicit movement contract: a negative `Refund` claim
 with a tax-vault source, merchant-funder source, and payer-bound destination.
 The on-chain claim/execute/cancel instructions, bounded Rust compilers, and
 cross-language claim vector are implemented. The claim, two checked CPIs,
-cancellation, finalized evidence, and unknown transaction state still require
-Linux validator execution and reconciliation evidence before any paid-state
-API is introduced.
+cancellation, and finalized evidence are implemented in the pinned client
+contract; the client now also attempts a substituted destination and proves
+no balance drift before the legitimate execution. Linux validator execution,
+finalized reconciliation, and unknown transaction state still require
+retained evidence before any paid-state API is introduced.
 
 ## ADR-0155 — finalized refund execution evidence projection
 
@@ -1539,6 +1603,16 @@ This is local validator evidence only; program audit, target-cluster compute
 and priority-fee measurements, staging governance, and production approval
 remain separate gates.
 
+### Extension-free Token-2022 Split Plan conformance (ADR-0214)
+
+- [x] Record the compatibility boundary, alternatives, invariants, and
+  fail-closed extension policy in ADR-0214.
+- [x] Add a real extension-free Token-2022 two-recipient Split Plan case to
+  the pinned validator client, including finalized 0/25/45/30 balance
+  assertions.
+- [ ] Retain successful Linux/amd64 validator evidence for this case before
+  marking Token-2022 Split Plan compatibility as a release-complete gate.
+
 ### Validator-backed policy revocation conformance (ADR-0141)
 
 The conformance suite also executes the governed revocation path against a
@@ -1618,13 +1692,15 @@ CSP/cache, and assistive-technology evidence remain release gates.
 The web platform now includes an opt-in Docker Compose `browser` profile with
 an official Playwright 1.63.0 runner pinned by immutable image digest. It
 executes against the built NGINX edge and proves keyboard skip/focus behavior,
-real lazy workspace loading, narrow RTL overflow, reduced-motion behavior, and
-redacted dynamic-import recovery. It also injects the locked dev-only
-`axe-core` source into the real browser and audits the quote, API-unavailable
-state, plus every lazy workspace against WCAG A/AA tags. Use
+real lazy workspace loading, narrow RTL overflow, reduced-motion behavior,
+redacted dynamic-import recovery, and the server-bound finalized refund-proof
+disclosure/reload journey. It also injects the locked dev-only `axe-core`
+source into the real browser and audits the quote, API-unavailable state,
+every lazy workspace, and the refund-proof surface against WCAG A/AA tags. Use
 `make web-browser-check`; the current Docker run type-checks the e2e project
-before launching and passes 5/5 test cases while auditing 7/7 lazy workspace
-surfaces.
+before launching and passes 15/15 test cases while auditing the covered
+surfaces. This evidence uses synthetic API fixtures and does not claim live
+wallet or chain finality.
 CI retains failure traces, screenshots, videos,
 and JSON results under the ignored `test-results/web-e2e` path. This automated
 contract complements the fast axe-core baseline and does not claim

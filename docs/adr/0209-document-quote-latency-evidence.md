@@ -85,3 +85,8 @@ and no observed database-pool waiters. The measured p50/p95/p99 were
 records, 200 document calculations, 200 outbox events, and one of each for
 the contention key. This is local synthetic evidence only; it is not a CI
 retained result, regional measurement, or production SLO acceptance.
+
+A follow-up profile-enabled run on the same host passed the declared workload
+with p50/p95/p99 of 4.166/26.137/35.064 ms and retained four timestamped
+Docker JSON-stat per-container records from one sampling epoch beside the
+summary. This remains local diagnostic evidence only.

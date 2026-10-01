@@ -120,7 +120,8 @@ jobs:
       - name: Run bounded document-quote latency workload
         run: |
           mkdir -p release-bundle/document-quote-load
-          make benchmark-document-quote-service | tee release-bundle/document-quote-load/evidence.txt
+          BENCHMARK_RESOURCE_PROFILE_OUTPUT=release-bundle/document-quote-load/resource-profile.ndjson \
+            make benchmark-document-quote-service | tee release-bundle/document-quote-load/evidence.txt
 
       - name: Run encrypted backup artifact drill
         run: |
@@ -132,6 +133,9 @@ jobs:
 
       - name: Build production web bundle
         run: pnpm --dir apps/web build
+
+      - name: Verify explicit release integrity hashes
+        run: make release-bundle-integrity-contract
 
       - name: Capture security report
         run: |

@@ -178,18 +178,23 @@ describe("checkout settlement boundary", () => {
 
   it("validates bounded routes and compiled artifacts before review", () => {
     const routeId = "01992f1b-4a70-7e30-8ea2-b6e37a9d9d13";
-    const [route] = parseSettlementRoutes([{
+    const routePayload = {
       id: routeId,
       route_key: "local-usdc",
       version: 1,
       merchant_account: vectorInstruction.accounts[2].pubkey,
       mint: vectorInstruction.accounts[4].pubkey,
+      mint_decimals: 6,
       tax_vault: vectorInstruction.accounts[5].pubkey,
       net_destination: vectorInstruction.accounts[8].pubkey,
       token_program: vectorInstruction.accounts[10].pubkey,
-    }]);
+    };
+    const [route] = parseSettlementRoutes([routePayload]);
     expect(route.id).toBe(routeId);
     expect(route.token_program).toBe(vectorInstruction.accounts[10].pubkey);
+    expect(route.mint_decimals).toBe(6);
+    expect(() => parseSettlementRoutes([{ ...routePayload, mint_decimals: 10 }])).toThrow(/mint decimals/);
+    expect(() => parseSettlementRoutes([{ ...routePayload, mint_decimals: undefined }])).toThrow(/mint decimals/);
 
     const artifact = parseCompiledSettlementArtifact({
       ...vectorInstruction,
@@ -262,6 +267,7 @@ describe("checkout settlement boundary", () => {
       version: 1,
       merchant_account: vectorInstruction.accounts[2].pubkey,
       mint: vectorInstruction.accounts[4].pubkey,
+      mint_decimals: 6,
       tax_vault: vectorInstruction.accounts[5].pubkey,
       net_destination: vectorInstruction.accounts[8].pubkey,
       token_program: "11111111111111111111111111111111",

@@ -213,6 +213,8 @@ pub enum StorageError {
     SettlementRouteUnavailable,
     #[error("settlement route verification evidence is invalid: {0}")]
     SettlementRouteVerificationInvalid(String),
+    #[error("stored settlement route failed integrity validation: {0}")]
+    SettlementRouteIntegrity(String),
     #[error("settlement route cannot be activated in its current lifecycle state")]
     SettlementRouteActivationConflict,
     #[error("refund funding configuration was not found")]
@@ -1210,6 +1212,7 @@ pub struct SettlementRoute {
     pub version: i32,
     pub merchant_account: String,
     pub mint: String,
+    pub mint_decimals: u8,
     pub tax_vault: String,
     pub net_destination: String,
     pub token_program: String,
@@ -10122,6 +10125,7 @@ impl PgStore {
             || verification.route_version <= 0
             || verification.verification_digest == [0; 32]
             || verification.accounts.len() != 4
+            || verification.mint_decimals > 9
             || !matches!(
                 verification.verification_commitment,
                 "finalized" | "local_synthetic"
@@ -10215,14 +10219,16 @@ impl PgStore {
                 ],
             )
             .await?;
+        let mint_decimals = i16::from(verification.mint_decimals);
         let updated = transaction
             .execute(
                 "UPDATE settlement_routes
                  SET status = 'active', verification_digest = $2,
                      verification_slot = $3::text::numeric,
                      verification_commitment = $4,
-                     verification_evidence = $5, verified_at = now(), updated_at = now()
-                 WHERE id = $1 AND merchant_id = $6
+                     verification_evidence = $5, mint_decimals = $6,
+                     verified_at = now(), updated_at = now()
+                 WHERE id = $1 AND merchant_id = $7
                    AND status IN ('pending_verification', 'suspended')",
                 &[
                     &route_id,
@@ -10230,6 +10236,7 @@ impl PgStore {
                     &verification.verification_slot.to_string(),
                     &verification.verification_commitment,
                     &evidence,
+                    &mint_decimals,
                     &merchant_id,
                 ],
             )
@@ -10257,7 +10264,7 @@ impl PgStore {
         let row = client
             .query_opt(
                 "SELECT route_key, version, status, merchant_account, mint,
-                        tax_vault, net_destination, token_program,
+                        tax_vault, net_destination, token_program, mint_decimals,
                         effective_from <= now()
                             AND (effective_until IS NULL OR now() < effective_until)
                  FROM settlement_routes
@@ -10267,7 +10274,7 @@ impl PgStore {
             .await?
             .ok_or(StorageError::SettlementRouteNotFound)?;
         let status: String = row.get(2);
-        let effective: bool = row.get(8);
+        let effective: bool = row.get(9);
         if status != "active" || !effective {
             return Err(StorageError::SettlementRouteUnavailable);
         }
@@ -10277,6 +10284,11 @@ impl PgStore {
             version: row.get(1),
             merchant_account: row.get(3),
             mint: row.get(4),
+            mint_decimals: row.get::<_, i16>(8).try_into().map_err(|_| {
+                StorageError::SettlementRouteIntegrity(
+                    "active route mint decimals are outside the supported range".to_string(),
+                )
+            })?,
             tax_vault: row.get(5),
             net_destination: row.get(6),
             token_program: row.get(7),
@@ -10308,7 +10320,7 @@ impl PgStore {
         let rows = client
             .query(
                 "SELECT id, route_key, version, merchant_account, mint,
-                        tax_vault, net_destination, token_program
+                        tax_vault, net_destination, token_program, mint_decimals
                  FROM settlement_routes
                  WHERE merchant_id = $1
                    AND status = 'active'
@@ -10330,6 +10342,12 @@ impl PgStore {
                     version: row.get(2),
                     merchant_account: row.get(3),
                     mint: row.get(4),
+                    mint_decimals: row.get::<_, i16>(8).try_into().map_err(|_| {
+                        StorageError::SettlementRouteIntegrity(
+                            "active route mint decimals are outside the supported range"
+                                .to_string(),
+                        )
+                    })?,
                     tax_vault: row.get(5),
                     net_destination: row.get(6),
                     token_program: row.get(7),
@@ -10355,7 +10373,7 @@ impl PgStore {
         let rows = client
             .query(
                 "SELECT id, route_key, version, merchant_account, mint,
-                        tax_vault, net_destination, token_program
+                        tax_vault, net_destination, token_program, mint_decimals
                  FROM settlement_routes
                  WHERE merchant_id = $1
                    AND status = 'active'
@@ -10366,19 +10384,26 @@ impl PgStore {
                 &[&merchant_id],
             )
             .await?;
-        Ok(rows
-            .into_iter()
-            .map(|row| SettlementRoute {
-                id: row.get(0),
-                route_key: row.get(1),
-                version: row.get(2),
-                merchant_account: row.get(3),
-                mint: row.get(4),
-                tax_vault: row.get(5),
-                net_destination: row.get(6),
-                token_program: row.get(7),
+        rows.into_iter()
+            .map(|row| {
+                Ok(SettlementRoute {
+                    id: row.get(0),
+                    route_key: row.get(1),
+                    version: row.get(2),
+                    merchant_account: row.get(3),
+                    mint: row.get(4),
+                    mint_decimals: row.get::<_, i16>(8).try_into().map_err(|_| {
+                        StorageError::SettlementRouteIntegrity(
+                            "active route mint decimals are outside the supported range"
+                                .to_string(),
+                        )
+                    })?,
+                    tax_vault: row.get(5),
+                    net_destination: row.get(6),
+                    token_program: row.get(7),
+                })
             })
-            .collect())
+            .collect::<Result<Vec<_>, StorageError>>()
     }
 
     /// Loads a server-owned, active Split Plan under the authenticated tenant

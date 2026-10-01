@@ -12,6 +12,7 @@ run_checker() {
   simulation_mode=${1:-false}
   seed_dir=${2:-}
   insecure_rpc=${3:-false}
+  auth_mode=${4:-pair}
   set -- env -i \
     PATH="$PATH" \
     DEPLOYMENT_ENV=staging \
@@ -34,8 +35,6 @@ run_checker() {
     ROUTE_VERIFIER_RPC_ENDPOINTS="$synthetic_rpc" \
     API_AUTH_ISSUER=https://identity.example.invalid \
     API_AUTH_AUDIENCE=tax-api-staging \
-    API_AUTH_JWKS_KID=staging-auth-key-v1 \
-    API_AUTH_JWKS_PUBLIC_KEY=synthetic-public-key \
     API_EVIDENCE_KEY_ID=staging-evidence-key-v1 \
     API_EVIDENCE_KEY_B64=synthetic-evidence-key \
     API_JURISDICTION_PROVIDER_KEY_ID=staging-provider-key-v1 \
@@ -43,10 +42,16 @@ run_checker() {
   if [ -n "$seed_dir" ]; then
     set -- "$@" SEED_DIR="$seed_dir"
   fi
+  if [ "$auth_mode" = json ]; then
+    set -- "$@" 'API_AUTH_JWKS_JSON={"keys":[{"kid":"staging-auth-key-v1","kty":"OKP","crv":"Ed25519","x":"synthetic-public-key"}]}'
+  else
+    set -- "$@" API_AUTH_JWKS_KID=staging-auth-key-v1 API_AUTH_JWKS_PUBLIC_KEY=synthetic-public-key
+  fi
   "$@" ./scripts/verify_deployment_config.sh
 }
 
 run_checker
+run_checker false '' false json
 
 if run_checker true >/dev/null 2>&1; then
   echo "simulation-mode negative contract did not fail" >&2

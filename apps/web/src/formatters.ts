@@ -12,6 +12,13 @@ function decimalSeparator(locale: string): string {
     .find((part) => part.type === "decimal")?.value ?? ".";
 }
 
+function boundedAtomicDecimals(decimals: number): number {
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 9) {
+    throw new Error("atomic decimals must be an integer between 0 and 9");
+  }
+  return decimals;
+}
+
 function currencyPlacement(locale: string): "prefix" | "suffix" {
   const parts = new Intl.NumberFormat(locale, {
     style: "currency",
@@ -39,7 +46,12 @@ function currencyJoiner(locale: string): string {
 }
 
 /** Formats protocol atomic units without converting the amount through Number. */
-export function formatAtomic(value: string, currency: string, locale = DEFAULT_LOCALE): string {
+export function formatAtomic(
+  value: string,
+  currency: string,
+  locale = DEFAULT_LOCALE,
+  atomicDecimals = 2,
+): string {
   let atomic: bigint;
   try {
     atomic = BigInt(value);
@@ -47,18 +59,21 @@ export function formatAtomic(value: string, currency: string, locale = DEFAULT_L
     throw new Error("atomic amount is not an integer");
   }
   if (!currency.trim()) throw new Error("currency is required");
+  const decimals = boundedAtomicDecimals(atomicDecimals);
 
   const negative = atomic < 0n;
   const absolute = negative ? -atomic : atomic;
-  const whole = absolute / 100n;
-  const fraction = absolute % 100n;
+  const scale = 10n ** BigInt(decimals);
+  const whole = decimals === 0 ? absolute : absolute / scale;
+  const fraction = decimals === 0 ? 0n : absolute % scale;
   const integerText = new Intl.NumberFormat(locale, { useGrouping: true, maximumFractionDigits: 0 }).format(whole);
-  const fractionText = new Intl.NumberFormat(locale, {
-    useGrouping: false,
-    minimumIntegerDigits: 2,
-    maximumFractionDigits: 0,
-  }).format(fraction);
-  const numericText = `${integerText}${decimalSeparator(locale)}${fractionText}`;
+  const numericText = decimals === 0
+    ? integerText
+    : `${integerText}${decimalSeparator(locale)}${new Intl.NumberFormat(locale, {
+      useGrouping: false,
+      minimumIntegerDigits: decimals,
+      maximumFractionDigits: 0,
+    }).format(fraction)}`;
   const joiner = currencyJoiner(locale);
   const display = currencyPlacement(locale) === "prefix"
     ? `${currency}${joiner}${numericText}`

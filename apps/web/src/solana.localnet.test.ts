@@ -816,6 +816,26 @@ describe("validator-backed settlement conformance", () => {
       getAccount(connection, source.address, "finalized"),
     ]);
     expect(beforeRefund.map((account) => account.amount)).toEqual([25n, 75n, 0n]);
+    await expect(send([
+      executeRefundInstruction(
+        mint,
+        vault.address,
+        refundFunderSource.address,
+        destination.address,
+        TOKEN_PROGRAM_ID,
+        1n,
+        1n,
+        1n,
+      ),
+    ], [adjustmentApprover, refundFunder])).rejects.toThrow();
+    const unchangedAfterDestinationSubstitution = await Promise.all([
+      getAccount(connection, vault.address, "finalized"),
+      getAccount(connection, refundFunderSource.address, "finalized"),
+      getAccount(connection, source.address, "finalized"),
+    ]);
+    expect(unchangedAfterDestinationSubstitution.map((account) => account.amount)).toEqual(
+      beforeRefund.map((account) => account.amount),
+    );
     await send([
       executeRefundInstruction(
         mint,
@@ -1275,6 +1295,109 @@ describe("validator-backed settlement conformance", () => {
       getAccount(connection, recipientB.address, "finalized"),
     ]);
     expect(afterWrongOrder.map((account) => account.amount)).toEqual([0n, 25n, 45n, 30n]);
+  }, 30_000);
+
+  test("settles an extension-free Token-2022 two-recipient Split Plan", async () => {
+    await airdrop(payer.publicKey, 10_000_000_000);
+    await airdrop(merchant.publicKey);
+    await airdrop(issuer.publicKey);
+    if ((await connection.getAccountInfo(protocolConfig(), "finalized")) === null) {
+      await send([
+        instruction(
+          "initialize_protocol_config",
+          [
+            { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+            { pubkey: protocolConfig(), isSigner: false, isWritable: true },
+            { pubkey: systemProgram, isSigner: false, isWritable: false },
+          ],
+          Buffer.alloc(0),
+        ),
+      ], []);
+    }
+
+    const mint = await createMint(
+      connection,
+      payer,
+      payer.publicKey,
+      null,
+      0,
+      undefined,
+      undefined,
+      TOKEN_2022_PROGRAM_ID,
+    );
+    const source = await getOrCreateAssociatedTokenAccount(
+      connection,
+      payer,
+      mint,
+      payer.publicKey,
+      false,
+      undefined,
+      undefined,
+      TOKEN_2022_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID,
+    );
+    const vault = await getOrCreateAssociatedTokenAccount(
+      connection,
+      payer,
+      mint,
+      vaultAuthority(mint),
+      true,
+      undefined,
+      undefined,
+      TOKEN_2022_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID,
+    );
+    const recipientA = await getOrCreateAssociatedTokenAccount(
+      connection,
+      payer,
+      mint,
+      splitRecipientOwnerA.publicKey,
+      false,
+      undefined,
+      undefined,
+      TOKEN_2022_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID,
+    );
+    const recipientB = await getOrCreateAssociatedTokenAccount(
+      connection,
+      payer,
+      mint,
+      splitRecipientOwnerB.publicKey,
+      false,
+      undefined,
+      undefined,
+      TOKEN_2022_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID,
+    );
+    await mintTo(connection, payer, mint, source.address, payer, 100n, [], undefined, TOKEN_2022_PROGRAM_ID);
+
+    await send([
+      initializeRegistryInstruction(mint, TOKEN_2022_PROGRAM_ID),
+      registerPolicyInstruction(mint, TOKEN_2022_PROGRAM_ID),
+      initializeSplitPlanInstruction(mint, TOKEN_2022_PROGRAM_ID, [
+        { tokenAccount: recipientA.address, basisPoints: 6_000 },
+        { tokenAccount: recipientB.address, basisPoints: 4_000 },
+      ]),
+    ], [issuer, merchant]);
+
+    await send([
+      settleSplitInstruction(
+        mint,
+        source.address,
+        vault.address,
+        [recipientA.address, recipientB.address],
+        TOKEN_2022_PROGRAM_ID,
+        22n,
+      ),
+    ], []);
+
+    const settled = await Promise.all([
+      getAccount(connection, source.address, "finalized", TOKEN_2022_PROGRAM_ID),
+      getAccount(connection, vault.address, "finalized", TOKEN_2022_PROGRAM_ID),
+      getAccount(connection, recipientA.address, "finalized", TOKEN_2022_PROGRAM_ID),
+      getAccount(connection, recipientB.address, "finalized", TOKEN_2022_PROGRAM_ID),
+    ]);
+    expect(settled.map((account) => account.amount)).toEqual([0n, 25n, 45n, 30n]);
   }, 30_000);
 
   test("rejects a real Token-2022 TransferFeeConfig mint before registry activation", async () => {

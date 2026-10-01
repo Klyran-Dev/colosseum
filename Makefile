@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 
-.PHONY: fmt lint test bench-tax-engine benchmark-quote-service benchmark-document-quote-service benchmark-rule-simulation postgres-pool-drill postgres-index-plan-drill postgres-pitr-drill vault-reconciliation-drill migration-integrity-drill migration-rollback-rehearsal adjustment-authority-drill refund-funding-verifier-drill refund-proof-lease-drill refund-execute-api-contention-drill refund-proof-integration-drill indexer-replay-drill indexer-replay-dead-letter-drill alert-delivery-drill otel-trace-drill web-install web-check web-browser-check security-scan observability-config public-docs-check environment-contract deployment-config-contract migration-bootstrap-contract bootstrap-contract check compose-config migrate backup-restore-drill encrypted-backup-restore-drill projection-rebuild-drill postgres-contention-drill integration-check solana-build solana-conformance solana-up solana-down indexer-up indexer-down route-verifier-up route-verifier-down observability-up observability-down bootstrap up down logs
+.PHONY: fmt lint test bench-tax-engine benchmark-quote-service benchmark-document-quote-service benchmark-rule-simulation postgres-pool-drill postgres-index-plan-drill postgres-pitr-drill vault-reconciliation-drill migration-integrity-drill migration-rollback-rehearsal adjustment-authority-drill refund-funding-verifier-drill refund-proof-lease-drill refund-execute-api-contention-drill refund-proof-integration-drill indexer-replay-drill indexer-replay-dead-letter-drill alert-delivery-drill otel-trace-drill web-install web-check web-browser-check security-scan observability-config public-docs-check environment-contract deployment-config-contract migration-bootstrap-contract bootstrap-contract release-bundle-integrity-contract check compose-config migrate backup-restore-drill encrypted-backup-restore-drill projection-rebuild-drill postgres-contention-drill integration-check solana-build solana-conformance solana-up solana-down indexer-up indexer-down route-verifier-up route-verifier-down observability-up observability-down bootstrap up down logs
 
 fmt:
 	cargo fmt --all
@@ -65,6 +65,9 @@ migration-bootstrap-contract:
 
 bootstrap-contract:
 	./scripts/verify_bootstrap_contract.sh
+
+release-bundle-integrity-contract:
+	./scripts/release_bundle_integrity_contract.sh
 
 compose-config:
 	docker compose --profile browser --profile cache --profile observability --profile indexer --profile route-verifier --profile solana config --quiet

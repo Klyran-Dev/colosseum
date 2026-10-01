@@ -7,6 +7,11 @@ server-owned quote-bound calculation-attestation ingestion, and a cached
 on-chain policy attestation binding. These are foundation gates, not completed
 production readiness. Unchecked items remain release blockers.
 
+ADR-0217 now retains the authoritative authenticated Docker integration stream
+for successful and failed CI runs with bounded public-safe artifacts. This
+improves reviewability of the synthetic service boundary but does not replace
+Linux validator, live-provider, production-SLO, identity, or legal evidence.
+
 ADR-0065 now provides an executable validator-backed conformance harness and a
 Dockerized SBF build path. The harness is a release-gate implementation, not
 evidence by itself: the localnet boxes below remain unchecked until the pinned
@@ -103,6 +108,10 @@ exists.
   duplicate receipt rejection, and wrong-account-order atomic failure under
   ADR-0140; the conformance implementation is present but requires a successful
   Linux validator/CI execution before this gate can be checked.
+- [ ] ADR-0214 extends the validator matrix with an extension-free Token-2022
+  two-recipient Split Plan and exact finalized 0/25/45/30 balance assertions;
+  the case is implemented, but successful Linux/amd64 execution remains
+  required before Token-2022 Split Plan compatibility is evidenced.
 - [ ] Validator-backed policy revocation proves a revoked attestation cannot
   authorize token movement under ADR-0141; the conformance implementation is
   present but requires successful Linux validator/CI execution.
@@ -171,6 +180,12 @@ exists.
   200/200/200 idempotency/calculation/outbox cardinality, and p50/p95/p99 of
   5.467/34.901/45.221 ms. This remains local synthetic evidence; retained CI,
   regional/resource-profile, and production SLO acceptance are still open.
+- [x] ADR-0215 adds bounded Docker JSON resource-profile retention beside the
+  aggregate and document benchmark summaries. The aggregate profile-enabled
+  run captured four named containers in one timestamped sampling epoch, and
+  the follow-up document run did the same while preserving the exact
+  persistence and latency invariants; CI retention, regional profiles, and
+  production SLO acceptance remain open.
 - [ ] Legacy SPL Token and extension-free Token-2022 account ownership is checked in localnet transactions.
 - [ ] Unsupported Token-2022 extensions are rejected or explicitly tested in localnet transactions.
 - [ ] Policy issuer, sequence, expiry, revocation, merchant binding, and governed issuer-registry scope are enforced.
@@ -181,6 +196,11 @@ exists.
   registry boundary. ADR-0062 provides the bounded verifier design and
   finalized account-proof implementation; production governance ceremonies and
   localnet activation evidence remain open.
+- [x] ADR-0216 persists finalized verifier-derived mint precision on immutable
+  settlement-route versions, exposes it through the route API, rejects missing
+  or out-of-range browser values, and formats checkout atomic amounts with
+  explicit `BigInt` decimal scaling. Migration and Linux validator-backed route
+  activation evidence remain release gates.
 - [x] ADR-0092 provides a tenant-scoped persisted Split Plan registry,
   canonical digest revalidation, active/effective lifecycle selection, and a
   quote-bound split compiler endpoint. On-chain initialization/activation,
@@ -391,7 +411,10 @@ exists.
 
 - [ ] Program audit complete with no unresolved critical/high findings.
 - [ ] Upgrade authority, policy signer, and vault release keys are separated.
-- [ ] HSM/KMS and multisig ceremonies are documented and rehearsed.
+- [ ] HSM/KMS and multisig ceremonies are documented and rehearsed. ADR-0219
+  now keeps the deployment preflight aligned with both supported JWKS input
+  forms, but it does not prove provider-managed rotation or key-ceremony
+  completion.
 - [ ] Frontend/API do not receive seed phrases or user private keys.
 - [ ] Dependency, container, SBOM, and secret scans pass in CI.
 - [x] The local NGINX edge has a non-root UID, read-only root filesystem,
@@ -595,7 +618,10 @@ and operational gates are intentionally not marked complete by unit tests.
   runbook. ADR-0131 now provides finalized event projection, fixed-cardinality
   active/unknown alerts, and localnet pause-blocking assertions; staging
   governance, delivery, and incident evidence remain required.
-- [ ] Releases are reproducible and record program binary and configuration hashes.
+- [x] ADR-0218 makes release bundles record named SHA-256 hashes for the final
+  Solana program binary and resolved Compose configuration, and verifies both
+  through a synthetic contract test. A successful Linux release-candidate run,
+  independent review, and production signing/deployment ceremony remain open.
 - [x] SLOs, error budgets, RTO/RPO, support ownership, and incident severity policy are published under ADR-0135; named deployment owners, alert-receiver delivery, and measured regional evidence remain open.
 - [ ] Backup restore, key recovery, RPC failover, and indexer replay drills
   pass in the required production-like environments. The Docker integration
@@ -696,7 +722,7 @@ and operational gates are intentionally not marked complete by unit tests.
   workspace chunks, narrow RTL overflow, reduced motion, and bounded dynamic
   import failure. It now also runs pinned `axe-core` WCAG A/AA audits against
   the quote, API-unavailable fail-closed state, and every lazy workspace in the
-  real browser; the 7/7 Docker run passed. Manual assistive-technology review
+  real browser; the 15/15 Docker run passed. Manual assistive-technology review
   and live-provider journeys
   remain open.
 - [x] ADR-0149 removes the secure-context-only `crypto.randomUUID()` startup
@@ -777,7 +803,9 @@ and operational gates are intentionally not marked complete by unit tests.
   pinned Linux validator for the published Refund scope; tax-vault and
   merchant-funder sources, payer-bound destination, claim cancellation,
   finalized reconciliation, and unknown-transaction handling must pass before
-  any paid-state API is introduced.
+  any paid-state API is introduced. The pinned client now includes a
+  destination-substitution rejection with unchanged tax-vault, funder, and
+  payer balances; retained Linux execution evidence remains required.
 - [ ] ADR-0173 server-owned refund-claim wallet orchestration is not enabled
   for production. The tenant-scoped funding configuration control plane,
   durable claim/execute intents, exact signed-byte verification, finalized
@@ -850,6 +878,15 @@ and operational gates are intentionally not marked complete by unit tests.
   duplicate external recovery work; the worker exposes a fixed-cardinality
   pending backlog gauge and alert.
   Validator, live-wallet, and production-load evidence remain open.
+- [x] ADR-0213 exposes the server-derived typed finalized claim-event proof to
+  the browser, rejects lifecycle/evidence mismatches, and renders event,
+  slot, index, conserved amounts, and digest evidence without implying legal
+  or tax compliance. Live injected-wallet and production-provider evidence
+  remain open.
+- [x] The pinned NGINX/Playwright suite covers finalized claim proof
+  disclosure, axe validation, reload, and durable intent recovery. This is
+  synthetic API evidence only; live injected-wallet, RPC-provider, and
+  finalized-chain evidence remain open.
 - [ ] Loading, stale-policy, expired-quote, wallet rejection, RPC timeout, and reconciliation-required states have complete browser accessibility and live-provider evidence. The shared timeout boundary and unit coverage are implemented by ADR-0095.
 
 ## Public repository

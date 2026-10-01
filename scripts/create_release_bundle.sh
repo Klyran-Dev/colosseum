@@ -53,6 +53,7 @@ esac
 
 [ -f "$bundle_dir/security-scan.txt" ] || fail_missing "$bundle_dir/security-scan.txt"
 [ -f "$bundle_dir/sbom.cdx.json" ] || fail_missing "$bundle_dir/sbom.cdx.json"
+[ -f "$bundle_dir/compose-config.yml" ] || fail_missing "$bundle_dir/compose-config.yml"
 [ -f "$bundle_dir/validator-conformance/result.env" ] || fail_missing "$bundle_dir/validator-conformance/result.env"
 "$repo_root/scripts/verify_solana_conformance_evidence.sh" "$bundle_dir/validator-conformance"
 
@@ -65,6 +66,7 @@ copy_file "$repo_root/target/release/projection-rebuild" "$artifacts_dir/bin/pro
 copy_file "$repo_root/target/release/route-verifier" "$artifacts_dir/bin/route-verifier"
 copy_file "$repo_root/target/release/worker" "$artifacts_dir/bin/worker"
 copy_file "$repo_root/target/deploy/settlement.so" "$artifacts_dir/solana/settlement.so"
+copy_file "$bundle_dir/compose-config.yml" "$artifacts_dir/config/compose-config.yml"
 [ -d "$repo_root/apps/web/dist" ] || fail_missing "$repo_root/apps/web/dist"
 cp -R "$repo_root/apps/web/dist" "$artifacts_dir/web"
 
@@ -102,6 +104,10 @@ while IFS=' ' read -r expected_hash relative_path; do
 done < "$checksums"
 
 manifest="$bundle_dir/release-manifest.json"
+program_binary_path="artifacts/solana/settlement.so"
+effective_configuration_path="artifacts/config/compose-config.yml"
+program_binary_hash=$(sha256_file "$bundle_dir/$program_binary_path")
+effective_configuration_hash=$(sha256_file "$bundle_dir/$effective_configuration_path")
 {
   printf '{\n'
   printf '  "schema_version": "solana-tax-protocol/release-candidate/v1",\n'
@@ -109,6 +115,9 @@ manifest="$bundle_dir/release-manifest.json"
     "$(json_value "$repo_revision")" "$(json_value "$release_ref")"
   printf '  "build": {"source_date_epoch": %s, "artifacts_are_not_deployments": true},\n' "$source_date_epoch"
   printf '  "evidence": {"security_scan": "security-scan.txt", "sbom": "sbom.cdx.json", "validator_conformance": "validator-conformance/result.env"},\n'
+  printf '  "integrity": {"program_binary": {"path": "%s", "sha256": "%s"}, "effective_configuration": {"path": "%s", "sha256": "%s"}},\n' \
+    "$program_binary_path" "$program_binary_hash" \
+    "$effective_configuration_path" "$effective_configuration_hash"
   printf '  "artifacts": [\n'
   first=true
   while IFS= read -r relative_path; do

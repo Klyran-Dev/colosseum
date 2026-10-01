@@ -24,6 +24,7 @@ require_text() {
 }
 
 for file in \
+  .gitignore \
   AGENTS.md \
   README.md \
   CONTRIBUTING.md \
@@ -43,6 +44,12 @@ for file in \
   docs/adr/0139-non-local-deployment-configuration-contract.md \
   docs/adr/0140-validator-backed-split-settlement-conformance.md \
   docs/adr/0141-validator-backed-policy-revocation-conformance.md \
+  docs/adr/0214-token-2022-split-conformance.md \
+  docs/adr/0215-bounded-load-resource-profile.md \
+  docs/adr/0216-server-owned-mint-precision-at-the-route-boundary.md \
+  docs/adr/0217-retained-docker-integration-evidence.md \
+  docs/adr/0218-explicit-release-integrity-hashes.md \
+  docs/adr/0219-jwks-json-preflight-parity.md \
   docs/adr/0142-spa-workspace-focus-management.md \
   docs/adr/0143-structured-tier-1-rule-workbench.md \
   docs/adr/0144-server-owned-persisted-rule-simulation.md \
@@ -86,10 +93,12 @@ for file in \
   scripts/create_release_bundle.sh \
   ops/docker/Dockerfile.solana-conformance \
   scripts/generate_release_sbom.sh \
+  scripts/release_bundle_integrity_contract.sh \
   scripts/vault_reconciliation_drill.sh \
   scripts/refund_proof_integration_drill.sh \
   scripts/benchmark_rule_simulation.sh \
   scripts/migration_integrity_drill.sh \
+  db/verification/settlement_route_mint_precision.sql \
   scripts/verify_deployment_config.sh \
   scripts/verify_deployment_config_contract.sh
 do

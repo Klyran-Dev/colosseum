@@ -50,6 +50,7 @@ export type SettlementRoute = {
   version: number;
   merchant_account: string;
   mint: string;
+  mint_decimals: number;
   tax_vault: string;
   net_destination: string;
   token_program: string;
@@ -121,6 +122,7 @@ export function parseSettlementRoutes(value: unknown): SettlementRoute[] {
       version: parseVersion(route.version, "settlement route"),
       merchant_account: requirePublicKey(route.merchant_account as string, "route merchant account").toBase58(),
       mint: requirePublicKey(route.mint as string, "route mint").toBase58(),
+      mint_decimals: proofNumber(route.mint_decimals, "route mint decimals", 0, 9),
       tax_vault: requirePublicKey(route.tax_vault as string, "route tax vault").toBase58(),
       net_destination: requirePublicKey(route.net_destination as string, "route net destination").toBase58(),
       token_program: tokenProgram,

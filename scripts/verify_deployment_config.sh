@@ -114,15 +114,34 @@ esac
 case "$(read_env API_AUTH_ISSUER)" in
   *local-identity.invalid*|*localhost*|*127.0.0.1*) fail "API_AUTH_ISSUER points to local identity" ;;
 esac
-for auth_name in API_AUTH_AUDIENCE API_AUTH_JWKS_KID API_AUTH_JWKS_PUBLIC_KEY; do
-  require_env "$auth_name"
-done
-case "$(read_env API_AUTH_JWKS_KID)" in
-  *local-development*) fail "API_AUTH_JWKS_KID uses a local development key" ;;
-esac
-case "$(read_env API_AUTH_JWKS_PUBLIC_KEY)" in
-  fBTjJ2wbKth0799nmehvmjl3jO_Qjjo18jfFqILUQWE) fail "API_AUTH_JWKS_PUBLIC_KEY uses the local development key" ;;
-esac
+require_env API_AUTH_AUDIENCE
+
+auth_jwks_json=$(read_env API_AUTH_JWKS_JSON)
+if [ -n "$auth_jwks_json" ]; then
+  case "$auth_jwks_json" in
+    \{*\}) ;;
+    *) fail "API_AUTH_JWKS_JSON must be a non-empty JSON object" ;;
+  esac
+  case "$auth_jwks_json" in
+    *local-development*|*fBTjJ2wbKth0799nmehvmjl3jO_Qjjo18jfFqILUQWE*)
+      fail "API_AUTH_JWKS_JSON contains local development key material"
+      ;;
+  esac
+  [ -z "$(read_env API_AUTH_JWKS_KID)" ] || fail "API_AUTH_JWKS_KID cannot accompany API_AUTH_JWKS_JSON"
+  [ -z "$(read_env API_AUTH_JWKS_PUBLIC_KEY)" ] || fail "API_AUTH_JWKS_PUBLIC_KEY cannot accompany API_AUTH_JWKS_JSON"
+else
+  for auth_name in API_AUTH_JWKS_KID API_AUTH_JWKS_PUBLIC_KEY; do
+    require_env "$auth_name"
+  done
+fi
+if [ -z "$auth_jwks_json" ]; then
+  case "$(read_env API_AUTH_JWKS_KID)" in
+    *local-development*) fail "API_AUTH_JWKS_KID uses a local development key" ;;
+  esac
+  case "$(read_env API_AUTH_JWKS_PUBLIC_KEY)" in
+    fBTjJ2wbKth0799nmehvmjl3jO_Qjjo18jfFqILUQWE) fail "API_AUTH_JWKS_PUBLIC_KEY uses the local development key" ;;
+  esac
+fi
 
 evidence_ring=$(read_env API_EVIDENCE_KEY_RING_JSON)
 if [ -n "$evidence_ring" ]; then

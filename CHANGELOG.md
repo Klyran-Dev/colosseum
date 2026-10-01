@@ -1,7 +1,47 @@
 # Changelog
 
+## 2026-10-01
+
+- Added ADR-0216 and migration `0053` to persist finalized verifier-derived
+  mint precision on settlement routes. Checkout now renders zero-, six-, and
+  nine-decimal assets using explicit `BigInt` scaling and fails closed when the
+  route precision is missing or invalid; route precision remains immutable per
+  verified version.
+- Added ADR-0217 and CI retention for the authenticated Docker integration
+  stream. Successful and failed runs now retain bounded public-safe evidence
+  with `pipefail`, while synthetic integration output remains distinct from
+  Linux validator, live-provider, and production-SLO evidence.
+- Added ADR-0218 and a release-bundle integrity contract. Release manifests now
+  name the SHA-256 hashes of the final Solana program binary and resolved
+  Compose configuration, and both files are included in the common checksum
+  set.
+- Added ADR-0219 to align staging/production deployment preflight with the API's
+  supported structured `API_AUTH_JWKS_JSON` representation while preserving
+  fail-closed mutual exclusion and local-key rejection.
+
 ## 2026-09-30
 
+- Added ADR-0213's typed finalized refund-claim evidence boundary. Finalized
+  claim responses now carry server-derived, signature/slot/artifact-bound event
+  evidence with canonical u64 strings; strict browser parsing and the wallet
+  workspace expose the proof progressively while distinguishing movement
+  finality from legal or tax compliance. Live-validator and production-provider
+  evidence remain release gates.
+- Extended the pinned NGINX/Playwright suite with finalized refund proof
+  disclosure, WCAG axe validation, reload, and durable intent recovery. The
+  web-e2e image now receives only the checked-in shared vectors needed by its
+  deterministic browser contract.
+- Added ADR-0214 and a validator-client case for extension-free Token-2022
+  two-recipient Split Plan settlement. The implementation asserts finalized
+  0/25/45/30 balances while retaining unsupported-extension rejection; Linux
+  validator execution remains the release evidence gate.
+- Added ADR-0215 bounded Docker JSON resource-profile capture to aggregate and
+  document load evidence, with CI/release artifact retention and a successful
+  local profile-enabled aggregate run. Regional and production SLO evidence
+  remain separate gates.
+- Extended the pinned Solana refund conformance path with an explicit
+  destination-substitution attempt and finalized balance-drift assertion before
+  legitimate execution. Linux validator execution remains the release gate.
 - Added ADR-0212's production Rust panic-safety contract. Every Rust crate
   denies `unwrap`, `expect`, and explicit panic paths in non-test builds, while
   test fixtures retain isolated assertions. The fixed RPC-fixture program ID

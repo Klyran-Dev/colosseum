@@ -134,6 +134,15 @@ use `finalized` evidence; the explicitly marked `local_synthetic` mode exists
 only for the Docker fixture and cannot be produced by the route-verifier
 service.
 
+Migration `0053` persists the verifier-derived `mint_decimals` on each
+settlement route, backfills it from existing verification evidence, bounds it
+to `0..=9`, binds the stored value to the verifier evidence JSON, and prevents
+precision mutation after activation. Active routes without valid precision
+fail closed; a correction requires a new route version and fresh chain
+verification. The rollback-safe
+`db/verification/settlement_route_mint_precision.sql` contract proves the
+database-side bound, evidence binding, and immutability guard.
+
 Migration `0014` adds the bounded normalized `facts_document` used for
 authoritative tax replay. It is nullable only to preserve legacy rows that
 were created before replay inputs were persisted; those rows fail closed with

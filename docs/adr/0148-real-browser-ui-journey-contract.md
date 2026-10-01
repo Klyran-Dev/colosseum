@@ -37,9 +37,10 @@ Add a separate Docker Compose `browser` profile with a `web-e2e` service:
   the quote workspace plus every lazy operational workspace against the
   `wcag2a` and `wcag2aa` rule tags; report only bounded rule/node metadata and
   never persist page content, credentials, or financial state;
-- keep API mutation and wallet-signing journeys outside this deterministic UI
-  contract unless their server-owned fixtures and authority boundaries are
-  explicitly added in a later ADR;
+- include the server-owned finalized refund-claim proof journey only through
+  a synthetic API fixture: disclosure, axe validation, reload, and durable
+  intent recovery are covered, while wallet signing and live-chain finality
+  remain outside this deterministic contract;
 - retain trace, screenshot, and video output only on failure, under the
   ignored `test-results/web-e2e` directory; and
 - expose the test through `make web-browser-check` and a dedicated CI job.
@@ -83,10 +84,11 @@ finality, or reconciliation result.
 
 `make web-browser-check` must pass on a clean Docker environment. The pinned
 runner type-checks the e2e project before launching Playwright and audits the
-quote, degraded API-health state, and every lazy operational workspace with
-axe-core WCAG A/AA tags. CI retains failure artifacts and publishes the result
-as a separate browser
-journey gate. This closes the deterministic real-browser journey contract but
-does not, by itself, prove screen-reader quality, legal/tax correctness, live
-RPC behavior, or general WCAG 2.2 AA conformance; manual assistive-technology
-review and live-provider release gates remain required.
+quote, degraded API-health state, every lazy operational workspace, and the
+finalized refund-proof journey with axe-core WCAG A/AA tags. The current run
+passes 15/15 journeys. CI retains failure artifacts and publishes the result
+as a separate browser journey gate. This closes the deterministic real-browser
+journey contract but does not, by itself, prove screen-reader quality,
+legal/tax correctness, live RPC behavior, or general WCAG 2.2 AA conformance;
+manual assistive-technology review and live-provider release gates remain
+required.

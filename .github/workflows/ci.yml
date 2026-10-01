@@ -160,7 +160,18 @@ jobs:
       - name: Check out source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Run isolated Docker integration checks
-        run: ./scripts/verify_local_stack.sh
+        run: |
+          set -o pipefail
+          mkdir -p test-results/local-stack-integration
+          ./scripts/verify_local_stack.sh 2>&1 | tee test-results/local-stack-integration/evidence.txt
+      - name: Upload Docker integration evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: local-stack-integration-${{ github.run_id }}
+          path: test-results/local-stack-integration/
+          if-no-files-found: warn
+          retention-days: 14
 
   indexer-replay:
     name: Automated indexer replay recovery
@@ -306,7 +317,8 @@ jobs:
       - name: Run the declared local workload
         run: |
           mkdir -p test-results/quote-load
-          make benchmark-quote-service | tee test-results/quote-load/evidence.txt
+          BENCHMARK_RESOURCE_PROFILE_OUTPUT=test-results/quote-load/resource-profile.ndjson \
+            make benchmark-quote-service | tee test-results/quote-load/evidence.txt
       - name: Upload quote-service evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -326,7 +338,8 @@ jobs:
       - name: Run the declared document workload
         run: |
           mkdir -p test-results/document-quote-load
-          make benchmark-document-quote-service | tee test-results/document-quote-load/evidence.txt
+          BENCHMARK_RESOURCE_PROFILE_OUTPUT=test-results/document-quote-load/resource-profile.ndjson \
+            make benchmark-document-quote-service | tee test-results/document-quote-load/evidence.txt
       - name: Upload document-quote evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

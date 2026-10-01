@@ -69,6 +69,7 @@ for expected_case in \
     'extension-free Token-2022' \
     'settles a document-bound payment' \
     'immutable two-recipient Split Plan' \
+    'extension-free Token-2022 two-recipient Split Plan' \
     'real Token-2022 TransferFeeConfig' \
     'revoked policy attestations'; do
     grep -Fq "$expected_case" "$evidence_dir/localnet-tests.log" \

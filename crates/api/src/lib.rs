@@ -1141,6 +1141,11 @@ impl From<StorageError> for ApiError {
                 "SETTLEMENT_ROUTE_VERIFICATION_INVALID",
                 message,
             ),
+            StorageError::SettlementRouteIntegrity(message) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "SETTLEMENT_ROUTE_INTEGRITY_FAILURE",
+                message,
+            ),
             StorageError::SettlementRouteActivationConflict => (
                 StatusCode::CONFLICT,
                 "SETTLEMENT_ROUTE_ACTIVATION_CONFLICT",
@@ -8973,6 +8978,51 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+    }
+
+    #[test]
+    fn finalized_refund_claim_evidence_response_preserves_typed_chain_binding() {
+        let evidence = FinalizedRefundClaimEvidence {
+            signature: "5VfY7WmYcR7h9o9E9nP7pQ8rS".to_string(),
+            slot: 77,
+            event_index: 2,
+            claim: [1; 32],
+            adjustment: [2; 32],
+            original_receipt: [3; 32],
+            merchant: [4; 32],
+            mint: [5; 32],
+            nonce: 3,
+            gross_magnitude: 100,
+            tax_magnitude: 25,
+            net_magnitude: 75,
+            refund_funder: [6; 32],
+            refund_destination: [7; 32],
+            proposer: [8; 32],
+            reference_digest: [9; 32],
+            execute_after_unix: 1_800_000_000,
+            expires_at_unix: 1_800_000_600,
+            evidence_digest: [10; 32],
+        };
+
+        let response = finalized_refund_claim_evidence_response(evidence);
+        assert_eq!(response.event_type, "AdjustmentRefundClaimCreated");
+        assert_eq!(response.event_version, "v1");
+        assert_eq!(response.commitment, "finalized");
+        assert_eq!(response.signature, "5VfY7WmYcR7h9o9E9nP7pQ8rS");
+        assert_eq!(response.slot, 77);
+        assert_eq!(response.event_index, 2);
+        assert_eq!(response.gross_magnitude, 100);
+        assert_eq!(
+            response.tax_magnitude + response.net_magnitude,
+            response.gross_magnitude
+        );
+
+        let json = serde_json::to_value(response).unwrap();
+        assert_eq!(json["slot"], "77");
+        assert_eq!(json["nonce"], "3");
+        assert_eq!(json["gross_magnitude"], "100");
+        assert_eq!(json["tax_magnitude"], "25");
+        assert_eq!(json["net_magnitude"], "75");
     }
 
     #[test]

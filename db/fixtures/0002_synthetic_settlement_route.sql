@@ -3,6 +3,7 @@
 INSERT INTO settlement_routes (
     id, merchant_id, route_key, version, status,
     merchant_account, mint, tax_vault, net_destination, token_program,
+    mint_decimals,
     verification_digest, verification_slot, verification_commitment,
     verification_evidence, verified_at
 )
@@ -17,10 +18,11 @@ VALUES (
     'Sysvar1nstructions1111111111111111111111111',
     'SysvarRecentB1ockHashes11111111111111111111',
     'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+    2,
     decode(repeat('07', 32), 'hex'),
     0,
     'local_synthetic',
-    '{"source":"synthetic-local-fixture","warning":"not chain verified"}'::jsonb,
+    '{"source":"synthetic-local-fixture","warning":"not chain verified","mint_decimals":2}'::jsonb,
     now()
 )
 ON CONFLICT (id) DO NOTHING;

@@ -1005,17 +1005,43 @@ identity and evidence keys, jurisdiction-provider inputs, and no synthetic seed
 directory. It does not replace secret validity checks, HSM/KMS ceremonies,
 deployment approvals, provider health, or live staging evidence.
 
+### JWKS deployment representation
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Require the legacy single-key pair | Simple shell validation | Rejects provider-managed rotation already supported by API startup | Rejected |
+| Accept both structured JWKS and the pair simultaneously | Permissive migration | Creates ambiguous identity authority and rotation drift | Rejected |
+| Remove identity-key validation from preflight | Fewer deployment failures | Allows missing or local identity material to reach rollout | Rejected |
+| **Accept exactly one supported representation with structural/local-value checks** | Keeps deployment parity, fail-closed mutual exclusion, and secret-safe validation | Cryptographic key validity remains a runtime/provider responsibility | **Selected in ADR-0219** |
+
 ### Validator-backed Split Plan conformance
 
 | Decision | Selected | Alternatives considered | Selection reason |
 | --- | --- | --- | --- |
 | Runtime proof for bounded recipient fan-out | Extend the pinned external Agave validator suite (ADR-0140) | Allocator unit tests only, `solana-program-test` only, synthetic RPC fixture | Proves the deployed SBF artifact, exact remaining-account order, token CPI movement, finalized conservation, and duplicate-receipt behavior at the real program boundary |
 
+ADR-0214 extends that selected validator boundary with an explicit
+extension-free Token-2022 two-recipient case. This preserves the one
+`token_interface` implementation while preventing a single-recipient test from
+being mistaken for proof of multi-recipient Token-2022 compatibility.
+
 ### Validator-backed policy revocation
 
 | Decision | Selected | Alternatives considered | Selection reason |
 | --- | --- | --- | --- |
 | Runtime proof that revoked policy cannot move tokens | Execute revoke then settlement against the pinned external Agave validator (ADR-0141) | Unit-test revocation helpers only, synthetic RPC fixture | Proves authority binding, revoked-PDA enforcement, deployed SBF behavior, and unchanged token balances at the CPI boundary |
+
+### Bounded load-test resource profiling
+
+| Decision | Selected | Alternatives considered | Selection reason |
+| --- | --- | --- | --- |
+| Resource evidence alongside quote latency | Bounded Docker JSON stats for the named benchmark containers (ADR-0215) | Latency only, arbitrary host-process sampling, an unpinned monitoring stack | Provides reproducible CPU/memory/runtime evidence without leaking unrelated host data or adding an unbounded dependency to the benchmark |
+
+### Server-owned settlement-route mint precision
+
+| Decision | Selected | Alternatives considered | Selection reason |
+| --- | --- | --- | --- |
+| Asset precision at the checkout boundary | Persist finalized verifier-derived `mint_decimals` on the immutable route version (ADR-0216) | Assume two decimals, accept browser/caller precision, fetch mint metadata during checkout, parse untyped evidence on every read | Keeps precision evidence-bound and O(1) on the hot path, supports Solana assets with 0–9 decimals, and prevents browser-side amount misrepresentation |
 
 ### SPA workspace focus management
 
@@ -1303,6 +1329,19 @@ after a bounded finalized proof.
 | Accept browser-supplied recovery inputs | Flexible UX | Caller-controlled signature/address and substitution risk | Rejected |
 | **Bounded finalized recovery plus exact raw claim-created event matching** | Signature binding, replayability, topology checks, forensic bytes, and restart-safe worker convergence | Requires event decoding, bounded RPC work, and operational backlog evidence | **Selected in ADR-0180** |
 
+### Typed finalized refund-claim evidence boundary
+
+**Criteria:** expose useful finalized-event proof to operators without moving
+authority into the browser, weakening canonical wire validation, or implying
+legal/tax compliance.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Status, signature, and slot only | Small response | The UI cannot show the exact event proof and may overstate finality | Rejected |
+| Browser-decoded raw event bytes | Preserves raw data | ABI coupling and client-side authority risk | Rejected |
+| Browser-supplied evidence | Flexible recovery | Evidence substitution and broken server ownership | Rejected |
+| **Server-derived typed finalized-event projection with strict client validation** | Stable schema, proof binding, progressive disclosure, fail-closed parsing | Additional API contract and test surface | **Selected in ADR-0213** |
+
 ### Refund-claim reconciliation concurrency
 
 | Alternative | Strengths | Risks / costs | Decision |
@@ -1481,3 +1520,30 @@ and provide a discoverable accessible path into document settlement.
 | Hide document quotes behind aggregate quote UI | Fewer workspaces | Conceals document-specific facts, attestation, and line-scope semantics | Rejected |
 | API-client-only workflow | No SPA implementation | Undocumented, inaccessible, and operationally error-prone | Rejected |
 | **Dedicated authenticated lazy workspace** | Clear authority boundary, exact server evidence, and direct document-checkout handoff | Additional UI and contract tests | **Selected in ADR-0208** |
+
+### Retained Docker integration evidence
+
+**Criteria:** preserve the authoritative integration command semantics, make
+success and failure behavior reviewable for a specific commit, avoid leaking
+credentials or private evidence, and keep the artifact bounded.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Retain only the CI exit status | Minimal configuration | Loses scenario cardinality and recovery diagnostics | Rejected |
+| Upload complete Docker logs and volumes | Maximum raw detail | Noise, sensitive-data risk, and poor public-safety boundary | Rejected |
+| Add a second bespoke JSON reporter | Structured output | Duplicates the authoritative gate and can drift | Rejected |
+| **Pipe the authoritative bounded integration stream to a retained CI artifact** | Exact command semantics, public-safe output, success/failure review, bounded retention | Requires CI artifact storage | **Selected in ADR-0217** |
+
+### Explicit release integrity hashes
+
+**Criteria:** bind authority-sensitive release bytes to named machine-readable
+claims, hash the effective rather than source-only deployment configuration,
+preserve one checksum source of truth, and fail before release evidence is
+reported complete.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Generic artifact list only | Simple and already available | Consumers must infer program/configuration paths | Rejected |
+| Hash source Compose files | Easy to inspect | Does not bind profiles, interpolation, or resolved image configuration | Rejected |
+| Detached configuration hash file | Small change | Creates a second source of truth outside the manifest | Rejected |
+| **Named manifest integrity fields plus the common checksum set** | Explicit, reproducible, machine-readable, and reviewable | Requires resolved configuration as a bundle input | **Selected in ADR-0218** |

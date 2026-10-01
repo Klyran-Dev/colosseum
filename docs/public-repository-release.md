@@ -20,10 +20,15 @@ open.
   [implementation plan](plans/implementation-plan.md), and
   [production-readiness gates](plans/production-readiness.md) are linked from
   the public entry points and contain no unsupported production claims.
+- The deployment preflight contract accepts only the API's documented
+  structured or compatibility JWKS representation and rejects local identity
+  material; provider rotation and HSM/KMS ceremony evidence remain deployment
+  gates.
 - CI records the exact toolchain, dependency lockfiles, container image
   digests, security-scan result, test result, and validator-conformance result
   for every release candidate. ADR-0129 provides the tag/manual workflow,
-  grouped dependency automation, checksums, SBOM, and retained evidence bundle;
+  grouped dependency automation, checksums, SBOM, retained evidence bundle, and
+  ADR-0218's explicit final-program and resolved-configuration hashes;
   the workflow does not publish images or deploy to production.
 - A maintainer has reviewed public examples, fixtures, logs, benchmark output,
   and test artifacts for credentials, private keys, PII, and sensitive

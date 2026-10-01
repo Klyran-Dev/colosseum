@@ -21,8 +21,10 @@ chain verification workflow has recorded evidence.
 ## Hot-path read contract
 
 `resolve(merchant_id, route_id, now)` performs one indexed, tenant-scoped
-read. It returns the merchant account, mint, tax vault, net destination, and
-token program. The source token account is derived from the payer wallet,
+read. It returns the merchant account, mint, verified `mint_decimals`, tax
+vault, net destination, and token program. `mint_decimals` is bounded to
+`0..=9`, derived from finalized route-verification evidence, and immutable for
+the route version. The source token account is derived from the payer wallet,
 token program, and mint using the associated-token-account PDA formula. No
 RPC, database write, ATA creation, or dynamic rule evaluation is allowed in
 this read.
@@ -40,4 +42,3 @@ configuration fails closed with a supportable error. The API does not fall
 back to caller-supplied addresses or a global default route. A payer without
 the derived source account must receive a wallet/setup remediation state; the
 API must not create that account in the settlement hot path.
-
