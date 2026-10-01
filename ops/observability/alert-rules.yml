@@ -49,6 +49,18 @@ groups:
           description: "The five-minute p95 tax-quote latency for {{ $labels.service }} has exceeded the declared synchronous quote budget."
           runbook: docs/architecture/low-latency.md#latency-budget
 
+      - alert: STPTaxEngineRuntimeReloadRejected
+        expr: >-
+          increase(stp_errors_total{service="tax_engine",operation="runtime_reload"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          owner: platform-sre
+        annotations:
+          summary: "Tax Engine runtime authentication reload was rejected"
+          description: "A Tax Engine token or mTLS runtime replacement failed validation and the last known-good configuration remains active. Follow the rotation runbook before retrying."
+          runbook: docs/runbooks/tax-engine-service-token-rotation.md
+
       - alert: STPSettlementCompileP95LatencyBudgetBreach
         expr: >-
           histogram_quantile(

@@ -18,6 +18,7 @@ use std::{
 
 use arc_swap::ArcSwap;
 use axum_server::{Handle, tls_rustls::RustlsConfig};
+use observability::ServiceMetrics;
 use rustls::{
     CertificateError, DigitallySignedStruct, DistinguishedName, RootCertStore, ServerConfig,
     SignatureScheme,
@@ -362,6 +363,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut telemetry = observability::init_tracing("tax_engine")?;
     let config = Config::from_env()?;
     let service = EngineService::with_limits(config.cache_capacity, config.max_concurrency)?;
+    let metrics = service.metrics();
     let auth_token = Arc::new(ArcSwap::from_pointee(config.auth_token.clone()));
     let handle = Handle::<SocketAddr>::new();
     let router = service.router_with_auth_token(auth_token.clone());
@@ -386,6 +388,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         auth_token,
         config.auth_token_file.clone(),
         config.environment,
+        metrics,
     );
     let server: ServerFuture = match tls_config {
         Some(tls_config) => Box::pin(
@@ -611,6 +614,7 @@ fn build_runtime_reload_future(
     auth_token: Arc<ArcSwap<String>>,
     auth_token_file: Option<PathBuf>,
     environment: Environment,
+    metrics: ServiceMetrics,
 ) -> Option<ReloadFuture> {
     if tls_config.is_none() && auth_token_file.is_none() {
         return None;
@@ -624,6 +628,7 @@ fn build_runtime_reload_future(
                 if hangup.recv().await.is_none() {
                     return Err("SIGHUP stream ended before shutdown".into());
                 }
+                let started = std::time::Instant::now();
                 match reload_runtime_config_async(
                     tls_config.clone(),
                     tls_files.clone(),
@@ -634,8 +639,12 @@ fn build_runtime_reload_future(
                 )
                 .await
                 {
-                    Ok(()) => info!("Tax Engine runtime authentication configuration reloaded"),
+                    Ok(()) => {
+                        metrics.observe_or_log("runtime_reload", started.elapsed(), false);
+                        info!("Tax Engine runtime authentication configuration reloaded")
+                    }
                     Err(error) => {
+                        metrics.observe_or_log("runtime_reload", started.elapsed(), true);
                         warn!(%error, "Tax Engine runtime configuration reload rejected; active configuration retained")
                     }
                 }
@@ -651,6 +660,7 @@ fn build_runtime_reload_future(
             auth_token,
             auth_token_file,
             environment,
+            metrics,
         );
         Some(Box::pin(async {
             Err("Tax Engine runtime reload requires a Unix SIGHUP signal".into())

@@ -146,4 +146,33 @@ new_token_status=$(curl --silent --show-error --output /dev/null \
 [ "$new_token_status" = '204' ] \
   || fail "new service token was not accepted after rotation"
 
+runtime_reload_metrics_status=$(curl --silent --show-error --output "$work_dir/reload-metrics.txt" \
+  --write-out '%{http_code}' "$base_url/metrics" || true)
+[ "$runtime_reload_metrics_status" = '200' ] \
+  || fail "metrics was unavailable after a valid runtime reload"
+grep -Fq 'operation="runtime_reload"' "$work_dir/reload-metrics.txt" \
+  || fail "runtime reload metric operation was not exported"
+
+dd if=/dev/zero of="$work_dir/oversized-auth-token" bs=1 count=4097 2>/dev/null
+chmod 644 "$work_dir/oversized-auth-token"
+mv "$work_dir/oversized-auth-token" "$work_dir/auth-token"
+docker kill --signal HUP "$container_id" >/dev/null
+sleep 1
+retained_token_status=$(curl --silent --show-error --output /dev/null \
+  --write-out '%{http_code}' --header "authorization: Bearer $new_auth_token" \
+  "$base_url/readyz" || true)
+[ "$retained_token_status" = '204' ] \
+  || fail "invalid token replacement displaced the last known-good token"
+runtime_reload_metrics_status=$(curl --silent --show-error --output "$work_dir/reload-metrics.txt" \
+  --write-out '%{http_code}' "$base_url/metrics" || true)
+[ "$runtime_reload_metrics_status" = '200' ] \
+  || fail "metrics was unavailable after an invalid runtime reload"
+grep -Fq 'stp_errors_total{service="tax_engine",operation="runtime_reload"} 1' \
+  "$work_dir/reload-metrics.txt" \
+  || fail "rejected runtime reload was not counted"
+if grep -Fq "$auth_token" "$work_dir/reload-metrics.txt" \
+  || grep -Fq "$new_auth_token" "$work_dir/reload-metrics.txt"; then
+  fail "service authentication token leaked into reload metrics"
+fi
+
 echo "tax-engine runtime contract passed"

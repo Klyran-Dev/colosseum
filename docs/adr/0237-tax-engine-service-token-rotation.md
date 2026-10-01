@@ -35,6 +35,11 @@ The request path performs one lock-free immutable snapshot load and constant-
 time bounded token comparison. No raw token, token digest, or secret value is
 logged, emitted as a metric label, or included in evidence.
 
+Each reload attempt records only the fixed `runtime_reload` operation in the
+existing `tax_engine` metrics registry. Success and rejection durations are
+bounded telemetry; rejection increments the fixed error counter and triggers
+the platform alert without exposing replacement contents.
+
 ## Alternatives considered
 
 | Alternative | Decision | Reason |
@@ -66,6 +71,8 @@ logged, emitted as a metric label, or included in evidence.
 - The required Ubuntu CI workflow runs this real-container contract as a
   dedicated service-token rotation job; release-candidate evidence must retain
   the job result with the other runtime contracts.
+- Prometheus alerts on any rejected `runtime_reload` attempt and points
+  operators to this runbook; metrics never contain token or certificate data.
 - Secret-manager atomic delivery, file ownership/permissions, rotation
   overlap, compromise response, regional reload latency, and alert/on-call
   evidence remain production deployment gates.

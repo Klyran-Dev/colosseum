@@ -954,6 +954,8 @@ release gates.
   preflight, and real pinned-container rotation.
 - [x] Run the real-container token-rotation contract as a dedicated required
   Ubuntu CI job, separate from the mTLS transport job.
+- [x] Export the fixed-cardinality `runtime_reload` operation and alert on
+  rejected token/TLS replacements without exposing credential material.
 - [ ] Prove production secret-manager atomic delivery, file permissions,
   overlap/revocation ceremony, compromise response, regional reload latency,
   and alert/on-call evidence.

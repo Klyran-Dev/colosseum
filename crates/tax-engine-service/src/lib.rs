@@ -117,8 +117,11 @@ impl EngineService {
                     order: VecDeque::new(),
                 }),
                 concurrency: Arc::new(Semaphore::new(max_concurrency)),
-                metrics: ServiceMetrics::new("tax_engine", &["calculate", "calculate_document"])
-                    .map_err(|error| error.to_string())?,
+                metrics: ServiceMetrics::new(
+                    "tax_engine",
+                    &["calculate", "calculate_document", "runtime_reload"],
+                )
+                .map_err(|error| error.to_string())?,
                 cache_capacity,
             }),
         })
@@ -126,6 +129,10 @@ impl EngineService {
 
     pub fn cache_capacity(&self) -> usize {
         self.inner.cache_capacity
+    }
+
+    pub fn metrics(&self) -> ServiceMetrics {
+        self.inner.metrics.clone()
     }
 
     #[cfg(test)]

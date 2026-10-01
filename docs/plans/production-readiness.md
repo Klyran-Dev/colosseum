@@ -407,7 +407,8 @@ exists.
   and alert/on-call evidence remain open.
 - [x] ADR-0237 adds mutually exclusive inline/file-backed Tax Engine bearer
   credentials, bounded file validation, lock-free token snapshots, and
-  atomic Unix `SIGHUP` rotation. Production secret-manager delivery,
+  atomic Unix `SIGHUP` rotation, plus fixed-cardinality reload telemetry and a
+  critical rejection alert. Production secret-manager delivery,
   permissions, overlap/revocation, compromise response, regional reload SLO,
   and alert/on-call evidence remain open.
 - [x] Compiled-rule cache hit/miss/eviction/entry metrics are exported with
