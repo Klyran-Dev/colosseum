@@ -1106,6 +1106,23 @@ identities remain excluded from logs and metric labels.
 | Mutable mutex-protected token | Straightforward implementation | Request-path contention and less explicit snapshot semantics | Rejected |
 | **Bounded file source with atomic SIGHUP replacement** | Lock-free request path, auditable rotation, last-known-good retention | Requires atomic deployment file delivery and Unix signal control | **Selected in ADR-0237** |
 
+### Governed refund-claim cancellation workflow
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| PostgreSQL-only cancellation flag | Fast and simple | Leaves the on-chain claim executable; database becomes a false authority | Rejected |
+| Browser-constructed cancellation instruction | Fewer server compiler types | Allows PDA, nonce, registry, and authority substitution | Rejected |
+| Reuse refund claim/execute compiler | Less code | Carries the wrong account shape and risks financial/topology confusion | Rejected |
+| API-held governance signer | Operationally convenient | Custody, larger key blast radius, and breaks wallet authorization | Rejected |
+| **Server-owned immutable cancellation artifact plus governance wallet signature and finalized proof** | Exact authority boundary, non-custodial, replay-safe, auditable | Adds a cancellation intent and reconciliation lifecycle | **Selected in ADR-0238** |
+
+The selected design has a fixed five-account legacy instruction and no RPC
+lookup in the compiler or wallet handoff path. Cancellation contains no
+amounts or token accounts; the server derives the registry and claim PDA from
+the authenticated claim identity. Submission is only an intent state change,
+and finalized on-chain event evidence remains the only cancellation authority
+for the off-chain projection.
+
 ### Tax Engine observability identity
 
 | Alternative | Strengths | Risks / trade-offs | Decision |

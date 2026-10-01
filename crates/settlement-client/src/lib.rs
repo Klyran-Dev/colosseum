@@ -163,6 +163,17 @@ pub struct SettlementRefundExecutionCompileRequest {
     pub claim_nonce: u64,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SettlementRefundCancellationCompileRequest {
+    pub program_id: String,
+    pub governance_authority: String,
+    pub merchant: String,
+    pub mint: String,
+    pub adjustment: String,
+    #[serde(with = "policy::serde_u64_string")]
+    pub claim_nonce: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CompiledSettlementInstruction {
     pub status: String,
@@ -276,6 +287,18 @@ pub struct CompiledSettlementRefundInstruction {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CompiledSettlementRefundCancellationInstruction {
+    pub status: String,
+    pub program_id: String,
+    pub instruction_data_base64: String,
+    pub accounts: Vec<CompiledAccountMeta>,
+    pub registry: String,
+    pub claim: String,
+    #[serde(with = "policy::serde_u64_string")]
+    pub claim_nonce: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CompiledAccountMeta {
     pub pubkey: String,
     pub is_signer: bool,
@@ -344,6 +367,12 @@ pub enum SettlementCompileError {
     RefundClaimAuthorityConflict,
     #[error("refund token accounts must be distinct")]
     AliasedRefundTokenAccounts,
+    #[error("refund cancellation nonce must be positive")]
+    InvalidRefundCancellationNonce,
+    #[error("refund cancellation key must be a non-default public key for {field}")]
+    InvalidRefundCancellationKey { field: &'static str },
+    #[error("refund cancellation accounts must be distinct")]
+    AliasedRefundCancellationAccounts,
 }
 
 pub fn settlement_program_id() -> Pubkey {
@@ -896,6 +925,79 @@ pub fn compile_settlement_refund_execution_instruction(
         registry: registry.to_string(),
         adjustment: adjustment.to_string(),
         original_receipt: original_receipt.to_string(),
+        claim: claim.to_string(),
+        claim_nonce: request.claim_nonce,
+    })
+}
+
+/// Compiles the governance-only cancellation instruction for a pending refund
+/// claim. Cancellation intentionally carries no token amounts or token-account
+/// topology: the protocol only needs the registered governance authority,
+/// merchant/mint registry, and deterministic claim PDA.
+pub fn compile_settlement_refund_cancellation_instruction(
+    request: &SettlementRefundCancellationCompileRequest,
+) -> Result<CompiledSettlementRefundCancellationInstruction, SettlementCompileError> {
+    let program_id = parse_pubkey("program_id", &request.program_id)?;
+    validate_settlement_program_id(program_id)?;
+    let governance_authority = parse_pubkey("governance_authority", &request.governance_authority)?;
+    let merchant = parse_pubkey("merchant", &request.merchant)?;
+    let mint = parse_pubkey("mint", &request.mint)?;
+    let adjustment = parse_pubkey("adjustment", &request.adjustment)?;
+    if request.claim_nonce == 0 {
+        return Err(SettlementCompileError::InvalidRefundCancellationNonce);
+    }
+    for (field, key) in [
+        ("governance_authority", governance_authority),
+        ("merchant", merchant),
+        ("mint", mint),
+        ("adjustment", adjustment),
+    ] {
+        if key == Pubkey::default() {
+            return Err(SettlementCompileError::InvalidRefundCancellationKey { field });
+        }
+    }
+
+    let (registry, _) = Pubkey::find_program_address(
+        &[b"adjustment-registry", merchant.as_ref(), mint.as_ref()],
+        &program_id,
+    );
+    let (claim, _) = Pubkey::find_program_address(
+        &[
+            b"refund-claim",
+            adjustment.as_ref(),
+            &request.claim_nonce.to_le_bytes(),
+        ],
+        &program_id,
+    );
+    let accounts = vec![
+        // The governance wallet is the canonical fee payer for this fixed
+        // wallet handoff, so Solana's message marks it writable. The program
+        // does not mutate the account; the writable bit is fee-payer driven.
+        account(governance_authority, true, true),
+        account(merchant, false, false),
+        account(mint, false, false),
+        account(registry, false, false),
+        account(claim, false, true),
+    ];
+    if governance_authority == merchant
+        || governance_authority == mint
+        || governance_authority == adjustment
+        || merchant == mint
+    {
+        return Err(SettlementCompileError::AliasedRefundCancellationAccounts);
+    }
+    ensure_unique_account_keys(&accounts, &program_id)?;
+
+    let mut instruction_data = instruction_discriminator("global:cancel_adjustment_refund_claim");
+    instruction_data.extend_from_slice(&request.claim_nonce.to_le_bytes());
+    estimate_legacy_settlement_wire_bytes(accounts.len(), instruction_data.len())?;
+
+    Ok(CompiledSettlementRefundCancellationInstruction {
+        status: "prepared_unsubmitted".to_string(),
+        program_id: program_id.to_string(),
+        instruction_data_base64: BASE64_STANDARD.encode(instruction_data),
+        accounts,
+        registry: registry.to_string(),
         claim: claim.to_string(),
         claim_nonce: request.claim_nonce,
     })
@@ -1722,6 +1824,56 @@ mod tests {
     }
 
     #[test]
+    fn compiles_exact_governed_refund_cancellation_shape() {
+        let request = valid_refund_cancellation_request();
+        let compiled = compile_settlement_refund_cancellation_instruction(&request)
+            .expect("valid refund cancellation");
+        assert_eq!(compiled.accounts.len(), 5);
+        assert_eq!(compiled.accounts[0].pubkey, request.governance_authority);
+        assert!(compiled.accounts[0].is_signer);
+        assert!(compiled.accounts[0].is_writable);
+        assert_eq!(compiled.accounts[1].pubkey, request.merchant);
+        assert_eq!(compiled.accounts[2].pubkey, request.mint);
+        assert_eq!(compiled.accounts[3].pubkey, compiled.registry);
+        assert_eq!(compiled.accounts[4].pubkey, compiled.claim);
+        assert!(compiled.accounts[4].is_writable);
+        assert_eq!(compiled.claim_nonce, 17);
+
+        let mut expected_data = instruction_discriminator("global:cancel_adjustment_refund_claim");
+        expected_data.extend_from_slice(&17_u64.to_le_bytes());
+        assert_eq!(
+            compiled.instruction_data_base64,
+            BASE64_STANDARD.encode(expected_data)
+        );
+    }
+
+    #[test]
+    fn refund_cancellation_rejects_zero_or_default_keys_and_aliases() {
+        let mut request = valid_refund_cancellation_request();
+        request.claim_nonce = 0;
+        assert!(matches!(
+            compile_settlement_refund_cancellation_instruction(&request),
+            Err(SettlementCompileError::InvalidRefundCancellationNonce)
+        ));
+
+        let mut request = valid_refund_cancellation_request();
+        request.governance_authority = Pubkey::default().to_string();
+        assert!(matches!(
+            compile_settlement_refund_cancellation_instruction(&request),
+            Err(SettlementCompileError::InvalidRefundCancellationKey {
+                field: "governance_authority"
+            })
+        ));
+
+        let mut request = valid_refund_cancellation_request();
+        request.merchant = request.governance_authority.clone();
+        assert!(matches!(
+            compile_settlement_refund_cancellation_instruction(&request),
+            Err(SettlementCompileError::AliasedRefundCancellationAccounts)
+        ));
+    }
+
+    #[test]
     fn matches_the_shared_cross_language_refund_claim_vector() {
         #[derive(Deserialize)]
         struct RefundVector {
@@ -1913,6 +2065,17 @@ mod tests {
             execute_after_unix: 1_800_000_000,
             expires_at_unix: 1_800_000_600,
             reference_digest: [9; 32],
+        }
+    }
+
+    fn valid_refund_cancellation_request() -> SettlementRefundCancellationCompileRequest {
+        SettlementRefundCancellationCompileRequest {
+            program_id: settlement_program_id().to_string(),
+            governance_authority: Pubkey::new_unique().to_string(),
+            merchant: Pubkey::new_unique().to_string(),
+            mint: Pubkey::new_unique().to_string(),
+            adjustment: Pubkey::new_unique().to_string(),
+            claim_nonce: 17,
         }
     }
 }

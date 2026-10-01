@@ -7,8 +7,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settlement_client::{
-    CompiledSettlementRefundInstruction, SettlementCompileError,
+    CompiledSettlementRefundCancellationInstruction, CompiledSettlementRefundInstruction,
+    SettlementCompileError, SettlementRefundCancellationCompileRequest,
     SettlementRefundClaimCompileRequest, SettlementRefundExecutionCompileRequest,
+    compile_settlement_refund_cancellation_instruction,
     compile_settlement_refund_claim_instruction, compile_settlement_refund_execution_instruction,
     derive_source_token_account,
 };
@@ -19,6 +21,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 const ARTIFACT_SCHEMA: &str = "refund-movement-artifact/v1";
+const CANCELLATION_ARTIFACT_SCHEMA: &str = "refund-claim-cancellation-artifact/v1";
 const SPL_TOKEN_PROGRAM: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 
 #[derive(Debug, Error)]
@@ -37,6 +40,8 @@ pub enum RefundWorkflowError {
     UnsupportedTokenProgram,
     #[error("refund workflow digest must not be zero")]
     EmptyDigest,
+    #[error("refund cancellation identity is invalid")]
+    InvalidCancellationIdentity,
     #[error("refund claim window is invalid")]
     InvalidWindow,
     #[error("refund compiler failed: {0}")]
@@ -99,6 +104,19 @@ pub struct RefundExecuteServerInputs {
     pub claim_nonce: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RefundCancellationServerInputs {
+    pub merchant_id: Uuid,
+    pub claim_intent_id: Uuid,
+    pub adjustment_id: Uuid,
+    pub merchant: [u8; 32],
+    pub mint: [u8; 32],
+    pub adjustment: [u8; 32],
+    pub claim_nonce: u64,
+    pub governance_authority: String,
+    pub governance_subject: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RefundArtifact {
     pub schema: String,
@@ -133,10 +151,135 @@ pub struct RefundArtifact {
     pub expires_at_unix: Option<i64>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RefundCancellationArtifact {
+    pub schema: String,
+    pub instruction: CompiledSettlementRefundCancellationInstruction,
+    pub instruction_digest: [u8; 32],
+    pub artifact_digest: [u8; 32],
+    pub merchant_id: Uuid,
+    pub claim_intent_id: Uuid,
+    pub adjustment_id: Uuid,
+    pub merchant: String,
+    pub mint: String,
+    pub adjustment: String,
+    pub governance_authority: String,
+    pub governance_subject: String,
+}
+
 impl RefundArtifact {
     pub fn unsigned_artifact(&self) -> Result<Value, RefundWorkflowError> {
         Ok(serde_json::to_value(self)?)
     }
+}
+
+impl RefundCancellationArtifact {
+    pub fn unsigned_artifact(&self) -> Result<Value, RefundWorkflowError> {
+        Ok(serde_json::to_value(self)?)
+    }
+}
+
+pub fn build_cancellation_artifact(
+    input: &RefundCancellationServerInputs,
+) -> Result<RefundCancellationArtifact, RefundWorkflowError> {
+    if input.merchant_id.get_version_num() != 7
+        || input.claim_intent_id.get_version_num() != 7
+        || input.adjustment_id.get_version_num() != 7
+        || input.merchant == [0; 32]
+        || input.mint == [0; 32]
+        || input.adjustment == [0; 32]
+        || input.claim_nonce == 0
+    {
+        return Err(RefundWorkflowError::InvalidCancellationIdentity);
+    }
+    if input.governance_subject.trim().is_empty()
+        || input.governance_subject.len() > 256
+        || input
+            .governance_subject
+            .bytes()
+            .any(|byte| byte.is_ascii_control())
+    {
+        return Err(RefundWorkflowError::InvalidSubject("governance_subject"));
+    }
+    let governance_authority =
+        canonical_address(input.governance_authority.as_str(), "governance_authority")?;
+    let merchant = canonical_bytes(input.merchant, "merchant")?;
+    let mint = canonical_bytes(input.mint, "mint")?;
+    let adjustment = canonical_bytes(input.adjustment, "adjustment")?;
+    let instruction = compile_settlement_refund_cancellation_instruction(
+        &SettlementRefundCancellationCompileRequest {
+            program_id: settlement_client::SETTLEMENT_PROGRAM_ID.to_string(),
+            governance_authority: governance_authority.clone(),
+            merchant: merchant.clone(),
+            mint: mint.clone(),
+            adjustment: adjustment.clone(),
+            claim_nonce: input.claim_nonce,
+        },
+    )?;
+    let instruction_digest = cancellation_instruction_digest(&instruction)?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"refund-claim-cancellation-artifact/v1");
+    hasher.update(input.merchant_id.as_bytes());
+    hasher.update(input.claim_intent_id.as_bytes());
+    hasher.update(input.adjustment_id.as_bytes());
+    hasher.update(instruction_digest);
+    update_digest_text(&mut hasher, &governance_authority);
+    update_digest_text(&mut hasher, &input.governance_subject);
+    let artifact_digest = hasher.finalize().into();
+    Ok(RefundCancellationArtifact {
+        schema: CANCELLATION_ARTIFACT_SCHEMA.to_string(),
+        instruction,
+        instruction_digest,
+        artifact_digest,
+        merchant_id: input.merchant_id,
+        claim_intent_id: input.claim_intent_id,
+        adjustment_id: input.adjustment_id,
+        merchant,
+        mint,
+        adjustment,
+        governance_authority,
+        governance_subject: input.governance_subject.clone(),
+    })
+}
+
+pub fn cancellation_request_digest(input: &RefundCancellationServerInputs) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"refund-claim-cancellation-request/v1");
+    hasher.update(input.merchant_id.as_bytes());
+    hasher.update(input.claim_intent_id.as_bytes());
+    hasher.update(input.adjustment_id.as_bytes());
+    hasher.update(input.merchant);
+    hasher.update(input.mint);
+    hasher.update(input.adjustment);
+    hasher.update(input.claim_nonce.to_le_bytes());
+    update_digest_text(&mut hasher, &input.governance_authority);
+    update_digest_text(&mut hasher, &input.governance_subject);
+    hasher.finalize().into()
+}
+
+pub fn cancellation_instruction_digest(
+    instruction: &CompiledSettlementRefundCancellationInstruction,
+) -> Result<[u8; 32], RefundWorkflowError> {
+    let instruction_bytes = serde_json::to_vec(instruction)?;
+    Ok(Sha256::digest(
+        [
+            b"refund-claim-cancellation-instruction/v1".as_slice(),
+            &instruction_bytes,
+        ]
+        .concat(),
+    )
+    .into())
+}
+
+pub fn validate_cancellation_artifact(
+    input: &RefundCancellationServerInputs,
+    artifact: &RefundCancellationArtifact,
+) -> Result<(), RefundWorkflowError> {
+    let expected = build_cancellation_artifact(input)?;
+    if expected != *artifact {
+        return Err(RefundWorkflowError::InvalidCancellationIdentity);
+    }
+    Ok(())
 }
 
 pub fn build_claim_artifact(
@@ -659,6 +802,56 @@ mod tests {
             execute_after_unix: 1_790_000_000,
             expires_at_unix: 1_790_003_600,
         }
+    }
+
+    fn cancellation() -> RefundCancellationServerInputs {
+        RefundCancellationServerInputs {
+            merchant_id: Uuid::now_v7(),
+            claim_intent_id: Uuid::now_v7(),
+            adjustment_id: Uuid::now_v7(),
+            merchant: [4; 32],
+            mint: [5; 32],
+            adjustment: [7; 32],
+            claim_nonce: 9,
+            governance_authority: Pubkey::new_unique().to_string(),
+            governance_subject: "governance".into(),
+        }
+    }
+
+    #[test]
+    fn cancellation_artifact_has_no_financial_or_token_topology_inputs() {
+        let input = cancellation();
+        let artifact = build_cancellation_artifact(&input).expect("cancellation artifact");
+        assert_eq!(artifact.schema, CANCELLATION_ARTIFACT_SCHEMA);
+        assert_eq!(artifact.instruction.accounts.len(), 5);
+        assert_eq!(artifact.instruction.claim_nonce, input.claim_nonce);
+        assert_ne!(artifact.instruction_digest, [0; 32]);
+        assert_ne!(artifact.artifact_digest, [0; 32]);
+        let json = artifact.unsigned_artifact().expect("json");
+        assert!(json.get("gross_atomic").is_none());
+        assert!(json.get("tax_vault").is_none());
+        assert!(json.get("refund_destination").is_none());
+        validate_cancellation_artifact(&input, &artifact).expect("artifact validates");
+    }
+
+    #[test]
+    fn cancellation_artifact_rejects_invalid_identity_and_detects_rebinding() {
+        let mut input = cancellation();
+        input.claim_nonce = 0;
+        assert!(matches!(
+            build_cancellation_artifact(&input),
+            Err(RefundWorkflowError::InvalidCancellationIdentity)
+        ));
+
+        let input = cancellation();
+        let artifact = build_cancellation_artifact(&input).expect("artifact");
+        let mut changed = input.clone();
+        changed.claim_intent_id = Uuid::now_v7();
+        assert!(validate_cancellation_artifact(&changed, &artifact).is_err());
+        assert_ne!(
+            cancellation_request_digest(&input),
+            cancellation_request_digest(&changed)
+        );
     }
 
     #[test]

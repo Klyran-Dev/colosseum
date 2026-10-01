@@ -961,6 +961,30 @@ release gates.
   overlap/revocation ceremony, compromise response, regional reload latency,
   and alert/on-call evidence.
 
+## ADR-0238 — governed refund-claim cancellation workflow
+
+- [x] Record the alternatives, invariants, fixed account shape, non-custodial
+  signing boundary, finalized evidence rule, and diagnostic latency budget in
+  ADR-0238.
+- [ ] Add the pure Rust cancellation compiler with canonical discriminator,
+  claim PDA/registry derivation, exact five-account order, positive nonce and
+  duplicate-account validation, and wire-budget tests.
+- [ ] Add exact signed-message cancellation verification with no address lookup
+  tables, extra instructions, account substitution, or fee-payer aliasing.
+- [ ] Add a separate UUIDv7 cancellation intent aggregate and outbox record;
+  never mutate the immutable claim artifact to represent cancellation.
+- [ ] Add governance-scope API prepare/submit/read/reconcile routes. Browser
+  input may select a wallet and provide signed bytes only; it may not provide
+  financial values, program IDs, registry addresses, claim PDAs, or nonces.
+- [ ] Require finalized `AdjustmentRefundClaimCancelled` evidence before the
+  claim projection becomes cancelled; preserve unknown provider outcomes and
+  idempotent replay semantics.
+- [ ] Add production UI/UX for governance cancellation, wallet rejection,
+  timeout, unknown, finalized cancellation, and reconciliation-required states
+  with accessible explanations and no implied refund success.
+- [ ] Extend the pinned Linux validator conformance suite with the complete
+  cancellation lifecycle and unchanged tax-vault, funder, and payer balances.
+
 ## ADR-0234 — atomic API JWKS reload for bounded identity rotation
 
 - [x] Add an optional file-backed JWKS source that is mutually exclusive with

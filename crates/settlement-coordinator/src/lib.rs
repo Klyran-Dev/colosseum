@@ -10,8 +10,9 @@ use indexer::{AdaptiveProviderHealth, JsonRpcTransport, ProviderError};
 use serde_json::{Value, json};
 use settlement_client::{
     COMPUTE_BUDGET_PROGRAM_ID, CompiledSettlementAdjustmentInstruction,
-    CompiledSettlementInstruction, CompiledSettlementRefundInstruction, ComputeBudgetPolicy,
-    MAX_SETTLEMENT_SIGNED_BYTES, estimate_legacy_settlement_wire_bytes_with_compute_budget,
+    CompiledSettlementInstruction, CompiledSettlementRefundCancellationInstruction,
+    CompiledSettlementRefundInstruction, ComputeBudgetPolicy, MAX_SETTLEMENT_SIGNED_BYTES,
+    estimate_legacy_settlement_wire_bytes_with_compute_budget,
 };
 use sha2::{Digest, Sha256};
 use solana_address_lookup_table_interface::{
@@ -419,6 +420,143 @@ impl SignedTransaction {
             if !unique_accounts.insert(actual_key) {
                 return Err(CoordinatorError::InvalidSignedTransaction(
                     "signed refund contains duplicate instruction accounts".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Verifies the fixed five-account governance cancellation instruction
+    /// against the server-owned artifact. Cancellation has no movement
+    /// accounts, permits no address lookup table, extra instruction, or
+    /// client-selected account topology, and remains bounded by the legacy
+    /// packet limit.
+    pub fn verify_refund_cancellation_instruction(
+        &self,
+        expected: &CompiledSettlementRefundCancellationInstruction,
+    ) -> Result<(), CoordinatorError> {
+        if expected.status != "prepared_unsubmitted" {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "refund cancellation is not prepared for submission".into(),
+            ));
+        }
+        let transaction = self.decode_verified_transaction()?;
+        if self.bytes.len() > MAX_SIGNED_TRANSACTION_BYTES {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "signed refund cancellation exceeds the bounded packet size".into(),
+            ));
+        }
+        let message = &transaction.message;
+        if !lookup_table_keys(message)?.is_empty() {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "refund cancellation does not permit address lookup tables".into(),
+            ));
+        }
+        let instructions = message.instructions();
+        if instructions.len() != 1 {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "refund cancellation must contain exactly one instruction".into(),
+            ));
+        }
+        let static_accounts = message.static_account_keys();
+        let instruction = &instructions[0];
+        let program_index = usize::from(instruction.program_id_index);
+        let program_id = static_accounts.get(program_index).ok_or_else(|| {
+            CoordinatorError::InvalidSignedTransaction(
+                "refund cancellation program index is out of bounds".into(),
+            )
+        })?;
+        if program_id.to_string() != expected.program_id {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "signed refund cancellation program id does not match the compiled instruction"
+                    .into(),
+            ));
+        }
+        let expected_data = BASE64
+            .decode(&expected.instruction_data_base64)
+            .map_err(|_| {
+                CoordinatorError::InvalidSignedTransaction(
+                    "compiled refund cancellation data is not valid base64".into(),
+                )
+            })?;
+        if instruction.data != expected_data {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "signed refund cancellation data does not match the compiled instruction".into(),
+            ));
+        }
+        if instruction.accounts.len() != expected.accounts.len()
+            || (static_accounts.len() != expected.accounts.len() + 1
+                && static_accounts.len() != expected.accounts.len() + 2)
+        {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "signed refund cancellation account shape does not match the compiled instruction"
+                    .into(),
+            ));
+        }
+        let expected_keys = expected
+            .accounts
+            .iter()
+            .map(|account| account.pubkey.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        if expected_keys.len() != expected.accounts.len() {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "compiled refund cancellation contains duplicate account keys".into(),
+            ));
+        }
+        if static_accounts.len() == expected.accounts.len() + 2
+            && expected_keys.contains(static_accounts[0].to_string().as_str())
+        {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "refund cancellation fee payer must not duplicate a movement account".into(),
+            ));
+        }
+        if static_accounts
+            .iter()
+            .filter(|account| account.to_string() == expected.program_id)
+            .count()
+            != 1
+        {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "refund cancellation program id must occur exactly once in static accounts".into(),
+            ));
+        }
+        for (index, account) in static_accounts.iter().enumerate() {
+            let key = account.to_string();
+            if !expected_keys.contains(key.as_str()) && key != expected.program_id && index != 0 {
+                return Err(CoordinatorError::InvalidSignedTransaction(
+                    "signed refund cancellation contains an unused unexpected static account"
+                        .into(),
+                ));
+            }
+        }
+        let reserved_addresses = std::collections::BTreeSet::<solana_transaction::Address>::new();
+        let mut unique_accounts = std::collections::BTreeSet::new();
+        for (position, (actual_index, expected_account)) in instruction
+            .accounts
+            .iter()
+            .zip(&expected.accounts)
+            .enumerate()
+        {
+            let actual_index = usize::from(*actual_index);
+            let actual_key = static_accounts.get(actual_index).ok_or_else(|| {
+                CoordinatorError::InvalidSignedTransaction(format!(
+                    "signed refund cancellation account index is out of bounds at position {position}"
+                ))
+            })?;
+            let actual_is_signer = message.is_signer(actual_index);
+            let actual_is_writable = message
+                .is_maybe_writable_with_reserved_addresses(actual_index, Some(&reserved_addresses));
+            if actual_key.to_string() != expected_account.pubkey
+                || actual_is_signer != expected_account.is_signer
+                || actual_is_writable != expected_account.is_writable
+            {
+                return Err(CoordinatorError::InvalidSignedTransaction(format!(
+                    "signed refund cancellation account policy does not match the compiled instruction at position {position}"
+                )));
+            }
+            if !unique_accounts.insert(actual_key) {
+                return Err(CoordinatorError::InvalidSignedTransaction(
+                    "signed refund cancellation contains duplicate instruction accounts".into(),
                 ));
             }
         }
@@ -1562,9 +1700,11 @@ mod tests {
     use serde_json::json;
     use settlement_client::{
         CompiledSettlementAdjustmentInstruction, CompiledSettlementInstruction,
-        SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT, SettlementAdjustmentCompileRequest,
-        SettlementCompileRequest, SettlementRefundClaimCompileRequest,
+        CompiledSettlementRefundCancellationInstruction, SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT,
+        SettlementAdjustmentCompileRequest, SettlementCompileRequest,
+        SettlementRefundCancellationCompileRequest, SettlementRefundClaimCompileRequest,
         compile_settlement_adjustment_instruction, compile_settlement_instruction,
+        compile_settlement_refund_cancellation_instruction,
         compile_settlement_refund_claim_instruction,
     };
     use solana_keypair::Keypair;
@@ -1868,6 +2008,31 @@ mod tests {
         .expect("signed transaction")
     }
 
+    fn signed_refund_cancellation(
+        expected: &CompiledSettlementRefundCancellationInstruction,
+        governance_authority: &Keypair,
+    ) -> SignedTransaction {
+        let instruction = solana_transaction::Instruction {
+            program_id: expected.program_id.parse().expect("program id"),
+            accounts: expected
+                .accounts
+                .iter()
+                .map(|account| {
+                    let pubkey = account.pubkey.parse().expect("account pubkey");
+                    if account.is_writable {
+                        solana_transaction::AccountMeta::new(pubkey, account.is_signer)
+                    } else {
+                        solana_transaction::AccountMeta::new_readonly(pubkey, account.is_signer)
+                    }
+                })
+                .collect(),
+            data: BASE64
+                .decode(&expected.instruction_data_base64)
+                .expect("instruction data"),
+        };
+        signed_with_instruction_sequence(governance_authority, &[instruction])
+    }
+
     fn refund_claim_request(
         proposer: &Keypair,
         refund_funder: &Keypair,
@@ -1889,6 +2054,20 @@ mod tests {
             execute_after_unix: 1_790_000_000,
             expires_at_unix: 1_790_003_600,
             reference_digest: [8; 32],
+        }
+    }
+
+    fn refund_cancellation_request(
+        governance_authority: &Keypair,
+    ) -> SettlementRefundCancellationCompileRequest {
+        let unique = || solana_transaction::Address::new_unique().to_string();
+        SettlementRefundCancellationCompileRequest {
+            program_id: settlement_client::SETTLEMENT_PROGRAM_ID.to_string(),
+            governance_authority: governance_authority.pubkey().to_string(),
+            merchant: unique(),
+            mint: unique(),
+            adjustment: unique(),
+            claim_nonce: 7,
         }
     }
 
@@ -2264,6 +2443,64 @@ mod tests {
         )
         .expect("signed transaction");
         assert!(extra.verify_refund_instruction(&expected).is_err());
+    }
+
+    #[test]
+    fn verifies_the_exact_signed_refund_cancellation_instruction() {
+        let governance_authority = Keypair::new();
+        let request = refund_cancellation_request(&governance_authority);
+        let expected = compile_settlement_refund_cancellation_instruction(&request)
+            .expect("compile refund cancellation");
+        let signed = signed_refund_cancellation(&expected, &governance_authority);
+        signed
+            .verify_refund_cancellation_instruction(&expected)
+            .expect("exact refund cancellation must verify");
+
+        let mut wrong_data = expected.clone();
+        wrong_data.instruction_data_base64 = BASE64.encode([0; 16]);
+        assert!(
+            signed
+                .verify_refund_cancellation_instruction(&wrong_data)
+                .is_err()
+        );
+
+        let mut wrong_account = expected.clone();
+        wrong_account.accounts.swap(0, 1);
+        assert!(
+            signed
+                .verify_refund_cancellation_instruction(&wrong_account)
+                .is_err()
+        );
+
+        let extra = signed_with_instruction_sequence(
+            &governance_authority,
+            &[
+                solana_transaction::Instruction {
+                    program_id: expected.program_id.parse().expect("program id"),
+                    accounts: expected
+                        .accounts
+                        .iter()
+                        .map(|account| {
+                            let pubkey = account.pubkey.parse().expect("account pubkey");
+                            solana_transaction::AccountMeta::new_readonly(pubkey, account.is_signer)
+                        })
+                        .collect(),
+                    data: BASE64
+                        .decode(&expected.instruction_data_base64)
+                        .expect("instruction data"),
+                },
+                solana_transaction::Instruction {
+                    program_id: solana_transaction::Address::new_unique(),
+                    accounts: Vec::new(),
+                    data: vec![1],
+                },
+            ],
+        );
+        assert!(
+            extra
+                .verify_refund_cancellation_instruction(&expected)
+                .is_err()
+        );
     }
 
     #[test]
