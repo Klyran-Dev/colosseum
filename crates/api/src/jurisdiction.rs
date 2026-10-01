@@ -279,7 +279,12 @@ mod tests {
 
         assert!(
             registry
-                .verify(&[first_envelope.clone()], merchant, [2; 32], 1_800_000_100)
+                .verify(
+                    std::slice::from_ref(&first_envelope),
+                    merchant,
+                    [2; 32],
+                    1_800_000_100,
+                )
                 .is_ok()
         );
         std::fs::write(&path, &second_document).expect("second provider registry fixture");
@@ -290,7 +295,12 @@ mod tests {
         ));
         assert!(
             registry
-                .verify(&[second_envelope.clone()], merchant, [2; 32], 1_800_000_100)
+                .verify(
+                    std::slice::from_ref(&second_envelope),
+                    merchant,
+                    [2; 32],
+                    1_800_000_100,
+                )
                 .is_ok()
         );
 

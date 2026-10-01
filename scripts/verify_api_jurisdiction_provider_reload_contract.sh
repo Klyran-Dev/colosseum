@@ -7,6 +7,7 @@ cd "$repo_root"
 
 project_name=${COMPOSE_PROJECT_NAME:-solana-tax-protocol-jurisdiction-reload}
 host_port=${API_JURISDICTION_RELOAD_PORT:-18083}
+export POSTGRES_PORT=${JURISDICTION_RELOAD_POSTGRES_PORT:-55433}
 container_id=''
 work_dir=$(mktemp -d)
 issuer=https://api-jurisdiction-reload-identity.invalid
@@ -74,7 +75,7 @@ provider_public_key_from_evidence() {
   binary_path=$2
   jq -r '.provider_public_key[]' "$evidence_path" \
     | while IFS= read -r byte; do
-        printf '\\%03o' "$byte"
+        printf '%b' "\\$(printf '%03o' "$byte")"
       done > "$binary_path"
   base64 < "$binary_path" | tr '+/' '-_' | tr -d '=\n'
 }
@@ -196,7 +197,7 @@ old_status=$(printf '%s' "$first_request" | jq -c '.idempotency_key = "jurisdict
   --header "authorization: $first_token" --data-binary @- \
   "$base_url/v1/tax/quote" || true)
 [ "$old_status" = '422' ] || fail "removed provider key remained accepted after rotation (HTTP $old_status)"
-jq -e '.code == "JURISDICTION_PROVIDER_KEY_UNKNOWN"' "$work_dir/old-response.json" >/dev/null \
+jq -e '.error.code == "JURISDICTION_PROVIDER_KEY_UNKNOWN"' "$work_dir/old-response.json" >/dev/null \
   || fail "removed provider key did not return the typed unknown-key error"
 
 second_response="$work_dir/second-response.json"
