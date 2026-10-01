@@ -64,6 +64,7 @@ for file in \
   docs/adr/0231-tax-engine-request-rejection-semantics.md \
   docs/adr/0232-tax-engine-service-concurrency-evidence.md \
   docs/adr/0234-api-jwks-atomic-reload.md \
+  docs/adr/0235-jurisdiction-provider-key-atomic-reload.md \
   ops/docker/Dockerfile.tax-engine \
   docs/adr/0142-spa-workspace-focus-management.md \
   docs/adr/0143-structured-tier-1-rule-workbench.md \
@@ -117,6 +118,7 @@ for file in \
   scripts/benchmark_tax_engine_service.sh \
   scripts/verify_tax_engine_mtls_runtime_contract.sh \
   scripts/verify_api_auth_jwks_reload_contract.sh \
+  scripts/verify_api_jurisdiction_provider_reload_contract.sh \
   scripts/migration_integrity_drill.sh \
   db/verification/settlement_route_mint_precision.sql \
   scripts/verify_deployment_config.sh \

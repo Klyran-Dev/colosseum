@@ -930,16 +930,31 @@ release gates.
 
 ## ADR-0234 — atomic API JWKS reload for bounded identity rotation
 
-- [ ] Add an optional file-backed JWKS source that is mutually exclusive with
+- [x] Add an optional file-backed JWKS source that is mutually exclusive with
   inline key configuration and is fully validated before startup.
-- [ ] Add lock-free immutable key-snapshot replacement on Unix `SIGHUP`; read
+- [x] Add lock-free immutable key-snapshot replacement on Unix `SIGHUP`; read
   and parse the bounded file in a blocking task outside the request executor,
   and retain the last known-good snapshot after every invalid replacement.
-- [ ] Add focused rotation/rejection tests and a real API runtime contract for
+- [x] Add focused rotation/rejection tests and a real API runtime contract for
   valid replacement, removed-key rejection, and invalid-replacement retention.
 - [ ] Retain production identity-provider overlap/revocation ceremony,
   secret-manager atomic delivery and permissions, regional reload timing, and
   alert/on-call evidence before production activation.
+
+## ADR-0235 — atomic jurisdiction-provider key registry reload
+
+- [x] Add an optional file-backed provider registry that is mutually exclusive
+  with structured inline and compatibility-pair configuration and is fully
+  validated before startup.
+- [x] Add lock-free immutable provider-key snapshot replacement on Unix
+  `SIGHUP`; parse bounded files outside the request executor and retain the
+  last known-good registry after invalid replacements.
+- [x] Add focused provider evidence rotation tests and a real API runtime
+  contract for valid replacement, removed-key rejection, and malformed-
+  replacement retention.
+- [ ] Retain live provider-key overlap/revocation, HSM/KMS custody, atomic
+  secret delivery, regional reload timing, and legal/tax owner evidence before
+  production activation.
 
 ## ADR-0160 — clean-stack Docker drill migration gate
 

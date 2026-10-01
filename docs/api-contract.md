@@ -297,6 +297,25 @@ process targeting, and alert/on-call evidence remain deployment gates.
 rotation, removed-key rejection, and invalid-replacement retention with
 synthetic EdDSA material. It is a local/CI runtime contract and does not
 prove production identity-provider or secret-manager ceremonies.
+
+For deployment-owned jurisdiction-provider key rotation,
+`API_JURISDICTION_PROVIDER_KEYS_FILE` may replace the structured inline
+registry or compatibility key pair. The API fully validates the bounded file
+at startup; file and inline forms are mutually exclusive. On Unix, an
+operator or secret-delivery controller atomically replaces the file and sends
+`SIGHUP`. The API parses the complete replacement outside the request
+executor, then atomically swaps one immutable provider-key snapshot. Invalid,
+unreadable, oversized, duplicate, or cryptographically invalid replacements
+retain the last known-good snapshot. Provider evidence verification performs
+no file or network I/O on the quote path. Key overlap, secret-manager
+permissions, revocation timing, provider ownership, process targeting, and
+alert/on-call evidence remain deployment gates.
+
+`make api-jurisdiction-provider-reload-contract` exercises the real API
+container with signed synthetic jurisdiction evidence before and after a
+provider-key rotation and proves malformed-replacement retention. It is a
+local/CI runtime contract and does not prove live provider custody, legal
+authority, or production rotation ceremonies.
 The response status is `calculated_unattested`; it is not an attestation,
 wallet authorization, settlement, filing, or legal determination.
 

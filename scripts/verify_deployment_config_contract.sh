@@ -60,6 +60,8 @@ run_checker() {
   fi
   if [ "$jurisdiction_mode" = json ]; then
     set -- "$@" 'API_JURISDICTION_PROVIDER_KEYS_JSON={"keys":[{"key_id":"staging-provider-key-v1","public_key":"synthetic-provider-key"}]}'
+  elif [ "$jurisdiction_mode" = file ]; then
+    set -- "$@" API_JURISDICTION_PROVIDER_KEYS_FILE=/run/secrets/jurisdiction/providers.json
   elif [ "$jurisdiction_mode" = mixed ]; then
     set -- "$@" API_JURISDICTION_PROVIDER_KEY_ID=staging-provider-key-v1 API_JURISDICTION_PROVIDER_PUBLIC_KEY=synthetic-provider-key 'API_JURISDICTION_PROVIDER_KEYS_JSON={"keys":[{"key_id":"staging-provider-key-v1","public_key":"synthetic-provider-key"}]}'
   else
@@ -71,6 +73,7 @@ run_checker() {
 run_checker
 run_checker false '' false json
 run_checker false '' false file
+run_checker false '' false pair file
 
 if run_checker false '' false pair mixed >/dev/null 2>&1; then
   echo "mixed jurisdiction-provider key forms did not fail" >&2

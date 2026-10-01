@@ -124,27 +124,56 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             return Err("API_AUTH_ISSUER, API_AUTH_AUDIENCE, and authentication keys must be configured together".into());
         }
     };
-    let jurisdiction_provider_registry = match env::var("API_JURISDICTION_PROVIDER_KEYS_JSON") {
-        Ok(document) => Some(Arc::new(JurisdictionProviderRegistry::from_json(
-            &document,
-        )?)),
-        Err(_) => match (
-            env::var("API_JURISDICTION_PROVIDER_KEY_ID"),
-            env::var("API_JURISDICTION_PROVIDER_PUBLIC_KEY"),
-        ) {
-            (Ok(key_id), Ok(public_key)) => {
+    let provider_registry_file =
+        env_value("API_JURISDICTION_PROVIDER_KEYS_FILE").map(PathBuf::from);
+    let provider_registry_json = env_value("API_JURISDICTION_PROVIDER_KEYS_JSON");
+    let provider_key_id = env_value("API_JURISDICTION_PROVIDER_KEY_ID");
+    let provider_public_key = env_value("API_JURISDICTION_PROVIDER_PUBLIC_KEY");
+    if provider_registry_file.is_some()
+        && (provider_registry_json.is_some()
+            || provider_key_id.is_some()
+            || provider_public_key.is_some())
+    {
+        return Err(
+            "API_JURISDICTION_PROVIDER_KEYS_FILE cannot be combined with inline provider-key configuration".into(),
+        );
+    }
+    let (jurisdiction_provider_registry, provider_registry_reload_file) = match (
+        provider_registry_file,
+        provider_registry_json,
+    ) {
+        (Some(path), None) => (
+            Some(Arc::new(JurisdictionProviderRegistry::from_file(&path)?)),
+            Some(path),
+        ),
+        (None, Some(document)) => (
+            Some(Arc::new(JurisdictionProviderRegistry::from_json(
+                &document,
+            )?)),
+            None,
+        ),
+        (None, None) => match (provider_key_id, provider_public_key) {
+            (Some(key_id), Some(public_key)) => {
                 let document = serde_json::json!({
                     "keys": [{"key_id": key_id, "public_key": public_key}]
                 });
-                Some(Arc::new(JurisdictionProviderRegistry::from_json(
-                    &document.to_string(),
-                )?))
+                (
+                    Some(Arc::new(JurisdictionProviderRegistry::from_json(
+                        &document.to_string(),
+                    )?)),
+                    None,
+                )
             }
-            (Err(_), Err(_)) => None,
+            (None, None) => (None, None),
             _ => {
                 return Err("API_JURISDICTION_PROVIDER_KEY_ID and API_JURISDICTION_PROVIDER_PUBLIC_KEY must be configured together".into());
             }
         },
+        (Some(_), Some(_)) => {
+            return Err(
+                "API_JURISDICTION_PROVIDER_KEYS_FILE cannot be combined with provider JSON".into(),
+            );
+        }
     };
     let simulation_mode = deployment.simulation_mode;
     if !simulation_mode && jurisdiction_provider_registry.is_none() {
@@ -227,6 +256,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
     let shutdown_authenticator = authenticator.clone();
     let shutdown_jwks_file = auth_jwks_file.clone();
+    let shutdown_provider_registry = jurisdiction_provider_registry.clone();
+    let shutdown_provider_file = provider_registry_reload_file.clone();
     let state = AppState {
         ready: storage.is_some()
             && authenticator.is_some()
@@ -265,7 +296,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!(%address, "api listening");
     let (shutdown_sender, shutdown_receiver) = mpsc::sync_channel(1);
     let shutdown = async move {
-        let result = wait_for_shutdown(shutdown_authenticator, shutdown_jwks_file).await;
+        let result = wait_for_shutdown(
+            shutdown_authenticator,
+            shutdown_jwks_file,
+            shutdown_provider_registry,
+            shutdown_provider_file,
+        )
+        .await;
         if shutdown_sender.send(result).is_err() {
             tracing::warn!("api shutdown result could not be recorded");
         }
@@ -289,6 +326,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 async fn wait_for_shutdown(
     authenticator: Option<JwtAuthenticator>,
     jwks_file: Option<PathBuf>,
+    provider_registry: Option<Arc<JurisdictionProviderRegistry>>,
+    provider_registry_file: Option<PathBuf>,
 ) -> Result<(), String> {
     #[cfg(unix)]
     {
@@ -303,22 +342,50 @@ async fn wait_for_shutdown(
                     if signal.is_none() {
                         return Err("api SIGHUP listener ended unexpectedly".into());
                     }
-                    let (Some(authenticator), Some(path)) =
-                        (authenticator.clone(), jwks_file.clone()) else {
-                        tracing::warn!("api received SIGHUP without a file-backed JWKS configuration");
+                    if jwks_file.is_none() && provider_registry_file.is_none() {
+                        tracing::warn!("api received SIGHUP without a file-backed key configuration");
                         continue;
-                    };
+                    }
+                    let reload_authenticator = authenticator.clone();
+                    let reload_jwks_file = jwks_file.clone();
+                    let reload_provider_registry = provider_registry.clone();
+                    let reload_provider_file = provider_registry_file.clone();
                     let reload = tokio::task::spawn_blocking(move || {
-                        authenticator.reload_from_jwks_file(&path)
+                        let auth_result = match (reload_authenticator, reload_jwks_file) {
+                            (Some(authenticator), Some(path)) => {
+                                Some(authenticator.reload_from_jwks_file(&path))
+                            }
+                            _ => None,
+                        };
+                        let provider_result = match (reload_provider_registry, reload_provider_file) {
+                            (Some(registry), Some(path)) => {
+                                Some(registry.reload_from_file(&path))
+                            }
+                            _ => None,
+                        };
+                        (auth_result, provider_result)
                     })
                     .await
-                    .map_err(|error| format!("api JWKS reload task failed: {error}"))?;
-                    match reload {
-                        Ok(key_count) => {
-                            tracing::info!(key_count, "api authentication JWKS reloaded");
+                    .map_err(|error| format!("api key reload task failed: {error}"))?;
+                    let (auth_result, provider_result) = reload;
+                    if let Some(result) = auth_result {
+                        match result {
+                            Ok(key_count) => {
+                                tracing::info!(key_count, "api authentication JWKS reloaded");
+                            }
+                            Err(error) => {
+                                tracing::warn!(error = %error, "api authentication JWKS reload rejected; retaining last known-good snapshot");
+                            }
                         }
-                        Err(error) => {
-                            tracing::warn!(error = %error, "api authentication JWKS reload rejected; retaining last known-good snapshot");
+                    }
+                    if let Some(result) = provider_result {
+                        match result {
+                            Ok(key_count) => {
+                                tracing::info!(key_count, "api jurisdiction-provider registry reloaded");
+                            }
+                            Err(error) => {
+                                tracing::warn!(error = %error, "api jurisdiction-provider registry reload rejected; retaining last known-good snapshot");
+                            }
                         }
                     }
                 }
@@ -328,7 +395,12 @@ async fn wait_for_shutdown(
 
     #[cfg(not(unix))]
     {
-        let _ = (authenticator, jwks_file);
+        let _ = (
+            authenticator,
+            jwks_file,
+            provider_registry,
+            provider_registry_file,
+        );
         tokio::signal::ctrl_c()
             .await
             .map_err(|error| format!("api shutdown signal listener failed: {error}"))

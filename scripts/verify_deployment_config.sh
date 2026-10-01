@@ -182,7 +182,16 @@ case "$(read_env API_EVIDENCE_KEY_ID)" in
 esac
 
 jurisdiction_provider_keys_json=$(read_env API_JURISDICTION_PROVIDER_KEYS_JSON)
-if [ -n "$jurisdiction_provider_keys_json" ]; then
+jurisdiction_provider_keys_file=$(read_env API_JURISDICTION_PROVIDER_KEYS_FILE)
+if [ -n "$jurisdiction_provider_keys_file" ]; then
+  case "$jurisdiction_provider_keys_file" in
+    /*) ;;
+    *) fail "API_JURISDICTION_PROVIDER_KEYS_FILE must be an absolute deployment path" ;;
+  esac
+  [ -z "$jurisdiction_provider_keys_json" ] || fail "API_JURISDICTION_PROVIDER_KEYS_FILE cannot accompany API_JURISDICTION_PROVIDER_KEYS_JSON"
+  [ -z "$(read_env API_JURISDICTION_PROVIDER_KEY_ID)" ] || fail "API_JURISDICTION_PROVIDER_KEYS_FILE cannot accompany API_JURISDICTION_PROVIDER_KEY_ID"
+  [ -z "$(read_env API_JURISDICTION_PROVIDER_PUBLIC_KEY)" ] || fail "API_JURISDICTION_PROVIDER_KEYS_FILE cannot accompany API_JURISDICTION_PROVIDER_PUBLIC_KEY"
+elif [ -n "$jurisdiction_provider_keys_json" ]; then
   case "$jurisdiction_provider_keys_json" in
     \{*\}) ;;
     *) fail "API_JURISDICTION_PROVIDER_KEYS_JSON must be a non-empty JSON object" ;;
@@ -199,7 +208,7 @@ else
     require_env "$jurisdiction_name"
   done
 fi
-if [ -z "$jurisdiction_provider_keys_json" ]; then
+if [ -z "$jurisdiction_provider_keys_json" ] && [ -z "$jurisdiction_provider_keys_file" ]; then
   case "$(read_env API_JURISDICTION_PROVIDER_KEY_ID)" in
     0404040404040404040404040404040404040404040404040404040404040404)
       fail "API_JURISDICTION_PROVIDER_KEY_ID uses the local development key"

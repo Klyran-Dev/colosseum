@@ -387,6 +387,18 @@ exists.
   Production secret-manager delivery, certificate lifecycle/revocation, CA
   overlap, regional reload SLO, identity mapping, and on-call evidence remain
   open.
+- [x] ADR-0234 adds a real API container contract for file-backed EdDSA JWKS
+  rotation. Valid `SIGHUP` replacement rejects the removed key and accepts the
+  new key; malformed replacement retains the last known-good snapshot. This
+  closes the local API rotation contract only; provider-managed overlap and
+  revocation, secret-manager permissions, regional reload timing, and
+  production identity/on-call evidence remain open.
+- [x] ADR-0235 adds a real API container contract for file-backed
+  jurisdiction-provider key rotation. Valid evidence signed by the old key is
+  rejected after replacement, the new key is accepted, and malformed
+  replacement retains the last known-good registry. Live provider overlap and
+  revocation, HSM/KMS custody, secret-manager permissions, regional reload
+  timing, legal ownership, and production on-call evidence remain open.
 - [x] Compiled-rule cache hit/miss/eviction/entry metrics are exported with
   fixed labels and bounded cardinality; concurrent-load and invalidation
   performance evidence remains open.

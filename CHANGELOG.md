@@ -81,6 +81,11 @@
   Unix `SIGHUP` rotation, and last-known-good retention after invalid
   replacements; a real container contract proves old-key rejection, new-key
   acceptance, and invalid-replacement safety.
+- Added ADR-0235 and a jurisdiction-provider key rotation contract. The API now
+  supports an optional bounded file-backed provider registry, lock-free
+  immutable snapshots, Unix `SIGHUP` rotation, and last-known-good retention
+  after invalid replacements; a real container contract proves old-key
+  rejection, new-key acceptance, and malformed-replacement safety.
 - Tightened the Linux validator-conformance workflow so evidence verification
   runs after both successful and failed attempts and missing retained evidence
   fails the artifact step instead of being warning-only.

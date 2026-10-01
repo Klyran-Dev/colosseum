@@ -235,3 +235,4 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0232: Warm Tax Engine service concurrency evidence](0232-tax-engine-service-concurrency-evidence.md)
 - [ADR-0233: Real-container Tax Engine mTLS contract](0233-tax-engine-container-mtls-contract.md)
 - [ADR-0234: Atomic API JWKS reload for bounded identity rotation](0234-api-jwks-atomic-reload.md)
+- [ADR-0235: Atomic jurisdiction-provider key registry reload](0235-jurisdiction-provider-key-atomic-reload.md)

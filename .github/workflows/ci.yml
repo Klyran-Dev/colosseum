@@ -129,6 +129,8 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Run the synthetic API key-rotation contract
         run: make api-auth-jwks-reload-contract
+      - name: Run the synthetic jurisdiction-provider key-rotation contract
+        run: make api-jurisdiction-provider-reload-contract
 
   otel-trace:
     name: OTLP trace receipt and redaction drill

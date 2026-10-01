@@ -38,6 +38,7 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [Warm Tax Engine service concurrency evidence](adr/0232-tax-engine-service-concurrency-evidence.md)
 - [Real-container Tax Engine mTLS contract](adr/0233-tax-engine-container-mtls-contract.md)
 - [Atomic API JWKS reload for bounded identity rotation](adr/0234-api-jwks-atomic-reload.md)
+- [Atomic jurisdiction-provider key registry reload](adr/0235-jurisdiction-provider-key-atomic-reload.md)
 - [Settlement transaction and state machine](architecture/settlement-flow.md)
 - [Bounded immutable Split Plan decision](adr/0091-bounded-immutable-split-plan-context.md)
 - [Finalized split-settlement evidence projection](adr/0093-finalized-split-settlement-evidence-projection.md)

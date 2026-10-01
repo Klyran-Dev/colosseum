@@ -1692,3 +1692,18 @@ auditable.
 | Periodic background JWKS polling | Automatic rotation | Requires stale-cache, provider-authentication, backoff, and split-brain policy before safe production use | Rejected for this contract |
 | Mutable `RwLock` key map | No extra dependency | Adds request-path contention and couples hot-path cost to reloads | Rejected |
 | **Immutable key snapshot with atomic file reload on `SIGHUP`** | No request-path I/O, bounded validation, deterministic last-known-good behavior, explicit secret-manager ownership | Requires atomic delivery and signal/runbook discipline | **Selected in ADR-0234** |
+
+### Jurisdiction-provider key registry rotation
+
+**Criteria:** preserve deterministic quote authorization latency, remove a
+compromised provider key without request-path network or filesystem work,
+retain a last-known-good registry on malformed delivery, and keep provider
+authority changes auditable.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Restart-only registry rotation | Simple deployment model | Couples evidence-authority response to process rollout and downtime | Rejected |
+| Fetch provider keys from a network for every quote | Immediate provider changes | Adds external availability and unbounded latency to quote authorization | Rejected |
+| Periodic background registry polling | Automatic rotation | Requires provider authentication, stale-cache, backoff, and split-brain policy | Rejected for this contract |
+| Mutable registry behind `RwLock` | Simple implementation | Adds request-path lock contention and reload coupling | Rejected |
+| **Immutable registry snapshot with atomic file reload on `SIGHUP`** | Bounded validation, zero request-path I/O, deterministic last-known-good behavior, explicit secret-manager ownership | Requires atomic delivery and signal/runbook discipline | **Selected in ADR-0235** |

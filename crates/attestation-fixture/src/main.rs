@@ -172,6 +172,10 @@ fn emit_jurisdiction_evidence(args: &[String]) -> Result<(), Box<dyn std::error:
     };
     let merchant_id = Uuid::parse_str(&args[3])?;
     let signing_key = SigningKey::from_bytes(&parse_seed(&args[4])?);
+    let provider_key_id = match env::var("ATTESTATION_PROVIDER_KEY_ID_HEX") {
+        Ok(value) => parse_seed(&value)?,
+        Err(_) => [4; 32],
+    };
     let issued_at_unix = unix_now()? - 1;
     let envelope = JurisdictionEvidenceEnvelope::sign(
         UnsignedJurisdictionEvidence {
@@ -183,7 +187,7 @@ fn emit_jurisdiction_evidence(args: &[String]) -> Result<(), Box<dyn std::error:
             evidence_digest: [3; 32],
             issued_at_unix,
             expires_at_unix: issued_at_unix + 300,
-            provider_key_id: [4; 32],
+            provider_key_id,
         },
         &signing_key,
     )?;
