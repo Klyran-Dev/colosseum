@@ -1181,6 +1181,10 @@ configuration boundary:
   `refund_funder` role with `tax:refund:authority:bind` and
   `refund_funding_funder`. A funding configuration cannot activate until that
   subject has an active proof binding whose public key equals `refund_funder`.
+- The same challenge/bind boundary accepts the distinct `governance` role with
+  `settlement_adjustment_governance`. Cancellation preparation requires this
+  subject's active wallet binding and independently verifies the bound key in
+  the finalized on-chain adjustment registry.
 - `GET /v1/settlement/refund-funding-configurations` and
   `GET /v1/settlement/refund-funding-configurations/{configuration_id}` require
   the same scope and a governed funding/audit role. Tenant scope is derived
@@ -1216,6 +1220,32 @@ ADR-0175 and ADR-0176 now enable only the preparation boundary:
   artifact when the canonical server-owned request digest matches. A changed
   adjustment, authority, topology, or financial input fails with a conflict;
   any nonce gap after a process crash is intentional and safe.
+
+ADR-0238 adds the governed cancellation preparation and transport boundary:
+
+- `POST /v1/settlement/refund-claim-cancellations` requires
+  `tax:refund:claim:cancel:prepare` and the
+  `settlement_adjustment_governance` role. The request contains only a
+  tenant-scoped finalized `claim_intent_id`, an idempotency key, and explicit
+  confirmation. The server loads the immutable claim artifact, resolves the
+  tenant's governance wallet binding, and requires finalized adjustment-registry
+  provider agreement for merchant, mint, proposer, approver, and governance.
+- The response is a separate durable UUIDv7 cancellation intent containing a
+  fixed five-account, amount-free unsigned artifact. It contains no gross,
+  tax, net, token-account, or destination input. Replays return the exact
+  artifact for the same tenant/idempotency binding.
+- `GET /v1/settlement/refund-claim-cancellations/{intent_id}` requires
+  `tax:refund:claim:cancel:read` and a governed adjustment role.
+- `POST /v1/settlement/refund-claim-cancellations/submit` requires
+  `tax:refund:claim:cancel:submit` and accepts only the intent ID plus
+  canonical wallet-signed bytes. The server verifies the exact cancellation
+  instruction, governance signer/writable fee-payer boundary, recent
+  blockhash, immutable artifact digest, and no address lookup tables or extra
+  instructions before RPC submission. Provider ambiguity is `unknown`, never
+  cancelled success.
+- Finalized `AdjustmentRefundClaimCancelled` proof, a reconciliation endpoint,
+  and the claim projection transition remain explicitly gated work; transport
+  acknowledgement alone does not make a claim cancelled.
 
 Signed submission and exact program/instruction/account/signer/artifact-digest
 verification are implemented by ADR-0177. Finalized claim-event evidence is

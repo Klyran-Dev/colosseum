@@ -974,9 +974,12 @@ release gates.
 - [x] Add a separate UUIDv7 cancellation intent aggregate, immutable artifact
   validation, lifecycle events, outbox record, and PostgreSQL migration;
   never mutate the immutable claim artifact to represent cancellation.
-- [ ] Add governance-scope API prepare/submit/read/reconcile routes. Browser
-  input may select a wallet and provide signed bytes only; it may not provide
-  financial values, program IDs, registry addresses, claim PDAs, or nonces.
+- [x] Add governance-scope API prepare/submit/read routes. Browser input may
+  select a bound governance wallet and provide signed bytes only; it may not
+  provide financial values, program IDs, registry addresses, claim PDAs, or
+  nonces. Submission remains proof-pending until the reconciliation slice is
+  implemented.
+- [ ] Add the finalized cancellation-event reconciliation route and worker.
 - [ ] Require finalized `AdjustmentRefundClaimCancelled` evidence before the
   claim projection becomes cancelled; preserve unknown provider outcomes and
   idempotent replay semantics.
