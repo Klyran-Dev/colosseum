@@ -9,6 +9,9 @@
 - Added fixed-cardinality `runtime_reload` telemetry and a critical Prometheus
   alert for rejected Tax Engine token/TLS replacements, with a real-container
   assertion that credential material never enters metrics.
+- Extended the validator conformance contract for governed refund movement to
+  require payer-bound claim execution, governance cancellation, and unchanged
+  balances after cancelled or substituted-topology attempts.
 - Added ADR-0236 and a fail-closed Tax Engine mTLS client-identity boundary:
   non-local deployments require an exact bounded `spiffe://` URI-SAN
   allow-list, enforced during the Rustls handshake before HTTP authentication.

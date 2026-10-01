@@ -65,6 +65,8 @@ grep -Fq "sbf_artifact_sha256=$actual_hash" "$evidence_dir/artifact.txt" \
 
 for expected_case in \
     'settles legacy SPL' \
+    'payer-bound refund claim' \
+    'governance cancellation' \
     'real v0 address lookup table' \
     'extension-free Token-2022' \
     'settles a document-bound payment' \

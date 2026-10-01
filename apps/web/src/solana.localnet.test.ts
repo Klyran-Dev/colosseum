@@ -429,6 +429,25 @@ function executeRefundInstruction(
   );
 }
 
+function cancelRefundClaimInstruction(
+  mint: PublicKey,
+  settlementNonce: bigint,
+  adjustmentNonce: bigint,
+  claimNonce: bigint,
+): TransactionInstruction {
+  return instruction(
+    "cancel_adjustment_refund_claim",
+    [
+      { pubkey: payer.publicKey, isSigner: true, isWritable: false },
+      { pubkey: merchant.publicKey, isSigner: false, isWritable: false },
+      { pubkey: mint, isSigner: false, isWritable: false },
+      { pubkey: adjustmentRegistry(mint), isSigner: false, isWritable: false },
+      { pubkey: refundClaim(mint, settlementNonce, adjustmentNonce, claimNonce), isSigner: false, isWritable: true },
+    ],
+    u64(claimNonce),
+  );
+}
+
 function initializeSplitPlanInstruction(
   mint: PublicKey,
   tokenProgram: PublicKey,
@@ -676,7 +695,7 @@ async function createExtendedMint(): Promise<PublicKey> {
 describe("validator-backed settlement conformance", () => {
   const test = enabled ? it : it.skip;
 
-  test("settles legacy SPL and rejects a duplicate nonce without balance drift", async () => {
+  test("settles legacy SPL, records adjustment evidence, executes a payer-bound refund claim with governance cancellation, and rejects duplicate movement without balance drift", async () => {
     await airdrop(payer.publicKey, 10_000_000_000);
     await airdrop(merchant.publicKey);
     await airdrop(issuer.publicKey);
@@ -836,6 +855,52 @@ describe("validator-backed settlement conformance", () => {
     expect(unchangedAfterDestinationSubstitution.map((account) => account.amount)).toEqual(
       beforeRefund.map((account) => account.amount),
     );
+
+    await send([
+      recordAdjustmentInstruction(mint, 1n, 4n, TOKEN_PROGRAM_ID),
+    ], [adjustmentApprover]);
+    await send([
+      createRefundClaimInstruction(
+        mint,
+        vault.address,
+        refundFunderSource.address,
+        source.address,
+        TOKEN_PROGRAM_ID,
+        1n,
+        4n,
+        2n,
+        refundNow,
+        refundNow + 3_600n,
+      ),
+    ], [adjustmentProposer, refundFunder]);
+    await send([
+      cancelRefundClaimInstruction(mint, 1n, 4n, 2n),
+    ], []);
+    expect(await connection.getAccountInfo(
+      refundClaim(mint, 1n, 4n, 2n),
+      "finalized",
+    )).not.toBeNull();
+    await expect(send([
+      executeRefundInstruction(
+        mint,
+        vault.address,
+        refundFunderSource.address,
+        source.address,
+        TOKEN_PROGRAM_ID,
+        1n,
+        4n,
+        2n,
+      ),
+    ], [adjustmentApprover, refundFunder])).rejects.toThrow();
+    const unchangedAfterCancellation = await Promise.all([
+      getAccount(connection, vault.address, "finalized"),
+      getAccount(connection, refundFunderSource.address, "finalized"),
+      getAccount(connection, source.address, "finalized"),
+    ]);
+    expect(unchangedAfterCancellation.map((account) => account.amount)).toEqual(
+      beforeRefund.map((account) => account.amount),
+    );
+
     await send([
       executeRefundInstruction(
         mint,

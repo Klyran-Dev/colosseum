@@ -139,8 +139,9 @@ measurements exist.
    insufficient-funds, window, pause, duplicate, cancellation, and CPI failure
    atomicity.
 3. Add Linux validator conformance proving tax and net balances move exactly
-   once, the payer receives gross, duplicate execution fails without drift, and
-   wrong topology fails without movement.
+   once, the payer receives gross, duplicate execution fails without drift,
+   wrong topology fails without movement, and governance cancellation makes a
+   pending claim permanently non-executable without changing balances.
 4. Add finalized indexer/coordinator projection tests that retain unknown
    status and only advance after exact claim/signature/slot/balance evidence.
 5. Add API/UI states for claim creation, wallet rejection, timeout, unknown,
@@ -151,6 +152,8 @@ measurements exist.
 
 Refunds become a real atomic, non-custodial product capability for one clearly
 published scope. The protocol gains more accounts, a second governance claim
-lifecycle, and operational key/funder setup. Other adjustment kinds remain
-explicitly unavailable until their legal and authority semantics are modeled,
-which keeps the Tier-1 product honest and extensible.
+lifecycle, and operational key/funder setup. The validator evidence contract
+now treats cancellation as a release-critical state transition alongside
+execution and duplicate protection. Other adjustment kinds remain explicitly
+unavailable until their legal and authority semantics are modeled, which keeps
+the Tier-1 product honest and extensible.

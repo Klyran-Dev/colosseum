@@ -906,8 +906,9 @@ and operational gates are intentionally not marked complete by unit tests.
   merchant-funder sources, payer-bound destination, claim cancellation,
   finalized reconciliation, and unknown-transaction handling must pass before
   any paid-state API is introduced. The pinned client now includes a
-  destination-substitution rejection with unchanged tax-vault, funder, and
-  payer balances; retained Linux execution evidence remains required.
+  destination-substitution rejection and governance cancellation with
+  unchanged tax-vault, funder, and payer balances; retained Linux execution
+  evidence remains required.
 - [ ] ADR-0173 server-owned refund-claim wallet orchestration is not enabled
   for production. The tenant-scoped funding configuration control plane,
   durable claim/execute intents, exact signed-byte verification, finalized

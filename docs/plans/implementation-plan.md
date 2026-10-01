@@ -596,10 +596,11 @@ with a tax-vault source, merchant-funder source, and payer-bound destination.
 The on-chain claim/execute/cancel instructions, bounded Rust compilers, and
 cross-language claim vector are implemented. The claim, two checked CPIs,
 cancellation, and finalized evidence are implemented in the pinned client
-contract; the client now also attempts a substituted destination and proves
-no balance drift before the legitimate execution. Linux validator execution,
-finalized reconciliation, and unknown transaction state still require
-retained evidence before any paid-state API is introduced.
+contract; the client now attempts a substituted destination, proves no balance
+drift before the legitimate execution, and exercises governance cancellation
+of a pending claim. Linux validator execution, finalized reconciliation, and
+unknown transaction state still require retained evidence before any paid-state
+API is introduced.
 
 ## ADR-0155 — finalized refund execution evidence projection
 
