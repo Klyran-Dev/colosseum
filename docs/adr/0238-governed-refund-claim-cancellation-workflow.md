@@ -49,7 +49,10 @@ from the browser.
 The API/workflow layer will persist a separate UUIDv7 cancellation intent and
 unsigned artifact before wallet signing. The intent is tenant-scoped and
 idempotent by client key plus claim identity. Only an authenticated governance
-principal with the configured cancellation scope may prepare or submit it.
+principal with the configured cancellation scope may prepare or submit it. The
+governance wallet is a tenant-scoped UUIDv7 authority binding; the server
+additionally verifies that binding against the finalized on-chain adjustment
+registry before producing the artifact.
 Submission verifies the actual signed bytes against the exact artifact,
 including program ID, instruction data, account order, signer/writable flags,
 fee-payer separation, packet bound, and absence of address lookup tables or

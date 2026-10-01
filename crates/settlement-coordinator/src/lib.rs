@@ -38,6 +38,10 @@ pub struct AdjustmentRegistryVerificationRequest {
     pub mint: String,
     pub proposer: String,
     pub approver: String,
+    /// When present, finalized account data must also bind the governance
+    /// authority used by governed cancellation. Existing adjustment evidence
+    /// callers may omit this until they have a governance binding contract.
+    pub governance: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -47,6 +51,7 @@ pub struct AdjustmentRegistryVerification {
     pub mint: String,
     pub proposer: String,
     pub approver: String,
+    pub governance: Option<String>,
     pub finalized_slot: u64,
     pub account_digest: [u8; 32],
     pub commitment: &'static str,
@@ -938,6 +943,7 @@ pub enum SettlementStatus {
     Processed,
     Confirmed,
     Finalized,
+    Cancelled,
     Rejected,
     Unknown,
 }
@@ -952,6 +958,7 @@ impl SettlementStatus {
             Self::Processed => "processed",
             Self::Confirmed => "confirmed",
             Self::Finalized => "finalized",
+            Self::Cancelled => "cancelled",
             Self::Rejected => "rejected",
             Self::Unknown => "unknown",
         }
@@ -984,6 +991,7 @@ pub const fn can_transition(from: SettlementStatus, to: SettlementStatus) -> boo
             | (SettlementStatus::Processed, SettlementStatus::Rejected)
             | (SettlementStatus::Processed, SettlementStatus::Unknown)
             | (SettlementStatus::Confirmed, SettlementStatus::Finalized)
+            | (SettlementStatus::Finalized, SettlementStatus::Cancelled)
             | (SettlementStatus::Confirmed, SettlementStatus::Unknown)
             | (SettlementStatus::Unknown, SettlementStatus::Submitted)
             | (SettlementStatus::Unknown, SettlementStatus::Processed)
@@ -1126,7 +1134,7 @@ impl SettlementCoordinator {
         let (registry, expected_bump) =
             settlement_client::adjustment_registry_pda(&request.merchant, &request.mint)
                 .map_err(|error| CoordinatorError::InvalidAdjustmentRegistry(error.to_string()))?;
-        let expected = parse_registry_keys(request)?;
+        let (expected, expected_governance) = parse_registry_keys(request)?;
         let mut observations = Vec::new();
         let mut last_error = None;
 
@@ -1148,6 +1156,7 @@ impl SettlementCoordinator {
                     &registry,
                     expected_bump,
                     &expected,
+                    expected_governance.as_ref(),
                     &value,
                 ) {
                     Ok(observation) => {
@@ -1202,6 +1211,7 @@ impl SettlementCoordinator {
             mint: request.mint.clone(),
             proposer: request.proposer.clone(),
             approver: request.approver.clone(),
+            governance: request.governance.clone(),
             finalized_slot,
             account_digest: digest.finalize().into(),
             commitment: "finalized",
@@ -1418,7 +1428,7 @@ struct AdjustmentRegistryObservation {
 
 fn parse_registry_keys(
     request: &AdjustmentRegistryVerificationRequest,
-) -> Result<[Address; 4], CoordinatorError> {
+) -> Result<([Address; 4], Option<Address>), CoordinatorError> {
     let keys = [
         ("merchant", request.merchant.as_str()),
         ("mint", request.mint.as_str()),
@@ -1441,13 +1451,31 @@ fn parse_registry_keys(
             "registry proposer and approver must be distinct".into(),
         ));
     }
-    Ok(keys)
+    let governance = request
+        .governance
+        .as_deref()
+        .map(|value| {
+            value.parse::<Address>().map_err(|_| {
+                CoordinatorError::InvalidAdjustmentRegistry(
+                    "governance is not a valid Solana public key".into(),
+                )
+            })
+        })
+        .transpose()?
+        .filter(|key| *key != Address::default());
+    if request.governance.is_some() && governance.is_none() {
+        return Err(CoordinatorError::InvalidAdjustmentRegistry(
+            "governance must be a non-default public key".into(),
+        ));
+    }
+    Ok((keys, governance))
 }
 
 fn parse_adjustment_registry_response(
     registry: &str,
     expected_bump: u8,
     expected: &[Address; 4],
+    expected_governance: Option<&Address>,
     response: &Value,
 ) -> Result<AdjustmentRegistryObservation, CoordinatorError> {
     let encoded_response = serde_json::to_vec(response)
@@ -1529,12 +1557,14 @@ fn parse_adjustment_registry_response(
     };
     let merchant = read_address(8);
     let mint = read_address(40);
+    let governance = read_address(72);
     let proposer = read_address(104);
     let approver = read_address(136);
     if merchant != expected[0]
         || mint != expected[1]
         || proposer != expected[2]
         || approver != expected[3]
+        || expected_governance.is_some_and(|expected| governance != *expected)
     {
         return Err(CoordinatorError::InvalidAdjustmentRegistry(
             "registry account authority or scope fields do not match".into(),
@@ -2648,6 +2678,7 @@ mod tests {
             mint: mint.to_string(),
             proposer: proposer.to_string(),
             approver: approver.to_string(),
+            governance: None,
         };
         let first = Arc::new(FakeTransport {
             responses: Mutex::new(vec![Ok(adjustment_registry_response(
@@ -2691,6 +2722,7 @@ mod tests {
             mint: mint.to_string(),
             proposer: proposer.to_string(),
             approver: approver.to_string(),
+            governance: None,
         };
         let first = Arc::new(FakeTransport {
             responses: Mutex::new(vec![Ok(adjustment_registry_response(
@@ -2734,7 +2766,8 @@ mod tests {
             }
         });
         assert!(
-            parse_adjustment_registry_response(&registry, bump, &expected, &wrong_owner).is_err()
+            parse_adjustment_registry_response(&registry, bump, &expected, None, &wrong_owner)
+                .is_err()
         );
 
         let mut inactive = valid.clone();
@@ -2744,7 +2777,10 @@ mod tests {
         let mut inactive_bytes = inactive_data;
         inactive_bytes[168] = 0;
         inactive["value"]["data"][0] = Value::String(BASE64.encode(inactive_bytes));
-        assert!(parse_adjustment_registry_response(&registry, bump, &expected, &inactive).is_err());
+        assert!(
+            parse_adjustment_registry_response(&registry, bump, &expected, None, &inactive)
+                .is_err()
+        );
 
         let malformed = json!({
             "context": { "slot": 120 },
@@ -2755,7 +2791,8 @@ mod tests {
             }
         });
         assert!(
-            parse_adjustment_registry_response(&registry, bump, &expected, &malformed).is_err()
+            parse_adjustment_registry_response(&registry, bump, &expected, None, &malformed)
+                .is_err()
         );
     }
 

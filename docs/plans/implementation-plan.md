@@ -966,12 +966,13 @@ release gates.
 - [x] Record the alternatives, invariants, fixed account shape, non-custodial
   signing boundary, finalized evidence rule, and diagnostic latency budget in
   ADR-0238.
-- [ ] Add the pure Rust cancellation compiler with canonical discriminator,
+- [x] Add the pure Rust cancellation compiler with canonical discriminator,
   claim PDA/registry derivation, exact five-account order, positive nonce and
   duplicate-account validation, and wire-budget tests.
-- [ ] Add exact signed-message cancellation verification with no address lookup
+- [x] Add exact signed-message cancellation verification with no address lookup
   tables, extra instructions, account substitution, or fee-payer aliasing.
-- [ ] Add a separate UUIDv7 cancellation intent aggregate and outbox record;
+- [x] Add a separate UUIDv7 cancellation intent aggregate, immutable artifact
+  validation, lifecycle events, outbox record, and PostgreSQL migration;
   never mutate the immutable claim artifact to represent cancellation.
 - [ ] Add governance-scope API prepare/submit/read/reconcile routes. Browser
   input may select a wallet and provide signed bytes only; it may not provide

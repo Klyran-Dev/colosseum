@@ -1226,6 +1226,22 @@ impl From<StorageError> for ApiError {
                 "INVALID_REFUND_EXECUTE_INTENT",
                 message,
             ),
+            StorageError::RefundCancellationIntentNotFound => (
+                StatusCode::NOT_FOUND,
+                "REFUND_CANCELLATION_INTENT_NOT_FOUND",
+                "the refund cancellation intent was not found for this merchant".to_string(),
+            ),
+            StorageError::RefundCancellationIntentIdempotencyConflict => (
+                StatusCode::CONFLICT,
+                "REFUND_CANCELLATION_INTENT_IDEMPOTENCY_CONFLICT",
+                "the refund cancellation idempotency key was reused for different input"
+                    .to_string(),
+            ),
+            StorageError::InvalidRefundCancellationIntent(message) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_REFUND_CANCELLATION_INTENT",
+                message,
+            ),
             StorageError::SettlementSplitPlanNotFound => (
                 StatusCode::NOT_FOUND,
                 "SETTLEMENT_SPLIT_PLAN_NOT_FOUND",
@@ -1724,6 +1740,12 @@ impl From<SettlementCompileError> for ApiError {
             | SettlementCompileError::AliasedRefundTokenAccounts => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "INVALID_SETTLEMENT_REFUND_CLAIM",
+            ),
+            SettlementCompileError::InvalidRefundCancellationNonce
+            | SettlementCompileError::InvalidRefundCancellationKey { .. }
+            | SettlementCompileError::AliasedRefundCancellationAccounts => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_SETTLEMENT_REFUND_CANCELLATION",
             ),
         };
         Self {
@@ -3132,6 +3154,7 @@ async fn compile_settlement_adjustment_inner(
             mint: mint.clone(),
             proposer: Pubkey::new_from_array(proposer_binding.public_key).to_string(),
             approver: Pubkey::new_from_array(approver_binding.public_key).to_string(),
+            governance: None,
         })
         .await
         .map_err(|error| log_adjustment_compile_coordinator_error("verify_registry", error))?;
@@ -3646,10 +3669,14 @@ fn adjustment_authority_requirements(role: &str) -> Result<(&'static str, &'stat
             "settlement_adjustment_approver",
         )),
         "refund_funder" => Ok(("tax:refund:authority:bind", "refund_funding_funder")),
+        "governance" => Ok((
+            "tax:adjustment:authority:bind",
+            "settlement_adjustment_governance",
+        )),
         _ => Err(ApiError {
             status: StatusCode::BAD_REQUEST,
             code: "INVALID_ADJUSTMENT_AUTHORITY_ROLE",
-            message: "role must be proposer, approver, or refund_funder".to_string(),
+            message: "role must be proposer, approver, refund_funder, or governance".to_string(),
         }),
     }
 }

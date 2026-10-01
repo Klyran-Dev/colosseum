@@ -5,9 +5,11 @@
 - Added ADR-0238 and the first governed refund-claim cancellation domain
   slice. Rust now compiles a fixed five-account, amount-free cancellation
   artifact, validates UUIDv7/server-owned identity, and verifies exact wallet-
-  signed bytes without address lookup tables or extra instructions. API,
-  storage, UI, finalized cancellation reconciliation, and Linux validator
-  evidence remain explicitly open release gates.
+  signed bytes without address lookup tables or extra instructions. PostgreSQL
+  migration `0054` and the storage adapter now persist a separate immutable
+  UUIDv7 cancellation intent with lifecycle events and outbox publication.
+  API, UI, finalized cancellation reconciliation, and Linux validator evidence
+  remain explicitly open release gates.
 - Added ADR-0237 and a fail-closed Tax Engine service-token rotation contract:
   inline and file-backed credentials are mutually exclusive, file reads are
   bounded, and Unix `SIGHUP` atomically replaces the token while retaining the
