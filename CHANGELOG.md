@@ -9,9 +9,11 @@
   migration `0054` and the storage adapter now persist a separate immutable
   UUIDv7 cancellation intent with lifecycle events and outbox publication.
   The API now exposes tenant-scoped prepare/submit/read routes with finalized
-  registry governance binding and exact signed-byte verification. UI,
-  finalized cancellation reconciliation, and Linux validator evidence remain
-  explicitly open release gates.
+  registry governance binding and exact signed-byte verification. The UI now
+  supports wallet review, transport submission, and finalized reconciliation;
+  typed cancellation-event evidence atomically converges the original claim to
+  `cancelled`. Linux validator evidence and production governance-key,
+  provider-load, and operational gates remain explicitly open.
 - Added ADR-0237 and a fail-closed Tax Engine service-token rotation contract:
   inline and file-backed credentials are mutually exclusive, file reads are
   bounded, and Unix `SIGHUP` atomically replaces the token while retaining the

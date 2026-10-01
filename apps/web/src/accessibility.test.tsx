@@ -13,6 +13,7 @@ import VaultReconciliationPanel from "./VaultReconciliationPanel";
 import VaultReleasePanel from "./VaultReleasePanel";
 import SettlementAdjustmentPanel from "./SettlementAdjustmentPanel";
 import RefundClaimPanel from "./RefundClaimPanel";
+import RefundCancellationPanel from "./RefundCancellationPanel";
 import RefundExecutePanel from "./RefundExecutePanel";
 
 afterEach(() => {
@@ -42,6 +43,7 @@ describe("primary product accessibility contract", () => {
       <VaultReleasePanel key="vault" apiBase="/api" serviceOnline accessToken="" />,
       <SettlementAdjustmentPanel key="adjustments" apiBase="/api" serviceOnline accessToken="" />,
       <RefundClaimPanel key="refund-claims" apiBase="/api" serviceOnline accessToken="" locale="en-US" />,
+      <RefundCancellationPanel key="refund-cancellations" apiBase="/api" serviceOnline accessToken="" />,
       <RefundExecutePanel key="refund-executions" apiBase="/api" serviceOnline accessToken="" locale="en-US" />,
       <CheckoutPanel
         key="checkout"

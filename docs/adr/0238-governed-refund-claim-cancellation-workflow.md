@@ -4,8 +4,9 @@
 
 Accepted for implementation. This ADR adds the server-owned compiler and
 signed-transaction verification boundary for cancellation; API persistence,
-finalized cancellation reconciliation, UI, and Linux validator evidence remain
-required release gates.
+finalized cancellation reconciliation, and UI are implemented. Linux validator
+evidence, provider-load evidence, and production governance-key operations
+remain required release gates.
 
 ## Context
 
@@ -116,10 +117,11 @@ measured separately and must not be folded into the compiler budget.
 2. Add failing coordinator tests for account substitution, data mutation,
    extra instructions, address lookup tables, fee-payer aliasing, and accepted
    canonical signed bytes.
-3. Add storage/API tests for tenant isolation, governance scope, idempotency,
+3. Storage/API tests now cover tenant isolation, governance scope, idempotency,
    prepared-state fencing, signed-byte immutability, unknown provider outcome,
-   and finalized event-only transition.
-4. Add browser tests for wallet rejection, timeout, unknown, cancelled, and
+   typed finalized event matching, and the atomic claim/cancellation transition.
+4. Browser parser and accessibility tests cover account substitution, wallet
+   rejection, transport acknowledgement, finalized cancellation, and
    reconciliation-required states with no implied financial success.
 5. Extend the authoritative Linux validator evidence to require the complete
    prepare/sign/submit/finalize cancellation lifecycle and unchanged balances.
@@ -127,8 +129,8 @@ measured separately and must not be folded into the compiler budget.
 ## Consequences
 
 Cancellation becomes a first-class auditable workflow instead of an implicit
-database flag. It adds an intent aggregate, governance authorization and UI
-states, but keeps claim movement immutable and prevents a cancelled claim from
-being mistaken for a submitted or finalized refund. Production enablement
-still requires validator, provider, load, security, legal/tax ownership, and
-operational evidence.
+database flag. It adds an intent aggregate, governance authorization, typed
+event decoding, atomic finalized reconciliation, and UI states, but keeps claim
+movement immutable and prevents a cancelled claim from being mistaken for a
+submitted or finalized refund. Production enablement still requires validator,
+provider, load, security, legal/tax ownership, and operational evidence.

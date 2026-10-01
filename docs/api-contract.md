@@ -1243,8 +1243,12 @@ ADR-0238 adds the governed cancellation preparation and transport boundary:
   blockhash, immutable artifact digest, and no address lookup tables or extra
   instructions before RPC submission. Provider ambiguity is `unknown`, never
   cancelled success.
-- Finalized `AdjustmentRefundClaimCancelled` proof, a reconciliation endpoint,
-  and the claim projection transition remain explicitly gated work; transport
+- `POST /v1/settlement/refund-claim-cancellations/{intent_id}/reconcile`
+  requires `tax:refund:claim:cancel:reconcile` and a governed adjustment role.
+  It recovers the exact submitted signature at finalized commitment, matches a
+  typed `AdjustmentRefundClaimCancelled` event against the immutable claim and
+  cancellation artifacts, then atomically records cancellation finality and
+  converges the original claim projection to `cancelled`. Transport
   acknowledgement alone does not make a claim cancelled.
 
 Signed submission and exact program/instruction/account/signer/artifact-digest

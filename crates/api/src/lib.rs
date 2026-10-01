@@ -23,8 +23,8 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use document_payment::{DocumentPaymentError, PaymentScope, authorize_document_payment};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use indexer::{
-    FinalizedRefundClaimEvidence, FinalizedSignaturePageSource, FinalizedTransactionSource,
-    IndexedSettlementAdjustment,
+    FinalizedRefundClaimCancellationEvidence, FinalizedRefundClaimEvidence,
+    FinalizedSignaturePageSource, FinalizedTransactionSource, IndexedSettlementAdjustment,
 };
 use indexer_service::{
     IndexerServiceError, MAX_TARGETED_RECOVERY_PAGES, recover_targeted_signature,
@@ -70,9 +70,10 @@ use storage::{
     CreateSettlementAdjustmentEvidenceIntent, CreateVaultReleaseClaimCommand, DatabasePoolStats,
     DocumentQuoteCommand, DocumentQuoteOutcome, EvidenceAccessAuditCommand,
     JurisdictionPolicyGovernanceTransition, PgStore, QuoteCommand, QuoteOutcome,
-    RefundCancellationIntentTransition, RefundClaimIntentTransition, RefundExecuteIntentTransition,
-    RefundFundingConfigurationTransition, RuleCacheStats, RuleGovernanceTransition,
-    SettlementAdjustmentChainIntent, SettlementAdjustmentChainTransition,
+    RefundCancellationFinalization, RefundCancellationIntentTransition,
+    RefundClaimCancellationEvidenceExpectation, RefundClaimIntentTransition,
+    RefundExecuteIntentTransition, RefundFundingConfigurationTransition, RuleCacheStats,
+    RuleGovernanceTransition, SettlementAdjustmentChainIntent, SettlementAdjustmentChainTransition,
     SettlementAdjustmentEvidenceIntent, SettlementAdjustmentRecord, SettlementAdjustmentTransition,
     SettlementTransition, StorageError, VaultReleaseClaimTransition,
 };
@@ -375,6 +376,28 @@ pub struct RefundCancellationPreparationResponse {
     pub submitted_slot: Option<u64>,
     pub commitment: Option<String>,
     pub last_error_code: Option<String>,
+    pub finalized_evidence: Option<FinalizedRefundCancellationEvidenceResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FinalizedRefundCancellationEvidenceResponse {
+    pub event_type: &'static str,
+    pub event_version: &'static str,
+    pub event_discriminator: Vec<u8>,
+    pub commitment: &'static str,
+    pub signature: String,
+    #[serde(with = "policy::serde_u64_string")]
+    pub slot: u64,
+    pub event_index: u16,
+    pub claim: Digest32,
+    pub adjustment: Digest32,
+    pub merchant: Digest32,
+    pub mint: Digest32,
+    #[serde(with = "policy::serde_u64_string")]
+    pub nonce: u64,
+    pub governance_authority: Digest32,
+    pub reference_digest: Digest32,
+    pub evidence_digest: Digest32,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1948,6 +1971,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/v1/settlement/refund-claim-cancellations/{intent_id}",
             get(load_refund_cancellation),
+        )
+        .route(
+            "/v1/settlement/refund-claim-cancellations/{intent_id}/reconcile",
+            post(reconcile_refund_cancellation),
         )
         .route(
             "/v1/settlement/refund-executions",
@@ -4980,7 +5007,17 @@ async fn prepare_refund_cancellation(
                 StorageError::RefundCancellationIntentIdempotencyConflict,
             ));
         }
-        return Ok(Json(refund_cancellation_response(intent, artifact)));
+        let finalized_evidence = load_finalized_refund_cancellation_evidence_response(
+            &store,
+            state.targeted_recovery.as_deref(),
+            &intent,
+        )
+        .await?;
+        return Ok(Json(refund_cancellation_response(
+            intent,
+            artifact,
+            finalized_evidence,
+        )));
     }
 
     let claim = store
@@ -5105,12 +5142,13 @@ async fn prepare_refund_cancellation(
         })
         .await
         .map_err(ApiError::from)?;
-    Ok(Json(refund_cancellation_response(intent, artifact)))
+    Ok(Json(refund_cancellation_response(intent, artifact, None)))
 }
 
 fn refund_cancellation_response(
     intent: storage::RefundCancellationIntent,
     artifact: RefundCancellationArtifact,
+    finalized_evidence: Option<FinalizedRefundCancellationEvidenceResponse>,
 ) -> RefundCancellationPreparationResponse {
     RefundCancellationPreparationResponse {
         status: intent.status,
@@ -5125,7 +5163,110 @@ fn refund_cancellation_response(
         submitted_slot: intent.submitted_slot,
         commitment: intent.commitment,
         last_error_code: intent.last_error_code,
+        finalized_evidence,
     }
+}
+
+fn finalized_refund_cancellation_evidence_response(
+    evidence: FinalizedRefundClaimCancellationEvidence,
+) -> FinalizedRefundCancellationEvidenceResponse {
+    FinalizedRefundCancellationEvidenceResponse {
+        event_type: "AdjustmentRefundClaimCancelled",
+        event_version: "v1",
+        event_discriminator: indexer::ADJUSTMENT_REFUND_CLAIM_CANCELLED_EVENT_DISCRIMINATOR
+            .to_vec(),
+        commitment: "finalized",
+        signature: evidence.signature,
+        slot: evidence.slot,
+        event_index: evidence.event_index,
+        claim: evidence.claim,
+        adjustment: evidence.adjustment,
+        merchant: evidence.merchant,
+        mint: evidence.mint,
+        nonce: evidence.nonce,
+        governance_authority: evidence.governance_authority,
+        reference_digest: evidence.reference_digest,
+        evidence_digest: evidence.evidence_digest,
+    }
+}
+
+async fn load_finalized_refund_cancellation_evidence_response(
+    store: &PgStore,
+    ports: Option<&TargetedRecoveryPorts>,
+    intent: &storage::RefundCancellationIntent,
+) -> Result<Option<FinalizedRefundCancellationEvidenceResponse>, ApiError> {
+    if intent.status != SettlementStatus::Finalized.as_str() {
+        return Ok(None);
+    }
+    let ports = ports.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "REFUND_CANCELLATION_RECONCILIATION_UNAVAILABLE",
+        message: "finalized refund cancellation evidence is not configured".into(),
+    })?;
+    let signature = intent.signature.clone().ok_or_else(|| ApiError {
+        status: StatusCode::CONFLICT,
+        code: "REFUND_CANCELLATION_FINALIZED_PROOF_INCOMPLETE",
+        message: "finalized refund cancellation is missing its server-bound signature".into(),
+    })?;
+    let expected = refund_cancellation_evidence_expectation(store, intent).await?;
+    let evidence = store
+        .load_finalized_refund_claim_cancellation_evidence(&ports.stream_key, &signature, &expected)
+        .await
+        .map_err(ApiError::from)?;
+    if evidence.signature != signature || intent.submitted_slot != Some(evidence.slot) {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REFUND_CANCELLATION_FINALIZED_PROOF_CONFLICT",
+            message: "finalized refund cancellation evidence is not bound to the durable intent"
+                .into(),
+        });
+    }
+    Ok(Some(finalized_refund_cancellation_evidence_response(
+        evidence,
+    )))
+}
+
+async fn refund_cancellation_evidence_expectation(
+    store: &PgStore,
+    intent: &storage::RefundCancellationIntent,
+) -> Result<RefundClaimCancellationEvidenceExpectation, ApiError> {
+    let claim = store
+        .load_refund_claim_intent(intent.claim_intent_id, intent.merchant_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "REFUND_CLAIM_INTENT_NOT_FOUND",
+            message: "the cancellation's bound refund claim is missing".into(),
+        })?;
+    let claim_artifact = serde_json::from_value::<RefundArtifact>(claim.unsigned_artifact.clone())
+        .map_err(|_| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "REFUND_CLAIM_ARTIFACT_CORRUPT",
+            message: "the cancellation's bound refund claim artifact is invalid".into(),
+        })?;
+    let reference_digest = storage::refund_claim_evidence_expectation(&claim, &claim_artifact)
+        .map_err(|error| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "REFUND_CLAIM_ARTIFACT_CORRUPT",
+            message: error.to_string(),
+        })?
+        .reference_digest;
+    let governance_authority =
+        Pubkey::from_str(&intent.governance_authority).map_err(|_| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "REFUND_CANCELLATION_ARTIFACT_CORRUPT",
+            message: "persisted governance authority is invalid".into(),
+        })?;
+    Ok(RefundClaimCancellationEvidenceExpectation {
+        claim: intent.claim,
+        adjustment: intent.adjustment,
+        merchant: intent.merchant,
+        mint: intent.mint,
+        nonce: intent.claim_nonce,
+        governance_authority: governance_authority.to_bytes(),
+        reference_digest,
+    })
 }
 
 async fn load_refund_cancellation(
@@ -5161,7 +5302,154 @@ async fn load_refund_cancellation(
                 message: "persisted refund cancellation artifact failed integrity validation"
                     .into(),
             })?;
-    Ok(Json(refund_cancellation_response(intent, artifact)))
+    let finalized_evidence = load_finalized_refund_cancellation_evidence_response(
+        &store,
+        state.targeted_recovery.as_deref(),
+        &intent,
+    )
+    .await?;
+    Ok(Json(refund_cancellation_response(
+        intent,
+        artifact,
+        finalized_evidence,
+    )))
+}
+
+async fn reconcile_refund_cancellation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(intent_id): Path<Uuid>,
+) -> Result<Json<RefundCancellationPreparationResponse>, ApiError> {
+    let principal = authenticate_scope_any_role(
+        &state,
+        &headers,
+        "tax:refund:claim:cancel:reconcile",
+        &[
+            "settlement_adjustment_governance",
+            "settlement_adjustment_approver",
+            "settlement_adjustment_auditor",
+        ],
+    )?;
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "REFUND_CANCELLATION_STORAGE_UNAVAILABLE",
+        message: "refund cancellation storage is not configured".into(),
+    })?;
+    let intent = store
+        .load_refund_cancellation_intent(intent_id, principal.merchant_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::from(StorageError::RefundCancellationIntentNotFound))?;
+    let artifact =
+        serde_json::from_value::<RefundCancellationArtifact>(intent.unsigned_artifact.clone())
+            .map_err(|_| ApiError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "REFUND_CANCELLATION_ARTIFACT_CORRUPT",
+                message: "persisted refund cancellation artifact failed integrity validation"
+                    .into(),
+            })?;
+    if intent.status == SettlementStatus::Finalized.as_str() {
+        let evidence = load_finalized_refund_cancellation_evidence_response(
+            &store,
+            state.targeted_recovery.as_deref(),
+            &intent,
+        )
+        .await?;
+        return Ok(Json(refund_cancellation_response(
+            intent, artifact, evidence,
+        )));
+    }
+    if matches!(
+        intent.status.as_str(),
+        "prepared_unsubmitted" | "signed" | "rejected"
+    ) {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REFUND_CANCELLATION_NOT_SUBMITTED",
+            message: "cancellation reconciliation requires a persisted submitted signature".into(),
+        });
+    }
+    let signature = intent.signature.clone().ok_or_else(|| ApiError {
+        status: StatusCode::CONFLICT,
+        code: "REFUND_CANCELLATION_SIGNATURE_MISSING",
+        message: "cancellation reconciliation requires the signature fenced at submission".into(),
+    })?;
+    let ports = state.targeted_recovery.as_ref().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "REFUND_CANCELLATION_RECONCILIATION_UNAVAILABLE",
+        message: "finalized transaction recovery is not configured".into(),
+    })?;
+    let recovery = recover_targeted_signature(
+        store.as_ref(),
+        ports.signature_source.as_ref(),
+        ports.transaction_source.as_ref(),
+        &ports.stream_key,
+        &intent.governance_authority,
+        &signature,
+        ports.max_pages,
+    )
+    .await
+    .map_err(targeted_recovery_api_error)?;
+    let expected = refund_cancellation_evidence_expectation(&store, &intent).await?;
+    let evidence = store
+        .load_finalized_refund_claim_cancellation_evidence(&ports.stream_key, &signature, &expected)
+        .await
+        .map_err(ApiError::from)?;
+    if evidence.signature != signature || evidence.slot != recovery.slot {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REFUND_CANCELLATION_FINALIZED_EVIDENCE_CONFLICT",
+            message: "finalized cancellation event and recovered transaction disagree".into(),
+        });
+    }
+    if !store
+        .finalize_refund_claim_cancellation(RefundCancellationFinalization {
+            cancellation_intent_id: intent.id,
+            claim_intent_id: intent.claim_intent_id,
+            merchant_id: principal.merchant_id,
+            expected_cancellation_status: intent.status.clone(),
+            signature: evidence.signature.clone(),
+            slot: evidence.slot,
+            evidence: serde_json::json!({
+                "source": "finalized_refund_claim_cancellation_event",
+                "stream_key": ports.stream_key,
+                "event_index": evidence.event_index,
+                "event_digest": evidence.evidence_digest,
+                "recovery_pages_scanned": recovery.pages_scanned,
+            }),
+        })
+        .await
+        .map_err(ApiError::from)?
+    {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REFUND_CANCELLATION_STATE_CHANGED",
+            message: "cancellation changed concurrently; reload before retry".into(),
+        });
+    }
+    let finalized = store
+        .load_refund_cancellation_intent(intent.id, principal.merchant_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::from(StorageError::RefundCancellationIntentNotFound))?;
+    let finalized_artifact =
+        serde_json::from_value::<RefundCancellationArtifact>(finalized.unsigned_artifact.clone())
+            .map_err(|_| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "REFUND_CANCELLATION_ARTIFACT_CORRUPT",
+            message: "persisted refund cancellation artifact failed integrity validation".into(),
+        })?;
+    let finalized_evidence = load_finalized_refund_cancellation_evidence_response(
+        &store,
+        state.targeted_recovery.as_deref(),
+        &finalized,
+    )
+    .await?;
+    Ok(Json(refund_cancellation_response(
+        finalized,
+        finalized_artifact,
+        finalized_evidence,
+    )))
 }
 
 async fn submit_refund_cancellation(

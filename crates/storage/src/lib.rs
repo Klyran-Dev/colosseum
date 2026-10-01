@@ -20,13 +20,15 @@ use deadpool_postgres::{
 };
 use document_payment::{DocumentPaymentAuthorization, PaymentScope};
 use indexer::{
-    BalanceExpectation, BalanceSnapshot, Checkpoint, FinalizedPage, FinalizedRefundClaimEvidence,
+    BalanceExpectation, BalanceSnapshot, Checkpoint, FinalizedPage,
+    FinalizedRefundClaimCancellationEvidence, FinalizedRefundClaimEvidence,
     IndexedAdjustmentRefundExecution, IndexedReceipt, IndexedSettlementAdjustment,
     IndexedSplitSettlement, MAX_REPLAY_ATTEMPTS, MAX_SCAN_RANGE_SLOTS, ProtocolPauseChangedEvent,
     RawChainEvidence, RawChainTransaction, Reconciliation, ReplayGap, ReplayGapReason, ReplayWork,
-    VaultBalanceExpectation, decode_refund_claim_created_event, merge_adjustment_refund_execution,
-    merge_raw_evidence, merge_receipt, merge_settlement_adjustment,
-    rebuild_receipt_from_raw_evidence, rebuild_split_settlement_from_raw_evidence, reconcile,
+    VaultBalanceExpectation, decode_refund_claim_cancelled_event,
+    decode_refund_claim_created_event, merge_adjustment_refund_execution, merge_raw_evidence,
+    merge_receipt, merge_settlement_adjustment, rebuild_receipt_from_raw_evidence,
+    rebuild_split_settlement_from_raw_evidence, reconcile,
 };
 use jurisdiction::{JurisdictionCandidate, ResolutionPolicy, candidate_set_digest};
 use policy::{
@@ -1466,6 +1468,17 @@ pub struct RefundClaimEvidenceExpectation {
     pub expires_at_unix: i64,
 }
 
+#[derive(Clone, Debug)]
+pub struct RefundClaimCancellationEvidenceExpectation {
+    pub claim: [u8; 32],
+    pub adjustment: [u8; 32],
+    pub merchant: [u8; 32],
+    pub mint: [u8; 32],
+    pub nonce: u64,
+    pub governance_authority: [u8; 32],
+    pub reference_digest: [u8; 32],
+}
+
 /// Derives the finalized claim-event expectation exclusively from the
 /// immutable intent and artifact stored by the API. This is shared by the
 /// authenticated operator endpoint and the automatic indexer worker so they
@@ -1596,6 +1609,17 @@ pub struct RefundCancellationIntentTransition {
     pub signature: Option<String>,
     pub slot: Option<u64>,
     pub last_error_code: Option<String>,
+    pub evidence: Value,
+}
+
+#[derive(Clone, Debug)]
+pub struct RefundCancellationFinalization {
+    pub cancellation_intent_id: Uuid,
+    pub claim_intent_id: Uuid,
+    pub merchant_id: Uuid,
+    pub expected_cancellation_status: String,
+    pub signature: String,
+    pub slot: u64,
     pub evidence: Value,
 }
 
@@ -8799,6 +8823,74 @@ impl PgStore {
         }
     }
 
+    /// Loads the finalized cancellation event retained by the indexer. A
+    /// cancellation projection is accepted only when every immutable identity
+    /// field matches the server-owned cancellation intent.
+    pub async fn load_finalized_refund_claim_cancellation_evidence(
+        &self,
+        stream_key: &str,
+        signature: &str,
+        expected: &RefundClaimCancellationEvidenceExpectation,
+    ) -> Result<FinalizedRefundClaimCancellationEvidence, StorageError> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let rows = client
+            .query(
+                "SELECT signature, slot::text, event_index::text,
+                        event_discriminator, event_data, evidence_digest
+                 FROM raw_chain_evidence
+                 WHERE stream_key = $1 AND signature = $2
+                   AND event_discriminator = $3
+                 ORDER BY event_index
+                 LIMIT 2",
+                &[
+                    &stream_key,
+                    &signature,
+                    &&indexer::ADJUSTMENT_REFUND_CLAIM_CANCELLED_EVENT_DISCRIMINATOR[..],
+                ],
+            )
+            .await?;
+        let mut matches = Vec::new();
+        for row in rows {
+            let evidence = parse_raw_evidence_row(row)?;
+            let decoded = decode_refund_claim_cancelled_event(
+                &evidence.signature,
+                evidence.slot,
+                evidence.event_index,
+                &evidence.event_data,
+                evidence.evidence_digest,
+            )
+            .map_err(|error| StorageError::InvalidIndexerState(error.to_string()))?;
+            if decoded.claim == expected.claim
+                && decoded.adjustment == expected.adjustment
+                && decoded.merchant == expected.merchant
+                && decoded.mint == expected.mint
+                && decoded.nonce == expected.nonce
+                && decoded.governance_authority == expected.governance_authority
+                && decoded.reference_digest == expected.reference_digest
+            {
+                matches.push(decoded);
+            }
+        }
+        match matches.len() {
+            1 => matches.pop().ok_or_else(|| {
+                StorageError::InvalidIndexerState(
+                    "refund claim cancellation evidence match disappeared unexpectedly".into(),
+                )
+            }),
+            0 => Err(StorageError::InvalidIndexerState(
+                "finalized refund claim cancellation event did not match the durable intent".into(),
+            )),
+            _ => Err(StorageError::InvalidIndexerState(
+                "multiple finalized refund claim cancellation events matched the durable intent"
+                    .into(),
+            )),
+        }
+    }
+
     /// Applies one compare-and-set refund claim lifecycle transition and
     /// records its event and outbox publication atomically. The transport
     /// fields are never accepted from a browser without the exact signed-byte
@@ -9796,6 +9888,147 @@ impl PgStore {
                     &command.signature,
                     &slot_text,
                     &command.evidence,
+                ],
+            )
+            .await?;
+        transaction.commit().await?;
+        Ok(true)
+    }
+
+    /// Atomically records finalized cancellation evidence and converges the
+    /// original refund claim to `cancelled`. The claim transition is guarded
+    /// by a transaction-local database setting in migration 0056 so an
+    /// ordinary API update cannot forge a finalized-to-cancelled transition.
+    pub async fn finalize_refund_claim_cancellation(
+        &self,
+        command: RefundCancellationFinalization,
+    ) -> Result<bool, StorageError> {
+        if command.expected_cancellation_status.trim().is_empty()
+            || command.signature.trim().is_empty()
+            || command.signature.len() > 128
+            || command.slot == 0
+            || command.evidence.to_string().len() > 64 * 1024
+        {
+            return Err(StorageError::InvalidRefundCancellationIntent(
+                "finalized cancellation evidence is invalid".into(),
+            ));
+        }
+        let expected = parse_settlement_status(&command.expected_cancellation_status)?;
+        if !can_transition(expected, SettlementStatus::Finalized) {
+            return Err(StorageError::InvalidRefundCancellationIntent(
+                "cancellation must converge to finalized from its durable transport state".into(),
+            ));
+        }
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms'; SET LOCAL app.refund_claim_cancellation_reconciliation = 'true';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let cancellation_updated = transaction
+            .execute(
+                "UPDATE refund_claim_cancellation_intents
+                 SET status = 'finalized', signature = COALESCE(signature, $4),
+                     submitted_slot = COALESCE(submitted_slot, $5::text::numeric),
+                     commitment = 'finalized', last_error_code = NULL, updated_at = now()
+                 WHERE id = $1 AND merchant_id = $2 AND status = $3",
+                &[
+                    &command.cancellation_intent_id,
+                    &command.merchant_id,
+                    &command.expected_cancellation_status,
+                    &command.signature,
+                    &command.slot.to_string(),
+                ],
+            )
+            .await?;
+        if cancellation_updated != 1 {
+            transaction.rollback().await?;
+            return Ok(false);
+        }
+        let claim_updated = transaction
+            .execute(
+                "UPDATE refund_claim_intents
+                 SET status = 'cancelled', updated_at = now()
+                 WHERE id = $1 AND merchant_id = $2 AND status = 'finalized'",
+                &[&command.claim_intent_id, &command.merchant_id],
+            )
+            .await?;
+        if claim_updated != 1 {
+            transaction.rollback().await?;
+            return Err(StorageError::InvalidRefundCancellationIntent(
+                "refund claim was not finalized or was already cancelled".into(),
+            ));
+        }
+        transaction
+            .execute(
+                "INSERT INTO refund_claim_cancellation_intent_events
+                    (intent_id, merchant_id, from_status, to_status, signature, slot, evidence)
+                 VALUES ($1, $2, $3, 'finalized', $4, $5::text::numeric, $6)",
+                &[
+                    &command.cancellation_intent_id,
+                    &command.merchant_id,
+                    &command.expected_cancellation_status,
+                    &command.signature,
+                    &command.slot.to_string(),
+                    &command.evidence,
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "INSERT INTO refund_claim_intent_events
+                    (intent_id, merchant_id, from_status, to_status, signature, slot, evidence)
+                 VALUES ($1, $2, 'finalized', 'cancelled', $3, $4::text::numeric, $5)",
+                &[
+                    &command.claim_intent_id,
+                    &command.merchant_id,
+                    &command.signature,
+                    &command.slot.to_string(),
+                    &command.evidence,
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "INSERT INTO outbox_events
+                    (aggregate_type, aggregate_id, event_type, payload)
+                 VALUES ($1, $2, $3, $4), ($5, $6, $7, $8)",
+                &[
+                    &"refund_claim_cancellation_intent",
+                    &command.cancellation_intent_id,
+                    &"tax.refund_claim_cancellation_intent.finalized",
+                    &serde_json::json!({
+                        "schema_version": OUTBOX_PAYLOAD_SCHEMA_VERSION,
+                        "merchant_id": command.merchant_id,
+                        "intent_id": command.cancellation_intent_id,
+                        "claim_intent_id": command.claim_intent_id,
+                        "signature": command.signature,
+                        "slot": command.slot,
+                        "evidence": command.evidence,
+                    }),
+                    &"refund_claim_intent",
+                    &command.claim_intent_id,
+                    &"tax.refund_claim_intent.cancelled",
+                    &serde_json::json!({
+                        "schema_version": OUTBOX_PAYLOAD_SCHEMA_VERSION,
+                        "merchant_id": command.merchant_id,
+                        "intent_id": command.claim_intent_id,
+                        "from_status": "finalized",
+                        "to_status": "cancelled",
+                        "signature": command.signature,
+                        "slot": command.slot,
+                    }),
                 ],
             )
             .await?;

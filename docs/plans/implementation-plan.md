@@ -977,13 +977,14 @@ release gates.
 - [x] Add governance-scope API prepare/submit/read routes. Browser input may
   select a bound governance wallet and provide signed bytes only; it may not
   provide financial values, program IDs, registry addresses, claim PDAs, or
-  nonces. Submission remains proof-pending until the reconciliation slice is
-  implemented.
-- [ ] Add the finalized cancellation-event reconciliation route and worker.
-- [ ] Require finalized `AdjustmentRefundClaimCancelled` evidence before the
+  nonces. Submission remains proof-pending until finalized reconciliation.
+- [x] Add the finalized cancellation-event reconciliation route and atomic
+  claim/cancellation transition; a bounded worker remains an operational
+  follow-up once the indexer scheduling contract is selected.
+- [x] Require finalized `AdjustmentRefundClaimCancelled` evidence before the
   claim projection becomes cancelled; preserve unknown provider outcomes and
   idempotent replay semantics.
-- [ ] Add production UI/UX for governance cancellation, wallet rejection,
+- [x] Add production UI/UX for governance cancellation, wallet rejection,
   timeout, unknown, finalized cancellation, and reconciliation-required states
   with accessible explanations and no implied refund success.
 - [ ] Extend the pinned Linux validator conformance suite with the complete

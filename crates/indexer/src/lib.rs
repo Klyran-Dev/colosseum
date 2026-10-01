@@ -43,6 +43,8 @@ pub const ADJUSTMENT_REFUND_EXECUTED_EVENT_DISCRIMINATOR: [u8; 8] =
     [112, 130, 243, 73, 61, 70, 35, 70];
 pub const ADJUSTMENT_REFUND_CLAIM_CREATED_EVENT_DISCRIMINATOR: [u8; 8] =
     [40, 169, 108, 67, 121, 205, 147, 49];
+pub const ADJUSTMENT_REFUND_CLAIM_CANCELLED_EVENT_DISCRIMINATOR: [u8; 8] =
+    [201, 89, 79, 76, 75, 107, 22, 3];
 pub const SETTLEMENT_ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR: [u8; 8] =
     [208, 86, 69, 183, 44, 203, 236, 75];
 pub const MAX_ROUTE_RPC_RESULT_BYTES: usize = 256 * 1024;
@@ -4282,6 +4284,80 @@ pub struct FinalizedRefundClaimEvidence {
     pub evidence_digest: [u8; 32],
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FinalizedRefundClaimCancellationEvidence {
+    pub signature: String,
+    pub slot: u64,
+    pub event_index: u16,
+    pub claim: [u8; 32],
+    pub adjustment: [u8; 32],
+    pub merchant: [u8; 32],
+    pub mint: [u8; 32],
+    pub nonce: u64,
+    pub governance_authority: [u8; 32],
+    pub reference_digest: [u8; 32],
+    pub evidence_digest: [u8; 32],
+}
+
+impl FinalizedRefundClaimCancellationEvidence {
+    fn validate(&self) -> Result<(), ProviderError> {
+        if self.signature.trim().is_empty()
+            || self.signature.len() > 128
+            || self.claim == [0; 32]
+            || self.adjustment == [0; 32]
+            || self.merchant == [0; 32]
+            || self.mint == [0; 32]
+            || self.nonce == 0
+            || self.governance_authority == [0; 32]
+            || self.reference_digest == [0; 32]
+            || self.evidence_digest == [0; 32]
+        {
+            return Err(ProviderError::InvalidResponse(
+                "refund claim cancellation evidence violates identity invariants".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub fn decode_refund_claim_cancelled_event(
+    signature: &str,
+    slot: u64,
+    event_index: u16,
+    data: &[u8],
+    evidence_digest: [u8; 32],
+) -> Result<FinalizedRefundClaimCancellationEvidence, ProviderError> {
+    const EVENT_BYTES: usize = 8 + (32 * 6) + 8;
+    if data.len() != EVENT_BYTES
+        || data[..8] != ADJUSTMENT_REFUND_CLAIM_CANCELLED_EVENT_DISCRIMINATOR
+    {
+        return Err(ProviderError::InvalidResponse(
+            "refund claim cancellation event has an unexpected discriminator or length".to_string(),
+        ));
+    }
+    let mut offset = 8;
+    let event = FinalizedRefundClaimCancellationEvidence {
+        signature: signature.to_string(),
+        slot,
+        event_index,
+        claim: read_array::<32>(data, &mut offset)?,
+        adjustment: read_array::<32>(data, &mut offset)?,
+        merchant: read_array::<32>(data, &mut offset)?,
+        mint: read_array::<32>(data, &mut offset)?,
+        nonce: read_u64_le(data, &mut offset)?,
+        governance_authority: read_array::<32>(data, &mut offset)?,
+        reference_digest: read_array::<32>(data, &mut offset)?,
+        evidence_digest,
+    };
+    if offset != data.len() {
+        return Err(ProviderError::InvalidResponse(
+            "refund claim cancellation event has trailing bytes".to_string(),
+        ));
+    }
+    event.validate()?;
+    Ok(event)
+}
+
 impl FinalizedRefundClaimEvidence {
     fn validate(&self) -> Result<(), ProviderError> {
         if self.signature.trim().is_empty()
@@ -4698,6 +4774,7 @@ impl ReceiptDecoder for SettlementExecutedDecoder {
                     && discriminator != SETTLEMENT_ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR
                     && discriminator != ADJUSTMENT_REFUND_EXECUTED_EVENT_DISCRIMINATOR
                     && discriminator != ADJUSTMENT_REFUND_CLAIM_CREATED_EVENT_DISCRIMINATOR
+                    && discriminator != ADJUSTMENT_REFUND_CLAIM_CANCELLED_EVENT_DISCRIMINATOR
                     && discriminator != PROTOCOL_PAUSE_EVENT_DISCRIMINATOR
                 {
                     continue;
@@ -4706,6 +4783,31 @@ impl ReceiptDecoder for SettlementExecutedDecoder {
                     let evidence_digest =
                         settlement_evidence_digest(signature, slot, event_index, &event_data);
                     decode_refund_claim_created_event(
+                        signature,
+                        slot,
+                        event_index,
+                        &event_data,
+                        evidence_digest,
+                    )?;
+                    decoded.raw_evidence.push(RawChainEvidence {
+                        signature: signature.to_string(),
+                        slot,
+                        event_index,
+                        event_discriminator: discriminator,
+                        event_data,
+                        evidence_digest,
+                    });
+                    event_index = event_index.checked_add(1).ok_or_else(|| {
+                        ProviderError::InvalidResponse(
+                            "too many supported events in one transaction".to_string(),
+                        )
+                    })?;
+                    continue;
+                }
+                if discriminator == ADJUSTMENT_REFUND_CLAIM_CANCELLED_EVENT_DISCRIMINATOR {
+                    let evidence_digest =
+                        settlement_evidence_digest(signature, slot, event_index, &event_data);
+                    decode_refund_claim_cancelled_event(
                         signature,
                         slot,
                         event_index,
@@ -6324,6 +6426,31 @@ mod tests {
         data[8 + (32 * 5) + (8 * 4) + 32 + 32..8 + (32 * 5) + (8 * 4) + 32 + (32 * 2)].fill(6);
         assert!(
             decode_refund_claim_created_event("claim-signature", 77, 2, &data, [1; 32]).is_err()
+        );
+    }
+
+    #[test]
+    fn refund_claim_cancellation_decoder_binds_governance_and_reference() {
+        let mut data = Vec::with_capacity(8 + (32 * 6) + 8);
+        data.extend_from_slice(&ADJUSTMENT_REFUND_CLAIM_CANCELLED_EVENT_DISCRIMINATOR);
+        for value in 1_u8..=4 {
+            data.extend_from_slice(&[value; 32]);
+        }
+        data.extend_from_slice(&9_u64.to_le_bytes());
+        data.extend_from_slice(&[5; 32]);
+        data.extend_from_slice(&[6; 32]);
+
+        let evidence =
+            decode_refund_claim_cancelled_event("cancellation-signature", 88, 3, &data, [7; 32])
+                .expect("valid cancellation event");
+        assert_eq!(evidence.claim, [1; 32]);
+        assert_eq!(evidence.governance_authority, [5; 32]);
+        assert_eq!(evidence.reference_digest, [6; 32]);
+
+        data[8..40].fill(0);
+        assert!(
+            decode_refund_claim_cancelled_event("cancellation-signature", 88, 3, &data, [7; 32],)
+                .is_err()
         );
     }
 
