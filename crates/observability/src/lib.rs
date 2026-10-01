@@ -387,6 +387,20 @@ impl ServiceMetrics {
         Ok(())
     }
 
+    /// Records a metric without allowing non-authoritative telemetry to fail
+    /// the request or worker operation. A rejected fixed operation is still
+    /// visible to operators through a bounded structured log.
+    pub fn observe_or_log(&self, operation: &str, elapsed: Duration, error: bool) {
+        if let Err(metrics_error) = self.observe(operation, elapsed, error) {
+            tracing::error!(
+                service = %self.inner.service,
+                operation,
+                error = %metrics_error,
+                "metric observation rejected"
+            );
+        }
+    }
+
     pub fn render_prometheus(&self) -> String {
         let mut output = String::new();
         output.push_str("# TYPE stp_requests_total counter\n");
@@ -493,6 +507,16 @@ mod tests {
             metrics.observe("user-controlled", Duration::ZERO, false),
             Err(MetricsError::UnknownOperation)
         );
+    }
+
+    #[test]
+    fn observe_or_log_keeps_telemetry_non_authoritative_and_bounded() {
+        let metrics = ServiceMetrics::new("api", &["quote"]).unwrap();
+        metrics.observe_or_log("unknown", Duration::ZERO, true);
+        metrics.observe_or_log("quote", Duration::from_millis(1), false);
+
+        let rendered = metrics.render_prometheus();
+        assert!(rendered.contains("operation=\"quote\"} 1"));
     }
 
     #[test]

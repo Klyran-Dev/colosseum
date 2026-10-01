@@ -177,6 +177,7 @@ This document records the comparison baseline required before implementation. It
 | External tax SaaS only | Broad possible coverage | Vendor lock-in, opaque calculation, network dependency, weak replay | Rejected as authority; may be an evidence adapter |
 | JavaScript-only engine | Fast UI integration | Numeric/runtime drift, harder shared authoritative service semantics | Rejected as authority |
 | **Pure Rust engine + signed attestation** | Deterministic, typed, replayable, low latency, shared native/WASM core | Requires rule governance and signer security | **Selected** |
+| **Pure Rust domain engine plus a warm Rust service adapter** | Independent batch/simulation scaling while retaining in-process hot-path execution and one semantic authority | Requires bounded cache, service identity, and deployment topology | **Selected; see ADR-0225** |
 
 ### Service runtime
 
@@ -532,6 +533,15 @@ of min/max semantics after final rounding.
 | Add document fields to aggregate schema v1 | One wire type | Breaks existing signed payloads and verifier compatibility | Rejected |
 | Signed ad-hoc JSON envelope | Flexible | Ambiguous canonicalization and domain separation | Rejected |
 | **Dedicated policy contract, persistence table, API route, and outbox event** | Explicit scope firewall and independent replay | Additional audited contract surface | **Selected in ADR-0205** |
+
+### Calculation-attestation cross-language compatibility
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Rust-only canonical-payload tests | Minimal implementation | TypeScript serialization drift can change the authority-bound digest unnoticed | Rejected |
+| JSON serialization comparison | Easy to inspect | JSON ordering, UTF-16 text lengths, and numeric coercion are not the signed byte contract | Rejected |
+| Browser-generated or browser-signed attestations | Low apparent interaction latency | Makes an untrusted client an issuer authority and permits evidence substitution | Rejected |
+| **Versioned binary golden vector consumed by Rust and TypeScript** | Exact byte/digest parity, deterministic review, no network dependency | Requires explicit fixture maintenance and mutation tests | **Selected; see ADR-0224** |
 
 ### Document-to-payment binding
 
@@ -971,6 +981,38 @@ rejected; see ADR-0059.
 | Provider-specific migration service | Mature operational integrations | Adds vendor dependency and weakens clean-checkout reproducibility | Rejected as repository authority |
 | **Rust runner with advisory lock, ordered ledger, and SHA-256 checksums** | Deterministic, typed, fail-closed, low-latency deployment boundary | Requires staged Compose/deployment integration | **Selected; see ADR-0138** |
 
+### Migration database-connection lifecycle
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Detached `tokio::spawn` connection driver | Simple and common in small binaries | Connection failures can arrive after a false-success migration result; task lifetime is detached | Rejected |
+| `tokio::try_join!` migration and connection futures | Propagates errors | A healthy PostgreSQL driver normally does not finish before the client closes, so successful migration waits indefinitely | Rejected |
+| Post-migration connection health check | Easy to add | Cannot prove that a failure did not occur during migration | Rejected |
+| **Owned `tokio::select!` migration/connection supervisor** | Bounded lifetime, prompt failure propagation, cancellation, and no detached task | Requires explicit clean-termination semantics | **Selected; see ADR-0221** |
+
+### Service shutdown-signal handling
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Convert `ctrl_c()` errors to `None` | Keeps the loop simple | Masks failed shutdown control and can leave a process running indefinitely | Rejected |
+| Retry signal registration forever | May recover from transient setup errors | Unbounded retry and no deterministic lifecycle result | Rejected |
+| Detached signal-listener task | Separates signal code | Loses ownership and complicates cancellation/error propagation | Rejected |
+| **Handle `ctrl_c()` success/error in the existing structured service loop** | Fail-closed, bounded, minimal, and preserves orderly shutdown | Requires explicit error branch in each entrypoint | **Selected; see ADR-0222** |
+
+### Non-authoritative metric-observation failures
+
+Metric export is operational evidence, not settlement authority. Unexpected
+rejection by the fixed operation registry must therefore be visible without
+allowing telemetry to fail a quote, settlement, reconciliation, or worker
+operation.
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Discard `observe` errors | Zero request-path overhead | Silently loses evidence and hides registry drift | Rejected |
+| Propagate errors through financial paths | Makes failures visible to callers | Incorrectly makes non-authoritative telemetry a money-path dependency | Rejected |
+| Queue metric errors asynchronously | Decouples the caller | Adds unbounded/lossy queue and lifecycle complexity for a bounded validation error | Rejected |
+| **Synchronous bounded structured log via `observe_or_log`** | Visible, bounded, no retry or external dependency, preserves financial-path availability | Requires a fixed log contract and log-volume monitoring | **Selected; see ADR-0223** |
+
 All PostgreSQL-backed operational drills use the same migration authority.
 Each clean-stack drill waits for PostgreSQL health and runs the pinned
 one-shot migration service before touching application tables; see
@@ -1005,6 +1047,14 @@ identity and evidence keys, jurisdiction-provider inputs, and no synthetic seed
 directory. It does not replace secret validity checks, HSM/KMS ceremonies,
 deployment approvals, provider health, or live staging evidence.
 
+### Tax Engine deployment identity preflight
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Operator convention only | No additional manifest fields | Local token or omitted service label can reach non-local rollout | Rejected |
+| Tax Engine-only checker | Narrow ownership | Duplicates shared deployment policy and can drift | Rejected |
+| **Shared preflight plus Tax Engine runtime validation** | Cross-service parity, early local-default rejection, independent process safety | Secret validity, mTLS, and rotation remain deployment-owned | **Selected in ADR-0226** |
+
 ### JWKS deployment representation
 
 | Alternative | Strengths | Risks / trade-offs | Decision |
@@ -1013,6 +1063,15 @@ deployment approvals, provider health, or live staging evidence.
 | Accept both structured JWKS and the pair simultaneously | Permissive migration | Creates ambiguous identity authority and rotation drift | Rejected |
 | Remove identity-key validation from preflight | Fewer deployment failures | Allows missing or local identity material to reach rollout | Rejected |
 | **Accept exactly one supported representation with structural/local-value checks** | Keeps deployment parity, fail-closed mutual exclusion, and secret-safe validation | Cryptographic key validity remains a runtime/provider responsibility | **Selected in ADR-0219** |
+
+### Jurisdiction-provider key deployment representation
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Require the legacy provider-key pair | Simple shell validation | Rejects the structured registry already supported by API startup | Rejected |
+| Accept structured registry and pair simultaneously | Permissive migration | Creates ambiguous provider authority and rotation drift | Rejected |
+| Remove provider-key validation from preflight | Fewer deployment failures | Allows missing or local jurisdiction evidence verification material to reach rollout | Rejected |
+| **Accept exactly one supported representation with structural/local-value checks** | Keeps preflight/runtime parity and fail-closed secret-safe validation | Cryptographic validity and provider availability remain runtime/deployment responsibilities | **Selected in ADR-0220** |
 
 ### Validator-backed Split Plan conformance
 

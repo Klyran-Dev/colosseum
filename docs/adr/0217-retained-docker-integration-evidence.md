@@ -28,9 +28,10 @@ settlement authority, credential store, or production performance claim.
 The CI `integration` job runs `scripts/verify_local_stack.sh` with
 `set -o pipefail`, captures stdout and stderr into
 `test-results/local-stack-integration/evidence.txt`, and uploads that directory
-with a bounded 14-day retention period even when the job fails. The script
-continues to own lifecycle cleanup and failure semantics; CI capture is an
-observer and cannot turn a failed command green.
+with a bounded 14-day retention period even when the job fails. The artifact
+upload uses `if-no-files-found: error`, so a missing capture is itself a
+delivery failure. The script continues to own lifecycle cleanup and failure
+semantics; CI capture is an observer and cannot turn a failed command green.
 
 The evidence is plain text containing the existing structured scenario lines
 and bounded diagnostics. It is intentionally not a second JSON protocol and
@@ -58,6 +59,8 @@ identity-provider, and legal/tax evidence.
 
 - `pipefail` makes a failing integration command fail the CI step even when
   artifact capture succeeds.
+- The upload fails if the expected evidence directory is absent, preventing a
+  green job with no retained integration record.
 - Artifact retention is bounded to 14 days and scoped to the integration job.
 - The artifact contains no credentials, private keys, Docker volumes, or
   production tax evidence.

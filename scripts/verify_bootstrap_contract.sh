@@ -19,7 +19,7 @@ for required in \
     '--profile route-verifier' \
     '--profile solana' \
     'up --build --detach --wait --wait-timeout 180' \
-    'postgres migrator api nats worker redis' \
+    'postgres migrator api tax-engine nats worker redis' \
     'alert-receiver alertmanager prometheus grafana otel-collector' \
     'indexer route-verifier validator edge'; do
     contains "$required" || {

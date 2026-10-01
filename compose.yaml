@@ -75,6 +75,36 @@ services:
       timeout: 3s
       retries: 12
 
+  tax-engine:
+    build:
+      context: .
+      dockerfile: ops/docker/Dockerfile.tax-engine
+    environment:
+      TAX_ENGINE_BIND_ADDRESS: 0.0.0.0:8084
+      TAX_ENGINE_ENV: ${TAX_ENGINE_ENV:-local}
+      TAX_ENGINE_AUTH_TOKEN: ${TAX_ENGINE_AUTH_TOKEN:-local-development-only}
+      TAX_ENGINE_CACHE_CAPACITY: ${TAX_ENGINE_CACHE_CAPACITY:-64}
+      TAX_ENGINE_MAX_CONCURRENCY: ${TAX_ENGINE_MAX_CONCURRENCY:-32}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
+      OTEL_ENVIRONMENT: ${OTEL_ENVIRONMENT:-local}
+      OTEL_ALLOW_INSECURE_TELEMETRY: ${OTEL_ALLOW_INSECURE_TELEMETRY:-false}
+      OTEL_TRACE_SAMPLE_RATIO: ${OTEL_TRACE_SAMPLE_RATIO:-1.0}
+      RUST_LOG: ${RUST_LOG:-info}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:8084/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 512M
+
   nats:
     image: nats:2.12.3-alpine@sha256:88fe8e0e09d6084a06b3d4dbbffbca70fa632b1ad981af8473da23c446630957
     command: ["-js", "-sd", "/data", "-m", "8222"]

@@ -91,9 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     health_state.ready.store(true, Ordering::Release);
     info!(%stream_name, batch_size, ?poll_interval, "outbox worker started");
 
-    let mut shutdown = Box::pin(async {
-        tokio::signal::ctrl_c().await.ok();
-    });
+    let mut shutdown = Box::pin(tokio::signal::ctrl_c());
     loop {
         tokio::select! {
             result = &mut health_server => {
@@ -102,14 +100,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     Err(error) => Err(error.into()),
                 };
             }
-            _ = &mut shutdown => {
+            shutdown_result = &mut shutdown => {
+                shutdown_result?;
                 info!("outbox worker shutting down");
                 break;
             }
             _ = sleep(poll_interval) => {
                 let started = Instant::now();
                 let result = dispatch_once(&store, &publisher, batch_size, default_lease()).await;
-                let _ = health_state.metrics.observe("dispatch", started.elapsed(), result.is_err());
+                health_state.metrics.observe_or_log("dispatch", started.elapsed(), result.is_err());
                 match result {
                     Ok(stats) if stats.claimed > 0 => info!(?stats, "outbox batch processed"),
                     Ok(_) => {}

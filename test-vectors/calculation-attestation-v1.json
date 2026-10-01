@@ -1,0 +1,25 @@
+{
+  "schema": "solana-tax-protocol/calculation-attestation/v1",
+  "unsigned": {
+    "schema_version": 1,
+    "merchant_id": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    "rule_set_id": "us-ca-sales-tax",
+    "rule_version": 7,
+    "jurisdiction": "US-CA",
+    "currency": "USD",
+    "asset_mint": [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
+    "facts_digest": [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3],
+    "rule_digest": [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4],
+    "gross_atomic": "1155",
+    "tax_atomic": "155",
+    "net_atomic": "1000",
+    "issued_at_unix": 1800000000,
+    "expires_at_unix": 1800000300,
+    "sequence": "9",
+    "issuer_key_id": [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5]
+  },
+  "issuer_public_key": [234, 74, 108, 99, 226, 156, 82, 10, 190, 245, 80, 123, 19, 46, 197, 249, 149, 71, 118, 174, 190, 190, 123, 146, 66, 30, 234, 105, 20, 70, 210, 44],
+  "payload_digest": [49, 125, 184, 36, 95, 120, 73, 70, 173, 248, 134, 135, 78, 225, 30, 133, 159, 200, 214, 56, 82, 115, 116, 1, 52, 54, 59, 161, 73, 196, 78, 200],
+  "signature": [176, 86, 139, 161, 208, 60, 167, 154, 247, 140, 72, 136, 195, 80, 8, 117, 255, 176, 9, 250, 102, 54, 110, 34, 186, 41, 137, 177, 5, 45, 244, 206, 5, 94, 232, 56, 254, 64, 185, 1, 82, 92, 123, 253, 55, 222, 247, 115, 55, 71, 228, 125, 74, 176, 144, 188, 145, 227, 212, 167, 30, 51, 142, 15],
+  "canonical_payload_base64": "c29sYW5hLXRheC1wcm90b2NvbC9jYWxjdWxhdGlvbi1hdHRlc3RhdGlvbi92MQEAAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEPAHVzLWNhLXNhbGVzLXRheAcAAAAFAFVTLUNBAwBVU0QCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBASDBAAAAAAAAJsAAAAAAAAA6AMAAAAAAAAA0klrAAAAACzTSWsAAAAACQAAAAAAAAAFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQ=="
+}

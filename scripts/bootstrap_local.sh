@@ -26,7 +26,7 @@ set -- \
     --profile route-verifier \
     --profile solana \
     up --build --detach --wait --wait-timeout "$wait_timeout" \
-    postgres migrator api nats worker redis \
+    postgres migrator api tax-engine nats worker redis \
     alert-receiver alertmanager prometheus grafana otel-collector \
     indexer route-verifier validator edge
 
@@ -50,7 +50,7 @@ fi
 if ! docker compose -p "$project_name" "$@"; then
     echo "local topology bootstrap failed; preserving project $project_name for inspection" >&2
     docker compose -p "$project_name" ps >&2 || true
-    docker compose -p "$project_name" logs --no-color --tail=120 validator api edge indexer route-verifier >&2 || true
+    docker compose -p "$project_name" logs --no-color --tail=120 validator api tax-engine edge indexer route-verifier >&2 || true
     exit 1
 fi
 

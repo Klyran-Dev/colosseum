@@ -75,6 +75,13 @@ The Tax Engine is a separate bounded context and pure Rust domain library. It no
 
 The engine must be deterministic, replayable, bounded, and fail closed on ambiguous rules. It supports progressive brackets, tax-on-tax dependencies, inclusive/exclusive prices, thresholds, exemptions, credits, min/max, caps/floors, truncation, and explicit rounding scope. It never performs arbitrary network calls during calculation.
 
+The pure library is also packaged as a warm `tax-engine-service` Rust/Tokio
+adapter for bounded simulation and batch consumers. It uses an immutable
+rule-digest LRU cache, bounded blocking concurrency, a 500 ms admission
+deadline, authenticated calculation endpoints, and a private fixed-cardinality
+metrics plane. Quote, attestation, transaction compilation, and settlement
+critical paths remain in-process and do not depend on this network adapter.
+
 ### 5. Tax vault
 
 Each supported stablecoin has a program-controlled vault authority. Vault balances are segregated by merchant, asset, and policy domain. A release instruction must satisfy the configured release policy, which may include recipient allow-list, claim/reference, time window, governance threshold, and idempotent release nonce.

@@ -614,6 +614,24 @@ mod tests {
     }
 
     #[test]
+    fn shared_calculation_attestation_vector_matches_canonical_bytes() {
+        let attestation: CalculationAttestation = serde_json::from_str(include_str!(
+            "../../../test-vectors/calculation-attestation-v1.json"
+        ))
+        .expect("shared calculation-attestation vector must deserialize");
+        attestation
+            .verify_at(1_800_000_100)
+            .expect("shared calculation-attestation vector must verify");
+        assert_eq!(
+            attestation
+                .unsigned
+                .payload_digest()
+                .expect("payload digest"),
+            attestation.payload_digest
+        );
+    }
+
+    #[test]
     fn rejects_payload_tampering() {
         let mut attestation = CalculationAttestation::sign(unsigned(), &signing_key()).unwrap();
         attestation.unsigned.tax_atomic = 156;

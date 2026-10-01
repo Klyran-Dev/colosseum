@@ -13,6 +13,9 @@ run_checker() {
   seed_dir=${2:-}
   insecure_rpc=${3:-false}
   auth_mode=${4:-pair}
+  jurisdiction_mode=${5:-pair}
+  tax_engine_env=${6:-staging}
+  tax_engine_token=${7:-synthetic-nonlocal-service-token}
   set -- env -i \
     PATH="$PATH" \
     DEPLOYMENT_ENV=staging \
@@ -23,6 +26,8 @@ run_checker() {
     INDEXER_ALLOW_INSECURE_LOCAL_RPC=false \
     ROUTE_VERIFIER_ENV=staging \
     ROUTE_VERIFIER_ALLOW_INSECURE_LOCAL_RPC=false \
+    TAX_ENGINE_ENV="$tax_engine_env" \
+    TAX_ENGINE_AUTH_TOKEN="$tax_engine_token" \
     DATABASE_URL="$synthetic_database" \
     API_DATABASE_URL="$synthetic_database" \
     WORKER_DATABASE_URL="$synthetic_database" \
@@ -36,9 +41,7 @@ run_checker() {
     API_AUTH_ISSUER=https://identity.example.invalid \
     API_AUTH_AUDIENCE=tax-api-staging \
     API_EVIDENCE_KEY_ID=staging-evidence-key-v1 \
-    API_EVIDENCE_KEY_B64=synthetic-evidence-key \
-    API_JURISDICTION_PROVIDER_KEY_ID=staging-provider-key-v1 \
-    API_JURISDICTION_PROVIDER_PUBLIC_KEY=synthetic-provider-key
+    API_EVIDENCE_KEY_B64=synthetic-evidence-key
   if [ -n "$seed_dir" ]; then
     set -- "$@" SEED_DIR="$seed_dir"
   fi
@@ -47,11 +50,25 @@ run_checker() {
   else
     set -- "$@" API_AUTH_JWKS_KID=staging-auth-key-v1 API_AUTH_JWKS_PUBLIC_KEY=synthetic-public-key
   fi
+  if [ "$jurisdiction_mode" = json ]; then
+    set -- "$@" 'API_JURISDICTION_PROVIDER_KEYS_JSON={"keys":[{"key_id":"staging-provider-key-v1","public_key":"synthetic-provider-key"}]}'
+  elif [ "$jurisdiction_mode" = mixed ]; then
+    set -- "$@" API_JURISDICTION_PROVIDER_KEY_ID=staging-provider-key-v1 API_JURISDICTION_PROVIDER_PUBLIC_KEY=synthetic-provider-key 'API_JURISDICTION_PROVIDER_KEYS_JSON={"keys":[{"key_id":"staging-provider-key-v1","public_key":"synthetic-provider-key"}]}'
+  else
+    set -- "$@" API_JURISDICTION_PROVIDER_KEY_ID=staging-provider-key-v1 API_JURISDICTION_PROVIDER_PUBLIC_KEY=synthetic-provider-key
+  fi
   "$@" ./scripts/verify_deployment_config.sh
 }
 
 run_checker
 run_checker false '' false json
+
+if run_checker false '' false pair mixed >/dev/null 2>&1; then
+  echo "mixed jurisdiction-provider key forms did not fail" >&2
+  exit 1
+fi
+
+run_checker false '' false pair json
 
 if run_checker true >/dev/null 2>&1; then
   echo "simulation-mode negative contract did not fail" >&2
@@ -65,6 +82,16 @@ fi
 
 if run_checker false /seeds >/dev/null 2>&1; then
   echo "seed-directory negative contract did not fail" >&2
+  exit 1
+fi
+
+if run_checker false '' false pair pair production synthetic-nonlocal-service-token >/dev/null 2>&1; then
+  echo "tax engine environment mismatch did not fail" >&2
+  exit 1
+fi
+
+if run_checker false '' false pair pair staging local-development-only >/dev/null 2>&1; then
+  echo "local tax engine token did not fail" >&2
   exit 1
 fi
 

@@ -4486,6 +4486,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "tax-engine-service"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "observability",
+ "serde",
+ "serde_json",
+ "tax-engine",
+ "thiserror 2.0.21",
+ "tokio",
+ "tower",
+ "tower-http 0.7.1",
+ "tracing",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

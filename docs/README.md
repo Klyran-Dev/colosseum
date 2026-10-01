@@ -23,6 +23,13 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [Retained Docker integration evidence](adr/0217-retained-docker-integration-evidence.md)
 - [Explicit release integrity hashes](adr/0218-explicit-release-integrity-hashes.md)
 - [JWKS JSON deployment-preflight parity](adr/0219-jwks-json-preflight-parity.md)
+- [Jurisdiction-provider JSON deployment-preflight parity](adr/0220-jurisdiction-provider-json-preflight-parity.md)
+- [Structured migration-connection lifecycle](adr/0221-structured-migration-connection-lifecycle.md)
+- [Fail-closed shutdown-signal handling](adr/0222-fail-closed-shutdown-signal-handling.md)
+- [Observable non-authoritative metrics failures](adr/0223-observable-non-authoritative-metrics-failures.md)
+- [Cross-language calculation-attestation vector](adr/0224-cross-language-calculation-attestation-vector.md)
+- [Dedicated warm Tax Engine service adapter](adr/0225-dedicated-warm-tax-engine-service.md)
+- [Tax Engine deployment preflight boundary](adr/0226-tax-engine-deployment-preflight.md)
 - [Settlement transaction and state machine](architecture/settlement-flow.md)
 - [Bounded immutable Split Plan decision](adr/0091-bounded-immutable-split-plan-context.md)
 - [Finalized split-settlement evidence projection](adr/0093-finalized-split-settlement-evidence-projection.md)
@@ -222,6 +229,10 @@ Run `make deployment-config-contract` to exercise the fail-closed staging and
 production configuration preflight. It checks structure and forbidden local
 defaults without printing secret values; it does not prove credential validity
 or deployment approval.
+
+Run `make service-lifecycle-contract` to verify that API, worker, indexer, and
+route-verifier shutdown futures are owned by their service lifecycles and that
+signal-listener failures are not silently ignored.
 
 Run `make solana-conformance` for the validator-backed settlement gate. It
 builds the pinned SBF artifact, loads the fixed settlement program ID, and

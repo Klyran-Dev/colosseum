@@ -405,6 +405,8 @@ advance a movement to a successful state.
   and failure semantics in ADR-0217.
 - [x] Retain the authoritative Docker integration stream for successful and
   failed CI runs with `pipefail` and bounded artifact retention.
+- [x] Fail the CI evidence-upload step when the expected capture directory is
+  absent, keeping missing evidence distinct from a retained failed run.
 - [ ] Review retained Linux CI artifacts for the exact release commit before
   using synthetic integration evidence in a release decision.
 
@@ -425,6 +427,16 @@ advance a movement to a successful state.
   representations without printing secret material.
 - [ ] Exercise provider-managed key rotation and HSM/KMS-backed identity
   provisioning in a controlled staging environment.
+
+## ADR-0220 — jurisdiction-provider JSON deployment-preflight parity
+
+- [x] Align the staging/production preflight with the API's supported
+  structured `API_JURISDICTION_PROVIDER_KEYS_JSON` or compatibility-key-pair
+  contract.
+- [x] Reject mixed, empty, malformed-shape, and known local-development
+  provider-key representations without printing key material.
+- [ ] Exercise live provider-key rotation, provider signature verification, and
+  HSM/KMS-backed jurisdiction evidence provisioning in controlled staging.
 
 ## ADR-0210 — Docker full-topology bootstrap
 
@@ -770,6 +782,72 @@ closed. ADR-0182 adds the synthetic encrypted-artifact contract and ADR-0183
 adds the isolated expand/contract rollback rehearsal; production KMS/HSM,
 off-site recovery, staging approval, and live rollback authorization remain
 release gates.
+
+## ADR-0221 — structured migration-connection lifecycle
+
+- [x] Replace the detached migration-runner PostgreSQL driver task with an
+  owned `tokio::select!` supervisor.
+- [x] Fail closed when the connection driver errors or terminates before the
+  migration operation completes; return promptly after migration success.
+- [ ] Retain staging migration-service evidence and production rollback,
+  backup/PITR, and operator-approval evidence.
+
+## ADR-0222 — fail-closed shutdown-signal handling
+
+- [x] Propagate shutdown-signal listener errors from the API, worker, indexer,
+  and route-verifier lifecycles instead of converting them to a silent success.
+- [x] Keep signal ownership inside each existing structured `select!` loop or
+  Axum graceful-shutdown boundary and preserve orderly telemetry shutdown on a
+  valid signal.
+- [ ] Capture production supervisor restart, signal delivery, and graceful
+  termination evidence.
+
+## ADR-0223 — observable non-authoritative metrics failures
+
+- [x] Add a shared bounded `observe_or_log` adapter so fixed-operation metric
+  registration failures are visible without making telemetry authoritative for
+  financial or reconciliation work.
+- [x] Migrate API, worker, indexer, and route-verifier production call sites
+  away from silently discarded metric-observation errors.
+- [ ] Retain production scrape, alert-delivery, and on-call response evidence;
+  local logs and Prometheus-compatible output do not prove those live gates.
+
+## ADR-0224 — cross-language calculation-attestation vector
+
+- [x] Add the versioned calculation-attestation vector with canonical payload,
+  digest, issuer key, and signature material.
+- [x] Consume the vector from Rust policy verification and the browser
+  compatibility helper; preserve decimal-string atomic values and explicit
+  little-endian field encoding.
+- [ ] Add production issuer-key rotation, HSM/KMS ceremony, and finalized
+  chain evidence; a compatibility vector does not prove deployment authority.
+
+## ADR-0225 — dedicated warm Tax Engine service adapter
+
+- [x] Add a separately deployable Rust/Tokio adapter that shares the pure
+  `tax-engine` domain library and exposes authenticated calculation and
+  document-calculation endpoints for simulation, batch, and future worker
+  workloads.
+- [x] Enforce bounded request bodies, cache capacity, blocking-concurrency
+  permits and queue wait, cache-key immutability, service authentication, and
+  fail-closed environment configuration.
+- [x] Add a pinned non-root Docker image, Compose health check, Prometheus
+  scrape target, bootstrap inclusion, lifecycle contract, and executable
+  deterministic/cache/body-limit tests.
+- [ ] Add staging/production service identity, TLS/mTLS, token rotation,
+  network policy, redacted audit evidence, and regional SLO/load evidence.
+- [ ] Keep the API's synchronous wallet-signing and settlement compilation
+  path in-process unless measured evidence and a new ADR prove a service call
+  is safe for the documented latency and availability budgets.
+
+## ADR-0226 — Tax Engine deployment preflight boundary
+
+- [x] Extend the shared staging/production preflight with exact
+  `TAX_ENGINE_ENV` parity and non-local token requirements.
+- [x] Add positive and negative executable deployment-contract cases without
+  printing secret values or changing local Compose defaults.
+- [ ] Complete production service identity, TLS/mTLS termination, secret
+  rotation, network policy, and regional SLO evidence.
 
 ## ADR-0160 — clean-stack Docker drill migration gate
 

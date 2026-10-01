@@ -18,6 +18,37 @@
 - Added ADR-0219 to align staging/production deployment preflight with the API's
   supported structured `API_AUTH_JWKS_JSON` representation while preserving
   fail-closed mutual exclusion and local-key rejection.
+- Added ADR-0220 to align staging/production deployment preflight with the API's
+  structured `API_JURISDICTION_PROVIDER_KEYS_JSON` representation while
+  preserving fail-closed mutual exclusion and local-provider rejection.
+- Added ADR-0221 to make the Rust migration runner own its PostgreSQL driver
+  and migration futures under structured concurrency, failing closed on driver
+  errors or premature connection termination.
+- Tightened ADR-0217's CI integration evidence upload so a missing capture
+  directory fails the job instead of producing a warning-only artifact gap.
+- Added ADR-0222 to make API, worker, indexer, and route-verifier
+  shutdown-signal listener failures fail closed instead of being silently
+  ignored.
+- Added a checked-in service-lifecycle contract and `make check` gate covering
+  shutdown-future ownership and error propagation across those services.
+- Added ADR-0223 and the shared bounded `observe_or_log` metrics boundary.
+  Unexpected fixed-operation registration failures are now structured-log
+  visible across API, worker, indexer, and route-verifier paths without making
+  non-authoritative telemetry a dependency of financial or reconciliation work.
+- Added ADR-0224 and a shared calculation-attestation golden vector consumed by
+  Rust and TypeScript. Canonical payload bytes, SHA-256 digest, decimal-string
+  atomic values, and explicit little-endian encoding now have executable
+  cross-language parity evidence without granting authority to the browser.
+- Added ADR-0225 and a dedicated warm Rust Tax Engine service adapter. The
+  service shares the pure domain engine, authenticates bounded calculation
+  requests, caches immutable rule digests, limits blocking concurrency, and is
+  included in pinned Docker/Compose bootstrap, metrics, and lifecycle gates;
+  the API settlement hot path remains in-process. Its private metrics plane is
+  now scrapeable by Prometheus without exposing calculation credentials, and
+  CI builds the pinned service image.
+- Added ADR-0226 to extend the staging/production deployment preflight with
+  Tax Engine environment parity and local-token rejection without exposing
+  secret values or changing local Compose defaults.
 
 ## 2026-09-30
 

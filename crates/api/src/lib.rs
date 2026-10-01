@@ -2064,7 +2064,7 @@ async fn calculate_tax(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = calculate_tax_inner(state, request).await;
-    let _ = metrics.observe("tax_calculate", started.elapsed(), result.is_err());
+    metrics.observe_or_log("tax_calculate", started.elapsed(), result.is_err());
     result
 }
 
@@ -2096,7 +2096,7 @@ async fn calculate_document_tax(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = calculate_document_tax_inner(state, request).await;
-    let _ = metrics.observe("tax_document_calculate", started.elapsed(), result.is_err());
+    metrics.observe_or_log("tax_document_calculate", started.elapsed(), result.is_err());
     result
 }
 
@@ -2137,7 +2137,7 @@ async fn quote_tax(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = quote_tax_inner(state, headers, payload).await;
-    let _ = metrics.observe("tax_quote", started.elapsed(), result.is_err());
+    metrics.observe_or_log("tax_quote", started.elapsed(), result.is_err());
     result
 }
 
@@ -2208,7 +2208,7 @@ async fn document_quote_tax(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = document_quote_tax_inner(state, headers, payload).await;
-    let _ = metrics.observe("tax_document_quote", started.elapsed(), result.is_err());
+    metrics.observe_or_log("tax_document_quote", started.elapsed(), result.is_err());
     result
 }
 
@@ -2289,7 +2289,7 @@ async fn create_rule_draft(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = create_rule_draft_inner(state, headers, payload).await;
-    let _ = metrics.observe("tax_rule_draft_create", started.elapsed(), result.is_err());
+    metrics.observe_or_log("tax_rule_draft_create", started.elapsed(), result.is_err());
     result
 }
 
@@ -2347,7 +2347,7 @@ async fn transition_rule_set(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = transition_rule_set_inner(state, headers, rule_set_id, payload).await;
-    let _ = metrics.observe("tax_rule_transition", started.elapsed(), result.is_err());
+    metrics.observe_or_log("tax_rule_transition", started.elapsed(), result.is_err());
     result
 }
 
@@ -2413,7 +2413,7 @@ async fn load_rule_governance(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = load_rule_governance_inner(state, headers, rule_set_id).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "tax_rule_governance_read",
         started.elapsed(),
         result.is_err(),
@@ -2461,7 +2461,7 @@ async fn simulate_rule_set(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = simulate_rule_set_inner(state, headers, rule_set_id, payload).await;
-    let _ = metrics.observe("tax_rule_simulation", started.elapsed(), result.is_err());
+    metrics.observe_or_log("tax_rule_simulation", started.elapsed(), result.is_err());
     result
 }
 
@@ -2551,7 +2551,7 @@ async fn create_jurisdiction_policy(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = create_jurisdiction_policy_inner(state, headers, payload).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "jurisdiction_policy_draft_create",
         started.elapsed(),
         result.is_err(),
@@ -2611,7 +2611,7 @@ async fn transition_jurisdiction_policy(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = transition_jurisdiction_policy_inner(state, headers, policy_id, payload).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "jurisdiction_policy_transition",
         started.elapsed(),
         result.is_err(),
@@ -2681,7 +2681,7 @@ async fn load_jurisdiction_policy_governance(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = load_jurisdiction_policy_governance_inner(state, headers, policy_id).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "jurisdiction_policy_governance_read",
         started.elapsed(),
         result.is_err(),
@@ -2728,7 +2728,7 @@ async fn create_settlement_adjustment(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = create_settlement_adjustment_inner(state, headers, payload).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "settlement_adjustment_create",
         started.elapsed(),
         result.is_err(),
@@ -2873,7 +2873,7 @@ async fn create_adjustment_authority_challenge(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = create_adjustment_authority_challenge_inner(state, headers, payload).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "adjustment_authority_challenge",
         started.elapsed(),
         result.is_err(),
@@ -2930,7 +2930,7 @@ async fn bind_adjustment_authority(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = bind_adjustment_authority_inner(state, headers, payload).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "adjustment_authority_bind",
         started.elapsed(),
         result.is_err(),
@@ -3016,7 +3016,7 @@ async fn compile_settlement_adjustment(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = compile_settlement_adjustment_inner(state, headers, adjustment_id, payload).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "settlement_adjustment_compile",
         started.elapsed(),
         result.is_err(),
@@ -3762,7 +3762,7 @@ async fn create_vault_release_claim(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = create_vault_release_claim_inner(state, headers, payload).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "vault_release_claim_create",
         started.elapsed(),
         result.is_err(),
@@ -3827,7 +3827,7 @@ async fn load_vault_release_claim(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = load_vault_release_claim_inner(state, headers, claim_id).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "vault_release_claim_read",
         started.elapsed(),
         result.is_err(),
@@ -3876,7 +3876,7 @@ async fn list_vault_reconciliation_targets(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = list_vault_reconciliation_targets_inner(state, headers, query).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "vault_reconciliation_read",
         started.elapsed(),
         result.is_err(),
@@ -3934,7 +3934,7 @@ async fn list_vault_reconciliation_runs(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = list_vault_reconciliation_runs_inner(state, headers, target_id, query).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "vault_reconciliation_read",
         started.elapsed(),
         result.is_err(),
@@ -3993,7 +3993,7 @@ async fn transition_vault_release_claim(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = transition_vault_release_claim_inner(state, headers, claim_id, payload).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "vault_release_claim_transition",
         started.elapsed(),
         result.is_err(),
@@ -4112,7 +4112,7 @@ async fn replay_quote(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = replay_quote_inner(state, headers, calculation_id).await;
-    let _ = metrics.observe("tax_replay", started.elapsed(), result.is_err());
+    metrics.observe_or_log("tax_replay", started.elapsed(), result.is_err());
     result
 }
 
@@ -4190,7 +4190,7 @@ async fn replay_document_quote(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = replay_document_quote_inner(state, headers, calculation_id).await;
-    let _ = metrics.observe("tax_document_replay", started.elapsed(), result.is_err());
+    metrics.observe_or_log("tax_document_replay", started.elapsed(), result.is_err());
     result
 }
 
@@ -4267,7 +4267,7 @@ async fn list_replay_gaps(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = list_replay_gaps_inner(state, headers, query).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "indexer_replay_operator",
         started.elapsed(),
         result.is_err(),
@@ -4307,7 +4307,7 @@ async fn acknowledge_replay_gap(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = acknowledge_replay_gap_inner(state, headers, gap_id, payload).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "indexer_replay_operator",
         started.elapsed(),
         result.is_err(),
@@ -4350,7 +4350,7 @@ async fn requeue_replay_gap(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = requeue_replay_gap_inner(state, headers, gap_id, payload).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "indexer_replay_operator",
         started.elapsed(),
         result.is_err(),
@@ -4392,7 +4392,7 @@ async fn targeted_recovery(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = targeted_recovery_inner(state, headers, payload).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "indexer_targeted_recovery",
         started.elapsed(),
         result.is_err(),
@@ -4575,7 +4575,7 @@ async fn compile_settlement(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = compile_settlement_inner(state, headers, payload).await;
-    let _ = metrics.observe("settlement_compile", started.elapsed(), result.is_err());
+    metrics.observe_or_log("settlement_compile", started.elapsed(), result.is_err());
     result
 }
 
@@ -4628,7 +4628,7 @@ async fn create_refund_funding_configuration(
     let started = std::time::Instant::now();
     let metrics = Arc::clone(&state.metrics);
     let result = create_refund_funding_configuration_inner(state, headers, payload).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "refund_funding_configuration_create",
         started.elapsed(),
         result.is_err(),
@@ -4692,7 +4692,7 @@ async fn list_refund_funding_configurations(
     let started = std::time::Instant::now();
     let metrics = Arc::clone(&state.metrics);
     let result = list_refund_funding_configurations_inner(state, headers).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "refund_funding_configuration_read",
         started.elapsed(),
         result.is_err(),
@@ -4735,7 +4735,7 @@ async fn load_refund_funding_configuration(
     let started = std::time::Instant::now();
     let metrics = Arc::clone(&state.metrics);
     let result = load_refund_funding_configuration_inner(state, headers, configuration_id).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "refund_funding_configuration_read",
         started.elapsed(),
         result.is_err(),
@@ -4782,7 +4782,7 @@ async fn transition_refund_funding_configuration(
     let result =
         transition_refund_funding_configuration_inner(state, headers, configuration_id, payload)
             .await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "refund_funding_configuration_transition",
         started.elapsed(),
         result.is_err(),
@@ -4840,7 +4840,7 @@ async fn prepare_refund_claim(
     let started = Instant::now();
     let metrics = Arc::clone(&state.metrics);
     let result = prepare_refund_claim_inner(state, headers, payload).await;
-    let _ = metrics.observe("refund_claim_prepare", started.elapsed(), result.is_err());
+    metrics.observe_or_log("refund_claim_prepare", started.elapsed(), result.is_err());
     result
 }
 
@@ -6180,7 +6180,7 @@ async fn compile_settlement_from_quote(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = compile_settlement_from_quote_inner(state, headers, payload).await;
-    let _ = metrics.observe("settlement_compile", started.elapsed(), result.is_err());
+    metrics.observe_or_log("settlement_compile", started.elapsed(), result.is_err());
     result
 }
 
@@ -6251,7 +6251,7 @@ async fn compile_document_settlement_from_quote(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = compile_document_settlement_from_quote_inner(state, headers, payload).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "settlement_document_compile",
         started.elapsed(),
         result.is_err(),
@@ -6395,7 +6395,7 @@ async fn compile_split_settlement_from_quote(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = compile_split_settlement_from_quote_inner(state, headers, payload).await;
-    let _ = metrics.observe(
+    metrics.observe_or_log(
         "settlement_split_compile",
         started.elapsed(),
         result.is_err(),
@@ -6627,7 +6627,7 @@ async fn submit_settlement(
     let metrics = Arc::clone(&state.metrics);
     let started = Instant::now();
     let result = submit_settlement_inner(state, headers, payload).await;
-    let _ = metrics.observe("settlement_submit", started.elapsed(), result.is_err());
+    metrics.observe_or_log("settlement_submit", started.elapsed(), result.is_err());
     result
 }
 

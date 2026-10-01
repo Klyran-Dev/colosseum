@@ -50,6 +50,14 @@ for file in \
   docs/adr/0217-retained-docker-integration-evidence.md \
   docs/adr/0218-explicit-release-integrity-hashes.md \
   docs/adr/0219-jwks-json-preflight-parity.md \
+  docs/adr/0220-jurisdiction-provider-json-preflight-parity.md \
+  docs/adr/0221-structured-migration-connection-lifecycle.md \
+  docs/adr/0222-fail-closed-shutdown-signal-handling.md \
+  docs/adr/0223-observable-non-authoritative-metrics-failures.md \
+  docs/adr/0224-cross-language-calculation-attestation-vector.md \
+  docs/adr/0225-dedicated-warm-tax-engine-service.md \
+  docs/adr/0226-tax-engine-deployment-preflight.md \
+  ops/docker/Dockerfile.tax-engine \
   docs/adr/0142-spa-workspace-focus-management.md \
   docs/adr/0143-structured-tier-1-rule-workbench.md \
   docs/adr/0144-server-owned-persisted-rule-simulation.md \
@@ -84,6 +92,7 @@ for file in \
   docs/adr/0198-strict-vault-release-response-contract.md \
   test-vectors/settlement-adjustment-evidence-v1.json \
   test-vectors/settlement-refund-claim-v1.json \
+  test-vectors/calculation-attestation-v1.json \
   docs/operations/slo-error-budget-policy.md \
   docs/operations/dependency-register.md \
   docs/runbooks/incident-severity-and-error-budget.md \
@@ -100,7 +109,8 @@ for file in \
   scripts/migration_integrity_drill.sh \
   db/verification/settlement_route_mint_precision.sql \
   scripts/verify_deployment_config.sh \
-  scripts/verify_deployment_config_contract.sh
+  scripts/verify_deployment_config_contract.sh \
+  scripts/verify_service_lifecycle_contract.sh
 do
   require_file "$file"
 done

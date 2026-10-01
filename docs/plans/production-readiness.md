@@ -336,6 +336,21 @@ exists.
   non-simulation single/Split Plan compilation. Production issuer/HSM/KMS
   integration, live issuer-registry evidence, and validator-backed
   policy-account registration remain release gates.
+- [x] ADR-0224 adds a shared calculation-attestation golden vector consumed by
+  Rust and TypeScript, proving canonical payload and digest parity without
+  moving issuer or settlement authority into the browser. Production key
+  rotation, HSM/KMS ceremony, live issuer evidence, and finalized chain
+  evidence remain separate release gates.
+- [x] ADR-0225 adds a separately deployable warm Rust Tax Engine service with
+  authenticated bounded calculation/document endpoints, immutable rule-digest
+  cache keys, bounded blocking concurrency, Docker health checks, metrics, and
+  lifecycle coverage. The API keeps the settlement hot path in-process;
+  staging/production service identity, TLS/mTLS, rotation, regional SLO, and
+  load evidence remain release gates.
+- [x] ADR-0226 extends the shared non-local deployment preflight to require
+  Tax Engine environment parity and reject the local service token. Secret
+  validity, service identity, TLS/mTLS, rotation, network policy, and
+  production SLO evidence remain separate release gates.
 - [x] Compiled-rule cache hit/miss/eviction/entry metrics are exported with
   fixed labels and bounded cardinality; concurrent-load and invalidation
   performance evidence remains open.
@@ -584,6 +599,18 @@ and operational gates are intentionally not marked complete by unit tests.
   process, while shutdown propagates cancellation and drops the listener.
   Supervisor restart, orchestration, and multi-replica failure evidence remain
   open.
+- [x] ADR-0221 gives the migration runner the same structured-lifecycle
+  guarantee: PostgreSQL driver failures cancel migration work and no detached
+  connection task survives runner completion. Staging migration-service and
+  production rollback evidence remain open.
+- [x] ADR-0222 makes shutdown-signal listener failures terminate API, worker,
+  indexer, and route-verifier processes instead of silently continuing. Real
+  supervisor restart, signal delivery, and graceful-termination evidence
+  remain open.
+- [x] ADR-0223 makes unexpected fixed-operation metric-registration failures
+  visible through bounded structured logs while keeping metrics non-authoritative
+  for financial and reconciliation paths. Production scrape authorization,
+  alert delivery, and on-call response evidence remain open.
 - [x] Adaptive settlement provider health is exposed through bounded API gauges
   for score, consecutive failures, and cooldown milliseconds using only a
   fixed provider-index label (ADR-0117). Endpoint, merchant, request, and
@@ -613,6 +640,10 @@ and operational gates are intentionally not marked complete by unit tests.
   gates.
 - [ ] Mainnet configuration is separate from staging and requires approval. ADR-0130 now enforces explicit `local`/`staging`/`production` startup environments and rejects simulation or insecure RPC outside local; separate secret provisioning, deployment approval, allow-listing, and mainnet evidence remain open.
 - [x] Repository-side staging/production preflight rejects local databases, RPC/NATS/identity defaults, insecure flags, and synthetic seed fixtures under ADR-0139; actual secret validity, provider health, deployment approval, and live staging/production evidence remain open.
+- [x] ADR-0220 keeps the deployment preflight aligned with the API's structured
+  or compatibility jurisdiction-provider key forms and rejects mixed or local
+  provider material; live provider rotation, signature, custody, and staging
+  evidence remain open.
 - [ ] Emergency pause/unpause is exercised on localnet and staging with
   multisig/timelock authority, event alerting, and a documented break-glass
   runbook. ADR-0131 now provides finalized event projection, fixed-cardinality
@@ -622,6 +653,9 @@ and operational gates are intentionally not marked complete by unit tests.
   Solana program binary and resolved Compose configuration, and verifies both
   through a synthetic contract test. A successful Linux release-candidate run,
   independent review, and production signing/deployment ceremony remain open.
+- [x] ADR-0217 makes the Docker integration evidence upload fail closed when
+  the expected capture directory is missing; retained Linux evidence for the
+  exact release commit remains required.
 - [x] SLOs, error budgets, RTO/RPO, support ownership, and incident severity policy are published under ADR-0135; named deployment owners, alert-receiver delivery, and measured regional evidence remain open.
 - [ ] Backup restore, key recovery, RPC failover, and indexer replay drills
   pass in the required production-like environments. The Docker integration

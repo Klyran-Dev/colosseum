@@ -110,9 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     );
     let mut ticks = interval(config.poll_interval);
     let mut vault_ticks = interval(config.vault_reconciliation_poll_interval);
-    let mut shutdown = Box::pin(async {
-        tokio::signal::ctrl_c().await.ok();
-    });
+    let mut shutdown = Box::pin(tokio::signal::ctrl_c());
     loop {
         tokio::select! {
             result = &mut health_server => {
@@ -121,14 +119,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     Err(error) => Err(error.into()),
                 };
             }
-            _ = &mut shutdown => {
+            shutdown_result = &mut shutdown => {
+                shutdown_result?;
                 info!("finalized indexer shutting down");
                 break;
             }
             _ = ticks.tick() => {
                 let replay_started = Instant::now();
                 let replay_result = replay_once(&store, &source, &config).await;
-                let _ = health_state.metrics.observe("replay", replay_started.elapsed(), replay_result.is_err());
+                health_state.metrics.observe_or_log("replay", replay_started.elapsed(), replay_result.is_err());
                 match replay_result {
                     Ok(ReplayOutcome::Idle) => {}
                     Ok(ReplayOutcome::Completed) => info!("replay gap completed"),
@@ -137,7 +136,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 }
                 let forward_started = Instant::now();
                 let forward_result = run_once(&store, &source, &config).await;
-                let _ = health_state.metrics.observe("forward", forward_started.elapsed(), forward_result.is_err());
+                health_state.metrics.observe_or_log("forward", forward_started.elapsed(), forward_result.is_err());
                 match forward_result {
                     Ok(checkpoint) => info!(next_slot = checkpoint.next_slot, finalized_slot = checkpoint.finalized_slot, "finalized page committed"),
                     Err(IndexerServiceError::Provider(error)) => warn!(%error, health = ?provider_health(&source), "provider page failed; replay gap recorded"),
@@ -164,7 +163,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     MAX_TARGETED_RECOVERY_PAGES,
                 )
                 .await;
-                let _ = health_state.metrics.observe(
+                health_state.metrics.observe_or_log(
                     "refund_claim_reconcile",
                     refund_claim_started.elapsed(),
                     refund_claim_result.is_err(),
@@ -181,7 +180,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     &config.stream_key,
                 )
                 .await;
-                let _ = health_state.metrics.observe(
+                health_state.metrics.observe_or_log(
                     "refund_proof",
                     refund_proof_started.elapsed(),
                     refund_proof_result.is_err(),

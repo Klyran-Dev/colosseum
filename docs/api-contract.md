@@ -68,6 +68,34 @@ The calculation result also returns the exact `engine_version` that produced
 the trace. Replay tooling must use the same engine version and compare the
 complete result, not only aggregate tax totals.
 
+## Dedicated warm Tax Engine service adapter
+
+The separately deployable `tax-engine-service` shares the pure Rust engine and
+uses the same `RuleSetDocument`, `TaxFacts`, `TaxDocumentFacts`,
+`CalculationResult`, and `TaxDocumentResult` wire contracts. It is an internal
+calculation adapter for bounded simulation and batch workloads; it is not a
+settlement, attestation, or tenant-authorization boundary.
+
+Protected endpoints require `Authorization: Bearer <service-token>`:
+
+- `POST /v1/calculate` accepts `{ "rule_set": RuleSetDocument, "facts": TaxFacts }`.
+- `POST /v1/calculate-document` accepts `{ "rule_set": RuleSetDocument, "facts": TaxDocumentFacts }`.
+- `GET /readyz` reports authenticated service readiness.
+
+`GET /healthz` and `GET /metrics` are available only on the private service
+network. Metrics are fixed-cardinality Prometheus text and contain no tax facts,
+tenant identifiers, rule contents, or credentials; the NGINX edge does not
+publish this listener. Request bodies are limited to 128 KiB, compiled-rule
+cache capacity is bounded, and calculation admission has a 500 ms queue
+deadline. Overload, invalid rules/facts, unsupported schemas, malformed
+decimal values, and worker failures fail closed without partial results.
+
+The API keeps quote, attestation, transaction compilation, and settlement
+critical paths in-process. A future service consumer must add an ADR covering
+identity, transport security, version compatibility, latency, failure
+behavior, and replay evidence before depending on this adapter for an
+authoritative workflow.
+
 ## Document calculation simulation
 
 `POST /v1/tax/calculate-document` accepts the versioned

@@ -21,9 +21,9 @@ open.
   [production-readiness gates](plans/production-readiness.md) are linked from
   the public entry points and contain no unsupported production claims.
 - The deployment preflight contract accepts only the API's documented
-  structured or compatibility JWKS representation and rejects local identity
-  material; provider rotation and HSM/KMS ceremony evidence remain deployment
-  gates.
+  structured or compatibility JWKS and jurisdiction-provider representations
+  and rejects local identity/provider material; provider rotation and HSM/KMS
+  ceremony evidence remain deployment gates.
 - CI records the exact toolchain, dependency lockfiles, container image
   digests, security-scan result, test result, and validator-conformance result
   for every release candidate. ADR-0129 provides the tag/manual workflow,

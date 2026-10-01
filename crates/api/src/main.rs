@@ -10,7 +10,7 @@ use indexer::{MAX_RPC_RESPONSE_BYTES, ReqwestJsonRpcTransport};
 use indexer_service::{MAX_TARGETED_RECOVERY_PAGES, build_targeted_recovery_sources};
 use observability::ServiceMetrics;
 use settlement_coordinator::{DEFAULT_ATTEMPT_TIMEOUT, SettlementCoordinator};
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 use std::{env, net::SocketAddr};
 use storage::{EvidenceCipher, PgStore};
 use tokio::net::TcpListener;
@@ -240,13 +240,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
     let listener = TcpListener::bind(address).await?;
     info!(%address, "api listening");
+    let (shutdown_sender, shutdown_receiver) = mpsc::sync_channel(1);
+    let shutdown = async move {
+        let result = tokio::signal::ctrl_c()
+            .await
+            .map_err(|error| error.to_string());
+        if shutdown_sender.send(result).is_err() {
+            tracing::warn!("api shutdown result could not be recorded");
+        }
+    };
     axum::serve(listener, router().with_state(state))
-        .with_graceful_shutdown(async {
-            if let Err(error) = tokio::signal::ctrl_c().await {
-                tracing::warn!(%error, "api shutdown signal listener failed");
-            }
-        })
+        .with_graceful_shutdown(shutdown)
         .await?;
+    match shutdown_receiver.recv() {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            return Err(format!("api shutdown signal listener failed: {error}").into());
+        }
+        Err(_) => {
+            return Err("api server ended before a shutdown signal result was recorded".into());
+        }
+    }
     telemetry.shutdown();
     Ok(())
 }

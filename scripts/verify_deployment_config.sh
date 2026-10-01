@@ -81,6 +81,11 @@ require_exact INDEXER_ENV "$deployment_env"
 require_exact INDEXER_ALLOW_INSECURE_LOCAL_RPC false
 require_exact ROUTE_VERIFIER_ENV "$deployment_env"
 require_exact ROUTE_VERIFIER_ALLOW_INSECURE_LOCAL_RPC false
+require_exact TAX_ENGINE_ENV "$deployment_env"
+require_env TAX_ENGINE_AUTH_TOKEN
+case "$(read_env TAX_ENGINE_AUTH_TOKEN)" in
+  local-development-only) fail "TAX_ENGINE_AUTH_TOKEN uses the local development token" ;;
+esac
 
 for database_name in \
   DATABASE_URL \
@@ -160,19 +165,36 @@ case "$(read_env API_EVIDENCE_KEY_ID)" in
   *local-development*) fail "API_EVIDENCE_KEY_ID uses a local development key" ;;
 esac
 
-for jurisdiction_name in API_JURISDICTION_PROVIDER_KEY_ID API_JURISDICTION_PROVIDER_PUBLIC_KEY; do
-  require_env "$jurisdiction_name"
-done
-case "$(read_env API_JURISDICTION_PROVIDER_KEY_ID)" in
-  0404040404040404040404040404040404040404040404040404040404040404)
-    fail "API_JURISDICTION_PROVIDER_KEY_ID uses the local development key"
-    ;;
-esac
-case "$(read_env API_JURISDICTION_PROVIDER_PUBLIC_KEY)" in
-  _RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg)
-    fail "API_JURISDICTION_PROVIDER_PUBLIC_KEY uses the local development key"
-    ;;
-esac
+jurisdiction_provider_keys_json=$(read_env API_JURISDICTION_PROVIDER_KEYS_JSON)
+if [ -n "$jurisdiction_provider_keys_json" ]; then
+  case "$jurisdiction_provider_keys_json" in
+    \{*\}) ;;
+    *) fail "API_JURISDICTION_PROVIDER_KEYS_JSON must be a non-empty JSON object" ;;
+  esac
+  case "$jurisdiction_provider_keys_json" in
+    *local-development*|*0404040404040404040404040404040404040404040404040404040404040404*|*_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg*)
+      fail "API_JURISDICTION_PROVIDER_KEYS_JSON contains a local development value"
+      ;;
+  esac
+  [ -z "$(read_env API_JURISDICTION_PROVIDER_KEY_ID)" ] || fail "API_JURISDICTION_PROVIDER_KEY_ID cannot accompany API_JURISDICTION_PROVIDER_KEYS_JSON"
+  [ -z "$(read_env API_JURISDICTION_PROVIDER_PUBLIC_KEY)" ] || fail "API_JURISDICTION_PROVIDER_PUBLIC_KEY cannot accompany API_JURISDICTION_PROVIDER_KEYS_JSON"
+else
+  for jurisdiction_name in API_JURISDICTION_PROVIDER_KEY_ID API_JURISDICTION_PROVIDER_PUBLIC_KEY; do
+    require_env "$jurisdiction_name"
+  done
+fi
+if [ -z "$jurisdiction_provider_keys_json" ]; then
+  case "$(read_env API_JURISDICTION_PROVIDER_KEY_ID)" in
+    0404040404040404040404040404040404040404040404040404040404040404)
+      fail "API_JURISDICTION_PROVIDER_KEY_ID uses the local development key"
+      ;;
+  esac
+  case "$(read_env API_JURISDICTION_PROVIDER_PUBLIC_KEY)" in
+    _RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg)
+      fail "API_JURISDICTION_PROVIDER_PUBLIC_KEY uses the local development key"
+      ;;
+  esac
+fi
 
 if [ "${SEED_DIR+x}" = x ]; then
   fail "SEED_DIR must be unset outside local development"

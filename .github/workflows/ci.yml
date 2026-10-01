@@ -86,6 +86,8 @@ jobs:
         run: ./scripts/verify_observability_config.sh
       - name: Build the route-verifier image
         run: docker compose --profile route-verifier build route-verifier
+      - name: Build the pinned Tax Engine service image
+        run: docker compose build tax-engine
 
   otel-trace:
     name: OTLP trace receipt and redaction drill
@@ -170,7 +172,7 @@ jobs:
         with:
           name: local-stack-integration-${{ github.run_id }}
           path: test-results/local-stack-integration/
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
 
   indexer-replay:

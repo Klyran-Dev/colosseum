@@ -1,0 +1,21 @@
+[package]
+name = "tax-engine-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+axum.workspace = true
+observability = { path = "../observability" }
+serde.workspace = true
+serde_json.workspace = true
+tax-engine = { path = "../tax-engine" }
+thiserror.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tower.workspace = true
