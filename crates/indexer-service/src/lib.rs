@@ -383,41 +383,47 @@ pub struct ReplayMetrics {
     protocol_pause_slot: Arc<AtomicU64>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ReplayMetricsSnapshot {
+    pub replay: ReplayGapMetricsSnapshot,
+    pub targeted_recovery: TargetedRecoveryMetricsSnapshot,
+    pub vault_reconciliation: VaultReconciliationMetricsSnapshot,
+    pub refund_proofs: RefundProofMetricsSnapshot,
+    pub refund_claims: RefundClaimReconciliationMetricsSnapshot,
+    pub refund_claim_cancellations: RefundClaimCancellationReconciliationMetricsSnapshot,
+    pub protocol_pause: ProtocolPauseMetricsSnapshot,
+}
+
 impl ReplayMetrics {
-    pub fn set_snapshot(
-        &self,
-        snapshot: ReplayGapMetricsSnapshot,
-        targeted_recovery: TargetedRecoveryMetricsSnapshot,
-        vault_reconciliation: VaultReconciliationMetricsSnapshot,
-        refund_proofs: RefundProofMetricsSnapshot,
-        refund_claims: RefundClaimReconciliationMetricsSnapshot,
-        refund_claim_cancellations: RefundClaimCancellationReconciliationMetricsSnapshot,
-        protocol_pause: ProtocolPauseMetricsSnapshot,
-    ) {
-        self.queued.store(snapshot.queued, Ordering::Release);
-        self.leased.store(snapshot.leased, Ordering::Release);
+    pub fn set_snapshot(&self, snapshot: ReplayMetricsSnapshot) {
+        self.queued.store(snapshot.replay.queued, Ordering::Release);
+        self.leased.store(snapshot.replay.leased, Ordering::Release);
         self.dead_lettered
-            .store(snapshot.dead_lettered, Ordering::Release);
+            .store(snapshot.replay.dead_lettered, Ordering::Release);
         self.leased_slots
-            .store(snapshot.leased_slots, Ordering::Release);
+            .store(snapshot.replay.leased_slots, Ordering::Release);
         self.refund_proofs_pending
-            .store(refund_proofs.pending, Ordering::Release);
+            .store(snapshot.refund_proofs.pending, Ordering::Release);
         self.refund_claims_pending
-            .store(refund_claims.pending, Ordering::Release);
-        self.refund_claim_cancellations_pending
-            .store(refund_claim_cancellations.pending, Ordering::Release);
-        self.targeted_recovery_stale_requested
-            .store(targeted_recovery.stale_requested, Ordering::Release);
+            .store(snapshot.refund_claims.pending, Ordering::Release);
+        self.refund_claim_cancellations_pending.store(
+            snapshot.refund_claim_cancellations.pending,
+            Ordering::Release,
+        );
+        self.targeted_recovery_stale_requested.store(
+            snapshot.targeted_recovery.stale_requested,
+            Ordering::Release,
+        );
         self.vault_reconciliation_mismatches
-            .store(vault_reconciliation.mismatches, Ordering::Release);
+            .store(snapshot.vault_reconciliation.mismatches, Ordering::Release);
         self.vault_reconciliation_errors
-            .store(vault_reconciliation.errors, Ordering::Release);
+            .store(snapshot.vault_reconciliation.errors, Ordering::Release);
         self.protocol_pause_known
-            .store(protocol_pause.known, Ordering::Release);
+            .store(snapshot.protocol_pause.known, Ordering::Release);
         self.protocol_paused
-            .store(protocol_pause.paused, Ordering::Release);
+            .store(snapshot.protocol_pause.paused, Ordering::Release);
         self.protocol_pause_slot
-            .store(protocol_pause.slot, Ordering::Release);
+            .store(snapshot.protocol_pause.slot, Ordering::Release);
     }
 
     pub fn render_prometheus(&self) -> String {
@@ -512,7 +518,7 @@ pub async fn refresh_replay_metrics(
         store.load_refund_claim_cancellation_reconciliation_metrics(),
         store.load_protocol_pause_metrics(stream_key),
     )?;
-    metrics.set_snapshot(
+    metrics.set_snapshot(ReplayMetricsSnapshot {
         replay,
         targeted_recovery,
         vault_reconciliation,
@@ -520,7 +526,7 @@ pub async fn refresh_replay_metrics(
         refund_claims,
         refund_claim_cancellations,
         protocol_pause,
-    );
+    });
     Ok(())
 }
 
@@ -1417,27 +1423,29 @@ mod tests {
     #[test]
     fn replay_metrics_render_only_fixed_cardinality_series() {
         let metrics = ReplayMetrics::default();
-        metrics.set_snapshot(
-            ReplayGapMetricsSnapshot {
+        metrics.set_snapshot(ReplayMetricsSnapshot {
+            replay: ReplayGapMetricsSnapshot {
                 queued: 2,
                 leased: 1,
                 dead_lettered: 3,
                 leased_slots: 128,
             },
-            TargetedRecoveryMetricsSnapshot { stale_requested: 4 },
-            VaultReconciliationMetricsSnapshot {
+            targeted_recovery: TargetedRecoveryMetricsSnapshot { stale_requested: 4 },
+            vault_reconciliation: VaultReconciliationMetricsSnapshot {
                 mismatches: 5,
                 errors: 6,
             },
-            RefundProofMetricsSnapshot { pending: 7 },
-            RefundClaimReconciliationMetricsSnapshot { pending: 8 },
-            RefundClaimCancellationReconciliationMetricsSnapshot { pending: 9 },
-            ProtocolPauseMetricsSnapshot {
+            refund_proofs: RefundProofMetricsSnapshot { pending: 7 },
+            refund_claims: RefundClaimReconciliationMetricsSnapshot { pending: 8 },
+            refund_claim_cancellations: RefundClaimCancellationReconciliationMetricsSnapshot {
+                pending: 9,
+            },
+            protocol_pause: ProtocolPauseMetricsSnapshot {
                 known: true,
                 paused: true,
                 slot: 777,
             },
-        );
+        });
         let rendered = metrics.render_prometheus();
 
         assert!(
