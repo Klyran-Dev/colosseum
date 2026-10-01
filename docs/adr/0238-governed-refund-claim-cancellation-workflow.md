@@ -4,7 +4,7 @@
 
 Accepted for implementation. This ADR adds the server-owned compiler and
 signed-transaction verification boundary for cancellation; API persistence,
-finalized cancellation reconciliation, and UI are implemented. Linux validator
+finalized cancellation reconciliation, bounded automatic worker convergence, and UI are implemented. Linux validator
 evidence, provider-load evidence, and production governance-key operations
 remain required release gates.
 
@@ -62,6 +62,15 @@ extra instructions. Unknown provider outcomes remain unknown. Only finalized
 signature, slot, and event fields may transition the cancellation intent and
 the claim projection to `cancelled`.
 
+The indexer owns a bounded automatic cancellation reconciler. It claims one
+submitted cancellation at a time using a short PostgreSQL UUIDv7 lease with
+`SKIP LOCKED`, recovers only the persisted governance authority and signature,
+and fences the finalized cancellation transition with the lease token. A
+stale lease is reclaimable after the bounded crash window; the worker never
+holds a database lock while calling RPC and never advances the forward
+checkpoint. The API reconciliation route remains an explicit operator path
+and uses the same evidence boundary, but cannot steal an active worker lease.
+
 The browser receives only a server-built artifact and may provide the selected
 governance wallet plus signed bytes. It cannot provide a program ID, merchant,
 mint, registry, claim PDA, nonce, amount, or destination as authority inputs.
@@ -100,6 +109,14 @@ See `docs/architecture/alternative-analysis.md`.
    wallet signature with finalized proof:** selected because it preserves the
    protocol authority, auditability, replay safety, and non-custodial model.
 
+6. **Run automatic convergence in the indexer with a short PostgreSQL lease:**
+   selected because cancellation finality is a projection concern, not a
+   browser responsibility; durable leases coordinate replicas, stale-lease
+   reclamation survives crashes, and token-fenced CAS prevents an old worker
+   from changing state after ownership expires. Broker-owned queues and locks
+   across RPC were rejected because they add another authority or couple
+   database capacity to external latency.
+
 ## Latency and resource budget
 
 The compiler is pure in-process work with a fixed five-account legacy
@@ -125,6 +142,10 @@ measured separately and must not be folded into the compiler budget.
    reconciliation-required states with no implied financial success.
 5. Extend the authoritative Linux validator evidence to require the complete
    prepare/sign/submit/finalize cancellation lifecycle and unchanged balances.
+6. Exercise two indexer replicas against an isolated PostgreSQL/RPC fixture to
+   prove cancellation lease ownership, stale reclaim, finalized event binding,
+   token-fenced convergence, bounded retries, and fixed-cardinality backlog
+   metrics.
 
 ## Consequences
 

@@ -1522,6 +1522,15 @@ legal/tax compliance.
 | Long database lock across RPC recovery | Strong serialization | Holds a database connection/lock across external I/O and can block unrelated work | Rejected |
 | **Short PostgreSQL lease with `SKIP LOCKED`, TTL reclaim, and final CAS** | Cross-replica bounded ownership, restart recovery, no lock across RPC, safe duplicate convergence | Requires lease fields, metrics, and stale-lease tests | **Selected in ADR-0180** |
 
+### Refund-claim cancellation reconciliation scheduling
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Browser-only or operator-only reconciliation | Minimal service work | Finality backlog is not self-healing and leaves user-visible state dependent on a manual action | Rejected |
+| Broker-owned cancellation queue | Familiar delivery model | Adds a second durable work authority, duplicate delivery semantics, and queue recovery coupling | Rejected |
+| Database lock held across finalized RPC recovery | Strong local serialization | Holds a pool connection and row lock across network I/O; stalls unrelated governance work | Rejected |
+| **Bounded indexer worker with PostgreSQL UUIDv7 lease, `SKIP LOCKED`, stale reclaim, and token-fenced final CAS** | Self-healing convergence, replica coordination, crash recovery, replayable evidence, and no lock across RPC | Adds lease columns, worker telemetry, and a deterministic Docker drill | **Selected in ADR-0238** |
+
 ### Refund-funding topology verification concurrency
 
 | Alternative | Strengths | Risks / costs | Decision |

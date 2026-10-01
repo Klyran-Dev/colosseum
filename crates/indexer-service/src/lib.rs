@@ -29,10 +29,10 @@ use std::{
 };
 use storage::{
     DEFAULT_REPLAY_LEASE, MAX_VAULT_RECONCILIATION_TARGETS, PgStore, ProtocolPauseMetricsSnapshot,
-    RefundBalanceProofTopology, RefundClaimReconciliationMetricsSnapshot,
-    RefundProofMetricsSnapshot, ReplayGapMetricsSnapshot, StorageError,
-    TargetedRecoveryMetricsSnapshot, VaultReconciliationMetricsSnapshot, VaultReconciliationRun,
-    refund_claim_evidence_expectation,
+    RefundBalanceProofTopology, RefundClaimCancellationReconciliationMetricsSnapshot,
+    RefundClaimReconciliationMetricsSnapshot, RefundProofMetricsSnapshot, ReplayGapMetricsSnapshot,
+    StorageError, TargetedRecoveryMetricsSnapshot, VaultReconciliationMetricsSnapshot,
+    VaultReconciliationRun, refund_claim_evidence_expectation,
 };
 use thiserror::Error;
 
@@ -345,6 +345,8 @@ pub enum IndexerServiceError {
     RefundProofDomain(String),
     #[error("refund claim reconciliation domain validation failed: {0}")]
     RefundClaimDomain(String),
+    #[error("refund claim cancellation reconciliation domain validation failed: {0}")]
+    RefundClaimCancellationDomain(String),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -372,6 +374,7 @@ pub struct ReplayMetrics {
     leased_slots: Arc<AtomicU64>,
     refund_proofs_pending: Arc<AtomicU64>,
     refund_claims_pending: Arc<AtomicU64>,
+    refund_claim_cancellations_pending: Arc<AtomicU64>,
     targeted_recovery_stale_requested: Arc<AtomicU64>,
     vault_reconciliation_mismatches: Arc<AtomicU64>,
     vault_reconciliation_errors: Arc<AtomicU64>,
@@ -388,6 +391,7 @@ impl ReplayMetrics {
         vault_reconciliation: VaultReconciliationMetricsSnapshot,
         refund_proofs: RefundProofMetricsSnapshot,
         refund_claims: RefundClaimReconciliationMetricsSnapshot,
+        refund_claim_cancellations: RefundClaimCancellationReconciliationMetricsSnapshot,
         protocol_pause: ProtocolPauseMetricsSnapshot,
     ) {
         self.queued.store(snapshot.queued, Ordering::Release);
@@ -400,6 +404,8 @@ impl ReplayMetrics {
             .store(refund_proofs.pending, Ordering::Release);
         self.refund_claims_pending
             .store(refund_claims.pending, Ordering::Release);
+        self.refund_claim_cancellations_pending
+            .store(refund_claim_cancellations.pending, Ordering::Release);
         self.targeted_recovery_stale_requested
             .store(targeted_recovery.stale_requested, Ordering::Release);
         self.vault_reconciliation_mismatches
@@ -459,6 +465,12 @@ impl ReplayMetrics {
             "stp_indexer_refund_claims_pending{{service=\"indexer\"}} {}\n",
             self.refund_claims_pending.load(Ordering::Acquire)
         ));
+        output.push_str("# TYPE stp_indexer_refund_claim_cancellations_pending gauge\n");
+        output.push_str(&format!(
+            "stp_indexer_refund_claim_cancellations_pending{{service=\"indexer\"}} {}\n",
+            self.refund_claim_cancellations_pending
+                .load(Ordering::Acquire)
+        ));
         output.push_str("# TYPE stp_settlement_protocol_pause_known gauge\n");
         output.push_str(&format!(
             "stp_settlement_protocol_pause_known{{service=\"indexer\"}} {}\n",
@@ -489,6 +501,7 @@ pub async fn refresh_replay_metrics(
         vault_reconciliation,
         refund_proofs,
         refund_claims,
+        refund_claim_cancellations,
         protocol_pause,
     ) = tokio::try_join!(
         store.load_replay_gap_metrics(stream_key),
@@ -496,6 +509,7 @@ pub async fn refresh_replay_metrics(
         store.load_vault_reconciliation_metrics(),
         store.load_refund_proof_metrics(stream_key),
         store.load_refund_claim_reconciliation_metrics(),
+        store.load_refund_claim_cancellation_reconciliation_metrics(),
         store.load_protocol_pause_metrics(stream_key),
     )?;
     metrics.set_snapshot(
@@ -504,6 +518,7 @@ pub async fn refresh_replay_metrics(
         vault_reconciliation,
         refund_proofs,
         refund_claims,
+        refund_claim_cancellations,
         protocol_pause,
     );
     Ok(())
@@ -862,6 +877,76 @@ where
             last_error_code: None,
             evidence: serde_json::json!({
                 "source": "automatic_finalized_refund_claim_reconciler",
+                "stream_key": stream_key,
+                "event_index": evidence.event_index,
+                "event_digest": evidence.evidence_digest,
+                "recovery_pages_scanned": recovery.pages_scanned,
+            }),
+            reconciliation_claim_token: Some(claim_token),
+        })
+        .await?;
+    Ok(transitioned)
+}
+
+/// Reconciles at most one server-owned governance cancellation. The durable
+/// cancellation lease is acquired before targeted finalized recovery and is
+/// required again when the atomic cancellation/claim transition commits.
+pub async fn reconcile_one_refund_claim_cancellation_once<P, T>(
+    store: &PgStore,
+    signature_source: &P,
+    transaction_source: &T,
+    stream_key: &str,
+    max_pages: usize,
+) -> Result<bool, IndexerServiceError>
+where
+    P: FinalizedSignaturePageSource + ?Sized,
+    T: FinalizedTransactionSource + ?Sized,
+{
+    let Some(candidate) = store
+        .load_pending_refund_claim_cancellation_reconciliation()
+        .await?
+    else {
+        return Ok(false);
+    };
+    let claim_token = candidate.claim_token;
+    let intent = candidate.intent;
+    let signature = intent.signature.clone().ok_or_else(|| {
+        IndexerServiceError::RefundClaimCancellationDomain(
+            "cancellation candidate has no persisted transaction signature".into(),
+        )
+    })?;
+    let recovery = recover_targeted_signature(
+        store,
+        signature_source,
+        transaction_source,
+        stream_key,
+        &intent.governance_authority,
+        &signature,
+        max_pages,
+    )
+    .await?;
+    let expected = store
+        .load_refund_claim_cancellation_evidence_expectation(&intent)
+        .await
+        .map_err(|error| IndexerServiceError::RefundClaimCancellationDomain(error.to_string()))?;
+    let evidence = store
+        .load_finalized_refund_claim_cancellation_evidence(stream_key, &signature, &expected)
+        .await?;
+    if evidence.signature != signature || evidence.slot != recovery.slot {
+        return Err(IndexerServiceError::RefundClaimCancellationDomain(
+            "finalized cancellation event and recovered transaction disagree".into(),
+        ));
+    }
+    let transitioned = store
+        .finalize_refund_claim_cancellation(storage::RefundCancellationFinalization {
+            cancellation_intent_id: intent.id,
+            claim_intent_id: intent.claim_intent_id,
+            merchant_id: intent.merchant_id,
+            expected_cancellation_status: intent.status,
+            signature: evidence.signature.clone(),
+            slot: evidence.slot,
+            evidence: serde_json::json!({
+                "source": "automatic_finalized_refund_claim_cancellation_reconciler",
                 "stream_key": stream_key,
                 "event_index": evidence.event_index,
                 "event_digest": evidence.evidence_digest,
@@ -1346,6 +1431,7 @@ mod tests {
             },
             RefundProofMetricsSnapshot { pending: 7 },
             RefundClaimReconciliationMetricsSnapshot { pending: 8 },
+            RefundClaimCancellationReconciliationMetricsSnapshot { pending: 9 },
             ProtocolPauseMetricsSnapshot {
                 known: true,
                 paused: true,
@@ -1376,6 +1462,10 @@ mod tests {
         assert!(rendered.contains("stp_indexer_vault_reconciliation_error{service=\"indexer\"} 6"));
         assert!(rendered.contains("stp_indexer_refund_proofs_pending{service=\"indexer\"} 7"));
         assert!(rendered.contains("stp_indexer_refund_claims_pending{service=\"indexer\"} 8"));
+        assert!(
+            rendered
+                .contains("stp_indexer_refund_claim_cancellations_pending{service=\"indexer\"} 9")
+        );
         assert!(rendered.contains("stp_settlement_protocol_pause_known{service=\"indexer\"} 1"));
         assert!(rendered.contains("stp_settlement_protocol_paused{service=\"indexer\"} 1"));
         assert!(rendered.contains("stp_settlement_protocol_pause_slot{service=\"indexer\"} 777"));

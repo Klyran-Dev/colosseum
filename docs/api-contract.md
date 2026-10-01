@@ -1251,6 +1251,15 @@ ADR-0238 adds the governed cancellation preparation and transport boundary:
   converges the original claim projection to `cancelled`. Transport
   acknowledgement alone does not make a claim cancelled.
 
+The indexer also runs a bounded automatic reconciliation cycle for submitted,
+processed, confirmed, and unknown cancellation intents. It owns a short
+PostgreSQL UUIDv7 lease, recovers only the persisted governance authority and
+signature, and uses the same typed finalized-event matcher and token-fenced
+atomic transition. The operator endpoint cannot steal an active lease; stale
+leases are reclaimable after the bounded crash window. The backlog is exposed
+as the fixed-cardinality `stp_indexer_refund_claim_cancellations_pending`
+metric.
+
 Signed submission and exact program/instruction/account/signer/artifact-digest
 verification are implemented by ADR-0177. Finalized claim-event evidence is
 implemented by ADR-0180; transaction-bound balance proof remains a separate

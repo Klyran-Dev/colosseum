@@ -2,6 +2,14 @@
 
 ## 2026-10-01
 
+- Added the ADR-0238 automatic cancellation reconciler. The indexer now claims
+  submitted cancellation intents with a short PostgreSQL UUIDv7 lease, performs
+  bounded finalized recovery without holding database locks across RPC, and
+  commits only with a token-fenced atomic claim/cancellation transition. Added
+  migration `0057`, shared immutable evidence derivation, stale-lease safety,
+  and fixed-cardinality cancellation backlog telemetry. Linux validator,
+  provider-load, governance-key, and production operational evidence remain
+  release gates.
 - Added ADR-0238 and the first governed refund-claim cancellation domain
   slice. Rust now compiles a fixed five-account, amount-free cancellation
   artifact, validates UUIDv7/server-owned identity, and verifies exact wallet-

@@ -12,8 +12,9 @@ use axum::{
 };
 use indexer_service::{
     IndexerConfig, IndexerServiceError, MAX_TARGETED_RECOVERY_PAGES, ReplayMetrics, ReplayOutcome,
-    prove_one_refund_balance_once, provider_health, reconcile_one_refund_claim_once,
-    reconcile_vaults_once, refresh_replay_metrics, replay_once, run_once,
+    prove_one_refund_balance_once, provider_health, reconcile_one_refund_claim_cancellation_once,
+    reconcile_one_refund_claim_once, reconcile_vaults_once, refresh_replay_metrics, replay_once,
+    run_once,
 };
 use observability::ServiceMetrics;
 use std::{
@@ -84,6 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             &[
                 "replay",
                 "forward",
+                "refund_claim_cancellation_reconcile",
                 "refund_claim_reconcile",
                 "refund_proof",
             ],
@@ -153,6 +155,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     config.vault_reconciliation_target_limit,
                 ).await {
                     warn!(%error, "vault reconciliation cycle failed; retaining the last bounded snapshot");
+                }
+                let refund_cancellation_started = Instant::now();
+                let refund_cancellation_result = reconcile_one_refund_claim_cancellation_once(
+                    &store,
+                    &refund_claim_signature_source,
+                    &refund_claim_transaction_source,
+                    &config.stream_key,
+                    MAX_TARGETED_RECOVERY_PAGES,
+                )
+                .await;
+                health_state.metrics.observe_or_log(
+                    "refund_claim_cancellation_reconcile",
+                    refund_cancellation_started.elapsed(),
+                    refund_cancellation_result.is_err(),
+                );
+                match refund_cancellation_result {
+                    Ok(true) => info!("one finalized refund claim cancellation reconciled"),
+                    Ok(false) => {}
+                    Err(error) => warn!(%error, "refund claim cancellation reconciliation cycle failed; retaining the pending evidence candidate"),
                 }
                 let refund_claim_started = Instant::now();
                 let refund_claim_result = reconcile_one_refund_claim_once(

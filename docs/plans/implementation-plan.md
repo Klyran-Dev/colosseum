@@ -979,8 +979,12 @@ release gates.
   provide financial values, program IDs, registry addresses, claim PDAs, or
   nonces. Submission remains proof-pending until finalized reconciliation.
 - [x] Add the finalized cancellation-event reconciliation route and atomic
-  claim/cancellation transition; a bounded worker remains an operational
-  follow-up once the indexer scheduling contract is selected.
+  claim/cancellation transition.
+- [x] Add the bounded automatic cancellation reconciler: UUIDv7 PostgreSQL
+  lease, `SKIP LOCKED` ownership, stale-lease reclaim, shared immutable
+  evidence derivation, token-fenced final CAS, and fixed-cardinality backlog
+  telemetry. The operator route remains available but cannot steal an active
+  worker lease.
 - [x] Require finalized `AdjustmentRefundClaimCancelled` evidence before the
   claim projection becomes cancelled; preserve unknown provider outcomes and
   idempotent replay semantics.

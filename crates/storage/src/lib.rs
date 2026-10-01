@@ -1412,6 +1412,12 @@ pub struct RefundCancellationIntent {
     pub unsigned_artifact: Value,
 }
 
+#[derive(Clone, Debug)]
+pub struct RefundClaimCancellationReconciliationCandidate {
+    pub intent: RefundCancellationIntent,
+    pub claim_token: Uuid,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FinalizedSettlementAdjustmentBinding {
     pub adjustment: [u8; 32],
@@ -1621,6 +1627,7 @@ pub struct RefundCancellationFinalization {
     pub signature: String,
     pub slot: u64,
     pub evidence: Value,
+    pub reconciliation_claim_token: Option<Uuid>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1817,6 +1824,14 @@ pub struct RefundProofMetricsSnapshot {
 /// event evidence remains authoritative.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RefundClaimReconciliationMetricsSnapshot {
+    pub pending: u64,
+}
+
+/// Fixed-cardinality operational snapshot for automatic refund-claim
+/// cancellation finality reconciliation. Finalized chain evidence remains
+/// authoritative; this is only a backlog signal.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RefundClaimCancellationReconciliationMetricsSnapshot {
     pub pending: u64,
 }
 
@@ -3113,6 +3128,31 @@ impl PgStore {
             .await?;
         Ok(RefundClaimReconciliationMetricsSnapshot {
             pending: parse_u64(row.get(0), "pending refund claim reconciliations")?,
+        })
+    }
+
+    pub async fn load_refund_claim_cancellation_reconciliation_metrics(
+        &self,
+    ) -> Result<RefundClaimCancellationReconciliationMetricsSnapshot, StorageError> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let row = client
+            .query_one(
+                "SELECT COUNT(*)::text
+                 FROM refund_claim_cancellation_intents
+                 WHERE signature IS NOT NULL
+                   AND status IN ('submitting', 'submitted', 'processed', 'confirmed', 'unknown')",
+                &[],
+            )
+            .await?;
+        Ok(RefundClaimCancellationReconciliationMetricsSnapshot {
+            pending: parse_u64(
+                row.get(0),
+                "pending refund claim cancellation reconciliations",
+            )?,
         })
     }
 
@@ -9676,6 +9716,119 @@ impl PgStore {
         row.map(parse_refund_cancellation_intent_row).transpose()
     }
 
+    /// Claims one submitted cancellation whose finalized event still needs
+    /// reconciliation. The lease is committed before external RPC work and
+    /// is fenced again by the final transition.
+    pub async fn load_pending_refund_claim_cancellation_reconciliation(
+        &self,
+    ) -> Result<Option<RefundClaimCancellationReconciliationCandidate>, StorageError> {
+        const LEASE_SECONDS: i64 = 60;
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::ReadCommitted)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let row = transaction
+            .query_opt(
+                "SELECT id, merchant_id, idempotency_key, request_digest,
+                        claim_intent_id, adjustment_id, merchant, mint, adjustment,
+                        claim_nonce::text, claim, governance_authority,
+                        governance_subject, instruction_digest, artifact_digest,
+                        status, signed_transaction_digest, signature,
+                        submitted_slot::text, commitment, last_error_code,
+                        unsigned_artifact
+                 FROM refund_claim_cancellation_intents
+                 WHERE signature IS NOT NULL
+                   AND status IN ('submitting', 'submitted', 'processed', 'confirmed', 'unknown')
+                   AND (reconciliation_claim_token IS NULL
+                        OR reconciliation_claimed_at < now() - ($1::bigint * interval '1 second'))
+                 ORDER BY updated_at, id
+                 FOR UPDATE SKIP LOCKED
+                 LIMIT 1",
+                &[&LEASE_SECONDS],
+            )
+            .await?;
+        let Some(row) = row else {
+            transaction.commit().await?;
+            return Ok(None);
+        };
+        let intent = parse_refund_cancellation_intent_row(row)?;
+        let claim_token = Uuid::now_v7();
+        let updated = transaction
+            .execute(
+                "UPDATE refund_claim_cancellation_intents
+                 SET reconciliation_claim_token = $2,
+                     reconciliation_claimed_at = now()
+                 WHERE id = $1",
+                &[&intent.id, &claim_token],
+            )
+            .await?;
+        if updated != 1 {
+            transaction.rollback().await?;
+            return Ok(None);
+        }
+        transaction.commit().await?;
+        Ok(Some(RefundClaimCancellationReconciliationCandidate {
+            intent,
+            claim_token,
+        }))
+    }
+
+    /// Derives cancellation event binding from the immutable cancellation
+    /// intent and the immutable refund-claim artifact. No browser field is
+    /// accepted by this boundary.
+    pub async fn load_refund_claim_cancellation_evidence_expectation(
+        &self,
+        intent: &RefundCancellationIntent,
+    ) -> Result<RefundClaimCancellationEvidenceExpectation, StorageError> {
+        let claim = self
+            .load_refund_claim_intent(intent.claim_intent_id, intent.merchant_id)
+            .await?
+            .ok_or_else(|| {
+                StorageError::InvalidRefundCancellationIntent(
+                    "the cancellation's bound refund claim is missing".into(),
+                )
+            })?;
+        let claim_artifact = serde_json::from_value::<RefundArtifact>(
+            claim.unsigned_artifact.clone(),
+        )
+        .map_err(|_| {
+            StorageError::InvalidRefundCancellationIntent(
+                "the cancellation's bound refund claim artifact is invalid".into(),
+            )
+        })?;
+        let reference_digest = refund_claim_evidence_expectation(&claim, &claim_artifact)
+            .map_err(|error| StorageError::InvalidRefundCancellationIntent(error.to_string()))?
+            .reference_digest;
+        let governance_authority =
+            Pubkey::from_str(&intent.governance_authority).map_err(|_| {
+                StorageError::InvalidRefundCancellationIntent(
+                    "persisted governance authority is invalid".into(),
+                )
+            })?;
+        Ok(RefundClaimCancellationEvidenceExpectation {
+            claim: intent.claim,
+            adjustment: intent.adjustment,
+            merchant: intent.merchant,
+            mint: intent.mint,
+            nonce: intent.claim_nonce,
+            governance_authority: governance_authority.to_bytes(),
+            reference_digest,
+        })
+    }
+
     pub async fn create_refund_cancellation_intent(
         &self,
         command: CreateRefundCancellationIntentCommand,
@@ -9941,14 +10094,21 @@ impl PgStore {
                 "UPDATE refund_claim_cancellation_intents
                  SET status = 'finalized', signature = COALESCE(signature, $4),
                      submitted_slot = COALESCE(submitted_slot, $5::text::numeric),
-                     commitment = 'finalized', last_error_code = NULL, updated_at = now()
-                 WHERE id = $1 AND merchant_id = $2 AND status = $3",
+                     commitment = 'finalized', last_error_code = NULL,
+                     reconciliation_claim_token = NULL,
+                     reconciliation_claimed_at = NULL,
+                     updated_at = now()
+                 WHERE id = $1 AND merchant_id = $2 AND status = $3
+                   AND (($6::uuid IS NOT NULL AND reconciliation_claim_token = $6::uuid)
+                     OR ($6::uuid IS NULL AND (reconciliation_claim_token IS NULL
+                         OR reconciliation_claimed_at < now() - interval '60 seconds'))) ",
                 &[
                     &command.cancellation_intent_id,
                     &command.merchant_id,
                     &command.expected_cancellation_status,
                     &command.signature,
                     &command.slot.to_string(),
+                    &command.reconciliation_claim_token,
                 ],
             )
             .await?;

@@ -4624,6 +4624,9 @@ fn targeted_recovery_error_code(error: &IndexerServiceError) -> &'static str {
         IndexerServiceError::Storage(_) => "storage_failure",
         IndexerServiceError::Configuration(_) => "recovery_configuration_invalid",
         IndexerServiceError::RefundClaimDomain(_) => "refund_claim_domain_invalid",
+        IndexerServiceError::RefundClaimCancellationDomain(_) => {
+            "refund_claim_cancellation_domain_invalid"
+        }
         _ => "targeted_recovery_failed",
     }
 }
@@ -4661,6 +4664,11 @@ fn targeted_recovery_api_error(error: IndexerServiceError) -> ApiError {
         IndexerServiceError::RefundClaimDomain(message) => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "INVALID_REFUND_CLAIM_RECONCILIATION",
+            message,
+        },
+        IndexerServiceError::RefundClaimCancellationDomain(message) => ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "INVALID_REFUND_CLAIM_CANCELLATION_RECONCILIATION",
             message,
         },
         IndexerServiceError::GapRecordFailed { primary, gap } => ApiError {
@@ -5230,43 +5238,14 @@ async fn refund_cancellation_evidence_expectation(
     store: &PgStore,
     intent: &storage::RefundCancellationIntent,
 ) -> Result<RefundClaimCancellationEvidenceExpectation, ApiError> {
-    let claim = store
-        .load_refund_claim_intent(intent.claim_intent_id, intent.merchant_id)
+    store
+        .load_refund_claim_cancellation_evidence_expectation(intent)
         .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            code: "REFUND_CLAIM_INTENT_NOT_FOUND",
-            message: "the cancellation's bound refund claim is missing".into(),
-        })?;
-    let claim_artifact = serde_json::from_value::<RefundArtifact>(claim.unsigned_artifact.clone())
-        .map_err(|_| ApiError {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            code: "REFUND_CLAIM_ARTIFACT_CORRUPT",
-            message: "the cancellation's bound refund claim artifact is invalid".into(),
-        })?;
-    let reference_digest = storage::refund_claim_evidence_expectation(&claim, &claim_artifact)
         .map_err(|error| ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
-            code: "REFUND_CLAIM_ARTIFACT_CORRUPT",
-            message: error.to_string(),
-        })?
-        .reference_digest;
-    let governance_authority =
-        Pubkey::from_str(&intent.governance_authority).map_err(|_| ApiError {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
             code: "REFUND_CANCELLATION_ARTIFACT_CORRUPT",
-            message: "persisted governance authority is invalid".into(),
-        })?;
-    Ok(RefundClaimCancellationEvidenceExpectation {
-        claim: intent.claim,
-        adjustment: intent.adjustment,
-        merchant: intent.merchant,
-        mint: intent.mint,
-        nonce: intent.claim_nonce,
-        governance_authority: governance_authority.to_bytes(),
-        reference_digest,
-    })
+            message: error.to_string(),
+        })
 }
 
 async fn load_refund_cancellation(
@@ -5417,6 +5396,7 @@ async fn reconcile_refund_cancellation(
                 "event_digest": evidence.evidence_digest,
                 "recovery_pages_scanned": recovery.pages_scanned,
             }),
+            reconciliation_claim_token: None,
         })
         .await
         .map_err(ApiError::from)?
