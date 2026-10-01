@@ -89,4 +89,5 @@ network policy remain deployment gates.
   workspace remain release-visible rather than being validated only by local
   unit tests.
 - Production identity, TLS/mTLS, rotation, resource-profile, regional SLO,
-  and service-consumer authorization evidence remain independent release gates.
+  and production workload-identity issuance/rotation evidence remain
+  independent release gates.

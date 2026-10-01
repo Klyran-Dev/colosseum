@@ -926,7 +926,20 @@ release gates.
   invalid replacement.
 - [ ] Retain Linux/amd64 CI transport evidence, secret-manager delivery,
   certificate issuance/revocation, CA overlap, regional reload latency,
-  client-identity mapping, and production alert/on-call evidence.
+  identity issuance/rotation, and production alert/on-call evidence.
+
+## ADR-0236 — Tax Engine mTLS client identity binding
+
+- [x] Compare bearer-only, CA-only, subject/CN, exact URI-SAN, and external
+  introspection alternatives; select the bounded Rustls URI-SAN verifier.
+- [x] Require a unique, bounded `spiffe://` URI allow-list in non-local
+  configuration and reject malformed or missing identity policy before bind.
+- [x] Enforce identity at the TLS handshake, before bearer authorization and
+  tax calculation, with no request-path network or database dependency.
+- [x] Add focused handshake/configuration tests and wrong-identity real-image
+  mTLS contract coverage.
+- [ ] Retain production identity issuance, rotation, CA overlap/revocation,
+  regional handshake latency, and alert/on-call evidence.
 
 ## ADR-0234 — atomic API JWKS reload for bounded identity rotation
 

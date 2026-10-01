@@ -30,6 +30,8 @@ Add `make tax-engine-mtls-runtime-contract`, an isolated Docker contract that:
 - proves trusted-client `/readyz` still requires the bearer token and that an
   authenticated calculation returns exact aggregate tax/net values;
 - proves a client certificate signed by an untrusted CA is rejected;
+- proves a trusted certificate with an unlisted URI-SAN workload identity is
+  rejected before HTTP authentication;
 - negotiates the configured `h2` ALPN protocol with a trusted client; and
 - replaces the mounted CA file atomically, sends `SIGHUP`, and proves both an
   invalid replacement (last known-good configuration retained) and a valid
@@ -71,4 +73,5 @@ revocation, regional reload latency, or consumer identity governance.
 - The existing focused Rustls tests remain necessary; this contract adds image
   and process evidence rather than replacing them.
 - Production secret-manager, certificate lifecycle, revocation/CA overlap,
-  identity mapping, regional SLO, and on-call evidence remain release gates.
+  identity issuance/rotation, regional SLO, and on-call evidence remain
+  release gates.

@@ -21,6 +21,10 @@ deployment.
   subject/SAN, validity window, client-CA trust policy, and rollback material.
 - Confirm the replacement certificate matches the replacement private key and
   the client CA contains the intended workload issuer.
+- Confirm the certificate contains exactly one approved `spiffe://` URI SAN and
+  that `TAX_ENGINE_MTLS_ALLOWED_CLIENT_URIS` contains that identity. Changing
+  the workload identity allow-list is a reviewed deployment change, not an
+  operator-supplied request header or runtime override.
 - Confirm the secret manager writes each replacement file atomically, with
   restrictive permissions, and that the service account can read the files
   without exposing their contents to logs or operator terminals.
@@ -44,8 +48,8 @@ deployment.
    successful mTLS reload for the expected revision. The log must not contain
    certificate or key material.
 5. From an approved client, establish a new mTLS connection and verify the
-   expected server certificate, client-CA trust, ALPN, and authenticated
-   readiness response. Existing connections may remain on the previous
+  expected server certificate, client-CA trust, URI-SAN workload identity,
+  ALPN, and authenticated readiness response. Existing connections may remain on the previous
    snapshot until they naturally close.
 6. Confirm the calculation endpoint still requires its bearer token and that
    no quote, attestation, settlement, or evidence row was created by the

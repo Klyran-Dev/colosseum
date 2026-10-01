@@ -72,7 +72,8 @@ issue_certificate() {
 }
 
 issue_certificate server localhost serverAuth 'DNS:localhost,IP:127.0.0.1'
-issue_certificate client tax-engine-client clientAuth 'DNS:tax-engine-client'
+issue_certificate client tax-engine-client clientAuth 'DNS:tax-engine-client,URI:spiffe://solana-tax-protocol/tax-engine-client'
+issue_certificate wrong-client tax-engine-wrong-client clientAuth 'DNS:tax-engine-wrong-client,URI:spiffe://solana-tax-protocol/tax-engine-wrong-client'
 
 openssl req -x509 -newkey rsa:2048 -nodes \
   -keyout "$tls_dir/untrusted-ca.key" -out "$tls_dir/untrusted-ca.crt" -days 1 \
@@ -107,6 +108,7 @@ container_id=$(docker compose -p "$project_name" run \
   --env TAX_ENGINE_TLS_CERT_FILE=/run/tax-engine/server.crt \
   --env TAX_ENGINE_TLS_KEY_FILE=/run/tax-engine/server.key \
   --env TAX_ENGINE_MTLS_CA_FILE=/run/tax-engine/ca.crt \
+  --env 'TAX_ENGINE_MTLS_ALLOWED_CLIENT_URIS=["spiffe://solana-tax-protocol/tax-engine-client"]' \
   --env OTEL_ENVIRONMENT=local \
   --env OTEL_EXPORTER_OTLP_TRACES_ENDPOINT= \
   tax-engine)
@@ -139,6 +141,11 @@ untrusted_status=$(curl --silent --show-error --output /dev/null --write-out '%{
   --cacert "$tls_dir/ca.crt" --cert "$tls_dir/untrusted-client.crt" \
   --key "$tls_dir/untrusted-client.key" --max-time 5 "$base_url/healthz" || true)
 [ "$untrusted_status" != '204' ] || fail "health endpoint accepted an untrusted client certificate"
+
+wrong_identity_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+  --cacert "$tls_dir/ca.crt" --cert "$tls_dir/wrong-client.crt" \
+  --key "$tls_dir/wrong-client.key" --max-time 5 "$base_url/healthz" || true)
+[ "$wrong_identity_status" != '204' ] || fail "health endpoint accepted a trusted but unauthorized client identity"
 
 ready_without_token=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
   --cacert "$tls_dir/ca.crt" --cert "$tls_dir/client.crt" --key "$tls_dir/client.key" \

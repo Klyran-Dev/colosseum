@@ -2,6 +2,10 @@
 
 ## 2026-10-01
 
+- Added ADR-0236 and a fail-closed Tax Engine mTLS client-identity boundary:
+  non-local deployments require an exact bounded `spiffe://` URI-SAN
+  allow-list, enforced during the Rustls handshake before HTTP authentication.
+
 - Added ADR-0216 and migration `0053` to persist finalized verifier-derived
   mint precision on settlement routes. Checkout now renders zero-, six-, and
   nine-decimal assets using explicit `BigInt` scaling and fails closed when the

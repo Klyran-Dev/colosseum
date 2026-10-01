@@ -19,6 +19,7 @@ run_checker() {
   tax_engine_tls_cert=${8-/run/secrets/tax-engine/tls.crt}
   tax_engine_tls_key=${9-/run/secrets/tax-engine/tls.key}
   tax_engine_mtls_ca=${10-/run/secrets/tax-engine/client-ca.pem}
+  tax_engine_client_uris=${11-'["spiffe://solana-tax-protocol/api"]'}
   set -- env -i \
     PATH="$PATH" \
     DEPLOYMENT_ENV=staging \
@@ -34,6 +35,7 @@ run_checker() {
     TAX_ENGINE_TLS_CERT_FILE="$tax_engine_tls_cert" \
     TAX_ENGINE_TLS_KEY_FILE="$tax_engine_tls_key" \
     TAX_ENGINE_MTLS_CA_FILE="$tax_engine_mtls_ca" \
+    TAX_ENGINE_MTLS_ALLOWED_CLIENT_URIS="$tax_engine_client_uris" \
     DATABASE_URL="$synthetic_database" \
     API_DATABASE_URL="$synthetic_database" \
     WORKER_DATABASE_URL="$synthetic_database" \

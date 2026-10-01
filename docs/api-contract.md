@@ -87,7 +87,10 @@ network. Metrics are fixed-cardinality Prometheus text and contain no tax facts,
 tenant identifiers, rule contents, or credentials; the NGINX edge does not
 publish this listener. Local Docker development uses plain HTTP on that private
 network. Staging and production require Rustls mutual TLS with a configured
-server certificate, private key, and client-CA bundle; the bearer token remains
+server certificate, private key, client-CA bundle, and a JSON
+`TAX_ENGINE_MTLS_ALLOWED_CLIENT_URIS` allow-list containing one to 32 unique
+`spiffe://` URI identities. The client certificate must contain exactly one
+matching URI SAN; chain trust alone is insufficient. The bearer token remains
 defense in depth. Request bodies are limited to 128 KiB, compiled-rule cache
 capacity is bounded, and calculation admission has a 500 ms queue deadline.
 Overload, invalid rules/facts, unsupported schemas, malformed decimal values,
@@ -99,8 +102,8 @@ calculation endpoints.
 
 The API keeps quote, attestation, transaction compilation, and settlement
 critical paths in-process. The service is not an authoritative settlement or
-attestation boundary. Certificate issuance, rotation, revocation, client
-identity mapping, and production secret delivery remain deployment gates and
+attestation boundary. Certificate issuance, rotation, revocation, identity
+allow-list governance, and production secret delivery remain deployment gates and
 must be evidenced by the relevant runbooks before production activation.
 
 `make tax-engine-runtime-contract` builds the pinned service image and probes
@@ -123,7 +126,7 @@ image with synthetic staging certificates and verifies client-certificate
 rejection, trusted mTLS health/readiness, bearer authentication, exact
 calculation output, `h2` negotiation, and atomic invalid/valid CA replacement
 across `SIGHUP`. This is a local/CI transport contract; production CA
-issuance, identity mapping, revocation, secret delivery, regional trust
+issuance, identity rotation, revocation, secret delivery, regional trust
 configuration, and operator evidence remain release gates.
 
 ## Document calculation simulation

@@ -1082,6 +1082,21 @@ The reload path validates certificate, key, client CA, verifier, and ALPN in a
 blocking task before swapping the live snapshot. Invalid replacements are
 observable but cannot displace a valid configuration.
 
+### Tax Engine mTLS client identity
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Bearer token only | Simple application integration | Shared-secret replay and workload confusion | Rejected |
+| CA-chain validation only | Minimal handshake configuration | Trusts every workload issued by the CA | Rejected |
+| Subject/CN allow-list | Easy to inspect in certificates | CN is not a reliable workload identity and subject conventions drift | Rejected |
+| **Exact URI-SAN allow-list in the Rustls verifier** | Handshake-bound identity, no request-path I/O, bounded policy | Identity-set changes require a deployment reload/restart | **Selected in ADR-0236** |
+| External identity introspection per request | Centralized policy | Adds latency, availability, and a new authority to the hot path | Rejected |
+
+The selected verifier delegates chain, expiry, and client-auth validation to
+the standard WebPki verifier and then requires exactly one `spiffe://` URI SAN
+to match an immutable, bounded deployment allow-list. Raw certificate
+identities remain excluded from logs and metric labels.
+
 ### Tax Engine observability identity
 
 | Alternative | Strengths | Risks / trade-offs | Decision |

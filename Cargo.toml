@@ -70,3 +70,4 @@ tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "fmt", "js
 tower = "=0.5.3"
 uuid = { version = "=1.26.1", features = ["serde", "v4", "v7"] }
 wincode = "=0.6.1"
+x509-parser = "=0.18.1"

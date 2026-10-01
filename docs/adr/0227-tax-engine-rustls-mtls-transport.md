@@ -22,7 +22,8 @@ Use the pinned Rustls/axum-server stack for the Tax Engine listener:
 - local development uses the existing plain HTTP listener inside the isolated
   Compose network;
 - staging and production require `TAX_ENGINE_TLS_CERT_FILE`,
-  `TAX_ENGINE_TLS_KEY_FILE`, and `TAX_ENGINE_MTLS_CA_FILE` together;
+  `TAX_ENGINE_TLS_KEY_FILE`, `TAX_ENGINE_MTLS_CA_FILE`, and
+  `TAX_ENGINE_MTLS_ALLOWED_CLIENT_URIS` together;
 - the server presents its configured certificate and requires every client to
   present a certificate chaining to the configured CA;
 - ALPN is explicitly restricted to `h2` and `http/1.1` for the supported HTTP
@@ -35,7 +36,8 @@ Use the pinned Rustls/axum-server stack for the Tax Engine listener:
   configuration fail before binding.
 
 The bearer token remains an application-layer defense in depth and is not
-treated as a replacement for mTLS identity. Certificate provisioning,
+treated as a replacement for mTLS identity. ADR-0236 binds the client
+certificate to an exact URI-SAN allow-list during the handshake. Certificate provisioning,
 rotation/reload ceremony, workload authorization policy, CA compromise
 response, and production secret storage remain deployment-owned controls.
 

@@ -93,6 +93,11 @@ for tax_engine_tls_name in \
 do
   require_env "$tax_engine_tls_name"
 done
+require_env TAX_ENGINE_MTLS_ALLOWED_CLIENT_URIS
+case "$(read_env TAX_ENGINE_MTLS_ALLOWED_CLIENT_URIS)" in
+  *spiffe://*) ;;
+  *) fail "TAX_ENGINE_MTLS_ALLOWED_CLIENT_URIS must contain a spiffe:// identity" ;;
+esac
 
 for database_name in \
   DATABASE_URL \

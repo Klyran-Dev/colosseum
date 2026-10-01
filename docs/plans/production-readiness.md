@@ -369,7 +369,7 @@ exists.
 - [x] ADR-0230 adds an isolated real-container Tax Engine contract for image
   startup, liveness/readiness authentication, exact calculation, body limits,
   and canonical metrics. Linux/amd64 retention, production mTLS, resource
-  profiles, regional SLOs, and service-consumer authorization remain open.
+  profiles, regional SLOs, and production identity issuance remain open.
 - [x] ADR-0231 makes Tax Engine request rejection explicit: malformed JSON is
   `400` while the 128 KiB admission limit remains `413`, with focused and
   pinned-container evidence. Production gateway preservation and retry
@@ -379,13 +379,13 @@ exists.
   bounded timeouts, and p50/p95/p99 metadata. The 2026-10-01 local arm64 run
   returned 256/256 HTTP 200 responses with p50/p95/p99 of 1.344/3.650/10.302
   ms. This is local synthetic service evidence; Linux/amd64 retention,
-  resource profiles, regional SLOs, mTLS, and service-consumer authorization
+  resource profiles, regional SLOs, mTLS, and production identity issuance
   remain open.
 - [x] ADR-0233 adds a real pinned-image staging-mode mTLS contract covering
   trusted/untrusted client certificates, no-client rejection, bearer auth,
   exact calculation, h2 ALPN, invalid CA reload retention, and valid reload.
   Production secret-manager delivery, certificate lifecycle/revocation, CA
-  overlap, regional reload SLO, identity mapping, and on-call evidence remain
+  overlap, regional reload SLO, identity issuance/rotation, and on-call evidence remain
   open.
 - [x] ADR-0234 adds a real API container contract for file-backed EdDSA JWKS
   rotation. Valid `SIGHUP` replacement rejects the removed key and accepts the
@@ -399,6 +399,12 @@ exists.
   replacement retains the last known-good registry. Live provider overlap and
   revocation, HSM/KMS custody, secret-manager permissions, regional reload
   timing, legal ownership, and production on-call evidence remain open.
+- [x] ADR-0236 binds every non-local Tax Engine mTLS connection to an exact
+  `spiffe://` URI SAN from a bounded immutable allow-list. Chain validation
+  alone, subject/CN matching, and request-path introspection are rejected;
+  wrong-identity certificates fail before HTTP authentication. Production
+  identity issuance/rotation, CA overlap/revocation, regional handshake SLO,
+  and alert/on-call evidence remain open.
 - [x] Compiled-rule cache hit/miss/eviction/entry metrics are exported with
   fixed labels and bounded cardinality; concurrent-load and invalidation
   performance evidence remains open.
