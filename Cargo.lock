@@ -4690,6 +4690,7 @@ dependencies = [
 name = "tax-engine-service"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "axum",
  "axum-server",
  "observability",
@@ -4699,6 +4700,7 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "serde_json",
+ "subtle",
  "tax-engine",
  "thiserror 2.0.21",
  "tokio",

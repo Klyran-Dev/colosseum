@@ -8,6 +8,7 @@ cd "$repo_root"
 project_name=${COMPOSE_PROJECT_NAME:-solana-tax-protocol-tax-engine-contract}
 host_port=${TAX_ENGINE_CONTRACT_PORT:-18084}
 auth_token=tax-engine-runtime-contract-token
+new_auth_token=tax-engine-runtime-contract-token-v2
 container_id=''
 work_dir=$(mktemp -d)
 
@@ -31,6 +32,10 @@ cleanup() {
 
 trap cleanup EXIT
 
+printf '%s' "$auth_token" > "$work_dir/auth-token"
+chmod 755 "$work_dir"
+chmod 644 "$work_dir/auth-token"
+
 docker compose -p "$project_name" build tax-engine
 container_id=$(docker compose -p "$project_name" run \
   --detach \
@@ -39,7 +44,9 @@ container_id=$(docker compose -p "$project_name" run \
   --name "${project_name}-tax-engine" \
   --publish "127.0.0.1:${host_port}:8084" \
   --env TAX_ENGINE_ENV=local \
-  --env TAX_ENGINE_AUTH_TOKEN="$auth_token" \
+  --env TAX_ENGINE_AUTH_TOKEN= \
+  --env TAX_ENGINE_AUTH_TOKEN_FILE=/run/tax-engine-contract/auth-token \
+  --volume "$work_dir:/run/tax-engine-contract:ro" \
   --env OTEL_ENVIRONMENT=local \
   --env OTEL_EXPORTER_OTLP_TRACES_ENDPOINT= \
   tax-engine)
@@ -122,5 +129,21 @@ grep -Fq 'operation="calculate"' "$work_dir/metrics.txt" \
 if grep -Fq "$auth_token" "$work_dir/metrics.txt"; then
   fail "service authentication token leaked into metrics"
 fi
+
+printf '%s' "$new_auth_token" > "$work_dir/auth-token.next"
+chmod 644 "$work_dir/auth-token.next"
+mv "$work_dir/auth-token.next" "$work_dir/auth-token"
+docker kill --signal HUP "$container_id" >/dev/null
+sleep 1
+old_token_after_rotation_status=$(curl --silent --show-error --output /dev/null \
+  --write-out '%{http_code}' --header "authorization: Bearer $auth_token" \
+  "$base_url/readyz" || true)
+[ "$old_token_after_rotation_status" = '401' ] \
+  || fail "old service token remained valid after rotation"
+new_token_status=$(curl --silent --show-error --output /dev/null \
+  --write-out '%{http_code}' --header "authorization: Bearer $new_auth_token" \
+  "$base_url/readyz" || true)
+[ "$new_token_status" = '204' ] \
+  || fail "new service token was not accepted after rotation"
 
 echo "tax-engine runtime contract passed"

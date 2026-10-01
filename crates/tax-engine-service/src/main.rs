@@ -8,7 +8,7 @@ use std::{
     error::Error,
     fs::File,
     future::Future,
-    io::{self, BufReader},
+    io::{self, BufReader, Read},
     net::SocketAddr,
     path::{Path, PathBuf},
     pin::Pin,
@@ -16,6 +16,7 @@ use std::{
     time::Duration,
 };
 
+use arc_swap::ArcSwap;
 use axum_server::{Handle, tls_rustls::RustlsConfig};
 use rustls::{
     CertificateError, DigitallySignedStruct, DistinguishedName, RootCertStore, ServerConfig,
@@ -34,6 +35,7 @@ use tax_engine_service::{
 use tracing::{info, warn};
 
 const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(10);
+const MAX_AUTH_TOKEN_FILE_BYTES: usize = 4 * 1024;
 const MAX_ALLOWED_CLIENT_URIS: usize = 32;
 const MAX_ALLOWED_CLIENT_URI_LENGTH: usize = 256;
 const MAX_ALLOWED_CLIENT_URIS_JSON_LENGTH: usize = 8 * 1024;
@@ -50,6 +52,7 @@ struct Config {
     environment: Environment,
     bind_address: SocketAddr,
     auth_token: String,
+    auth_token_file: Option<PathBuf>,
     cache_capacity: usize,
     max_concurrency: usize,
     tls: Option<TlsFiles>,
@@ -112,16 +115,7 @@ impl Config {
         allowed_client_uris: Option<&str>,
     ) -> Result<Self, String> {
         let environment = Environment::parse(environment)?;
-        let auth_token = auth_token.trim();
-        if auth_token.is_empty() || auth_token.len() > 256 {
-            return Err("TAX_ENGINE_AUTH_TOKEN must contain 1 to 256 characters".to_string());
-        }
-        if environment != Environment::Local && auth_token == "local-development-only" {
-            return Err(
-                "TAX_ENGINE_AUTH_TOKEN cannot use the local development token outside local"
-                    .to_string(),
-            );
-        }
+        let auth_token = validate_auth_token(environment, auth_token)?;
         let cache_capacity = cache_capacity
             .parse::<usize>()
             .map_err(|_| "TAX_ENGINE_CACHE_CAPACITY must be a positive integer".to_string())?;
@@ -156,7 +150,8 @@ impl Config {
             bind_address: bind_address.parse().map_err(|_| {
                 "TAX_ENGINE_BIND_ADDRESS must be a valid socket address".to_string()
             })?,
-            auth_token: auth_token.to_string(),
+            auth_token,
+            auth_token_file: None,
             cache_capacity,
             max_concurrency,
             tls,
@@ -169,10 +164,23 @@ impl Config {
         let tls_private_key = env::var("TAX_ENGINE_TLS_KEY_FILE").ok();
         let tls_client_ca = env::var("TAX_ENGINE_MTLS_CA_FILE").ok();
         let allowed_client_uris = env::var("TAX_ENGINE_MTLS_ALLOWED_CLIENT_URIS").ok();
-        Self::from_values_with_identity(
-            &required_env("TAX_ENGINE_ENV")?,
+        let inline_token = env::var("TAX_ENGINE_AUTH_TOKEN")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        let token_file = env::var("TAX_ENGINE_AUTH_TOKEN_FILE")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        let environment = Environment::parse(&required_env("TAX_ENGINE_ENV")?)?;
+        let (auth_token, auth_token_file) =
+            resolve_auth_token(environment, inline_token.as_deref(), token_file.as_deref())?;
+        let mut config = Self::from_values_with_identity(
+            match environment {
+                Environment::Local => "local",
+                Environment::Staging => "staging",
+                Environment::Production => "production",
+            },
             &env::var("TAX_ENGINE_BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:8084".to_string()),
-            &required_env("TAX_ENGINE_AUTH_TOKEN")?,
+            &auth_token,
             &env::var("TAX_ENGINE_CACHE_CAPACITY")
                 .unwrap_or_else(|_| DEFAULT_CACHE_CAPACITY.to_string()),
             &env::var("TAX_ENGINE_MAX_CONCURRENCY")
@@ -183,8 +191,64 @@ impl Config {
                 tls_client_ca.as_deref(),
             ),
             allowed_client_uris.as_deref(),
-        )
+        )?;
+        config.auth_token_file = auth_token_file;
+        Ok(config)
     }
+}
+
+fn validate_auth_token(environment: Environment, raw: &str) -> Result<String, String> {
+    let auth_token = raw.trim();
+    if auth_token.is_empty() || auth_token.len() > 256 {
+        return Err("Tax Engine auth token must contain 1 to 256 characters".to_string());
+    }
+    if environment != Environment::Local && auth_token == "local-development-only" {
+        return Err(
+            "Tax Engine auth token cannot use the local development token outside local"
+                .to_string(),
+        );
+    }
+    Ok(auth_token.to_string())
+}
+
+fn resolve_auth_token(
+    environment: Environment,
+    inline_token: Option<&str>,
+    token_file: Option<&str>,
+) -> Result<(String, Option<PathBuf>), String> {
+    match (inline_token, token_file) {
+        (Some(_), Some(_)) => Err(
+            "TAX_ENGINE_AUTH_TOKEN and TAX_ENGINE_AUTH_TOKEN_FILE are mutually exclusive"
+                .to_string(),
+        ),
+        (Some(token), None) => Ok((validate_auth_token(environment, token)?, None)),
+        (None, Some(path)) => {
+            let path = non_empty_path("TAX_ENGINE_AUTH_TOKEN_FILE", path)?;
+            let token = read_auth_token_file(environment, &path)?;
+            Ok((token, Some(path)))
+        }
+        (None, None) => {
+            Err("TAX_ENGINE_AUTH_TOKEN or TAX_ENGINE_AUTH_TOKEN_FILE is required".to_string())
+        }
+    }
+}
+
+fn read_auth_token_file(environment: Environment, path: &Path) -> Result<String, String> {
+    let mut file = File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let mut bytes = Vec::new();
+    file.by_ref()
+        .take((MAX_AUTH_TOKEN_FILE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    if bytes.len() > MAX_AUTH_TOKEN_FILE_BYTES {
+        return Err(format!(
+            "{}: auth token file exceeds {MAX_AUTH_TOKEN_FILE_BYTES} bytes",
+            path.display()
+        ));
+    }
+    let token = std::str::from_utf8(&bytes)
+        .map_err(|_| format!("{}: auth token file is not UTF-8", path.display()))?;
+    validate_auth_token(environment, token)
 }
 
 fn parse_allowed_client_uris(
@@ -298,8 +362,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut telemetry = observability::init_tracing("tax_engine")?;
     let config = Config::from_env()?;
     let service = EngineService::with_limits(config.cache_capacity, config.max_concurrency)?;
+    let auth_token = Arc::new(ArcSwap::from_pointee(config.auth_token.clone()));
     let handle = Handle::<SocketAddr>::new();
-    let router = service.router(&config.auth_token);
+    let router = service.router_with_auth_token(auth_token.clone());
     info!(
         address = %config.bind_address,
         environment = ?config.environment,
@@ -309,21 +374,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         "tax engine service listening"
     );
 
-    let mut tls_reload: Option<ReloadFuture> = None;
-    let server: ServerFuture = match config.tls {
-        Some(tls_files) => {
-            let tls_config = build_mtls_config(&tls_files, &config.allowed_client_uris)?;
-            tls_reload = Some(build_tls_reload_future(
-                tls_config.clone(),
-                tls_files,
-                config.allowed_client_uris.clone(),
-            ));
-            Box::pin(
-                axum_server::bind_rustls(config.bind_address, tls_config)
-                    .handle(handle.clone())
-                    .serve(router.into_make_service()),
-            )
-        }
+    let tls_config = config
+        .tls
+        .as_ref()
+        .map(|tls_files| build_mtls_config(tls_files, &config.allowed_client_uris))
+        .transpose()?;
+    let tls_reload = build_runtime_reload_future(
+        tls_config.clone(),
+        config.tls.clone(),
+        config.allowed_client_uris.clone(),
+        auth_token,
+        config.auth_token_file.clone(),
+        config.environment,
+    );
+    let server: ServerFuture = match tls_config {
+        Some(tls_config) => Box::pin(
+            axum_server::bind_rustls(config.bind_address, tls_config)
+                .handle(handle.clone())
+                .serve(router.into_make_service()),
+        ),
         None => Box::pin(
             axum_server::bind(config.bind_address)
                 .handle(handle.clone())
@@ -504,52 +573,88 @@ fn reload_mtls_config(
     Ok(())
 }
 
-async fn reload_mtls_config_async(
-    config: RustlsConfig,
-    files: TlsFiles,
+async fn reload_runtime_config_async(
+    tls_config: Option<RustlsConfig>,
+    tls_files: Option<TlsFiles>,
     allowed_client_uris: Vec<String>,
+    auth_token: Arc<ArcSwap<String>>,
+    auth_token_file: Option<PathBuf>,
+    environment: Environment,
 ) -> Result<(), String> {
-    let replacement =
-        tokio::task::spawn_blocking(move || build_mtls_server_config(&files, &allowed_client_uris))
-            .await
-            .map_err(|error| format!("mTLS configuration validation task failed: {error}"))??;
-    install_mtls_config(&config, replacement);
+    let (replacement_token, replacement_tls) = tokio::task::spawn_blocking(move || {
+        let replacement_token = auth_token_file
+            .as_deref()
+            .map(|path| read_auth_token_file(environment, path))
+            .transpose()?;
+        let replacement_tls = tls_files
+            .as_ref()
+            .map(|files| build_mtls_server_config(files, &allowed_client_uris))
+            .transpose()?;
+        Ok::<_, String>((replacement_token, replacement_tls))
+    })
+    .await
+    .map_err(|error| format!("runtime configuration validation task failed: {error}"))??;
+
+    if let (Some(config), Some(replacement)) = (tls_config, replacement_tls) {
+        install_mtls_config(&config, replacement);
+    }
+    if let Some(token) = replacement_token {
+        auth_token.store(Arc::new(token));
+    }
     Ok(())
 }
 
-fn build_tls_reload_future(
-    config: RustlsConfig,
-    files: TlsFiles,
+fn build_runtime_reload_future(
+    tls_config: Option<RustlsConfig>,
+    tls_files: Option<TlsFiles>,
     allowed_client_uris: Vec<String>,
-) -> ReloadFuture {
+    auth_token: Arc<ArcSwap<String>>,
+    auth_token_file: Option<PathBuf>,
+    environment: Environment,
+) -> Option<ReloadFuture> {
+    if tls_config.is_none() && auth_token_file.is_none() {
+        return None;
+    }
     #[cfg(unix)]
     {
-        Box::pin(async move {
+        Some(Box::pin(async move {
             let mut hangup =
                 tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
             loop {
                 if hangup.recv().await.is_none() {
                     return Err("SIGHUP stream ended before shutdown".into());
                 }
-                match reload_mtls_config_async(
-                    config.clone(),
-                    files.clone(),
+                match reload_runtime_config_async(
+                    tls_config.clone(),
+                    tls_files.clone(),
                     allowed_client_uris.clone(),
+                    auth_token.clone(),
+                    auth_token_file.clone(),
+                    environment,
                 )
                 .await
                 {
-                    Ok(()) => info!("Tax Engine mTLS configuration reloaded"),
+                    Ok(()) => info!("Tax Engine runtime authentication configuration reloaded"),
                     Err(error) => {
-                        warn!(%error, "Tax Engine mTLS reload rejected; active configuration retained")
+                        warn!(%error, "Tax Engine runtime configuration reload rejected; active configuration retained")
                     }
                 }
             }
-        })
+        }) as ReloadFuture)
     }
     #[cfg(not(unix))]
     {
-        let _ = (config, files, allowed_client_uris);
-        Box::pin(async { Err("mTLS certificate reload requires a Unix SIGHUP signal".into()) })
+        let _ = (
+            tls_config,
+            tls_files,
+            allowed_client_uris,
+            auth_token,
+            auth_token_file,
+            environment,
+        );
+        Some(Box::pin(async {
+            Err("Tax Engine runtime reload requires a Unix SIGHUP signal".into())
+        }))
     }
 }
 
@@ -600,8 +705,9 @@ mod tests {
     use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName};
 
     use super::{
-        Config, Environment, TEST_CLIENT_URI, TlsFiles, build_mtls_config,
-        build_mtls_server_config, reload_mtls_config, validate_required,
+        Config, Environment, MAX_AUTH_TOKEN_FILE_BYTES, TEST_CLIENT_URI, TlsFiles,
+        build_mtls_config, build_mtls_server_config, read_auth_token_file, reload_mtls_config,
+        resolve_auth_token, validate_required,
     };
 
     struct MemoryPipe {
@@ -902,6 +1008,32 @@ mod tests {
             validate_required("TAX_ENGINE_ENV", "local"),
             Ok("local".to_string())
         );
+    }
+
+    #[test]
+    fn auth_token_sources_are_exclusive_bounded_and_reloadable() {
+        assert!(
+            resolve_auth_token(Environment::Local, Some("inline"), Some("/run/token")).is_err()
+        );
+        assert_eq!(
+            resolve_auth_token(Environment::Local, Some(" inline "), None),
+            Ok(("inline".to_string(), None))
+        );
+
+        static NEXT_TOKEN_FIXTURE: AtomicUsize = AtomicUsize::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "solana-tax-protocol-tax-engine-token-{}-{}",
+            std::process::id(),
+            NEXT_TOKEN_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::write(&path, b"file-token\n").expect("token fixture");
+        assert_eq!(
+            resolve_auth_token(Environment::Local, None, path.to_str()),
+            Ok(("file-token".to_string(), Some(path.clone())))
+        );
+        fs::write(&path, vec![b'a'; MAX_AUTH_TOKEN_FILE_BYTES + 1]).expect("oversized fixture");
+        assert!(read_auth_token_file(Environment::Local, &path).is_err());
+        fs::remove_file(path).expect("remove token fixture");
     }
 
     #[test]

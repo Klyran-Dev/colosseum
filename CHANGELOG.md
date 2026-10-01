@@ -2,6 +2,10 @@
 
 ## 2026-10-01
 
+- Added ADR-0237 and a fail-closed Tax Engine service-token rotation contract:
+  inline and file-backed credentials are mutually exclusive, file reads are
+  bounded, and Unix `SIGHUP` atomically replaces the token while retaining the
+  last known-good runtime configuration after invalid input.
 - Added ADR-0236 and a fail-closed Tax Engine mTLS client-identity boundary:
   non-local deployments require an exact bounded `spiffe://` URI-SAN
   allow-list, enforced during the Rustls handshake before HTTP authentication.

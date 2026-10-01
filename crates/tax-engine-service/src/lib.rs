@@ -1,3 +1,4 @@
+use arc_swap::ArcSwap;
 use axum::{
     Router,
     extract::{
@@ -16,6 +17,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+use subtle::ConstantTimeEq;
 use tax_engine::{
     CalculationResult, CompiledRuleSet, RuleSetDocument, TaxDocumentFacts, TaxDocumentResult,
     TaxFacts,
@@ -136,9 +138,13 @@ impl EngineService {
     }
 
     pub fn router(&self, auth_token: &str) -> Router {
+        self.router_with_auth_token(Arc::new(ArcSwap::from_pointee(auth_token.to_string())))
+    }
+
+    pub fn router_with_auth_token(&self, auth_token: Arc<ArcSwap<String>>) -> Router {
         let state = AppState {
             engine: self.clone(),
-            auth_token: Arc::from(auth_token.to_string()),
+            auth_token,
         };
         Router::new()
             .route("/healthz", get(healthz))
@@ -270,7 +276,7 @@ fn touch(order: &mut VecDeque<[u8; 32]>, digest: [u8; 32]) {
 #[derive(Clone)]
 struct AppState {
     engine: EngineService,
-    auth_token: Arc<str>,
+    auth_token: Arc<ArcSwap<String>>,
 }
 
 async fn healthz() -> StatusCode {
@@ -319,7 +325,8 @@ fn map_json_rejection(rejection: JsonRejection) -> ServiceError {
 }
 
 async fn authenticate(State(state): State<AppState>, request: Request, next: Next) -> Response {
-    match authorize(request.headers(), &state.auth_token) {
+    let auth_token = state.auth_token.load();
+    match authorize(request.headers(), auth_token.as_str()) {
         Ok(()) => next.run(request).await,
         Err(error) => error.into_response(),
     }
@@ -334,7 +341,7 @@ fn authorize(headers: &HeaderMap, expected: &str) -> Result<(), ServiceError> {
         .strip_prefix("Bearer ")
         .filter(|token| !token.is_empty() && token.len() <= 256)
         .ok_or(ServiceError::Unauthorized)?;
-    if token != expected {
+    if !bool::from(token.as_bytes().ct_eq(expected.as_bytes())) {
         return Err(ServiceError::Unauthorized);
     }
     Ok(())
@@ -343,7 +350,9 @@ fn authorize(headers: &HeaderMap, expected: &str) -> Result<(), ServiceError> {
 #[cfg(test)]
 mod tests {
     use super::{CalculateRequest, EngineService, MAX_REQUEST_BODY_BYTES};
+    use arc_swap::ArcSwap;
     use axum::{body::Body, http::Request, http::StatusCode};
+    use std::sync::Arc;
     use tax_engine::{
         BaseReference, PriceMode, Rate, RateSpec, RoundingMode, RoundingScope, RoundingSpec,
         RuleSet, RuleSetDocument, TaxBase, TaxComponentRule, TaxFacts,
@@ -407,6 +416,56 @@ mod tests {
             .await
             .expect("response");
         assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn auth_token_snapshot_rotates_without_rebuilding_the_router() {
+        let service = EngineService::new(2).expect("bounded cache configuration");
+        let token = Arc::new(ArcSwap::from_pointee("old-token".to_string()));
+        let router = service.router_with_auth_token(token.clone());
+
+        let old_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/readyz")
+                    .header("authorization", "Bearer old-token")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("old token response");
+        assert_eq!(old_response.status(), StatusCode::NO_CONTENT);
+
+        token.store(Arc::new("new-token".to_string()));
+
+        let old_after_rotation = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/readyz")
+                    .header("authorization", "Bearer old-token")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("old token response after rotation");
+        assert_eq!(old_after_rotation.status(), StatusCode::UNAUTHORIZED);
+
+        let new_response = router
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/readyz")
+                    .header("authorization", "Bearer new-token")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("new token response");
+        assert_eq!(new_response.status(), StatusCode::NO_CONTENT);
     }
 
     #[tokio::test]

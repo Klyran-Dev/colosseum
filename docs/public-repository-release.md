@@ -22,6 +22,9 @@ open.
   the public entry points and contain no unsupported production claims.
 - The public runbook index includes the Tax Engine mTLS certificate-rotation
   procedure, including fail-closed rollback and evidence-redaction rules.
+- The public runbook index includes the Tax Engine service-token rotation
+  procedure with atomic file delivery, overlap, revocation, and secret-redaction
+  requirements.
 - The deployment preflight contract accepts only the API's documented
   structured or compatibility JWKS and jurisdiction-provider representations
   and rejects local identity/provider material; provider rotation and HSM/KMS

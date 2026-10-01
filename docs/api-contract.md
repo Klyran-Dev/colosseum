@@ -110,7 +110,11 @@ must be evidenced by the relevant runbooks before production activation.
 the real listener for liveness, authenticated readiness, exact calculation,
 malformed/oversized request rejection, and fixed-cardinality metrics. It is a
 synthetic local/CI runtime contract and does not claim production identity,
-mTLS, live provider, or settlement authority.
+mTLS, live provider, or settlement authority. The Tax Engine service accepts
+either an inline bearer token or a bounded file-backed token source; the
+sources are mutually exclusive, and Unix deployments reload the file-backed
+token atomically on `SIGHUP` while retaining the last known-good value after a
+failed validation.
 
 On Unix staging and production deployments, an operator or secret-delivery
 controller may send `SIGHUP` after atomically replacing the configured TLS

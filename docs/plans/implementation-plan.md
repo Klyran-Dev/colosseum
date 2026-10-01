@@ -941,6 +941,21 @@ release gates.
 - [ ] Retain production identity issuance, rotation, CA overlap/revocation,
   regional handshake latency, and alert/on-call evidence.
 
+## ADR-0237 — Tax Engine service-token rotation
+
+- [x] Support exactly one bounded service-token source: inline
+  `TAX_ENGINE_AUTH_TOKEN` or file-backed `TAX_ENGINE_AUTH_TOKEN_FILE`.
+- [x] Validate file size, UTF-8, trimming, token bounds, and non-local
+  local-token rejection before listener bind.
+- [x] Add lock-free immutable token snapshots and sequential Unix `SIGHUP`
+  reload; validate token and TLS replacements together and retain the complete
+  last-known-good runtime configuration after any failure.
+- [x] Cover source exclusivity, bounded files, router rotation, deployment
+  preflight, and real pinned-container rotation.
+- [ ] Prove production secret-manager atomic delivery, file permissions,
+  overlap/revocation ceremony, compromise response, regional reload latency,
+  and alert/on-call evidence.
+
 ## ADR-0234 — atomic API JWKS reload for bounded identity rotation
 
 - [x] Add an optional file-backed JWKS source that is mutually exclusive with

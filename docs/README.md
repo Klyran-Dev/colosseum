@@ -40,6 +40,7 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [Atomic API JWKS reload for bounded identity rotation](adr/0234-api-jwks-atomic-reload.md)
 - [Atomic jurisdiction-provider key registry reload](adr/0235-jurisdiction-provider-key-atomic-reload.md)
 - [Tax Engine mTLS client identity binding](adr/0236-tax-engine-mtls-client-identity.md)
+- [Atomic Tax Engine service-token rotation](adr/0237-tax-engine-service-token-rotation.md)
 - [Settlement transaction and state machine](architecture/settlement-flow.md)
 - [Bounded immutable Split Plan decision](adr/0091-bounded-immutable-split-plan-context.md)
 - [Finalized split-settlement evidence projection](adr/0093-finalized-split-settlement-evidence-projection.md)

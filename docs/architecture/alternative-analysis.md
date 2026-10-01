@@ -1097,6 +1097,15 @@ the standard WebPki verifier and then requires exactly one `spiffe://` URI SAN
 to match an immutable, bounded deployment allow-list. Raw certificate
 identities remain excluded from logs and metric labels.
 
+### Tax Engine service-token rotation
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Process restart for every rotation | Simple lifecycle | Connection churn and larger emergency blast radius | Rejected as the only mechanism |
+| Secret-manager lookup per request | Centralized source | Adds hot-path latency and availability coupling | Rejected |
+| Mutable mutex-protected token | Straightforward implementation | Request-path contention and less explicit snapshot semantics | Rejected |
+| **Bounded file source with atomic SIGHUP replacement** | Lock-free request path, auditable rotation, last-known-good retention | Requires atomic deployment file delivery and Unix signal control | **Selected in ADR-0237** |
+
 ### Tax Engine observability identity
 
 | Alternative | Strengths | Risks / trade-offs | Decision |

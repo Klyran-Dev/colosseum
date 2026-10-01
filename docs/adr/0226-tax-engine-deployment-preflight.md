@@ -20,8 +20,9 @@ Extend `scripts/verify_deployment_config.sh` and its executable contract to
 require, for staging and production:
 
 - `TAX_ENGINE_ENV` exactly matching `DEPLOYMENT_ENV`; and
-- a non-empty `TAX_ENGINE_AUTH_TOKEN` that is not the checked-in local
-  development token; and
+- exactly one non-empty service-token source: `TAX_ENGINE_AUTH_TOKEN` or
+  `TAX_ENGINE_AUTH_TOKEN_FILE`, with the inline value not being the checked-in
+  local development token; and
 - all three non-local TLS paths: `TAX_ENGINE_TLS_CERT_FILE`,
   `TAX_ENGINE_TLS_KEY_FILE`, and `TAX_ENGINE_MTLS_CA_FILE`.
 - a non-empty `TAX_ENGINE_MTLS_ALLOWED_CLIENT_URIS` JSON array containing the
@@ -47,8 +48,9 @@ pretend an environment variable is transport security.
 ## Invariants and failure behavior
 
 - Non-local preflight fails when `TAX_ENGINE_ENV` is missing or mismatched.
-- Non-local preflight fails when the token is missing, empty, or the local
-  `local-development-only` value, or when any TLS path is missing.
+- Non-local preflight fails when both token sources are set, both are missing,
+  the inline token is the local `local-development-only` value, or any TLS
+  path is missing.
 - Non-local preflight fails when the Tax Engine client-identity allow-list is
   missing or does not declare a `spiffe://` identity; the binary performs the
   complete JSON, uniqueness, and bound validation.

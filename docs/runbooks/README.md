@@ -20,6 +20,7 @@ unknown state for reconciliation.
 - [Indexer gap and projection repair](indexer-gap.md)
 - [Backup and restore](backup-restore.md)
 - [Tax Engine mTLS certificate rotation](tax-engine-mtls-rotation.md)
+- [Tax Engine service-token rotation](tax-engine-service-token-rotation.md)
 - [Incident severity and error-budget response](incident-severity-and-error-budget.md)
 
 ## Required incident record

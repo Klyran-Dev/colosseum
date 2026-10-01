@@ -15,11 +15,12 @@ run_checker() {
   auth_mode=${4:-pair}
   jurisdiction_mode=${5:-pair}
   tax_engine_env=${6:-staging}
-  tax_engine_token=${7:-synthetic-nonlocal-service-token}
+  tax_engine_token=${7-synthetic-nonlocal-service-token}
   tax_engine_tls_cert=${8-/run/secrets/tax-engine/tls.crt}
   tax_engine_tls_key=${9-/run/secrets/tax-engine/tls.key}
   tax_engine_mtls_ca=${10-/run/secrets/tax-engine/client-ca.pem}
   tax_engine_client_uris=${11-'["spiffe://solana-tax-protocol/api"]'}
+  tax_engine_token_file=${12-}
   set -- env -i \
     PATH="$PATH" \
     DEPLOYMENT_ENV=staging \
@@ -32,6 +33,7 @@ run_checker() {
     ROUTE_VERIFIER_ALLOW_INSECURE_LOCAL_RPC=false \
     TAX_ENGINE_ENV="$tax_engine_env" \
     TAX_ENGINE_AUTH_TOKEN="$tax_engine_token" \
+    TAX_ENGINE_AUTH_TOKEN_FILE="$tax_engine_token_file" \
     TAX_ENGINE_TLS_CERT_FILE="$tax_engine_tls_cert" \
     TAX_ENGINE_TLS_KEY_FILE="$tax_engine_tls_key" \
     TAX_ENGINE_MTLS_CA_FILE="$tax_engine_mtls_ca" \
@@ -106,6 +108,21 @@ fi
 
 if run_checker false '' false pair pair staging local-development-only >/dev/null 2>&1; then
   echo "local tax engine token did not fail" >&2
+  exit 1
+fi
+
+run_checker false '' false pair pair staging '' \
+  /run/secrets/tax-engine/tls.crt /run/secrets/tax-engine/tls.key \
+  /run/secrets/tax-engine/client-ca.pem \
+  '["spiffe://solana-tax-protocol/api"]' \
+  /run/secrets/tax-engine/auth-token
+
+if run_checker false '' false pair pair staging synthetic-nonlocal-service-token \
+  /run/secrets/tax-engine/tls.crt /run/secrets/tax-engine/tls.key \
+  /run/secrets/tax-engine/client-ca.pem \
+  '["spiffe://solana-tax-protocol/api"]' \
+  /run/secrets/tax-engine/auth-token >/dev/null 2>&1; then
+  echo "simultaneous Tax Engine token sources did not fail" >&2
   exit 1
 fi
 

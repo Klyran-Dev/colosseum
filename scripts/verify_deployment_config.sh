@@ -82,8 +82,15 @@ require_exact INDEXER_ALLOW_INSECURE_LOCAL_RPC false
 require_exact ROUTE_VERIFIER_ENV "$deployment_env"
 require_exact ROUTE_VERIFIER_ALLOW_INSECURE_LOCAL_RPC false
 require_exact TAX_ENGINE_ENV "$deployment_env"
-require_env TAX_ENGINE_AUTH_TOKEN
-case "$(read_env TAX_ENGINE_AUTH_TOKEN)" in
+tax_engine_auth_token=$(read_env TAX_ENGINE_AUTH_TOKEN)
+tax_engine_auth_token_file=$(read_env TAX_ENGINE_AUTH_TOKEN_FILE)
+if [ -n "$tax_engine_auth_token" ] && [ -n "$tax_engine_auth_token_file" ]; then
+  fail "TAX_ENGINE_AUTH_TOKEN and TAX_ENGINE_AUTH_TOKEN_FILE are mutually exclusive"
+fi
+if [ -z "$tax_engine_auth_token" ] && [ -z "$tax_engine_auth_token_file" ]; then
+  fail "TAX_ENGINE_AUTH_TOKEN or TAX_ENGINE_AUTH_TOKEN_FILE is required"
+fi
+case "$tax_engine_auth_token" in
   local-development-only) fail "TAX_ENGINE_AUTH_TOKEN uses the local development token" ;;
 esac
 for tax_engine_tls_name in \
