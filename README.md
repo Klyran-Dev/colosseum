@@ -106,6 +106,13 @@ client certificate rejection/acceptance, bearer authorization, exact
 calculation, ALPN, and bounded SIGHUP reload behavior. It does not claim
 production certificate lifecycle or secret-manager evidence.
 
+Run `make api-auth-jwks-reload-contract` to exercise the real API image with
+an atomic file-backed EdDSA JWKS rotation. It proves the old key is rejected
+after a valid `SIGHUP` replacement, the new key is accepted, and malformed
+replacement material retains the last known-good snapshot. Production
+identity-provider overlap, revocation, secret-manager delivery, and regional
+reload evidence remain separate gates.
+
 Run `make refund-funding-verifier-drill` for the Docker-only synthetic
 two-replica refund-funding verification evidence. It proves lease-fenced single
 activation, one finalized RPC read under contention, and stale-lease reclaim
