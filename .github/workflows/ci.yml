@@ -120,6 +120,16 @@ jobs:
       - name: Run the synthetic pinned-image mTLS contract
         run: make tax-engine-mtls-runtime-contract
 
+  tax-engine-auth-rotation:
+    name: Tax Engine service-token rotation contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Run the synthetic pinned-image token rotation contract
+        run: make tax-engine-runtime-contract
+
   api-auth-jwks:
     name: API JWKS atomic reload contract
     runs-on: ubuntu-24.04

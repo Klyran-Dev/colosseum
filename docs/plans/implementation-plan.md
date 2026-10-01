@@ -952,6 +952,8 @@ release gates.
   last-known-good runtime configuration after any failure.
 - [x] Cover source exclusivity, bounded files, router rotation, deployment
   preflight, and real pinned-container rotation.
+- [x] Run the real-container token-rotation contract as a dedicated required
+  Ubuntu CI job, separate from the mTLS transport job.
 - [ ] Prove production secret-manager atomic delivery, file permissions,
   overlap/revocation ceremony, compromise response, regional reload latency,
   and alert/on-call evidence.

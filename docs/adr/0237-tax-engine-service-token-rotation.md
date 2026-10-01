@@ -63,6 +63,9 @@ logged, emitted as a metric label, or included in evidence.
 - The pinned Docker runtime contract mounts a synthetic token file, rotates it
   atomically with `SIGHUP`, and proves old-token rejection and new-token
   acceptance.
+- The required Ubuntu CI workflow runs this real-container contract as a
+  dedicated service-token rotation job; release-candidate evidence must retain
+  the job result with the other runtime contracts.
 - Secret-manager atomic delivery, file ownership/permissions, rotation
   overlap, compromise response, regional reload latency, and alert/on-call
   evidence remain production deployment gates.
