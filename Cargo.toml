@@ -19,6 +19,7 @@ members = [
     "crates/fx-evidence",
     "crates/fx-provider",
     "crates/fx-provider-http",
+    "crates/fx-signer-http",
     "crates/settlement-adjustments",
     "crates/settlement-coordinator",
     "crates/tax-engine",

@@ -57,6 +57,10 @@
   transport contract will enforce endpoint, credential, timeout, body-size,
   strict-decoding, exact-decimal, provider-identity, and raw-response evidence
   controls without selecting a concrete provider or weakening release gates.
+- Added ADR-0256 for a bounded vendor-neutral HTTP FX signer adapter. The
+  signer transport preserves exact payload bytes, server-owned key identity,
+  strict signature shape, bounded timeout/body behavior, and no duplicate
+  signing retries while leaving HSM/KMS custody decisions open.
 - Added ADR-0243 and a program pause-coverage contract. CI and normal checks
   now discover every public `transfer_checked` entry point and fail closed if
   movement is outside the explicit allowlist, if an allowlisted instruction

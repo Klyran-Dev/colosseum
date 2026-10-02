@@ -791,6 +791,17 @@ The decision register must be updated whenever a frozen choice changes.
 - [ ] Enable a concrete provider only after independent security, legal,
   HSM/KMS, failover, and regional latency evidence is approved.
 
+## ADR-0256 — bounded HTTP FX signer adapter
+
+- [x] Implement the vendor-neutral bounded HTTPS signer with exact payload,
+  configured key identity, strict signature decoding, and no hidden retry.
+- [x] Prove endpoint policy, payload binding, body limits, credential
+  redaction, redirect rejection, timeout, cancellation, and no-retry behavior
+  with local fixture tests.
+- [ ] Complete HSM/KMS non-exportability, mTLS/service identity, key ceremony,
+  rotation/revocation, recovery, audit, and regional latency evidence before
+  enabling production issuance.
+
 ## ADR-0154 — governed adjustment refund movement
 
 Implement only the first explicit movement contract: a negative `Refund` claim

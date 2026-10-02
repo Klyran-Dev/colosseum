@@ -1,0 +1,20 @@
+[package]
+name = "fx-signer-http"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+async-trait.workspace = true
+base64.workspace = true
+fx-provider = { path = "../fx-provider" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+base64.workspace = true

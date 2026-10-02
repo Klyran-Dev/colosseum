@@ -1953,6 +1953,19 @@ policy admission and evidence signing.
 | Broker-backed provider request | Durable asynchronous delivery | Adds expiry and delivery ambiguity to the quote path | Rejected |
 | **Separate bounded vendor-neutral HTTP source** | Explicit limits, strict decoding, transport isolation, and open provider gates | Requires a later approved provider adapter/configuration | **Selected in ADR-0255** |
 
+### FX signer HTTP transport
+
+**Criteria:** preserve exact payload bytes, keep key identity server-owned,
+bound remote signing behavior, and avoid duplicate or ambiguous signing.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| HTTP inside the FX policy crate | Fewer modules | Couples custody transport to policy and makes key-boundary review harder | Rejected |
+| Direct vendor SDK | Native vendor controls | Freezes an unresolved vendor and complicates portability/testing | Rejected |
+| Broker-backed signing | Durable delivery | Expiry, idempotency, and duplicate-sign ambiguity in the quote path | Rejected |
+| Accept arbitrary signature bytes | Low apparent latency | No strict shape or transport contract; substitution risk | Rejected |
+| **Separate bounded vendor-neutral HTTP signer** | Exact payload, bounded response, no retry, and explicit custody release gates | Requires later HSM/KMS and service-identity evidence | **Selected in ADR-0256** |
+
 ### FX evidence signing
 
 **Criteria:** protect key custody, avoid blocking async executors, bind the

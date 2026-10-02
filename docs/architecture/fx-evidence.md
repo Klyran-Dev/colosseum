@@ -85,3 +85,9 @@ strict JSON decoding, exact decimal parsing, configured provider identity, and
 raw-response evidence hashing explicit. It does not select a provider or make
 HTTP transport evidence sufficient for legal, regional, custody, or production
 release approval.
+
+ADR-0256 adds the corresponding vendor-neutral bounded HTTP signer transport.
+It transmits one exact canonical payload with a server-owned key identity,
+rejects redirects and non-canonical signatures, and never retries a remote
+signing operation. The async issuer still performs the authoritative envelope
+verification; HSM/KMS custody and key-ceremony evidence remain release gates.
