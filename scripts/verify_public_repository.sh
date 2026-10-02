@@ -194,6 +194,8 @@ require_text Makefile 'refund-cancellation-reconciliation-drill'
 require_text README.md 'refund-cancellation-reconciliation-drill'
 require_text docs/adr/README.md '0238-governed-refund-claim-cancellation-workflow.md'
 require_text CHANGELOG.md 'container and workflow pinning contract'
+require_text apps/web/package.json '"packageManager": "pnpm@12.3.4"'
+require_text docs/architecture/toolchain-compatibility.md '| pnpm | 12.3.4 |'
 
 tracked_secret_names=$(git ls-files | grep -E '(^|/)(\.env|\.env\.|id_rsa|id_ed25519|credentials\.json|service-account.*\.json|.*\.pem|.*\.key)$' || true)
 if [ -n "$tracked_secret_names" ]; then
