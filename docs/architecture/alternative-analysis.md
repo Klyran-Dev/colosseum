@@ -1811,4 +1811,4 @@ ABI, and keep the review surface explicit.
 | Reviewer grep/checklist | No tooling | Future movement paths can bypass pause unnoticed | Rejected |
 | Unit tests only | Precise behavior tests | Does not guarantee every entry point remains covered | Rejected |
 | Runtime reflection or macro registry | Centralized metadata | Adds on-chain/build complexity and ABI risk | Rejected |
-| **Explicit static entry-point coverage contract** | Deterministic, low overhead, credential-free, and fails before deployment review | New movement paths require an intentional allowlist update | **Selected in ADR-0243** |
+| **Explicit static entry-point coverage contract** | Deterministic, low overhead, credential-free, discovers all public functions containing token CPIs, and fails before deployment review | New movement paths require an intentional allowlist/guard update | **Selected in ADR-0243** |

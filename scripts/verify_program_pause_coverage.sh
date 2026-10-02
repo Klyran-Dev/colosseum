@@ -32,6 +32,37 @@ require_guard() {
         fail "$function_name does not call validate_protocol_not_paused"
 }
 
+movement_functions=$(awk '
+    function flush() {
+        if (in_function && has_transfer) {
+            print function_name
+        }
+    }
+    /^    pub fn / {
+        flush()
+        function_name = $0
+        sub(/^    pub fn /, "", function_name)
+        sub(/[<( ].*$/, "", function_name)
+        in_function = 1
+        has_transfer = 0
+    }
+    in_function && /token_interface::transfer_checked/ { has_transfer = 1 }
+    END { flush() }
+' "$program")
+
+expected_movement_functions='execute_adjustment_refund execute_vault_release settle settle_document settle_split'
+for function_name in $movement_functions; do
+    case " $expected_movement_functions " in
+        *" $function_name "*) ;;
+        *) fail "token movement is not represented in the explicit allowlist: $function_name" ;;
+    esac
+done
+
+for function_name in $expected_movement_functions; do
+    printf '%s\n' "$movement_functions" | grep -Fqx "$function_name" ||
+        fail "allowlisted movement instruction has no transfer_checked CPI: $function_name"
+done
+
 require_text 'fn validate_protocol_not_paused'
 require_guard settle
 require_guard settle_document

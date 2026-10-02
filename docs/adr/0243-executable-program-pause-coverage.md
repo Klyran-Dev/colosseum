@@ -29,8 +29,10 @@ The contract extracts each function body and requires the ordinary movement
 instructions to call `validate_protocol_not_paused`. The vault-release path
 must carry `protocol_config` through `ExecuteVaultRelease` and bind its pause
 state into release validation. The contract also requires the pause helper and
-the named entry points to exist, and runs from `make check` and the program CI
-job.
+the named entry points to exist. It discovers every public instruction that
+contains a `transfer_checked` CPI and rejects movement instructions that are
+not represented in the explicit allowlist. The contract runs from `make check`
+and the program CI job.
 
 The allowlist is intentionally explicit: adding a new token-moving instruction
 requires an ADR/contract update and a test before it can pass CI. Static

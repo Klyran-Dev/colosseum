@@ -614,8 +614,9 @@ validator release gate.
 ## ADR-0243 — executable program pause-coverage contract
 
 - [x] Add an explicit static allowlist contract covering every current
-  authority-bearing token-movement instruction and require the protocol pause
-  boundary in CI and normal checks.
+  authority-bearing token-movement instruction, discover future public
+  `transfer_checked` entry points, and require the protocol pause boundary in
+  CI and normal checks.
 - [x] Bind the vault-release pause-PDA account and pause-state validation into
   the same contract.
 - [ ] Keep Linux validator, staging governance, and production incident-drill
