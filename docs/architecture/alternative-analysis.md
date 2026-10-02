@@ -1799,3 +1799,16 @@ API-only or duplicated governance controls.
 | API-only pause check | No program change | Direct wallet/RPC callers can bypass the API | Rejected |
 | Separate mutable release pause flag | Localized | Duplicates and can diverge from protocol governance state | Rejected |
 | **Read the protocol pause PDA in release execution** | Uniform chain authority, fail-closed before CPI, consistent with other movement instructions | Adds one read-only account to the versioned instruction | **Selected in ADR-0242** |
+
+### Program pause-coverage enforcement
+
+**Criteria:** detect future token-movement entry points that omit the emergency
+pause boundary, remain deterministic and credential-free, preserve the on-chain
+ABI, and keep the review surface explicit.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Reviewer grep/checklist | No tooling | Future movement paths can bypass pause unnoticed | Rejected |
+| Unit tests only | Precise behavior tests | Does not guarantee every entry point remains covered | Rejected |
+| Runtime reflection or macro registry | Centralized metadata | Adds on-chain/build complexity and ABI risk | Rejected |
+| **Explicit static entry-point coverage contract** | Deterministic, low overhead, credential-free, and fails before deployment review | New movement paths require an intentional allowlist update | **Selected in ADR-0243** |

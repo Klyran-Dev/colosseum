@@ -741,6 +741,9 @@ and operational gates are intentionally not marked complete by unit tests.
   extends the on-chain stop to vault-release token movement and the real
   conformance case proves no balance drift while paused; staging governance,
   delivery, and incident evidence remain required.
+  ADR-0243 additionally makes current program pause coverage an executable
+  static contract, preventing future token-movement entry points from silently
+  bypassing the emergency boundary.
 - [x] ADR-0218 makes release bundles record named SHA-256 hashes for the final
   Solana program binary and resolved Compose configuration, and verifies both
   through a synthetic contract test. A successful Linux release-candidate run,

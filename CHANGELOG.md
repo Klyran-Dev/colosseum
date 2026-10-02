@@ -2,6 +2,10 @@
 
 ## 2026-10-02
 
+- Added ADR-0243 and a program pause-coverage contract. CI and normal checks
+  now fail closed if any allowlisted token-movement instruction loses its
+  protocol pause boundary or if vault-release loses its PDA-bound pause state.
+  Runtime validator and staging incident evidence remain separate gates.
 - Added ADR-0242 to make the on-chain emergency pause cover governed vault
   release execution. The release instruction now requires the protocol-config
   PDA and rejects before CPI while paused; localnet conformance also checks

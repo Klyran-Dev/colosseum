@@ -243,3 +243,4 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0240: Lease-safe refund-claim cancellation transition trigger](0240-refund-claim-cancellation-lease-trigger.md)
 - [ADR-0241: Executable Linux conformance workflow contract](0241-linux-conformance-workflow-contract.md)
 - [ADR-0242: Protocol pause gates vault-release execution](0242-protocol-pause-vault-release-execution.md)
+- [ADR-0243: Executable program pause-coverage contract](0243-executable-program-pause-coverage.md)

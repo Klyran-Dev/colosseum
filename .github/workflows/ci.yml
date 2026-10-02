@@ -32,6 +32,8 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Run bounded signed-message property tests
         run: cargo test --locked -p settlement-coordinator --all-targets
+      - name: Verify on-chain protocol pause coverage
+        run: make program-pause-coverage-contract
 
   web:
     name: Web tests, typecheck, and build

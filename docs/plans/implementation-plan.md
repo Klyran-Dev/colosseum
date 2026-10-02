@@ -611,6 +611,16 @@ validator release gate.
   multisig/timelock pause-ceremony evidence before enabling production release
   movement.
 
+## ADR-0243 — executable program pause-coverage contract
+
+- [x] Add an explicit static allowlist contract covering every current
+  authority-bearing token-movement instruction and require the protocol pause
+  boundary in CI and normal checks.
+- [x] Bind the vault-release pause-PDA account and pause-state validation into
+  the same contract.
+- [ ] Keep Linux validator, staging governance, and production incident-drill
+  evidence as separate release gates.
+
 ## ADR-0154 — governed adjustment refund movement
 
 Implement only the first explicit movement contract: a negative `Refund` claim
