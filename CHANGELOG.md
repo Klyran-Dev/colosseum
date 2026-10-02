@@ -30,6 +30,10 @@
   production-candidate and 5–7 week controlled-production estimates remain
   conditional, and no release gate, audit, legal approval, or evidence
   requirement is waived.
+- Added ADR-0252 for bounded concurrent FX provider acquisition. Provider
+  fan-out now has an explicit design boundary for source identity, concurrency,
+  per-provider deadlines, aggregate cancellation, and partial-failure evidence
+  before any real vendor adapter is enabled.
 - Added ADR-0243 and a program pause-coverage contract. CI and normal checks
   now discover every public `transfer_checked` entry point and fail closed if
   movement is outside the explicit allowlist, if an allowlisted instruction

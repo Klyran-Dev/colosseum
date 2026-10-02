@@ -1913,3 +1913,16 @@ operational gates while reducing calendar time through independent work.
 | Implement before scope and authority are frozen | Fast apparent start | Creates rework and unsafe legal/provider assumptions | Rejected |
 | Parallel work without named owners or exit artifacts | Maximum concurrency | Ambiguous accountability and weak release evidence | Rejected |
 | **Three owned workstreams behind a Day 2 decision freeze** | Shortens schedule while preserving explicit exit evidence and unchanged Tier-1 gates | Requires integration governance and merge coordination | **Selected in ADR-0251** |
+
+### FX provider acquisition
+
+**Criteria:** preserve exact agreement semantics while bounding task count,
+socket usage, tail latency, cancellation, and provider identity.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Sequential provider calls | Simple | Provider tail latency accumulates and failover is slow | Rejected |
+| Unbounded async fan-out | Fast apparent success | Resource exhaustion, retry storms, and detached work | Rejected |
+| First successful response | Lowest apparent latency | Nondeterministic authority and no agreement proof | Rejected |
+| Broker-backed acquisition | Durable retries | Adds a dependency and expiry complexity to quote issuance | Rejected |
+| **Bounded concurrent acquisition with per-provider and aggregate deadlines** | Low latency, bounded resources, explicit cancellation, and deterministic handoff to policy | Requires adapter-level retry/circuit controls | **Selected in ADR-0252** |

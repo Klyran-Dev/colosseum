@@ -740,6 +740,18 @@ The authoritative decision record is
 [ADR-0251](../adr/0251-accelerated-tier1-delivery-and-decision-freeze.md).
 The decision register must be updated whenever a frozen choice changes.
 
+## ADR-0252 — bounded concurrent FX provider acquisition
+
+- [ ] Add the object-safe async source port with server-owned provider identity.
+- [ ] Reject invalid requests, duplicate/unapproved sources, identity
+  substitution, and unbounded topology before any provider call.
+- [ ] Implement bounded Tokio fan-out with maximum concurrency, per-provider
+  deadlines, aggregate cancellation, and bounded failure classifications.
+- [ ] Prove maximum in-flight calls, timeout/cancellation behavior, partial
+  failure, and deterministic handoff to ADR-0250 admission with tests.
+- [ ] Integrate approved regional adapters only after provider selection,
+  legal ownership, HSM/KMS, and production SLO evidence are approved.
+
 ## ADR-0154 — governed adjustment refund movement
 
 Implement only the first explicit movement contract: a negative `Refund` claim
