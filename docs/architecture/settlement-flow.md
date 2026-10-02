@@ -20,6 +20,13 @@
 8. Indexer observes the signature, verifies the receipt and logs at the configured commitment, and updates projections.
 9. Reconciliation confirms chain balances and transitions the external status to `finalized`.
 
+The singleton `protocol-config` PDA is a mandatory read-only account on every
+token-moving instruction, including governed `execute_vault_release`.
+`ProtocolConfig.paused` is checked before the first token CPI; claim creation
+and governance cancellation remain available for incident recovery. ADR-0242
+defines the vault-release account-contract extension and its conformance
+evidence.
+
 ## Target hot-path instruction shape
 
 ```text

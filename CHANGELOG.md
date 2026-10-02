@@ -2,6 +2,11 @@
 
 ## 2026-10-02
 
+- Added ADR-0242 to make the on-chain emergency pause cover governed vault
+  release execution. The release instruction now requires the protocol-config
+  PDA and rejects before CPI while paused; localnet conformance also checks
+  vault/destination balance conservation. Linux validator and staging
+  multisig/timelock evidence remain release gates.
 - Added ADR-0241 and an executable conformance workflow contract. Normal
   checks now fail closed if CI or release-candidate workflows lose the pinned
   Linux/amd64 assertion, Dockerized validator command, evidence postcondition,

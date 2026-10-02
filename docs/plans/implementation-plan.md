@@ -600,6 +600,17 @@ validator release gate.
   commit; the workflow contract protects the gate but cannot create validator,
   provider, identity, or production-operational evidence.
 
+## ADR-0242 — protocol pause gates vault-release execution
+
+- [x] Add the protocol-config PDA to the versioned vault-release execution
+  account set and reject paused execution before any token CPI or claim
+  mutation.
+- [x] Add a failing-first Rust invariant test and extend the real localnet
+  release case to prove paused balances remain unchanged.
+- [ ] Retain successful Linux/amd64 validator evidence and staging
+  multisig/timelock pause-ceremony evidence before enabling production release
+  movement.
+
 ## ADR-0154 — governed adjustment refund movement
 
 Implement only the first explicit movement contract: a negative `Refund` claim

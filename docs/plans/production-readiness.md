@@ -737,8 +737,10 @@ and operational gates are intentionally not marked complete by unit tests.
 - [ ] Emergency pause/unpause is exercised on localnet and staging with
   multisig/timelock authority, event alerting, and a documented break-glass
   runbook. ADR-0131 now provides finalized event projection, fixed-cardinality
-  active/unknown alerts, and localnet pause-blocking assertions; staging
-  governance, delivery, and incident evidence remain required.
+  active/unknown alerts, and localnet pause-blocking assertions. ADR-0242
+  extends the on-chain stop to vault-release token movement and the real
+  conformance case proves no balance drift while paused; staging governance,
+  delivery, and incident evidence remain required.
 - [x] ADR-0218 makes release bundles record named SHA-256 hashes for the final
   Solana program binary and resolved Compose configuration, and verifies both
   through a synthetic contract test. A successful Linux release-candidate run,

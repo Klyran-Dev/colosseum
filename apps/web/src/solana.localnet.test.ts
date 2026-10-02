@@ -585,6 +585,7 @@ function executeReleaseInstruction(
     "execute_vault_release",
     [
       { pubkey: releaseApprover.publicKey, isSigner: true, isWritable: false },
+      { pubkey: protocolConfig(), isSigner: false, isWritable: false },
       { pubkey: merchant.publicKey, isSigner: false, isWritable: false },
       { pubkey: mint, isSigner: false, isWritable: false },
       { pubkey: tokenProgram, isSigner: false, isWritable: false },
@@ -1014,6 +1015,28 @@ describe("validator-backed settlement conformance", () => {
         now + 3_600n,
       ),
     ], [releaseProposer]);
+    const beforePausedRelease = await Promise.all([
+      getAccount(connection, vault.address, "finalized"),
+      getAccount(connection, releaseDestination.address, "finalized"),
+    ]);
+    await send([setProtocolPausedInstruction(true)], []);
+    await expect(send([
+      executeReleaseInstruction(
+        mint,
+        vault.address,
+        releaseDestination.address,
+        TOKEN_PROGRAM_ID,
+        10n,
+      ),
+    ], [releaseApprover])).rejects.toThrow();
+    const afterPausedRelease = await Promise.all([
+      getAccount(connection, vault.address, "finalized"),
+      getAccount(connection, releaseDestination.address, "finalized"),
+    ]);
+    expect(afterPausedRelease.map((account) => account.amount)).toEqual(
+      beforePausedRelease.map((account) => account.amount),
+    );
+    await send([setProtocolPausedInstruction(false)], []);
     await send([cancelReleaseInstruction(mint, 10n)], [releaseGovernance]);
     await expect(send([
       executeReleaseInstruction(

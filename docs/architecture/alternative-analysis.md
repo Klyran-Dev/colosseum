@@ -1786,3 +1786,16 @@ conformance execution path.
 | Runtime evidence verifier only | Strong postcondition after execution | Cannot prove the workflow invoked the authoritative command on the required runner | Rejected |
 | Second independent conformance workflow | Extra separation | Duplicate cost and two sources of release truth | Rejected |
 | **Static contract over CI and release-candidate workflows** | Deterministic, public-safe, credential-free, and runs in normal checks | Requires intentional updates with workflow changes | **Selected in ADR-0241** |
+
+### Protocol pause coverage for vault release execution
+
+**Criteria:** stop every protocol-controlled token movement during an
+emergency pause, preserve one authoritative state, fail before CPI, and avoid
+API-only or duplicated governance controls.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Pause only ordinary settlement | No release account change | Leaves treasury release as an emergency-stop bypass | Rejected |
+| API-only pause check | No program change | Direct wallet/RPC callers can bypass the API | Rejected |
+| Separate mutable release pause flag | Localized | Duplicates and can diverge from protocol governance state | Rejected |
+| **Read the protocol pause PDA in release execution** | Uniform chain authority, fail-closed before CPI, consistent with other movement instructions | Adds one read-only account to the versioned instruction | **Selected in ADR-0242** |

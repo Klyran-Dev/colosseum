@@ -339,6 +339,7 @@ pub mod settlement {
             destination: ctx.accounts.destination.key(),
             now_unix: Clock::get()?.unix_timestamp,
             vault_amount: ctx.accounts.tax_vault.amount,
+            protocol_paused: ctx.accounts.protocol_config.paused,
         };
         validate_release_claim_for_execution(
             &ctx.accounts.registry,
@@ -1479,6 +1480,11 @@ pub struct CreateVaultReleaseClaim<'info> {
 #[instruction(nonce: u64)]
 pub struct ExecuteVaultRelease<'info> {
     pub approver: Signer<'info>,
+    #[account(
+        seeds = [b"protocol-config"],
+        bump = protocol_config.bump,
+    )]
+    pub protocol_config: Account<'info, ProtocolConfig>,
     pub merchant: SystemAccount<'info>,
     pub mint: InterfaceAccount<'info, Mint>,
     pub token_program: Interface<'info, TokenInterface>,
@@ -2970,6 +2976,7 @@ struct ReleaseExecutionContext {
     destination: Pubkey,
     now_unix: i64,
     vault_amount: u64,
+    protocol_paused: bool,
 }
 
 fn validate_release_claim_for_execution(
@@ -2978,6 +2985,7 @@ fn validate_release_claim_for_execution(
     approver: Pubkey,
     execution: &ReleaseExecutionContext,
 ) -> Result<()> {
+    require!(!execution.protocol_paused, SettlementError::ProtocolPaused);
     validate_release_registry_scope(registry, execution.merchant, execution.mint)?;
     require!(registry.active, SettlementError::ReleaseRegistryInactive);
     require_keys_eq!(
@@ -3735,6 +3743,7 @@ mod tests {
             destination: claim.destination,
             now_unix: 1_800_000_200,
             vault_amount: 100,
+            protocol_paused: false,
         };
         assert!(
             validate_release_claim_for_execution(&registry, &claim, registry.approver, &execution,)
@@ -3776,6 +3785,12 @@ mod tests {
                 &execution,
             )
             .is_err()
+        );
+        let mut paused = execution;
+        paused.protocol_paused = true;
+        assert!(
+            validate_release_claim_for_execution(&registry, &claim, registry.approver, &paused,)
+                .is_err()
         );
     }
 }
