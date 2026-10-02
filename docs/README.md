@@ -15,6 +15,7 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [Registry-bound FX evidence issuance](adr/0248-registry-bound-fx-issuance.md)
 - [FX provider identity allowlist](adr/0249-fx-provider-identity-allowlist.md)
 - [Deterministic FX provider agreement](adr/0250-deterministic-fx-provider-agreement.md)
+- [Accelerated Tier-1 delivery and decision freeze](adr/0251-accelerated-tier1-delivery-and-decision-freeze.md)
 - [Document quote, attestation, payment binding, and checkout contracts](adr/0204-authoritative-document-quote-boundary.md)
 - [Jurisdiction-resolution bounded context](architecture/jurisdiction-resolution.md)
 - [Gold-standard UI/UX](architecture/ui-ux.md)

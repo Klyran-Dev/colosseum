@@ -25,6 +25,11 @@
 - Added ADR-0250 for deterministic FX provider agreement. Multi-provider
   policies require exact economic agreement and select by policy priority;
   disagreement and insufficient provider evidence fail closed.
+- Added ADR-0251 for an accelerated Tier-1 delivery model. Three named
+  workstreams may run in parallel after a Day 2 decision freeze; the 3–4 week
+  production-candidate and 5–7 week controlled-production estimates remain
+  conditional, and no release gate, audit, legal approval, or evidence
+  requirement is waived.
 - Added ADR-0243 and a program pause-coverage contract. CI and normal checks
   now discover every public `transfer_checked` entry point and fail closed if
   movement is outside the explicit allowlist, if an allowlisted instruction

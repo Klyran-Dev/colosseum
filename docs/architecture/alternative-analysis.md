@@ -1901,3 +1901,15 @@ tax-engine hot path.
 | Average or median rates | Tolerates market differences | Adds ambiguous legal and rounding semantics; can hide bad data | Rejected |
 | Silently discard invalid/disagreeing candidates | Higher availability | Masks provider faults and weakens evidence | Rejected |
 | **Exact economic agreement with policy-priority selection** | Deterministic, auditable, bounded, and conservative | Lower availability on disagreement | **Selected in ADR-0250** |
+
+### Tier-1 delivery sequencing
+
+**Criteria:** preserve all correctness, security, legal, conformance, and
+operational gates while reducing calendar time through independent work.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Sequential workstreams | Simple coordination | Delays independent evidence and extends external-dependency exposure | Rejected |
+| Implement before scope and authority are frozen | Fast apparent start | Creates rework and unsafe legal/provider assumptions | Rejected |
+| Parallel work without named owners or exit artifacts | Maximum concurrency | Ambiguous accountability and weak release evidence | Rejected |
+| **Three owned workstreams behind a Day 2 decision freeze** | Shortens schedule while preserving explicit exit evidence and unchanged Tier-1 gates | Requires integration governance and merge coordination | **Selected in ADR-0251** |

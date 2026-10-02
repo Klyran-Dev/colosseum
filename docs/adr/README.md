@@ -251,3 +251,4 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0248: Registry-bound FX evidence issuance](0248-registry-bound-fx-issuance.md)
 - [ADR-0249: FX provider identity allowlist](0249-fx-provider-identity-allowlist.md)
 - [ADR-0250: Deterministic FX provider agreement](0250-deterministic-fx-provider-agreement.md)
+- [ADR-0251: Accelerated Tier-1 delivery and decision freeze](0251-accelerated-tier1-delivery-and-decision-freeze.md)

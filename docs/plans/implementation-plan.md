@@ -695,6 +695,51 @@ validator release gate.
 - [ ] Exercise bounded concurrent provider acquisition, regional failover,
   provider SLOs, legal ownership, and production agreement evidence.
 
+## ADR-0251 — accelerated Tier-1 delivery and decision freeze
+
+Acceleration changes sequencing and ownership, not the Tier-1 definition of
+done. The planning estimate is a 3–4 week production candidate and a 5–7 week
+controlled production launch, conditional on external approvals and evidence.
+
+- [ ] **Days 1–2 — freeze decisions:** record the initial FX provider and
+  backup/allowlist, supported jurisdictions and assets, legal/tax owner,
+  staging environment and regions, RPC providers, SLOs, evidence retention,
+  rollback authority, and incident commander.
+- [ ] **Workstream A — blockchain/conformance:** produce the Linux/amd64
+  validator artifact, wallet-signing matrix, legacy SPL and extension-free
+  Token-2022 evidence, failover/reconciliation evidence, and finalized
+  account/amount-conservation proofs.
+- [ ] **Workstream B — platform/security:** provision HSM/KMS controls and key
+  ceremony, Linux/amd64 CI, pinned image/dependency/SBOM scans, observability,
+  threat-model review, backup/restore, rollback, and incident rehearsals.
+- [ ] **Workstream C — provider/tax/legal:** integrate the approved provider
+  ports, establish provider SLOs and regional failover, publish the supported
+  jurisdiction/asset matrix, obtain rule/legal ownership, and produce signed
+  FX/rule provenance evidence.
+- [ ] **Week 1 integration readiness:** all three workstreams have passing
+  interface contracts, named artifact owners, production-like dashboards, and
+  no unresolved authority boundary.
+- [ ] **Weeks 2–3 evidence sprint:** run wallet, validator, Token-2022,
+  provider failover, load, reconciliation, and regional latency tests in
+  parallel. Record workload, region, RPC, commitment, resource profile, and
+  p50/p95/p99 results.
+- [ ] **Weeks 3–4 readiness:** close independent program/security review,
+  threat-model findings, backup/restore, rollback, and incident-rehearsal
+  evidence. Critical/high findings block the candidate unless an explicit,
+  time-bound exception is approved.
+- [ ] **Weeks 5–6 canary and launch review:** run the staging canary, review the
+  complete evidence packet, obtain provider/tax/legal approval, verify signed
+  release artifacts/SBOM/provenance, and record a staffed go/no-go decision.
+- [ ] **Controlled-production gates:** exact Linux validator evidence, live
+  wallet and Token-2022 matrix, measured regional SLOs, HSM/KMS rotation and
+  recovery, failover/reconciliation, independent audit disposition,
+  restore/rollback/incident evidence, and public-safe documentation are all
+  green. No schedule target can waive a gate.
+
+The authoritative decision record is
+[ADR-0251](../adr/0251-accelerated-tier1-delivery-and-decision-freeze.md).
+The decision register must be updated whenever a frozen choice changes.
+
 ## ADR-0154 — governed adjustment refund movement
 
 Implement only the first explicit movement contract: a negative `Refund` claim
