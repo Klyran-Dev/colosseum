@@ -47,3 +47,6 @@ ADR-0247 provides the warm digest-keyed policy snapshot. Reload validation is
 Production issuance must resolve the exact approved digest through that
 registry before creating an issuer; direct issuer construction is reserved for
 isolated tests or explicitly reviewed adapters.
+Each policy also carries a bounded exact-match provider allowlist. A quote from
+an unapproved provider fails before signing; provider rotation requires a new
+immutable policy version.

@@ -1875,3 +1875,16 @@ isolation.
 | Caller assertion that a policy is approved | Small request type | No cryptographic or registry-verifiable authority | Rejected |
 | Database/remote policy lookup per request | Centralized | Hot-path dependency and mutable replay semantics | Rejected |
 | **Exact digest lookup through the immutable registry before issuer construction** | Fail-closed, lock-free, deterministic request snapshot | Production adapters must use the bound API | **Selected in ADR-0248** |
+
+### FX provider identity authorization
+
+**Criteria:** bind provider authority to the approved policy, preserve tenant
+and jurisdiction-specific governance, remain replayable, and fail closed on
+unapproved quote sources.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Trust the candidate provider string | Minimal configuration | Any source can claim an accepted identity | Rejected |
+| Global process-wide allowlist | Easy lookup | Cannot express policy-scoped approval or clean replay | Rejected |
+| Caller-supplied provider authorization | Flexible | Untrusted request becomes an authority boundary | Rejected |
+| **Exact bounded provider allowlist in the immutable policy** | Policy-scoped, deterministic, and fail-closed | Provider rotation requires a new policy version | **Selected in ADR-0249** |

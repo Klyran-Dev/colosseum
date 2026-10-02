@@ -678,6 +678,14 @@ validator release gate.
 - [ ] Migrate a concrete production provider adapter and HSM/KMS signer to the
   bound API after provider, legal, custody, and staging decisions are approved.
 
+## ADR-0249 — FX provider identity allowlist
+
+- [x] Add a bounded, unique, exact-match provider allowlist to every FX policy.
+- [x] Reject unapproved provider candidates before signing and preserve the
+  existing server-owned evidence boundary.
+- [ ] Select and exercise concrete providers, regional routing, quorum policy,
+  legal ownership, and provider failover evidence.
+
 ## ADR-0154 — governed adjustment refund movement
 
 Implement only the first explicit movement contract: a negative `Refund` claim

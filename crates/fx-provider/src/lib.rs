@@ -23,6 +23,7 @@ use tax_engine::{MAX_ATOMIC_AMOUNT, RoundingMode};
 use thiserror::Error;
 
 pub const MAX_ALLOWED_PAIRS: usize = 64;
+pub const MAX_ALLOWED_PROVIDERS: usize = 16;
 pub const MAX_POLICY_REGISTRY_POLICIES: usize = 32;
 pub const MAX_POLICY_REGISTRY_DOCUMENT_BYTES: usize = 64 * 1024;
 pub const MAX_PROVIDER_OBSERVATION_AGE_SECONDS: i64 = 86_400;
@@ -102,6 +103,7 @@ impl ExactRate {
 pub struct FxProviderPolicy {
     pub policy_digest: Digest32,
     pub allowed_pairs: Vec<CurrencyPair>,
+    pub allowed_providers: Vec<String>,
     pub max_observation_age_seconds: i64,
     pub max_future_skew_seconds: i64,
     pub max_quote_lifetime_seconds: i64,
@@ -119,6 +121,12 @@ impl FxProviderPolicy {
         if self.allowed_pairs.is_empty() || self.allowed_pairs.len() > MAX_ALLOWED_PAIRS {
             return Err(FxProviderError::InvalidConfiguration(
                 "allowed currency pairs are empty or unbounded",
+            ));
+        }
+        if self.allowed_providers.is_empty() || self.allowed_providers.len() > MAX_ALLOWED_PROVIDERS
+        {
+            return Err(FxProviderError::InvalidConfiguration(
+                "allowed providers are empty or unbounded",
             ));
         }
         if self.max_observation_age_seconds <= 0
@@ -151,6 +159,21 @@ impl FxProviderPolicy {
                 ));
             }
         }
+        for (index, provider) in self.allowed_providers.iter().enumerate() {
+            if provider.trim().is_empty() || provider.len() > MAX_CODE_BYTES {
+                return Err(FxProviderError::InvalidConfiguration(
+                    "allowed provider identity is empty or unbounded",
+                ));
+            }
+            if self.allowed_providers[..index]
+                .iter()
+                .any(|previous| previous == provider)
+            {
+                return Err(FxProviderError::InvalidConfiguration(
+                    "allowed providers contain duplicates",
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -179,6 +202,13 @@ impl FxProviderPolicy {
         }
         validate_bounded_text(&candidate.provider, MAX_CODE_BYTES, "provider")?;
         validate_bounded_text(&candidate.quote_id, MAX_CODE_BYTES, "quote identity")?;
+        if !self
+            .allowed_providers
+            .iter()
+            .any(|provider| provider == &candidate.provider)
+        {
+            return Err(FxProviderError::UnsupportedProvider);
+        }
         if candidate.evidence_digest == [0; 32] {
             return Err(FxProviderError::InvalidCandidate(
                 "provider evidence digest must be non-zero",
@@ -455,6 +485,8 @@ pub enum FxProviderError {
     InvalidCandidate(&'static str),
     #[error("unsupported FX currency pair")]
     UnsupportedCurrencyPair,
+    #[error("FX provider is not approved by policy")]
+    UnsupportedProvider,
     #[error("legal FX acceptance is required")]
     LegalAcceptanceRequired,
     #[error("FX observation is too old")]
@@ -690,6 +722,25 @@ mod tests {
     }
 
     #[test]
+    fn rejects_a_quote_from_a_provider_outside_the_policy_allowlist() {
+        let mut unapproved = candidate();
+        unapproved.provider = "unapproved-provider".to_string();
+        let error = FxEvidenceIssuer::new(policy(), TestSigner::new([21; 32], [22; 32]))
+            .issue(
+                unapproved,
+                [7; 32],
+                [8; 32],
+                1_800_000_100,
+                Some(ExactRate {
+                    numerator: 9,
+                    denominator: 8,
+                }),
+            )
+            .expect_err("unapproved provider must fail closed");
+        assert_eq!(error, FxProviderError::UnsupportedProvider);
+    }
+
+    #[test]
     fn rejects_overflow_and_signer_failures_without_issuing() {
         let overflow_policy = policy();
         let signer = TestSigner::new([3; 32], [4; 32]);
@@ -806,6 +857,13 @@ mod tests {
             Err(FxProviderError::InvalidPolicyRegistry(_))
         ));
 
+        let mut invalid_providers = first.clone();
+        invalid_providers.allowed_providers.clear();
+        assert!(matches!(
+            FxProviderPolicyRegistry::from_json(&policy_document(&invalid_providers)),
+            Err(FxProviderError::InvalidPolicyRegistry(_))
+        ));
+
         assert!(matches!(
             FxProviderPolicyRegistry::from_json("{\"policies\":[]}"),
             Err(FxProviderError::InvalidPolicyRegistry(_))
@@ -883,6 +941,7 @@ mod tests {
         FxProviderPolicy {
             policy_digest: [6; 32],
             allowed_pairs: vec![CurrencyPair::new("USD", "EUR").expect("pair")],
+            allowed_providers: vec!["provider-a".to_string()],
             max_observation_age_seconds: 600,
             max_future_skew_seconds: 60,
             max_quote_lifetime_seconds: 900,

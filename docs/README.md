@@ -13,6 +13,7 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [FX provider policy and issuance boundary](adr/0246-fx-provider-policy-and-issuance.md)
 - [FX provider policy snapshot lifecycle](adr/0247-fx-provider-policy-snapshot-reload.md)
 - [Registry-bound FX evidence issuance](adr/0248-registry-bound-fx-issuance.md)
+- [FX provider identity allowlist](adr/0249-fx-provider-identity-allowlist.md)
 - [Document quote, attestation, payment binding, and checkout contracts](adr/0204-authoritative-document-quote-boundary.md)
 - [Jurisdiction-resolution bounded context](architecture/jurisdiction-resolution.md)
 - [Gold-standard UI/UX](architecture/ui-ux.md)

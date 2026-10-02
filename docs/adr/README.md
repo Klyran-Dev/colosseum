@@ -249,3 +249,4 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0246: Server-owned FX provider policy and issuance boundary](0246-fx-provider-policy-and-issuance.md)
 - [ADR-0247: Atomic FX provider policy snapshot reload](0247-fx-provider-policy-snapshot-reload.md)
 - [ADR-0248: Registry-bound FX evidence issuance](0248-registry-bound-fx-issuance.md)
+- [ADR-0249: FX provider identity allowlist](0249-fx-provider-identity-allowlist.md)
