@@ -42,6 +42,8 @@ const SETTLEMENT_PROGRAM_BYTES: [u8; 32] = [1; 32];
 const ADJUSTMENT_REGISTRY_ACCOUNT_DATA_LEN: usize = 8 + (5 * 32) + 2;
 const REFUND_CLAIM_ACCOUNT_DATA_LEN: usize = 8 + (9 * 32) + (4 * 8) + 32 + (2 * 8) + 32 + 3;
 const ADJUSTMENT_REFUND_EXECUTED_EVENT_DISCRIMINATOR: [u8; 8] = [112, 130, 243, 73, 61, 70, 35, 70];
+const ADJUSTMENT_REFUND_CLAIM_CANCELLED_EVENT_DISCRIMINATOR: [u8; 8] =
+    [201, 89, 79, 76, 75, 107, 22, 3];
 const MAX_FAIL_METHODS: usize = 8;
 const MAX_FAIL_METHOD_CONFIG_BYTES: usize = 256;
 const MAX_TRANSACTION_BYTES: usize = 1_232;
@@ -75,6 +77,7 @@ struct FixtureState {
     adjustment_registry: Option<AdjustmentRegistryFixture>,
     refund_funding: Option<RefundFundingFixture>,
     refund_proof: Option<RefundProofFixture>,
+    refund_cancellation: Option<RefundCancellationFixture>,
     refund_funding_read_delay: Duration,
     send_delay: Duration,
     send_count: Arc<AtomicU64>,
@@ -131,6 +134,19 @@ struct RefundProofFixture {
     refund_source_after: u64,
     payer_destination_before: u64,
     payer_destination_after: u64,
+}
+
+#[derive(Clone)]
+struct RefundCancellationFixture {
+    claim: Pubkey,
+    adjustment: Pubkey,
+    merchant: Pubkey,
+    mint: Pubkey,
+    governance_authority: Pubkey,
+    reference_digest: [u8; 32],
+    nonce: u64,
+    signature: String,
+    slot: u64,
 }
 
 impl RefundProofFixture {
@@ -234,6 +250,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let adjustment_registry = load_adjustment_registry_fixture()?;
     let refund_funding = load_refund_funding_fixture()?;
     let refund_proof = load_refund_proof_fixture()?;
+    let refund_cancellation = load_refund_cancellation_fixture()?;
     let fail_method_config = env::var("RPC_FIXTURE_FAIL_METHODS").ok();
     let fail_methods = parse_fail_methods(fail_method_config.as_deref())
         .map_err(|error| format!("RPC_FIXTURE_FAIL_METHODS is invalid: {error}"))?;
@@ -248,6 +265,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         adjustment_registry,
         refund_funding,
         refund_proof,
+        refund_cancellation,
         refund_funding_read_delay: Duration::from_millis(refund_funding_read_delay_ms),
         send_delay: Duration::from_millis(send_delay_ms),
         send_count: Arc::new(AtomicU64::new(0)),
@@ -410,11 +428,69 @@ async fn handle_method(
         "isBlockhashValid" => Ok(json!({"context": {"slot": 1}, "value": true})),
         "getMultipleAccounts" => get_multiple_accounts(state, params),
         "getAccountInfo" => get_account_info(state, params),
-        "getTransaction" => get_refund_proof_transaction(state, params),
+        "getSignaturesForAddress" => get_cancellation_signature_page(state, params),
+        "getTransaction" => get_transaction(state, params),
         "sendTransaction" => send_transaction(state, params).await,
         "getSignatureStatuses" => signature_statuses(state, params).await,
         _ => Err((-32601, format!("unsupported fixture RPC method: {method}"))),
     }
+}
+
+fn get_cancellation_signature_page(
+    state: &FixtureState,
+    params: &Value,
+) -> Result<Value, (i64, String)> {
+    let fixture = state.refund_cancellation.as_ref().ok_or((
+        -32601,
+        "getSignaturesForAddress is not configured for this fixture profile".to_string(),
+    ))?;
+    let values = params.as_array().ok_or((
+        -32602,
+        "getSignaturesForAddress requires an array of parameters".to_string(),
+    ))?;
+    let governance_authority = fixture.governance_authority.to_string();
+    if values.first().and_then(Value::as_str) != Some(governance_authority.as_str()) {
+        return Err((
+            -32602,
+            "fixture cancellation signature address does not match governance authority".into(),
+        ));
+    }
+    let options = values.get(1).and_then(Value::as_object).ok_or((
+        -32602,
+        "getSignaturesForAddress options are required".to_string(),
+    ))?;
+    if options.get("commitment").and_then(Value::as_str) != Some("finalized") {
+        return Err((
+            -32602,
+            "fixture cancellation signature reads require finalized commitment".into(),
+        ));
+    }
+    if options.get("before").is_some() {
+        return Ok(json!([]));
+    }
+    Ok(json!([{
+        "signature": fixture.signature,
+        "slot": fixture.slot,
+        "err": null,
+        "memo": null,
+        "blockTime": null,
+        "confirmationStatus": "finalized"
+    }]))
+}
+
+fn get_transaction(state: &FixtureState, params: &Value) -> Result<Value, (i64, String)> {
+    let requested = params
+        .as_array()
+        .and_then(|values| values.first())
+        .and_then(Value::as_str);
+    if state
+        .refund_cancellation
+        .as_ref()
+        .is_some_and(|fixture| Some(fixture.signature.as_str()) == requested)
+    {
+        return get_refund_cancellation_transaction(state, params);
+    }
+    get_refund_proof_transaction(state, params)
 }
 
 fn load_adjustment_registry_fixture()
@@ -684,6 +760,93 @@ fn load_refund_proof_fixture() -> Result<Option<RefundProofFixture>, Box<dyn std
     }))
 }
 
+fn load_refund_cancellation_fixture()
+-> Result<Option<RefundCancellationFixture>, Box<dyn std::error::Error>> {
+    let names = [
+        "RPC_FIXTURE_REFUND_CANCELLATION_CLAIM",
+        "RPC_FIXTURE_REFUND_CANCELLATION_ADJUSTMENT",
+        "RPC_FIXTURE_REFUND_CANCELLATION_MERCHANT",
+        "RPC_FIXTURE_REFUND_CANCELLATION_MINT",
+        "RPC_FIXTURE_REFUND_CANCELLATION_GOVERNANCE",
+        "RPC_FIXTURE_REFUND_CANCELLATION_SIGNATURE",
+        "RPC_FIXTURE_REFUND_CANCELLATION_REFERENCE_DIGEST_HEX",
+    ];
+    let values = names
+        .iter()
+        .map(|name| env::var(name).ok().filter(|value| !value.trim().is_empty()))
+        .collect::<Vec<_>>();
+    if values.iter().all(Option::is_none) {
+        return Ok(None);
+    }
+    if values.iter().any(Option::is_none) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "all RPC_FIXTURE_REFUND_CANCELLATION_* values are required together",
+        )
+        .into());
+    }
+    let required = |index: usize| -> Result<&str, Box<dyn std::error::Error>> {
+        values[index].as_deref().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "refund cancellation fixture value is missing",
+            )
+            .into()
+        })
+    };
+    let parse_key = |index: usize| -> Result<Pubkey, Box<dyn std::error::Error>> {
+        let value = required(index)?;
+        Pubkey::from_str(value).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("refund cancellation public key is invalid: {value}"),
+            )
+            .into()
+        })
+    };
+    let claim = parse_key(0)?;
+    let adjustment = parse_key(1)?;
+    let merchant = parse_key(2)?;
+    let mint = parse_key(3)?;
+    let governance_authority = parse_key(4)?;
+    let signature = required(5)?.to_string();
+    if signature.is_empty() || signature.len() > 128 {
+        return Err(
+            "RPC_FIXTURE_REFUND_CANCELLATION_SIGNATURE must be a bounded non-empty value".into(),
+        );
+    }
+    let reference_digest = parse_hex_digest(
+        required(6)?,
+        "RPC_FIXTURE_REFUND_CANCELLATION_REFERENCE_DIGEST_HEX",
+    )?;
+    let nonce = env::var("RPC_FIXTURE_REFUND_CANCELLATION_NONCE")
+        .unwrap_or_else(|_| "11".into())
+        .parse::<u64>()?;
+    let slot = env::var("RPC_FIXTURE_REFUND_CANCELLATION_SLOT")
+        .unwrap_or_else(|_| "901".into())
+        .parse::<u64>()?;
+    let program = Pubkey::from_str(SETTLEMENT_PROGRAM_ID)?;
+    let derived_claim = Pubkey::find_program_address(
+        &[b"refund-claim", adjustment.as_ref(), &nonce.to_le_bytes()],
+        &program,
+    )
+    .0;
+    if nonce == 0 || slot == 0 || claim != derived_claim || claim == governance_authority {
+        return Err("refund cancellation fixture identity or window is invalid".into());
+    }
+    Ok(Some(RefundCancellationFixture {
+        claim,
+        adjustment,
+        merchant,
+        mint,
+        governance_authority,
+        reference_digest,
+        nonce,
+        signature,
+        slot,
+    }))
+}
+
 fn parse_hex_digest(value: &str, name: &str) -> Result<[u8; 32], Box<dyn std::error::Error>> {
     if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(format!("{name} must contain exactly 32 bytes of hex").into());
@@ -930,6 +1093,72 @@ fn get_refund_proof_transaction(
                 balance(0, fixture.vault_authority(), fixture.tax_vault_after),
                 balance(1, fixture.refund_funder, fixture.refund_source_after),
                 balance(2, fixture.payer, fixture.payer_destination_after)
+            ]
+        }
+    }))
+}
+
+fn get_refund_cancellation_transaction(
+    state: &FixtureState,
+    params: &Value,
+) -> Result<Value, (i64, String)> {
+    let fixture = state.refund_cancellation.as_ref().ok_or((
+        -32601,
+        "refund cancellation transaction fixture is not configured".to_string(),
+    ))?;
+    let values = params.as_array().ok_or((
+        -32602,
+        "getTransaction requires an array of parameters".to_string(),
+    ))?;
+    if values.first().and_then(Value::as_str) != Some(fixture.signature.as_str()) {
+        return Ok(Value::Null);
+    }
+    let options = values
+        .get(1)
+        .and_then(Value::as_object)
+        .ok_or((-32602, "getTransaction options are required".to_string()))?;
+    if options.get("commitment").and_then(Value::as_str) != Some("finalized")
+        || options.get("encoding").and_then(Value::as_str) != Some("json")
+        || options
+            .get("maxSupportedTransactionVersion")
+            .and_then(Value::as_u64)
+            != Some(0)
+    {
+        return Err((
+            -32602,
+            "fixture requires finalized json transaction reads with version zero".into(),
+        ));
+    }
+    let mut event = Vec::with_capacity(8 + (32 * 6) + 8);
+    event.extend_from_slice(&ADJUSTMENT_REFUND_CLAIM_CANCELLED_EVENT_DISCRIMINATOR);
+    for value in [
+        fixture.claim,
+        fixture.adjustment,
+        fixture.merchant,
+        fixture.mint,
+    ] {
+        event.extend_from_slice(value.as_ref());
+    }
+    event.extend_from_slice(&fixture.nonce.to_le_bytes());
+    event.extend_from_slice(fixture.governance_authority.as_ref());
+    event.extend_from_slice(&fixture.reference_digest);
+    Ok(json!({
+        "slot": fixture.slot,
+        "transaction": {
+            "signatures": [fixture.signature],
+            "message": {"accountKeys": [
+                fixture.governance_authority.to_string(),
+                fixture.merchant.to_string(),
+                fixture.mint.to_string(),
+                fixture.claim.to_string()
+            ]}
+        },
+        "meta": {
+            "err": null,
+            "logMessages": [
+                format!("Program {} invoke [1]", SETTLEMENT_PROGRAM_ID),
+                format!("Program data: {}", BASE64.encode(event)),
+                format!("Program {} success", SETTLEMENT_PROGRAM_ID)
             ]
         }
     }))
@@ -1259,6 +1488,7 @@ mod tests {
             adjustment_registry: None,
             refund_funding: None,
             refund_proof: None,
+            refund_cancellation: None,
             refund_funding_read_delay: Duration::ZERO,
             send_delay: Duration::ZERO,
             send_count: Arc::new(AtomicU64::new(0)),

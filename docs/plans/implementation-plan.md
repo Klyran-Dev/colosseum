@@ -985,6 +985,13 @@ release gates.
   evidence derivation, token-fenced final CAS, and fixed-cardinality backlog
   telemetry. The operator route remains available but cannot steal an active
   worker lease.
+- [x] Add the executable Docker drill and public contract for the reconciler:
+  two real indexer replicas, synthetic finalized RPC recovery, stale lease
+  reclaim, exact raw-evidence digest, atomic claim/cancellation convergence,
+  idempotent outbox cardinality, and zero pending telemetry.
+- [ ] Run and retain the Docker drill artifact on a Docker-enabled CI runner;
+  the current macOS host has no reachable Docker daemon, so this evidence is
+  not claimed locally yet.
 - [x] Require finalized `AdjustmentRefundClaimCancelled` evidence before the
   claim projection becomes cancelled; preserve unknown provider outcomes and
   idempotent replay semantics.

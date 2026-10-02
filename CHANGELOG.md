@@ -295,6 +295,11 @@ All notable changes to this project will be documented here. The project follows
 
 - Added ADR-0153 for a separate, record-only on-chain adjustment evidence PDA;
   token movement and paid-state semantics remain explicitly gated.
+- Added the executable two-replica Docker drill for ADR-0238 refund-claim
+  cancellation reconciliation. It exercises synthetic finalized RPC recovery,
+  UUIDv7 lease fencing, immutable raw evidence, atomic claim cancellation, and
+  idempotent outbox publication. The drill is evidence tooling, not a claim of
+  production readiness; it requires a reachable Docker daemon.
 
 ### Added
 

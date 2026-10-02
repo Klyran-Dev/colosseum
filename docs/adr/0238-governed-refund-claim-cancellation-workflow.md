@@ -142,10 +142,13 @@ measured separately and must not be folded into the compiler budget.
    reconciliation-required states with no implied financial success.
 5. Extend the authoritative Linux validator evidence to require the complete
    prepare/sign/submit/finalize cancellation lifecycle and unchanged balances.
-6. Exercise two indexer replicas against an isolated PostgreSQL/RPC fixture to
-   prove cancellation lease ownership, stale reclaim, finalized event binding,
-   token-fenced convergence, bounded retries, and fixed-cardinality backlog
-   metrics.
+6. Run `make refund-cancellation-reconciliation-drill` on a Docker-enabled
+   host. The drill starts two real indexer replicas against PostgreSQL 18 and
+   the bounded RPC fixture, seeds only synthetic UUIDv7/key material, and
+   proves lease ownership, stale reclaim, finalized event binding,
+   token-fenced convergence, idempotent outbox cardinality, and zero backlog
+   telemetry. This local harness is not a substitute for Linux validator,
+   provider-failover, or production load evidence.
 
 ## Consequences
 

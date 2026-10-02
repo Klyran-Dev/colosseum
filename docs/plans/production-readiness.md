@@ -416,7 +416,9 @@ exists.
   finalized cancellation-event reconciliation. The compiler, verifier,
   durable intent migration, API/UI lifecycle, typed finalized event decoder,
   bounded leased indexer reconciler, and atomic claim transition are
-  implemented; Linux validator/provider,
+  implemented. `make refund-cancellation-reconciliation-drill` provides the
+  two-replica Docker evidence harness, but its evidence artifact still must be
+  produced on a Docker-enabled CI runner. Linux validator/provider,
   governance-key, production-load, and operational evidence remain required
   before cancellation is enabled in production.
 - [x] Compiled-rule cache hit/miss/eviction/entry metrics are exported with
