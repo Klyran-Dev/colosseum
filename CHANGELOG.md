@@ -298,6 +298,8 @@ All notable changes to this project will be documented here. The project follows
 - Extended the ADR-0212 contract checker to every `src/bin` and Solana program
   crate root, and added the missing production lint contract to the indexer
   projection-rebuild binary.
+- Added a container and workflow pinning contract that rejects floating Docker
+  image digests and mutable GitHub Action references in CI.
 - Closed the ADR-0212 crate-root lint gap in the warm Tax Engine library and
   added a checked-in contract that verifies every Rust library/binary crate
   applies the non-test `expect`/`panic`/`unwrap` denial policy. CI now runs the

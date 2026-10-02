@@ -82,6 +82,8 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Validate Compose configuration
         run: docker compose --profile browser --profile cache --profile observability --profile indexer --profile route-verifier --profile solana config --quiet
+      - name: Verify immutable image and action pins
+        run: make container-pinning-contract
       - name: Validate clean PostgreSQL migration bootstrap
         run: make migration-bootstrap-contract
       - name: Validate Prometheus configuration and alert rules
