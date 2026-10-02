@@ -1988,6 +1988,22 @@ broker to the low-latency quote path.
 | Require signer adapters to be cloneable | Simple coordinator ownership | Couples the port to key material ownership and excludes non-exportable HSM/KMS sessions | Rejected |
 | **Separate integrity verification from time validity and share signers through `Arc`** | Correct historical replay semantics and one shared custody boundary | Requires an explicit durable-envelope persistence integration | **Selected in ADR-0258** |
 
+### Authenticated FX quote composition
+
+**Criteria:** keep provider, policy, legal, and custody authority server-owned;
+bind FX and jurisdiction evidence to one canonical facts digest; preserve the
+same-currency low-latency path; and keep non-local activation fail closed while
+operational decisions remain open.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Accept signed FX evidence from the browser | Simple request shape | Caller can bypass provider policy, legal admission, and custody controls | Rejected |
+| Call providers directly from each quote handler | Few abstractions | Duplicated orchestration and policy snapshot races | Rejected |
+| Put FX issuance in the pure Tax Engine | One apparent calculation flow | Violates deterministic domain purity and adds network/custody dependencies | Rejected |
+| Queue issuance through a broker | Durable asynchronous delivery | Quote expiry and duplicate-sign ambiguity in the synchronous path | Rejected |
+| Concrete vendor integration now | Immediate external connectivity | Invents unresolved provider/legal/custody decisions | Rejected |
+| **Server-owned API issuance port backed by the bounded coordinator** | Shared binding contract, bounded latency, explicit fail-closed activation, and future vendor composition | Requires configuration and release evidence before non-local traffic | **Selected in ADR-0260** |
+
 ### FX evidence signing
 
 **Criteria:** protect key custody, avoid blocking async executors, bind the

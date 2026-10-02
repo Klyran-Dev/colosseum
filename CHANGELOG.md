@@ -2,6 +2,12 @@
 
 ## 2026-10-02
 
+- Added ADR-0260's authenticated server-owned FX quote composition boundary:
+  source currency is an explicit request fact, while provider policy, evidence,
+  and signing remain server-owned and non-local activation remains fail-closed.
+- Added stable FX quote request identity: pre-resolution facts and normalized
+  source currency are idempotent inputs, while provider quote metadata remains
+  immutable evidence rather than a caller request digest.
 - Added the public Tier-1 decision register required by ADR-0251. Provider,
   jurisdiction, legal ownership, staging, SLO, retention, rollback, custody,
   and license choices remain explicitly open until accountable owners attach

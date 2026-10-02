@@ -104,11 +104,15 @@ binding, canonical payload digest, and signature without applying the original
 freshness window. The async signer port also supports `Arc` ownership so a
 shared HSM/KMS adapter does not need to clone private-key state. Complete
 envelope persistence and quote replay integration are implemented by ADR-0259
-at the storage boundary, while authenticated API composition remains gated.
+at the storage boundary. ADR-0260 composes that boundary into authenticated
+aggregate and document quote handlers through a server-owned issuance port.
 
 ADR-0259 makes that evidence durable inside the immutable quote
 `evidence_refs` document. The storage adapter binds the complete envelope to
 the pre-resolution facts digest, checks it against the exact tax-engine FX
 projection, and revalidates it during tenant-scoped replay. Quotes without FX
 remain unchanged; a quote that claims FX conversion without the complete
-envelope fails closed.
+envelope fails closed. Same-currency requests bypass the issuer; cross-currency
+requests fail closed when no approved issuer is configured. Quote idempotency
+is based on pre-resolution facts and normalized source currency rather than
+mutable provider quote metadata.

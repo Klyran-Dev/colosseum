@@ -11796,7 +11796,7 @@ fn verify_persisted_calculation_evidence(
 }
 
 pub fn quote_request_digest(command: &QuoteCommand) -> Result<[u8; 32], StorageError> {
-    let facts_digest = command.facts.canonical_digest()?;
+    let facts_digest = quote_request_facts_digest(&command.facts, command.fx_evidence.as_ref())?;
     let candidate_digest =
         candidate_set_digest(&command.jurisdiction_candidates).map_err(|error| {
             StorageError::InvalidConfiguration(format!("jurisdiction evidence is invalid: {error}"))
@@ -11809,13 +11809,18 @@ pub fn quote_request_digest(command: &QuoteCommand) -> Result<[u8; 32], StorageE
     write_text(&mut hasher, &command.regime)?;
     hasher.update(facts_digest);
     hasher.update(candidate_digest);
+    if let Some(evidence) = command.fx_evidence.as_ref() {
+        hasher.update(b"solana-tax-protocol/quote-fx-source/v1");
+        write_text(&mut hasher, &evidence.envelope.unsigned.source_currency)?;
+    }
     Ok(hasher.finalize().into())
 }
 
 pub fn document_quote_request_digest(
     command: &DocumentQuoteCommand,
 ) -> Result<Digest32, StorageError> {
-    let facts_digest = command.facts.canonical_digest()?;
+    let facts_digest =
+        document_quote_request_facts_digest(&command.facts, command.fx_evidence.as_ref())?;
     let candidate_digest =
         candidate_set_digest(&command.jurisdiction_candidates).map_err(|error| {
             StorageError::InvalidDocumentQuote(format!("jurisdiction evidence is invalid: {error}"))
@@ -11829,7 +11834,49 @@ pub fn document_quote_request_digest(
     write_text(&mut hasher, &command.regime)?;
     hasher.update(facts_digest);
     hasher.update(candidate_digest);
+    if let Some(evidence) = command.fx_evidence.as_ref() {
+        hasher.update(b"solana-tax-protocol/document-quote-fx-source/v1");
+        write_text(&mut hasher, &evidence.envelope.unsigned.source_currency)?;
+    }
     Ok(hasher.finalize().into())
+}
+
+fn quote_request_facts_digest(
+    facts: &TaxFacts,
+    evidence: Option<&PersistedFxEvidence>,
+) -> Result<Digest32, StorageError> {
+    let Some(evidence) = evidence else {
+        return Ok(facts.canonical_digest()?);
+    };
+    let mut pre_resolution_facts = facts.clone();
+    pre_resolution_facts.jurisdiction_resolution = None;
+    pre_resolution_facts.fx_conversion = None;
+    let computed = pre_resolution_facts.canonical_digest()?;
+    if computed != evidence.pre_resolution_facts_digest {
+        return Err(StorageError::FxEvidenceIntegrity(
+            "FX request digest is not bound to the pre-resolution facts".to_string(),
+        ));
+    }
+    Ok(computed)
+}
+
+fn document_quote_request_facts_digest(
+    facts: &TaxDocumentFacts,
+    evidence: Option<&PersistedFxEvidence>,
+) -> Result<Digest32, StorageError> {
+    let Some(evidence) = evidence else {
+        return Ok(facts.canonical_digest()?);
+    };
+    let mut pre_resolution_facts = facts.clone();
+    pre_resolution_facts.jurisdiction_resolution = None;
+    pre_resolution_facts.fx_conversion = None;
+    let computed = pre_resolution_facts.canonical_digest()?;
+    if computed != evidence.pre_resolution_facts_digest {
+        return Err(StorageError::FxEvidenceIntegrity(
+            "FX document request digest is not bound to the pre-resolution facts".to_string(),
+        ));
+    }
+    Ok(computed)
 }
 
 fn validate_document_quote_command(command: &DocumentQuoteCommand) -> Result<(), StorageError> {
@@ -15332,6 +15379,47 @@ mod tests {
             quote_request_digest(&first).unwrap(),
             quote_request_digest(&second).unwrap()
         );
+    }
+
+    #[test]
+    fn fx_request_digest_is_stable_across_server_issued_quote_replacement() {
+        let mut first = command();
+        let pre_resolution_digest = first.facts.canonical_digest().unwrap();
+        let evidence = persisted_fx_record(first.merchant_id, pre_resolution_digest);
+        first.facts.fx_conversion = Some(
+            evidence
+                .envelope
+                .verify_integrity(
+                    &ed25519_dalek::VerifyingKey::from_bytes(
+                        &evidence.envelope.provider_public_key,
+                    )
+                    .unwrap(),
+                    merchant_identity_digest(first.merchant_id.as_bytes()),
+                    pre_resolution_digest,
+                )
+                .unwrap(),
+        );
+        first.fx_evidence = Some(evidence);
+        let first_digest = quote_request_digest(&first).unwrap();
+
+        let mut replacement = first.clone();
+        replacement
+            .fx_evidence
+            .as_mut()
+            .unwrap()
+            .envelope
+            .unsigned
+            .quote_id = "quote-replacement".to_string();
+        assert_eq!(first_digest, quote_request_digest(&replacement).unwrap());
+
+        replacement
+            .fx_evidence
+            .as_mut()
+            .unwrap()
+            .envelope
+            .unsigned
+            .source_currency = "GBP".to_string();
+        assert_ne!(first_digest, quote_request_digest(&replacement).unwrap());
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # ADR-0257: Server-owned FX issuance coordinator
 
-- Status: Implemented as a vendor-neutral composition boundary; API wiring pending
+- Status: Implemented as a vendor-neutral composition boundary; authenticated API composition is implemented by ADR-0260, while concrete non-local activation remains gated
 - Date: 2026-10-02
 - Decision owners: FX Provider bounded context, Platform/SRE, Tax/Legal
 
@@ -35,8 +35,10 @@ The coordinator never accepts provider endpoints, provider identities, signer
 identity, policy JSON, legal authority, or FX evidence from a browser or quote
 caller. It does not persist quotes, call the tax engine, submit Solana
 transactions, retry signing, or decide legal coverage. Persistence and API
-authorization remain application adapters; provider, legal, custody, regional
-SLO, and production activation decisions remain in the decision register.
+authorization remain application adapters; ADR-0260 supplies the authenticated
+API port without selecting a concrete vendor or enabling non-local FX traffic.
+Provider, legal, custody, regional SLO, and production activation decisions
+remain in the decision register.
 
 The policy and issuer are captured from the same immutable registry snapshot
 before provider work. A reload during acquisition therefore cannot mix old

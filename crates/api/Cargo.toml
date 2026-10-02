@@ -14,6 +14,7 @@ axum.workspace = true
 observability = { path = "../observability" }
 base64.workspace = true
 ed25519-dalek.workspace = true
+fx-provider = { path = "../fx-provider" }
 jurisdiction = { path = "../jurisdiction" }
 indexer.workspace = true
 indexer-service = { path = "../indexer-service" }
@@ -36,4 +37,6 @@ uuid.workspace = true
 tax-engine = { path = "../tax-engine" }
 
 [dev-dependencies]
+async-trait.workspace = true
 ed25519-dalek.workspace = true
+fx-evidence = { path = "../fx-evidence" }

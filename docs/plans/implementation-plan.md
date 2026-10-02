@@ -809,9 +809,10 @@ The decision register must be updated whenever a frozen choice changes.
   into one server-owned coordinator.
 - [x] Prove successful issuance, missing-policy short circuit, snapshot
   isolation, provider disagreement, signer failure/timeout, and cancellation.
-- [ ] Wire the coordinator into an authenticated tenant-scoped API only after
-  durable evidence/outbox and provider/legal/custody release decisions are
-  explicit; caller-owned FX evidence remains forbidden.
+- [x] Expose the coordinator through ADR-0260's authenticated tenant-scoped
+  API port; caller-owned FX evidence remains forbidden.
+- [ ] Enable the authenticated path for non-local traffic only after durable
+  evidence/outbox and provider/legal/custody release decisions are explicit.
 
 ## ADR-0258 — FX evidence replay integrity and shared signer ownership
 
@@ -819,10 +820,12 @@ The decision register must be updated whenever a frozen choice changes.
   issuance freshness and future-skew checks.
 - [x] Allow the async signer port to be shared through `Arc` without requiring
   adapter cloning or private-key export.
-- [ ] Persist the complete typed FX envelope with the quote, bind it to the
+- [x] Persist the complete typed FX envelope with the quote, bind it to the
   pre-FX facts digest, audit access, and verify it during authenticated replay.
-- [ ] Integrate the persisted envelope into the authenticated quote path only
-  after provider, legal, custody, and evidence-retention decisions are frozen.
+- [x] Integrate the persisted envelope into the authenticated quote composition
+  boundary with server-owned issuance and fail-closed missing-issuer behavior.
+- [ ] Enable the authenticated path for non-local production traffic only after
+  provider, legal, custody, and evidence-retention decisions are frozen.
 
 ## ADR-0259 — durable FX envelope quote binding
 
@@ -833,8 +836,21 @@ The decision register must be updated whenever a frozen choice changes.
   projected conversion against normalized tax facts.
 - [x] Revalidate the envelope and projection during tenant-scoped historical
   replay without applying current issuance expiry.
-- [ ] Supply this storage boundary only from the server-owned coordinator after
-  provider, legal, custody, and evidence-retention decisions are frozen.
+- [x] Supply this storage boundary from the authenticated server-owned
+  composition boundary; storage still rejects caller-owned evidence.
+- [ ] Enable a concrete provider/signer deployment only after provider, legal,
+  custody, and evidence-retention decisions are frozen.
+
+## ADR-0260 — authenticated server-owned FX quote composition
+
+- [x] Define the server-only asynchronous issuance port and keep provider,
+  policy, reference-rate, signer, and custody inputs outside browser payloads.
+- [x] Add optional source-currency input with same-currency bypass and bounded
+  fail-closed behavior when no issuer is configured.
+- [ ] Wire an approved provider policy registry and HSM/KMS-backed signer into
+  the process bootstrap after DEC-0251-01/03/09 are frozen.
+- [ ] Retain provider agreement, legal acceptance, regional latency, and
+  production FX enablement evidence before enabling non-local traffic.
 
 ## ADR-0154 — governed adjustment refund movement
 

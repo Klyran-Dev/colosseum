@@ -22,6 +22,7 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use document_payment::{DocumentPaymentError, PaymentScope, authorize_document_payment};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use fx_provider::{AsyncFxEvidenceIssuance, CurrencyPair, ServerFxEvidenceRequest};
 use indexer::{
     FinalizedRefundClaimCancellationEvidence, FinalizedRefundClaimEvidence,
     FinalizedSignaturePageSource, FinalizedTransactionSource, IndexedSettlementAdjustment,
@@ -69,8 +70,8 @@ use storage::{
     CreateSettlementAdjustmentChainIntent, CreateSettlementAdjustmentCommand,
     CreateSettlementAdjustmentEvidenceIntent, CreateVaultReleaseClaimCommand, DatabasePoolStats,
     DocumentQuoteCommand, DocumentQuoteOutcome, EvidenceAccessAuditCommand,
-    JurisdictionPolicyGovernanceTransition, PgStore, QuoteCommand, QuoteOutcome,
-    RefundCancellationFinalization, RefundCancellationIntentTransition,
+    JurisdictionPolicyGovernanceTransition, PersistedFxEvidence, PgStore, QuoteCommand,
+    QuoteOutcome, RefundCancellationFinalization, RefundCancellationIntentTransition,
     RefundClaimCancellationEvidenceExpectation, RefundClaimIntentTransition,
     RefundExecuteIntentTransition, RefundFundingConfigurationTransition, RuleCacheStats,
     RuleGovernanceTransition, SettlementAdjustmentChainIntent, SettlementAdjustmentChainTransition,
@@ -93,6 +94,7 @@ pub struct AppState {
     pub storage: Option<Arc<PgStore>>,
     pub authenticator: Option<auth::JwtAuthenticator>,
     pub jurisdiction_provider_registry: Option<Arc<JurisdictionProviderRegistry>>,
+    pub fx_issuance: Option<Arc<dyn AsyncFxEvidenceIssuance>>,
     pub settlement_coordinator: Option<Arc<SettlementCoordinator>>,
     pub targeted_recovery: Option<Arc<TargetedRecoveryPorts>>,
     pub metrics: Arc<ServiceMetrics>,
@@ -143,6 +145,8 @@ pub struct QuoteRequest {
     pub regime: String,
     pub facts: TaxFacts,
     #[serde(default)]
+    pub source_currency: Option<String>,
+    #[serde(default)]
     pub jurisdiction_evidence: Vec<::jurisdiction::JurisdictionEvidenceEnvelope>,
 }
 
@@ -156,6 +160,8 @@ pub struct DocumentQuoteRequest {
     pub jurisdiction: String,
     pub regime: String,
     pub facts: TaxDocumentFacts,
+    #[serde(default)]
+    pub source_currency: Option<String>,
     #[serde(default)]
     pub jurisdiction_evidence: Vec<::jurisdiction::JurisdictionEvidenceEnvelope>,
 }
@@ -2264,8 +2270,9 @@ async fn quote_tax_inner(
         code: "INVALID_JSON",
         message: "request body is invalid".to_string(),
     })?;
+    let mut request = request;
     reject_client_fx_conversion(request.facts.fx_conversion.is_some())?;
-    let Some(store) = state.storage else {
+    let Some(store) = state.storage.as_ref() else {
         return Err(ApiError {
             status: StatusCode::SERVICE_UNAVAILABLE,
             code: "QUOTE_STORAGE_UNAVAILABLE",
@@ -2288,12 +2295,26 @@ async fn quote_tax_inner(
             message: "jurisdiction provider verification is not configured".to_string(),
         })?;
     let facts_digest = request.facts.canonical_digest().map_err(ApiError::from)?;
+    let now_unix = server_unix_now()?;
     let candidates = provider_registry.verify(
         &request.jurisdiction_evidence,
         principal.merchant_id,
         facts_digest,
-        server_unix_now()?,
+        now_unix,
     )?;
+    let fx_enrichment = issue_server_owned_fx(
+        &state,
+        principal.merchant_id,
+        facts_digest,
+        request.source_currency.as_deref(),
+        &request.facts.currency,
+        now_unix,
+    )
+    .await?;
+    let fx_evidence = fx_enrichment.as_ref().map(|enrichment| {
+        request.facts.fx_conversion = Some(enrichment.conversion.clone());
+        enrichment.persisted.clone()
+    });
     let outcome = store
         .quote(QuoteCommand {
             merchant_id: principal.merchant_id,
@@ -2304,7 +2325,7 @@ async fn quote_tax_inner(
             regime: request.regime,
             facts: request.facts,
             jurisdiction_candidates: candidates,
-            fx_evidence: None,
+            fx_evidence,
         })
         .await
         .map_err(ApiError::from)?;
@@ -2344,8 +2365,9 @@ async fn document_quote_tax_inner(
             message: "document schema is not supported".into(),
         });
     }
+    let mut request = request;
     reject_client_fx_conversion(request.facts.fx_conversion.is_some())?;
-    let Some(store) = state.storage else {
+    let Some(store) = state.storage.as_ref() else {
         return Err(ApiError {
             status: StatusCode::SERVICE_UNAVAILABLE,
             code: "QUOTE_STORAGE_UNAVAILABLE",
@@ -2368,12 +2390,26 @@ async fn document_quote_tax_inner(
             message: "jurisdiction provider verification is not configured".to_string(),
         })?;
     let facts_digest = request.facts.canonical_digest().map_err(ApiError::from)?;
+    let now_unix = server_unix_now()?;
     let candidates = provider_registry.verify(
         &request.jurisdiction_evidence,
         principal.merchant_id,
         facts_digest,
-        server_unix_now()?,
+        now_unix,
     )?;
+    let fx_enrichment = issue_server_owned_fx(
+        &state,
+        principal.merchant_id,
+        facts_digest,
+        request.source_currency.as_deref(),
+        &request.facts.currency,
+        now_unix,
+    )
+    .await?;
+    let fx_evidence = fx_enrichment.as_ref().map(|enrichment| {
+        request.facts.fx_conversion = Some(enrichment.conversion.clone());
+        enrichment.persisted.clone()
+    });
     let outcome = store
         .document_quote(DocumentQuoteCommand {
             merchant_id: principal.merchant_id,
@@ -2385,7 +2421,7 @@ async fn document_quote_tax_inner(
             regime: request.regime,
             facts: request.facts,
             jurisdiction_candidates: candidates,
-            fx_evidence: None,
+            fx_evidence,
         })
         .await
         .map_err(ApiError::from)?;
@@ -2668,6 +2704,86 @@ fn reject_client_fx_conversion(present: bool) -> Result<(), ApiError> {
         });
     }
     Ok(())
+}
+
+#[derive(Debug)]
+struct FxQuoteEnrichment {
+    conversion: tax_engine::FxConversionEvidence,
+    persisted: PersistedFxEvidence,
+}
+
+async fn issue_server_owned_fx(
+    state: &AppState,
+    merchant_id: Uuid,
+    facts_digest: Digest32,
+    source_currency: Option<&str>,
+    target_currency: &str,
+    now_unix: i64,
+) -> Result<Option<FxQuoteEnrichment>, ApiError> {
+    let Some(source_currency) = source_currency else {
+        return Ok(None);
+    };
+    let pair =
+        CurrencyPair::new(source_currency.trim(), target_currency).map_err(|_| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_FX_CURRENCY_PAIR",
+            message: "source and target currencies must be distinct, non-empty, and bounded"
+                .to_string(),
+        })?;
+    let issuer = state.fx_issuance.as_ref().ok_or(ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "FX_ISSUANCE_UNAVAILABLE",
+        message: "server-owned FX issuance is not configured for this deployment".to_string(),
+    })?;
+    let issued = issuer
+        .issue(ServerFxEvidenceRequest {
+            merchant_id: merchant_identity_digest(merchant_id.as_bytes()),
+            facts_digest,
+            source_currency: pair.source_currency.clone(),
+            target_currency: pair.target_currency.clone(),
+            now_unix,
+        })
+        .await
+        .map_err(|_| ApiError {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            code: "FX_ISSUANCE_FAILED",
+            message: "server-owned FX issuance failed closed".to_string(),
+        })?;
+    let verifying_key =
+        VerifyingKey::from_bytes(&issued.envelope.provider_public_key).map_err(|_| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "FX_EVIDENCE_INTEGRITY_FAILED",
+            message: "server-owned FX evidence signer identity is invalid".to_string(),
+        })?;
+    let signed_projection = issued
+        .envelope
+        .verify_integrity(
+            &verifying_key,
+            merchant_identity_digest(merchant_id.as_bytes()),
+            facts_digest,
+        )
+        .map_err(|_| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "FX_EVIDENCE_INTEGRITY_FAILED",
+            message: "server-owned FX evidence failed integrity validation".to_string(),
+        })?;
+    if signed_projection != issued.conversion
+        || signed_projection.source_currency != pair.source_currency
+        || signed_projection.target_currency != pair.target_currency
+    {
+        return Err(ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "FX_EVIDENCE_BINDING_FAILED",
+            message: "server-owned FX evidence does not match the requested pair".to_string(),
+        });
+    }
+    Ok(Some(FxQuoteEnrichment {
+        conversion: signed_projection,
+        persisted: PersistedFxEvidence {
+            pre_resolution_facts_digest: facts_digest,
+            envelope: issued.envelope,
+        },
+    }))
 }
 
 async fn create_jurisdiction_policy(
@@ -8052,8 +8168,11 @@ mod tests {
         http::{HeaderValue, Request},
     };
     use ed25519_dalek::{Signer, SigningKey};
+    use fx_evidence::{FX_EVIDENCE_SCHEMA_VERSION, FxEvidenceEnvelope, UnsignedFxEvidence};
+    use fx_provider::{AsyncFxEvidenceIssuance, IssuedFxEvidence};
     use policy::{ATTESTATION_SCHEMA_VERSION, CalculationAttestation, UnsignedAttestation};
     use settlement_client::{SETTLEMENT_PROGRAM_ID, SPL_TOKEN_PROGRAM_ID};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
     use tower::ServiceExt;
 
@@ -8112,6 +8231,155 @@ mod tests {
         })
     }
 
+    #[derive(Clone)]
+    struct TestFxIssuance {
+        calls: Arc<AtomicUsize>,
+        issued: IssuedFxEvidence,
+    }
+
+    #[async_trait::async_trait]
+    impl AsyncFxEvidenceIssuance for TestFxIssuance {
+        async fn issue(
+            &self,
+            _request: fx_provider::ServerFxEvidenceRequest,
+        ) -> Result<IssuedFxEvidence, fx_provider::FxProviderError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self.issued.clone())
+        }
+    }
+
+    fn test_issued_fx(merchant_id: Uuid, facts_digest: Digest32) -> IssuedFxEvidence {
+        let signing_key = SigningKey::from_bytes(&[41; 32]);
+        let conversion = tax_engine::FxConversionEvidence {
+            source_currency: "USD".to_string(),
+            target_currency: "EUR".to_string(),
+            numerator: 2,
+            denominator: 3,
+            rounding_mode: tax_engine::RoundingMode::HalfEven,
+            quantum_atomic: 1,
+            provider: "provider-a".to_string(),
+            quote_id: "quote-a".to_string(),
+            observed_at_unix: 1_800_000_000,
+            evidence_digest: [10; 32],
+        };
+        let unsigned = UnsignedFxEvidence {
+            schema_version: FX_EVIDENCE_SCHEMA_VERSION,
+            merchant_id: merchant_identity_digest(merchant_id.as_bytes()),
+            facts_digest,
+            source_currency: conversion.source_currency.clone(),
+            target_currency: conversion.target_currency.clone(),
+            numerator: conversion.numerator,
+            denominator: conversion.denominator,
+            rounding_mode: conversion.rounding_mode,
+            quantum_atomic: conversion.quantum_atomic,
+            provider: conversion.provider.clone(),
+            quote_id: conversion.quote_id.clone(),
+            observed_at_unix: conversion.observed_at_unix,
+            expires_at_unix: 1_800_000_300,
+            evidence_digest: [10; 32],
+            provider_key_id: [11; 32],
+        };
+        IssuedFxEvidence {
+            envelope: FxEvidenceEnvelope::sign(unsigned, &signing_key).expect("FX fixture"),
+            conversion,
+            source_evidence_digest: [12; 32],
+            policy_digest: [13; 32],
+            legal_authority_digest: [14; 32],
+        }
+    }
+
+    fn fx_test_state(issuer: Option<Arc<dyn AsyncFxEvidenceIssuance>>) -> AppState {
+        AppState {
+            ready: false,
+            simulation_mode: true,
+            storage: None,
+            authenticator: None,
+            jurisdiction_provider_registry: None,
+            fx_issuance: issuer,
+            settlement_coordinator: None,
+            targeted_recovery: None,
+            metrics: test_metrics(),
+        }
+    }
+
+    #[tokio::test]
+    async fn server_fx_enrichment_keeps_same_currency_on_the_no_fx_path() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let merchant_id = Uuid::from_bytes([1; 16]);
+        let issuer = TestFxIssuance {
+            calls: Arc::clone(&calls),
+            issued: test_issued_fx(merchant_id, [8; 32]),
+        };
+        let state = fx_test_state(Some(Arc::new(issuer)));
+
+        let result =
+            issue_server_owned_fx(&state, merchant_id, [8; 32], None, "EUR", 1_800_000_100)
+                .await
+                .expect("same-currency bypass");
+
+        assert!(result.is_none());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn server_fx_enrichment_fails_closed_without_a_server_issuer() {
+        let error = issue_server_owned_fx(
+            &fx_test_state(None),
+            Uuid::from_bytes([1; 16]),
+            [8; 32],
+            Some("USD"),
+            "EUR",
+            1_800_000_100,
+        )
+        .await
+        .expect_err("FX issuer must be required");
+
+        assert_eq!(error.code, "FX_ISSUANCE_UNAVAILABLE");
+    }
+
+    #[tokio::test]
+    async fn server_fx_enrichment_rejects_same_source_and_target_currency() {
+        let error = issue_server_owned_fx(
+            &fx_test_state(None),
+            Uuid::from_bytes([1; 16]),
+            [8; 32],
+            Some("EUR"),
+            "EUR",
+            1_800_000_100,
+        )
+        .await
+        .expect_err("same FX pair must be rejected");
+
+        assert_eq!(error.code, "INVALID_FX_CURRENCY_PAIR");
+    }
+
+    #[tokio::test]
+    async fn server_fx_enrichment_verifies_exact_server_owned_binding() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let merchant_id = Uuid::from_bytes([1; 16]);
+        let state = fx_test_state(Some(Arc::new(TestFxIssuance {
+            calls: Arc::clone(&calls),
+            issued: test_issued_fx(merchant_id, [8; 32]),
+        })));
+
+        let enrichment = issue_server_owned_fx(
+            &state,
+            merchant_id,
+            [8; 32],
+            Some("USD"),
+            "EUR",
+            1_800_000_100,
+        )
+        .await
+        .expect("server-owned FX evidence")
+        .expect("cross-currency enrichment");
+
+        assert_eq!(enrichment.conversion.source_currency, "USD");
+        assert_eq!(enrichment.conversion.target_currency, "EUR");
+        assert_eq!(enrichment.persisted.pre_resolution_facts_digest, [8; 32]);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
     #[tokio::test]
     async fn refund_claim_prepare_requires_explicit_confirmation_before_auth_or_storage() {
         let body = serde_json::to_vec(&RefundClaimPrepareRequest {
@@ -8127,6 +8395,7 @@ mod tests {
                 storage: None,
                 authenticator: None,
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -8158,6 +8427,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -8190,6 +8460,7 @@ mod tests {
                 storage: None,
                 authenticator: None,
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -8221,6 +8492,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -8247,6 +8519,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -8281,6 +8554,7 @@ mod tests {
                 storage: None,
                 authenticator: None,
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -8312,6 +8586,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -8338,6 +8613,7 @@ mod tests {
                 storage: None,
                 authenticator: None,
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -8362,6 +8638,7 @@ mod tests {
                 storage: None,
                 authenticator: None,
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -8396,6 +8673,7 @@ mod tests {
                 storage: None,
                 authenticator: None,
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -8432,6 +8710,7 @@ mod tests {
                 storage: None,
                 authenticator: None,
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics,
@@ -8598,6 +8877,7 @@ mod tests {
                 storage: None,
                 authenticator: None,
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -8664,6 +8944,7 @@ mod tests {
                 storage: None,
                 authenticator: None,
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -8710,6 +8991,7 @@ mod tests {
                 storage: None,
                 authenticator: None,
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -8752,6 +9034,7 @@ mod tests {
                 storage: None,
                 authenticator: None,
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -8802,6 +9085,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -8847,6 +9131,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -8910,6 +9195,7 @@ mod tests {
                 storage: None,
                 authenticator: None,
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -8962,6 +9248,7 @@ mod tests {
                 storage: None,
                 authenticator: None,
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9006,6 +9293,7 @@ mod tests {
                 storage: None,
                 authenticator: None,
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9046,6 +9334,7 @@ mod tests {
                 exemption_codes: Vec::new(),
                 cumulative_period: None,
             },
+            source_currency: None,
             jurisdiction_evidence: Vec::new(),
         })
         .unwrap();
@@ -9056,6 +9345,7 @@ mod tests {
                 storage: None,
                 authenticator: None,
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9082,6 +9372,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9108,6 +9399,7 @@ mod tests {
                                 exemption_codes: Vec::new(),
                                 cumulative_period: None,
                             },
+                            source_currency: None,
                             jurisdiction_evidence: Vec::new(),
                         })
                         .unwrap(),
@@ -9128,6 +9420,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9188,6 +9481,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9218,6 +9512,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9251,6 +9546,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9290,6 +9586,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9324,6 +9621,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9356,6 +9654,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9388,6 +9687,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9420,6 +9720,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9447,6 +9748,7 @@ mod tests {
                 storage: None,
                 authenticator: None,
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9476,6 +9778,7 @@ mod tests {
                 storage: None,
                 authenticator: None,
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9510,6 +9813,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9540,6 +9844,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9572,6 +9877,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9607,6 +9913,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9649,6 +9956,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9686,6 +9994,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9718,6 +10027,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9753,6 +10063,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9786,6 +10097,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9818,6 +10130,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9853,6 +10166,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9888,6 +10202,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9918,6 +10233,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9943,6 +10259,7 @@ mod tests {
                 storage: None,
                 authenticator: None,
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -9990,6 +10307,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),
@@ -10029,6 +10347,7 @@ mod tests {
                 storage: None,
                 authenticator: Some(auth::test_authenticator()),
                 jurisdiction_provider_registry: None,
+                fx_issuance: None,
                 settlement_coordinator: None,
                 targeted_recovery: None,
                 metrics: test_metrics(),

@@ -267,6 +267,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         storage,
         authenticator,
         jurisdiction_provider_registry,
+        fx_issuance: None,
         settlement_coordinator,
         targeted_recovery,
         metrics: std::sync::Arc::new(ServiceMetrics::new(

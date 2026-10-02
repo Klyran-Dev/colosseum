@@ -19,7 +19,7 @@ use fx_evidence::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::HashMap, sync::Arc, time::Duration};
-use tax_engine::{MAX_ATOMIC_AMOUNT, RoundingMode};
+use tax_engine::{FxConversionEvidence, MAX_ATOMIC_AMOUNT, RoundingMode};
 use thiserror::Error;
 use tokio::{sync::Semaphore, task::JoinSet, time::timeout};
 
@@ -729,6 +729,7 @@ fn validate_acquisition_request(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IssuedFxEvidence {
     pub envelope: FxEvidenceEnvelope,
+    pub conversion: FxConversionEvidence,
     pub source_evidence_digest: Digest32,
     pub policy_digest: Digest32,
     pub legal_authority_digest: Digest32,
@@ -748,6 +749,75 @@ pub struct FxEvidenceRequest {
     pub target_currency: String,
     pub now_unix: i64,
     pub reference_rate: Option<ExactRate>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ServerFxEvidenceRequest {
+    pub merchant_id: Digest32,
+    pub facts_digest: Digest32,
+    pub source_currency: String,
+    pub target_currency: String,
+    pub now_unix: i64,
+}
+
+#[async_trait::async_trait]
+pub trait AsyncFxEvidenceIssuance: Send + Sync {
+    async fn issue(
+        &self,
+        request: ServerFxEvidenceRequest,
+    ) -> Result<IssuedFxEvidence, FxProviderError>;
+}
+
+#[derive(Clone)]
+pub struct ConfiguredFxEvidenceIssuance<S> {
+    coordinator: Arc<FxEvidenceCoordinator<S>>,
+    policy_digest: Digest32,
+    reference_rate: Option<ExactRate>,
+}
+
+impl<S> ConfiguredFxEvidenceIssuance<S> {
+    pub fn new(
+        coordinator: Arc<FxEvidenceCoordinator<S>>,
+        policy_digest: Digest32,
+        reference_rate: Option<ExactRate>,
+    ) -> Result<Self, FxProviderError> {
+        if policy_digest == [0; 32] {
+            return Err(FxProviderError::InvalidConfiguration(
+                "FX application policy digest must be non-zero",
+            ));
+        }
+        if let Some(rate) = reference_rate {
+            rate.validate()?;
+        }
+        Ok(Self {
+            coordinator,
+            policy_digest,
+            reference_rate,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl<S> AsyncFxEvidenceIssuance for ConfiguredFxEvidenceIssuance<S>
+where
+    S: AsyncFxEvidenceSigner + Clone + Send + Sync + 'static,
+{
+    async fn issue(
+        &self,
+        request: ServerFxEvidenceRequest,
+    ) -> Result<IssuedFxEvidence, FxProviderError> {
+        self.coordinator
+            .issue(FxEvidenceRequest {
+                policy_digest: self.policy_digest,
+                merchant_id: request.merchant_id,
+                facts_digest: request.facts_digest,
+                source_currency: request.source_currency,
+                target_currency: request.target_currency,
+                now_unix: request.now_unix,
+                reference_rate: self.reference_rate,
+            })
+            .await
+    }
 }
 
 pub struct FxEvidenceCoordinator<S> {
@@ -1040,7 +1110,7 @@ fn finalize_evidence(
         payload_digest: Sha256::digest(&prepared.payload).into(),
         signature,
     };
-    envelope
+    let conversion = envelope
         .verify_with_key_at_and_future_skew(
             &verifying_key,
             envelope.unsigned.merchant_id,
@@ -1051,6 +1121,7 @@ fn finalize_evidence(
         .map_err(FxProviderError::Evidence)?;
     Ok(IssuedFxEvidence {
         envelope,
+        conversion,
         source_evidence_digest: prepared.source_evidence_digest,
         policy_digest: policy.policy_digest,
         legal_authority_digest: prepared.legal_authority_digest,
@@ -1877,6 +1948,48 @@ mod tests {
             .expect("shared signer issued evidence");
 
         assert_eq!(issued.policy_digest, [6; 32]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn configured_issuance_port_keeps_policy_server_owned_and_exposes_projection() {
+        let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let maximum = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let registry = FxProviderPolicyRegistry::from_json(&policy_document(&policy()))
+            .expect("policy registry");
+        let coordinator = Arc::new(FxEvidenceCoordinator::new(
+            registry,
+            vec![
+                Arc::new(source("provider-a", 0, false, None, &active, &maximum))
+                    as Arc<dyn AsyncFxQuoteSource>,
+            ],
+            TestSigner::new([31; 32], [32; 32]),
+            FxProviderAcquisitionConfig::default(),
+            FxSigningConfig::default(),
+        ));
+        let issuance = ConfiguredFxEvidenceIssuance::new(
+            coordinator,
+            [6; 32],
+            Some(ExactRate {
+                numerator: 9,
+                denominator: 8,
+            }),
+        )
+        .expect("server-owned issuance configuration");
+
+        let issued = issuance
+            .issue(ServerFxEvidenceRequest {
+                merchant_id: [7; 32],
+                facts_digest: [8; 32],
+                source_currency: "USD".to_string(),
+                target_currency: "EUR".to_string(),
+                now_unix: 1_800_000_100,
+            })
+            .await
+            .expect("server-owned issuance");
+
+        assert_eq!(issued.policy_digest, [6; 32]);
+        assert_eq!(issued.conversion.source_currency, "USD");
+        assert_eq!(issued.conversion.target_currency, "EUR");
     }
 
     #[tokio::test(flavor = "current_thread")]

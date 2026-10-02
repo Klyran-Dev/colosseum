@@ -222,6 +222,7 @@ not accepted from the request body:
     "currency": "USD",
     "jurisdiction": "US-CA"
   },
+  "source_currency": null,
   "jurisdiction_evidence": [
     {
       "unsigned": {
@@ -256,6 +257,15 @@ lengths: 32-byte digests/public keys and a 64-byte signature. The
 angle-bracket values above are documentation placeholders, not accepted
 literal values.
 
+For a cross-currency quote, `source_currency` is a bounded currency code such
+as `USD` while `facts.currency` is the target calculation/settlement currency.
+The API obtains the FX quote through its configured server-owned issuance port,
+binds it to the pre-resolution facts digest, and persists the complete signed
+envelope. The browser cannot submit a rate, provider, policy digest, signer
+identity, or FX evidence. Omitting `source_currency` keeps the same-currency
+path; setting it equal to `facts.currency` is rejected. If no approved issuer is
+configured, a cross-currency request fails closed with `FX_ISSUANCE_UNAVAILABLE`.
+
 The service selects a currently effective `published` row and its immutable
 tenant policy from PostgreSQL,
 recomputes the canonical rule digest, evaluates the pure engine, and commits
@@ -265,6 +275,10 @@ memory, reduced to the bounded server-owned resolution envelope, and
 discarded. A retry
 with the same key and identical request returns the original calculation. A
 different request using the same key returns `409 IDEMPOTENCY_KEY_REUSED`.
+For FX requests, the idempotency identity includes the pre-resolution facts and
+normalized source currency but excludes mutable provider quote metadata; the
+complete server-issued FX envelope remains immutable evidence and is replay
+validated separately.
 Replay evidence is decrypted only after merchant authorization and every
 replay attempt is recorded in the append-only evidence-access audit ledger;
 the audit row contains no customer facts. New durable quote writes fail closed
@@ -552,6 +566,13 @@ status, complete line/component trace, facts digest, rule digest, and all atomic
 amounts as decimal strings. This route does not authorize Solana settlement:
 the current attestation and settlement contracts remain aggregate-quote-only
 until a separate document-to-payment binding ADR is accepted.
+
+Document quotes use the same optional `source_currency` and server-owned FX
+composition contract as aggregate quotes. The source currency is applied to
+the document's raw line amounts before tax evaluation; the signed envelope is
+bound to the document's pre-resolution facts digest and persisted with the
+immutable calculation. A missing issuer fails closed for cross-currency
+requests.
 
 `GET /v1/tax/document-quotes/{calculation_id}/replay` is an authenticated,
 read-only replay operation. It tenant-scopes the lookup, decrypts the normalized
