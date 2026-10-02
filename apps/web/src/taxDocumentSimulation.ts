@@ -1,3 +1,5 @@
+import { parseFxConversionEvidence, type FxConversionEvidence } from "./taxResponses";
+
 const MAX_LINES = 256;
 const MAX_ATOMIC = 18_446_744_073_709_551_615n;
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -41,6 +43,7 @@ export type TaxDocumentCalculation = {
     gross_atomic: string;
     total_tax_atomic: string;
     total_net_atomic: string;
+    fx_conversion?: FxConversionEvidence;
     lines: Array<{
       id: string;
       gross_atomic: string;
@@ -165,6 +168,9 @@ function parseTaxDocumentCalculation(value: unknown, allowedStatuses: TaxDocumen
       gross_atomic: atomic(raw.gross_atomic, false),
       total_tax_atomic: atomic(raw.total_tax_atomic),
       total_net_atomic: atomic(raw.total_net_atomic),
+      fx_conversion: raw.fx_conversion === undefined || raw.fx_conversion === null
+        ? undefined
+        : parseFxConversionEvidence(raw.fx_conversion, raw.currency),
       lines,
     },
   };

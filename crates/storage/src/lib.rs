@@ -14398,6 +14398,7 @@ mod tests {
                 currency: "USD".to_string(),
                 jurisdiction: "US-CA".to_string(),
                 jurisdiction_resolution: None,
+                fx_conversion: None,
                 exemption_codes: Vec::new(),
                 cumulative_period: None,
             },
@@ -14940,6 +14941,7 @@ mod tests {
             currency: "USD".to_string(),
             jurisdiction: "US-CA".to_string(),
             jurisdiction_resolution: None,
+            fx_conversion: None,
             exemption_codes: Vec::new(),
             cumulative_period: None,
         };
@@ -15072,6 +15074,7 @@ mod tests {
             currency: "USD".to_string(),
             jurisdiction: "US-CA".to_string(),
             jurisdiction_resolution: None,
+            fx_conversion: None,
             cumulative_period: None,
             lines: vec![tax_engine::TaxLineFacts {
                 id: "line-1".to_string(),

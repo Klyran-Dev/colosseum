@@ -2,6 +2,11 @@
 
 ## 2026-10-02
 
+- Added ADR-0244 for the exact foreign-exchange evidence boundary required by
+  global taxation. The pure engine now normalizes exact evidence once and
+  preserves it for replay; API entry points reject caller-supplied FX until a
+  separately governed provider adapter can attach verified evidence. Provider
+  freshness and legal rate acceptance remain outside the tax hot path.
 - Added ADR-0243 and a program pause-coverage contract. CI and normal checks
   now discover every public `transfer_checked` entry point and fail closed if
   movement is outside the explicit allowlist, if an allowlisted instruction

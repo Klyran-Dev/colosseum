@@ -55,6 +55,47 @@ describe("strict tax evidence responses", () => {
     }))).toThrow(/gross_atomic/);
   });
 
+  it("validates and preserves exact FX evidence", () => {
+    const parsed = parseCalculationResponse(validCalculation({
+      result: {
+        ...validCalculation().result as Record<string, unknown>,
+        currency: "EUR",
+        fx_conversion: {
+          source_currency: "USD",
+          target_currency: "EUR",
+          numerator: "3",
+          denominator: "2",
+          rounding_mode: "HalfUp",
+          quantum_atomic: "1",
+          provider: "regulated-fx",
+          quote_id: "quote-1",
+          observed_at_unix: 1_759_000_000,
+          evidence_digest: Array(32).fill(7),
+        },
+      },
+    }));
+    expect(parsed.result.fx_conversion?.target_currency).toBe("EUR");
+    expect(parsed.result.fx_conversion?.numerator).toBe("3");
+    expect(() => parseCalculationResponse(validCalculation({
+      result: {
+        ...validCalculation().result as Record<string, unknown>,
+        currency: "EUR",
+        fx_conversion: {
+          source_currency: "USD",
+          target_currency: "USD",
+          numerator: "3",
+          denominator: "2",
+          rounding_mode: "HalfUp",
+          quantum_atomic: "1",
+          provider: "regulated-fx",
+          quote_id: "quote-1",
+          observed_at_unix: 1_759_000_000,
+          evidence_digest: Array(32).fill(7),
+        },
+      },
+    }))).toThrow(/currencies must differ/);
+  });
+
   it("rejects unsupported statuses, malformed identities, and invalid digests", () => {
     expect(() => parseCalculationResponse(validCalculation({ status: "finalized" }))).toThrow(/status/);
     expect(() => parseCalculationResponse(validCalculation({ calculation_id: "01992f1b-4a70-6e30-8ea2-b6e37a9d9d21" }))).toThrow(/UUIDv7/);

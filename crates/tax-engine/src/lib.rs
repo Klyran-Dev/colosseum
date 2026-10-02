@@ -22,6 +22,7 @@ pub const MAX_DOCUMENT_LINES: usize = 256;
 pub const MAX_EXEMPTION_CODES: usize = 32;
 pub const MAX_CODE_BYTES: usize = 64;
 pub const MAX_PERIOD_ID_BYTES: usize = 128;
+pub const MAX_CURRENCY_CODE_BYTES: usize = 16;
 pub const RULE_SET_DOCUMENT_SCHEMA_V1: &str = "solana-tax-protocol/tax-rule/v1";
 pub const TAX_DOCUMENT_SCHEMA_V1: &str = "solana-tax-protocol/tax-document/v1";
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -345,6 +346,10 @@ pub struct TaxFacts {
     /// records; new globally supported quote paths must require `Some`.
     #[serde(default)]
     pub jurisdiction_resolution: Option<JurisdictionResolution>,
+    /// Raw amounts are in `source_currency` when present; `currency` is the
+    /// target calculation/settlement currency.
+    #[serde(default)]
+    pub fx_conversion: Option<FxConversionEvidence>,
     #[serde(default)]
     pub exemption_codes: Vec<String>,
     #[serde(default)]
@@ -357,6 +362,83 @@ pub struct CumulativePeriodSnapshot {
     #[serde(with = "serde_i128_string")]
     pub cumulative_base_atomic: AtomicAmount,
     pub evidence_digest: Digest32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FxConversionEvidence {
+    pub source_currency: String,
+    pub target_currency: String,
+    #[serde(with = "serde_i128_string")]
+    pub numerator: i128,
+    #[serde(with = "serde_i128_string")]
+    pub denominator: i128,
+    pub rounding_mode: RoundingMode,
+    #[serde(with = "serde_i128_string")]
+    pub quantum_atomic: AtomicAmount,
+    pub provider: String,
+    pub quote_id: String,
+    pub observed_at_unix: i64,
+    pub evidence_digest: Digest32,
+}
+
+impl FxConversionEvidence {
+    fn validate_for_target(&self, target_currency: &str) -> Result<(), TaxError> {
+        for currency in [&self.source_currency, &self.target_currency] {
+            if currency.trim().is_empty() || currency.len() > MAX_CURRENCY_CODE_BYTES {
+                return Err(TaxError::InvalidFacts(
+                    "FX currency code is required and bounded",
+                ));
+            }
+        }
+        if self.source_currency == self.target_currency {
+            return Err(TaxError::InvalidFacts(
+                "FX source and target currencies must differ",
+            ));
+        }
+        if self.target_currency != target_currency {
+            return Err(TaxError::InvalidFacts(
+                "FX target currency must match facts currency",
+            ));
+        }
+        if self.numerator <= 0 || self.denominator <= 0 {
+            return Err(TaxError::InvalidFacts(
+                "FX rate must be positive with a positive denominator",
+            ));
+        }
+        if self.quantum_atomic <= 0 || self.quantum_atomic > MAX_ATOMIC_AMOUNT {
+            return Err(TaxError::InvalidFacts(
+                "FX rounding quantum must be a positive bounded atomic amount",
+            ));
+        }
+        if self.provider.trim().is_empty()
+            || self.provider.len() > MAX_CODE_BYTES
+            || self.quote_id.trim().is_empty()
+            || self.quote_id.len() > MAX_CODE_BYTES
+        {
+            return Err(TaxError::InvalidFacts(
+                "FX provider and quote identity are invalid",
+            ));
+        }
+        if self.observed_at_unix <= 0 || self.evidence_digest == [0; 32] {
+            return Err(TaxError::InvalidFacts("FX observation evidence is invalid"));
+        }
+        Ok(())
+    }
+
+    fn convert_amount(&self, amount_atomic: AtomicAmount) -> Result<AtomicAmount, TaxError> {
+        if !(0..=MAX_ATOMIC_AMOUNT).contains(&amount_atomic) {
+            return Err(TaxError::InvalidFacts(
+                "FX source amount must fit Solana atomic units",
+            ));
+        }
+        let converted = Rational::from_integer(amount_atomic)
+            .checked_mul(Rational::new(self.numerator, self.denominator)?)?
+            .round_to_quantum(self.rounding_mode, self.quantum_atomic)?;
+        if !(0..=MAX_ATOMIC_AMOUNT).contains(&converted) {
+            return Err(TaxError::FxConversionOutOfRange);
+        }
+        Ok(converted)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -380,6 +462,8 @@ pub struct TaxDocumentFacts {
     #[serde(default)]
     pub jurisdiction_resolution: Option<JurisdictionResolution>,
     #[serde(default)]
+    pub fx_conversion: Option<FxConversionEvidence>,
+    #[serde(default)]
     pub cumulative_period: Option<CumulativePeriodSnapshot>,
     pub lines: Vec<TaxLineFacts>,
 }
@@ -402,6 +486,7 @@ impl TaxDocumentFacts {
             currency: self.currency.clone(),
             jurisdiction: self.jurisdiction.clone(),
             jurisdiction_resolution: self.jurisdiction_resolution.clone(),
+            fx_conversion: self.fx_conversion.clone(),
             exemption_codes: Vec::new(),
             cumulative_period: self.cumulative_period.clone(),
         }
@@ -488,7 +573,26 @@ impl TaxDocumentFacts {
             None => encoder.u8(0),
         }
         encode_jurisdiction_resolution(&mut encoder, &self.jurisdiction_resolution)?;
+        encode_fx_conversion(&mut encoder, &self.fx_conversion)?;
         Ok(encoder.digest())
+    }
+
+    fn normalized_for_calculation(&self) -> Result<Self, TaxError> {
+        self.validate()?;
+        let Some(fx) = &self.fx_conversion else {
+            return Ok(self.clone());
+        };
+        let mut normalized = self.clone();
+        for line in &mut normalized.lines {
+            line.gross_atomic = fx.convert_amount(line.gross_atomic)?;
+            line.net_atomic = fx.convert_amount(line.net_atomic)?;
+        }
+        if let Some(snapshot) = &mut normalized.cumulative_period {
+            snapshot.cumulative_base_atomic = fx.convert_amount(snapshot.cumulative_base_atomic)?;
+        }
+        normalized.fx_conversion = None;
+        normalized.validate()?;
+        Ok(normalized)
     }
 }
 
@@ -506,6 +610,9 @@ impl TaxFacts {
             return Err(TaxError::InvalidFacts(
                 "currency and jurisdiction must be non-empty",
             ));
+        }
+        if let Some(conversion) = &self.fx_conversion {
+            conversion.validate_for_target(&self.currency)?;
         }
         if let Some(resolution) = &self.jurisdiction_resolution
             && (resolution.policy_id.trim().is_empty()
@@ -569,7 +676,24 @@ impl TaxFacts {
         // a resolution envelope. Presence of an envelope is an additive
         // versioned suffix, so historical evidence remains replayable.
         encode_jurisdiction_resolution(&mut encoder, &self.jurisdiction_resolution)?;
+        encode_fx_conversion(&mut encoder, &self.fx_conversion)?;
         Ok(encoder.digest())
+    }
+
+    fn normalized_for_calculation(&self) -> Result<Self, TaxError> {
+        self.validate()?;
+        let Some(fx) = &self.fx_conversion else {
+            return Ok(self.clone());
+        };
+        let mut normalized = self.clone();
+        normalized.gross_atomic = fx.convert_amount(normalized.gross_atomic)?;
+        normalized.net_atomic = fx.convert_amount(normalized.net_atomic)?;
+        if let Some(snapshot) = &mut normalized.cumulative_period {
+            snapshot.cumulative_base_atomic = fx.convert_amount(snapshot.cumulative_base_atomic)?;
+        }
+        normalized.fx_conversion = None;
+        normalized.validate()?;
+        Ok(normalized)
     }
 }
 
@@ -596,6 +720,32 @@ fn encode_jurisdiction_resolution(
             encoder.u32(entry.candidate_count);
             encoder.u8(u8::from(entry.selected));
         }
+    }
+    Ok(())
+}
+
+fn encode_fx_conversion(
+    encoder: &mut CanonicalEncoder,
+    conversion: &Option<FxConversionEvidence>,
+) -> Result<(), TaxError> {
+    if let Some(conversion) = conversion {
+        encoder.u8(1);
+        encoder.text(&conversion.source_currency)?;
+        encoder.text(&conversion.target_currency)?;
+        encoder.i128(conversion.numerator);
+        encoder.i128(conversion.denominator);
+        encoder.u8(match conversion.rounding_mode {
+            RoundingMode::Floor => 0,
+            RoundingMode::Ceil => 1,
+            RoundingMode::HalfUp => 2,
+            RoundingMode::HalfEven => 3,
+            RoundingMode::AwayFromZero => 4,
+        });
+        encoder.i128(conversion.quantum_atomic);
+        encoder.text(&conversion.provider)?;
+        encoder.text(&conversion.quote_id)?;
+        encoder.i128(i128::from(conversion.observed_at_unix));
+        encoder.bytes(&conversion.evidence_digest);
     }
     Ok(())
 }
@@ -823,9 +973,11 @@ impl CompiledRuleSet {
     pub fn calculate(&self, facts: &TaxFacts) -> Result<CalculationResult, TaxError> {
         facts.validate()?;
         let facts_digest = facts.canonical_digest()?;
+        let fx_conversion = facts.fx_conversion.clone();
+        let facts = facts.normalized_for_calculation()?;
         match self.rule_set.components[0].rounding.scope {
             RoundingScope::Settlement => {
-                return self.calculate_settlement_scope(facts, facts_digest);
+                return self.calculate_settlement_scope(&facts, facts_digest, fx_conversion);
             }
             RoundingScope::Line | RoundingScope::Invoice => {
                 return Err(TaxError::UnsupportedDocumentScope(
@@ -838,7 +990,7 @@ impl CompiledRuleSet {
         let mut results = BTreeMap::<String, ComponentResult>::new();
         for &index in &self.evaluation_order {
             let component = &self.rule_set.components[index];
-            let base_atomic = evaluate_base(&component.base, facts, &computed)?;
+            let base_atomic = evaluate_base(&component.base, &facts, &computed)?;
             let exemption_applied = component
                 .exemption_codes
                 .iter()
@@ -846,7 +998,7 @@ impl CompiledRuleSet {
             let effective_base_atomic = if exemption_applied {
                 0
             } else {
-                apply_threshold(component, base_atomic, facts)?
+                apply_threshold(component, base_atomic, &facts)?
             };
             let raw_tax = if exemption_applied {
                 Rational::zero()
@@ -923,6 +1075,7 @@ impl CompiledRuleSet {
             currency: facts.currency.clone(),
             jurisdiction: facts.jurisdiction.clone(),
             jurisdiction_resolution: facts.jurisdiction_resolution.clone(),
+            fx_conversion,
             facts_digest,
             rule_digest: self.rule_digest,
             gross_atomic: facts.gross_atomic,
@@ -936,6 +1089,7 @@ impl CompiledRuleSet {
         &self,
         facts: &TaxFacts,
         facts_digest: Digest32,
+        fx_conversion: Option<FxConversionEvidence>,
     ) -> Result<CalculationResult, TaxError> {
         let rounding_mode = self.rule_set.components[0].rounding.mode;
         let rounding_quantum = self.rule_set.components[0].rounding.quantum_atomic;
@@ -963,6 +1117,7 @@ impl CompiledRuleSet {
             currency: facts.currency.clone(),
             jurisdiction: facts.jurisdiction.clone(),
             jurisdiction_resolution: facts.jurisdiction_resolution.clone(),
+            fx_conversion,
             facts_digest,
             rule_digest: self.rule_digest,
             gross_atomic: facts.gross_atomic,
@@ -1053,6 +1208,8 @@ impl CompiledRuleSet {
     ) -> Result<TaxDocumentResult, TaxError> {
         facts.validate()?;
         let facts_digest = facts.canonical_digest()?;
+        let fx_conversion = facts.fx_conversion.clone();
+        let facts = facts.normalized_for_calculation()?;
         let scope = self.rule_set.components[0].rounding.scope;
         if !matches!(scope, RoundingScope::Line | RoundingScope::Invoice) {
             return Err(TaxError::UnsupportedDocumentScope(
@@ -1071,6 +1228,7 @@ impl CompiledRuleSet {
                 currency: facts.currency.clone(),
                 jurisdiction: facts.jurisdiction.clone(),
                 jurisdiction_resolution: facts.jurisdiction_resolution.clone(),
+                fx_conversion: None,
                 exemption_codes: line.exemption_codes.clone(),
                 cumulative_period: facts.cumulative_period.clone(),
             };
@@ -1147,6 +1305,7 @@ impl CompiledRuleSet {
             currency: facts.currency.clone(),
             jurisdiction: facts.jurisdiction.clone(),
             jurisdiction_resolution: facts.jurisdiction_resolution.clone(),
+            fx_conversion,
             facts_digest,
             rule_digest: self.rule_digest,
             gross_atomic,
@@ -1321,6 +1480,8 @@ pub struct CalculationResult {
     pub jurisdiction: String,
     #[serde(default)]
     pub jurisdiction_resolution: Option<JurisdictionResolution>,
+    #[serde(default)]
+    pub fx_conversion: Option<FxConversionEvidence>,
     pub facts_digest: Digest32,
     pub rule_digest: Digest32,
     #[serde(with = "serde_i128_string")]
@@ -1372,6 +1533,8 @@ pub struct TaxDocumentResult {
     pub jurisdiction: String,
     #[serde(default)]
     pub jurisdiction_resolution: Option<JurisdictionResolution>,
+    #[serde(default)]
+    pub fx_conversion: Option<FxConversionEvidence>,
     pub facts_digest: Digest32,
     pub rule_digest: Digest32,
     #[serde(with = "serde_i128_string")]
@@ -1431,6 +1594,8 @@ pub enum TaxError {
     ReplayMismatch,
     #[error("jurisdiction resolution failed: {0}")]
     JurisdictionResolution(#[from] jurisdiction::JurisdictionError),
+    #[error("FX conversion result exceeds the supported atomic amount bound")]
+    FxConversionOutOfRange,
 }
 
 pub fn calculate(rule_set: &RuleSet, facts: &TaxFacts) -> Result<CalculationResult, TaxError> {
@@ -1993,6 +2158,7 @@ mod tests {
             currency: "USD".to_string(),
             jurisdiction: "US-CA".to_string(),
             jurisdiction_resolution: None,
+            fx_conversion: None,
             exemption_codes: Vec::new(),
             cumulative_period: None,
         }
@@ -2343,6 +2509,7 @@ mod tests {
             currency: "USD".to_string(),
             jurisdiction: "US-CA".to_string(),
             jurisdiction_resolution: None,
+            fx_conversion: None,
             cumulative_period: None,
             lines,
         }
@@ -2956,6 +3123,127 @@ mod tests {
             result.verify_replay(&rule, &tampered_facts),
             Err(TaxError::ReplayMismatch)
         );
+    }
+
+    fn fx_evidence(
+        source_currency: &str,
+        target_currency: &str,
+        numerator: i128,
+        denominator: i128,
+    ) -> FxConversionEvidence {
+        FxConversionEvidence {
+            source_currency: source_currency.to_string(),
+            target_currency: target_currency.to_string(),
+            numerator,
+            denominator,
+            rounding_mode: RoundingMode::HalfUp,
+            quantum_atomic: 1,
+            provider: "regulated-fx".to_string(),
+            quote_id: "quote-2026-10-02-1".to_string(),
+            observed_at_unix: 1_759_000_000,
+            evidence_digest: [7; 32],
+        }
+    }
+
+    #[test]
+    fn exact_fx_evidence_normalizes_before_tax_and_replays() {
+        let rule = RuleSet {
+            id: "fx-rule".to_string(),
+            version: 1,
+            components: vec![flat_rule(
+                "sales-tax",
+                TaxBase::single(BaseReference::Net),
+                Rate::new(10, 100).unwrap(),
+                PriceMode::Exclusive,
+            )],
+        };
+        let mut transaction_facts = facts(1_000, 500);
+        transaction_facts.currency = "EUR".to_string();
+        transaction_facts.fx_conversion = Some(fx_evidence("USD", "EUR", 3, 2));
+
+        let result = calculate(&rule, &transaction_facts).unwrap();
+        assert_eq!(result.currency, "EUR");
+        assert_eq!(result.gross_atomic, 1_500);
+        assert_eq!(result.total_tax_atomic, 75);
+        assert_eq!(result.total_net_atomic, 1_425);
+        assert_eq!(result.fx_conversion, transaction_facts.fx_conversion);
+        result.verify_replay(&rule, &transaction_facts).unwrap();
+    }
+
+    #[test]
+    fn document_fx_evidence_normalizes_each_line_and_preserves_result_binding() {
+        let mut document = document_facts(vec![line("line-a", 1_000)]);
+        document.currency = "EUR".to_string();
+        document.fx_conversion = Some(fx_evidence("USD", "EUR", 3, 2));
+        let result =
+            calculate_document(&independent_document_rule(RoundingScope::Line), &document).unwrap();
+        assert_eq!(result.gross_atomic, 1_500);
+        assert_eq!(result.fx_conversion, document.fx_conversion);
+        result
+            .verify_replay(&independent_document_rule(RoundingScope::Line), &document)
+            .unwrap();
+    }
+
+    #[test]
+    fn fx_conversion_rounding_and_cumulative_snapshot_use_declared_policy() {
+        let rule = RuleSet {
+            id: "fx-rounding".to_string(),
+            version: 1,
+            components: vec![flat_rule(
+                "sales-tax",
+                TaxBase::single(BaseReference::Net),
+                Rate::new(1, 10).unwrap(),
+                PriceMode::Exclusive,
+            )],
+        };
+        let mut evidence = fx_evidence("JPY", "USD", 1, 2);
+        evidence.quantum_atomic = 10;
+        let mut transaction_facts = facts(10, 10);
+        transaction_facts.currency = "USD".to_string();
+        transaction_facts.fx_conversion = Some(evidence);
+        transaction_facts.cumulative_period = Some(CumulativePeriodSnapshot {
+            period_id: "2026-Q4".to_string(),
+            cumulative_base_atomic: 11,
+            evidence_digest: [8; 32],
+        });
+
+        let result = calculate(&rule, &transaction_facts).unwrap();
+        assert_eq!(result.gross_atomic, 10);
+        assert_eq!(result.total_net_atomic, 9);
+        assert_eq!(result.total_tax_atomic, 1);
+    }
+
+    #[test]
+    fn malformed_or_out_of_range_fx_evidence_fails_closed() {
+        let mut transaction_facts = facts(100, 100);
+        transaction_facts.currency = "EUR".to_string();
+        let mut evidence = fx_evidence("USD", "USD", 1, 1);
+        transaction_facts.fx_conversion = Some(evidence.clone());
+        assert!(matches!(
+            transaction_facts.validate(),
+            Err(TaxError::InvalidFacts(message)) if message.contains("source and target")
+        ));
+
+        evidence = fx_evidence("USD", "EUR", 2, 1);
+        transaction_facts.fx_conversion = Some(evidence);
+        transaction_facts.gross_atomic = MAX_ATOMIC_AMOUNT;
+        transaction_facts.net_atomic = MAX_ATOMIC_AMOUNT;
+        assert!(matches!(
+            calculate(
+                &RuleSet {
+                    id: "fx-overflow".to_string(),
+                    version: 1,
+                    components: vec![flat_rule(
+                        "sales-tax",
+                        TaxBase::single(BaseReference::Net),
+                        Rate::new(0, 1).unwrap(),
+                        PriceMode::Exclusive,
+                    )],
+                },
+                &transaction_facts
+            ),
+            Err(TaxError::FxConversionOutOfRange)
+        ));
     }
 
     #[test]

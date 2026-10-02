@@ -622,6 +622,21 @@ validator release gate.
 - [ ] Keep Linux validator, staging governance, and production incident-drill
   evidence as separate release gates.
 
+## ADR-0244 — exact foreign-exchange evidence boundary
+
+- [x] Add typed source/target currency, exact rational rate, provider quote,
+  observation, digest, quantum, and rounding evidence to aggregate and
+  document facts.
+- [x] Normalize gross, net, line, and cumulative amounts exactly once before
+  rule evaluation and expose the immutable envelope in calculation results.
+- [x] Add failing-first Rust/TypeScript vectors for ties, overflow, malformed
+  evidence, replay, and double-conversion prevention.
+- [x] Reject caller-supplied FX evidence at simulation and persisted quote API
+  boundaries; reserve server-side provider attachment for a separately governed
+  integration.
+- [ ] Keep provider freshness, legal rate acceptance, and production FX
+  availability as separately governed release gates.
+
 ## ADR-0154 — governed adjustment refund movement
 
 Implement only the first explicit movement contract: a negative `Refund` claim

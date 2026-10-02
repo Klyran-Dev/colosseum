@@ -1,3 +1,5 @@
+import { parseFxConversionEvidence, type FxConversionEvidence } from "./taxResponses";
+
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ATOMIC = /^(0|[1-9][0-9]{0,19})$/;
 
@@ -15,6 +17,7 @@ export type TaxSimulation = {
     gross_atomic: string;
     total_tax_atomic: string;
     total_net_atomic: string;
+    fx_conversion?: FxConversionEvidence;
     components: Array<{
       id: string;
       label: string;
@@ -79,6 +82,9 @@ export function parseTaxSimulation(value: unknown): TaxSimulation {
       gross_atomic: atomic(result.gross_atomic),
       total_tax_atomic: atomic(result.total_tax_atomic),
       total_net_atomic: atomic(result.total_net_atomic),
+      fx_conversion: result.fx_conversion === undefined || result.fx_conversion === null
+        ? undefined
+        : parseFxConversionEvidence(result.fx_conversion, result.currency),
       components,
     },
   };

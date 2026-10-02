@@ -60,6 +60,7 @@ fn benchmark_facts() -> TaxFacts {
         currency: "USD".to_string(),
         jurisdiction: "US-CA".to_string(),
         jurisdiction_resolution: None,
+        fx_conversion: None,
         exemption_codes: Vec::new(),
         cumulative_period: None,
     }
@@ -97,6 +98,7 @@ fn benchmark_document_facts() -> TaxDocumentFacts {
         currency: "USD".to_string(),
         jurisdiction: "US-CA".to_string(),
         jurisdiction_resolution: None,
+        fx_conversion: None,
         cumulative_period: None,
         lines: (0..64)
             .map(|index| TaxLineFacts {

@@ -1023,6 +1023,7 @@ impl From<TaxError> for ApiError {
             TaxError::EngineVersionMismatch { .. } => "ENGINE_VERSION_MISMATCH",
             TaxError::ReplayMismatch => "CALCULATION_REPLAY_MISMATCH",
             TaxError::JurisdictionResolution(_) => "JURISDICTION_RESOLUTION_FAILED",
+            TaxError::FxConversionOutOfRange => "FX_CONVERSION_OUT_OF_RANGE",
         };
         Self {
             status: StatusCode::UNPROCESSABLE_ENTITY,
@@ -2185,6 +2186,7 @@ async fn calculate_tax_inner(
                     .into(),
         });
     }
+    reject_client_fx_conversion(request.facts.fx_conversion.is_some())?;
     let result = calculate(&request.rule_set, &request.facts).map_err(ApiError::from)?;
     Ok(Json(CalculateResponse {
         calculation_id: Uuid::now_v7(),
@@ -2224,6 +2226,7 @@ async fn calculate_document_tax_inner(
             message: "document schema is not supported".into(),
         });
     }
+    reject_client_fx_conversion(request.facts.fx_conversion.is_some())?;
     let result = calculate_document(&request.rule_set, &request.facts).map_err(ApiError::from)?;
     Ok(Json(CalculateDocumentResponse {
         schema: TAX_DOCUMENT_SCHEMA_V1,
@@ -2256,6 +2259,7 @@ async fn quote_tax_inner(
         code: "INVALID_JSON",
         message: "request body is invalid".to_string(),
     })?;
+    reject_client_fx_conversion(request.facts.fx_conversion.is_some())?;
     let Some(store) = state.storage else {
         return Err(ApiError {
             status: StatusCode::SERVICE_UNAVAILABLE,
@@ -2334,6 +2338,7 @@ async fn document_quote_tax_inner(
             message: "document schema is not supported".into(),
         });
     }
+    reject_client_fx_conversion(request.facts.fx_conversion.is_some())?;
     let Some(store) = state.storage else {
         return Err(ApiError {
             status: StatusCode::SERVICE_UNAVAILABLE,
@@ -2645,6 +2650,17 @@ fn parse_strict_simulation_facts(value: serde_json::Value) -> Result<TaxFacts, A
         code: "INVALID_SIMULATION_FACTS",
         message: "simulation facts are malformed".to_string(),
     })
+}
+
+fn reject_client_fx_conversion(present: bool) -> Result<(), ApiError> {
+    if present {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "CLIENT_FX_CONVERSION_FORBIDDEN",
+            message: "FX conversion evidence is server-owned".to_string(),
+        });
+    }
+    Ok(())
 }
 
 async fn create_jurisdiction_policy(
@@ -8074,6 +8090,21 @@ mod tests {
         )
     }
 
+    fn client_fx_evidence_json() -> serde_json::Value {
+        serde_json::json!({
+            "source_currency": "USD",
+            "target_currency": "EUR",
+            "numerator": "3",
+            "denominator": "2",
+            "rounding_mode": "HalfUp",
+            "quantum_atomic": "1",
+            "provider": "test-provider",
+            "quote_id": "test-quote",
+            "observed_at_unix": 1_800_000_000_i64,
+            "evidence_digest": vec![1_u8; 32]
+        })
+    }
+
     #[tokio::test]
     async fn refund_claim_prepare_requires_explicit_confirmation_before_auth_or_storage() {
         let body = serde_json::to_vec(&RefundClaimPrepareRequest {
@@ -8592,6 +8623,7 @@ mod tests {
                 currency: "USD".to_string(),
                 jurisdiction: "US-CA".to_string(),
                 jurisdiction_resolution: None,
+                fx_conversion: None,
                 exemption_codes: Vec::new(),
                 cumulative_period: None,
             },
@@ -8650,6 +8682,185 @@ mod tests {
             response["result"]["facts_digest"].as_array().unwrap().len(),
             32
         );
+    }
+
+    #[tokio::test]
+    async fn calculation_endpoint_rejects_client_owned_fx_evidence() {
+        let body = serde_json::json!({
+            "facts": {
+                "gross_atomic": "100",
+                "net_atomic": "100",
+                "currency": "EUR",
+                "jurisdiction": "DE-BE",
+                "fx_conversion": client_fx_evidence_json()
+            },
+            "rule_set": { "id": "client-fx", "version": 1, "components": [] }
+        });
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: true,
+                storage: None,
+                authenticator: None,
+                jurisdiction_provider_registry: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/tax/calculate")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let response_body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&response_body).unwrap();
+        assert_eq!(response["error"]["code"], "CLIENT_FX_CONVERSION_FORBIDDEN");
+    }
+
+    #[tokio::test]
+    async fn document_calculation_endpoint_rejects_client_owned_fx_evidence() {
+        let body = serde_json::json!({
+            "schema": "solana-tax-protocol/tax-document/v1",
+            "facts": {
+                "id": "invoice-client-fx",
+                "currency": "EUR",
+                "jurisdiction": "DE-BE",
+                "fx_conversion": client_fx_evidence_json(),
+                "lines": [{ "id": "line-a", "gross_atomic": "100", "net_atomic": "100" }]
+            },
+            "rule_set": { "id": "client-fx-document", "version": 1, "components": [] }
+        });
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: true,
+                storage: None,
+                authenticator: None,
+                jurisdiction_provider_registry: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/tax/calculate-document")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let response_body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&response_body).unwrap();
+        assert_eq!(response["error"]["code"], "CLIENT_FX_CONVERSION_FORBIDDEN");
+    }
+
+    #[tokio::test]
+    async fn persisted_quote_endpoints_reject_client_owned_fx_evidence() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let (token, _) = auth::test_token(now);
+        let aggregate_body = serde_json::json!({
+            "idempotency_key": "client-fx-quote",
+            "rule_set_id": "published-rule",
+            "rule_version": 1,
+            "jurisdiction": "DE-BE",
+            "regime": "sales-tax",
+            "facts": {
+                "gross_atomic": "100",
+                "net_atomic": "100",
+                "currency": "EUR",
+                "jurisdiction": "DE-BE",
+                "fx_conversion": client_fx_evidence_json()
+            }
+        });
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: true,
+                storage: None,
+                authenticator: Some(auth::test_authenticator()),
+                jurisdiction_provider_registry: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/tax/quote")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&aggregate_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let response_body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&response_body).unwrap();
+        assert_eq!(response["error"]["code"], "CLIENT_FX_CONVERSION_FORBIDDEN");
+
+        let (token, _) = auth::test_token(now);
+        let document_body = serde_json::json!({
+            "schema": "solana-tax-protocol/tax-document/v1",
+            "idempotency_key": "client-fx-document-quote",
+            "rule_set_id": "published-rule",
+            "rule_version": 1,
+            "jurisdiction": "DE-BE",
+            "regime": "sales-tax",
+            "facts": {
+                "id": "invoice-client-fx-quote",
+                "currency": "EUR",
+                "jurisdiction": "DE-BE",
+                "fx_conversion": client_fx_evidence_json(),
+                "lines": [{ "id": "line-a", "gross_atomic": "100", "net_atomic": "100" }]
+            }
+        });
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: true,
+                storage: None,
+                authenticator: Some(auth::test_authenticator()),
+                jurisdiction_provider_registry: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/tax/document-quote")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&document_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let response_body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&response_body).unwrap();
+        assert_eq!(response["error"]["code"], "CLIENT_FX_CONVERSION_FORBIDDEN");
     }
 
     #[tokio::test]
@@ -8824,6 +9035,7 @@ mod tests {
                 currency: "USD".to_string(),
                 jurisdiction: "US-CA".to_string(),
                 jurisdiction_resolution: None,
+                fx_conversion: None,
                 exemption_codes: Vec::new(),
                 cumulative_period: None,
             },
@@ -8885,6 +9097,7 @@ mod tests {
                                 currency: "USD".to_string(),
                                 jurisdiction: "US-CA".to_string(),
                                 jurisdiction_resolution: None,
+                                fx_conversion: None,
                                 exemption_codes: Vec::new(),
                                 cumulative_period: None,
                             },

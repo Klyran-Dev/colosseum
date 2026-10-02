@@ -36,6 +36,19 @@ export type JurisdictionResolution = {
   }>;
 };
 
+export type FxConversionEvidence = {
+  source_currency: string;
+  target_currency: string;
+  numerator: string;
+  denominator: string;
+  rounding_mode: "Floor" | "Ceil" | "HalfUp" | "HalfEven" | "AwayFromZero";
+  quantum_atomic: string;
+  provider: string;
+  quote_id: string;
+  observed_at_unix: number;
+  evidence_digest: number[];
+};
+
 export type Calculation = {
   calculation_id: string;
   status: CalculationStatus;
@@ -52,6 +65,7 @@ export type Calculation = {
     total_tax_atomic: string;
     total_net_atomic: string;
     jurisdiction_resolution?: JurisdictionResolution;
+    fx_conversion?: FxConversionEvidence;
     components: TaxComponent[];
   };
 };
@@ -116,6 +130,12 @@ function optionalSignedI128(value: unknown, label: string): string | null {
   return signedI128(value, label);
 }
 
+function positiveI128(value: unknown, label: string): string {
+  const parsed = signedI128(value, label);
+  if (BigInt(parsed) <= 0n) throw new Error(`${label} must be positive.`);
+  return parsed;
+}
+
 function optionalExpiry(value: unknown): number | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) throw new Error("quote expiry is invalid.");
@@ -171,6 +191,35 @@ function parseJurisdictionResolution(value: unknown): JurisdictionResolution {
   };
 }
 
+export function parseFxConversionEvidence(value: unknown, expectedTargetCurrency?: string): FxConversionEvidence {
+  const record = objectValue(value, "FX conversion evidence is invalid.");
+  const roundingModes = ["Floor", "Ceil", "HalfUp", "HalfEven", "AwayFromZero"] as const;
+  if (typeof record.rounding_mode !== "string" || !roundingModes.includes(record.rounding_mode as typeof roundingModes[number])) {
+    throw new Error("FX rounding mode is invalid.");
+  }
+  if (typeof record.observed_at_unix !== "number" || !Number.isSafeInteger(record.observed_at_unix) || record.observed_at_unix <= 0) {
+    throw new Error("FX observation timestamp is invalid.");
+  }
+  const sourceCurrency = boundedText(record.source_currency, "FX source currency", 16);
+  const targetCurrency = boundedText(record.target_currency, "FX target currency", 16);
+  if (sourceCurrency === targetCurrency) throw new Error("FX source and target currencies must differ.");
+  if (expectedTargetCurrency !== undefined && targetCurrency !== expectedTargetCurrency) {
+    throw new Error("FX target currency does not match calculation currency.");
+  }
+  return {
+    source_currency: sourceCurrency,
+    target_currency: targetCurrency,
+    numerator: positiveI128(record.numerator, "FX numerator"),
+    denominator: positiveI128(record.denominator, "FX denominator"),
+    rounding_mode: record.rounding_mode as typeof roundingModes[number],
+    quantum_atomic: positiveI128(record.quantum_atomic, "FX quantum"),
+    provider: boundedText(record.provider, "FX provider", 64),
+    quote_id: boundedText(record.quote_id, "FX quote ID", 64),
+    observed_at_unix: record.observed_at_unix,
+    evidence_digest: digest(record.evidence_digest, "FX evidence"),
+  };
+}
+
 export function parseCalculationResponse(value: unknown): Calculation {
   const record = objectValue(value, "calculation response is invalid.");
   if (typeof record.status !== "string" || !CALCULATION_STATUSES.includes(record.status as CalculationStatus)) {
@@ -179,6 +228,10 @@ export function parseCalculationResponse(value: unknown): Calculation {
   const result = objectValue(record.result, "calculation result is invalid.");
   const components = boundedArray(result.components, "tax components", 128);
   if (components.length === 0) throw new Error("tax components must not be empty.");
+  const currency = boundedText(result.currency, "currency", 16);
+  const fxConversion = result.fx_conversion === undefined || result.fx_conversion === null
+    ? undefined
+    : parseFxConversionEvidence(result.fx_conversion, currency);
   return {
     calculation_id: validateUuidV7(record.calculation_id as string, "calculation ID"),
     status: record.status as CalculationStatus,
@@ -187,7 +240,7 @@ export function parseCalculationResponse(value: unknown): Calculation {
       rule_set_id: boundedText(result.rule_set_id, "rule set ID", 128),
       rule_version: positiveVersion(result.rule_version, "rule version"),
       engine_version: boundedText(result.engine_version, "engine version", 128, true),
-      currency: boundedText(result.currency, "currency", 16),
+      currency,
       jurisdiction: boundedText(result.jurisdiction, "jurisdiction", 64),
       facts_digest: digest(result.facts_digest, "facts"),
       rule_digest: digest(result.rule_digest, "rule"),
@@ -197,6 +250,7 @@ export function parseCalculationResponse(value: unknown): Calculation {
       jurisdiction_resolution: result.jurisdiction_resolution === undefined
         ? undefined
         : parseJurisdictionResolution(result.jurisdiction_resolution),
+      fx_conversion: fxConversion,
       components: components.map(parseComponent),
     },
   };
@@ -213,4 +267,3 @@ export function parseReplayVerificationResponse(value: unknown): ReplayVerificat
     rule_digest: digest(record.rule_digest, "replay rule"),
   };
 }
-

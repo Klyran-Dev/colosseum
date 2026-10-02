@@ -36,6 +36,7 @@ It does not own:
 ```text
 Raw checkout facts
   -> normalize units, currency, timestamps, customer/merchant facts
+  -> verify and bind exact FX evidence when source and target currencies differ
   -> resolve jurisdiction and place of supply
   -> resolve tax category, exemptions, and registration/threshold state
   -> select immutable RuleSet
@@ -50,6 +51,15 @@ Raw checkout facts
 ```
 
 Every stage is pure with respect to its inputs. External facts such as exchange rates, customer evidence, registration thresholds, or policy snapshots are resolved before calculation and included by digest in the calculation input.
+
+ADR-0244 makes foreign-exchange normalization explicit: a verified upstream
+provider supplies a bounded source/target currency pair, exact rational rate,
+quote identity, observation, target atomic quantum, rounding mode, and evidence
+digest. The pure engine converts gross, net, lines, and cumulative snapshots
+once before evaluating the rule graph; it never calls an FX provider or reads a
+clock. The target `currency` is the calculation/settlement currency, and the
+original FX envelope is retained in the facts digest and result for replay and
+user explanation.
 
 ADR-0101 defines the deterministic jurisdiction-resolution bounded context;
 ADR-0102 binds its server-owned result into `TaxFacts` and

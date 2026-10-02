@@ -200,10 +200,12 @@ require_text docs/adr/README.md '0238-governed-refund-claim-cancellation-workflo
 require_text docs/adr/README.md '0241-linux-conformance-workflow-contract.md'
 require_text docs/adr/README.md '0242-protocol-pause-vault-release-execution.md'
 require_text docs/adr/README.md '0243-executable-program-pause-coverage.md'
+require_text docs/adr/README.md '0244-exact-fx-evidence-boundary.md'
 require_text CHANGELOG.md 'container and workflow pinning contract'
 require_text CHANGELOG.md 'conformance workflow contract'
 require_text CHANGELOG.md 'emergency pause cover governed vault'
 require_text CHANGELOG.md 'program pause-coverage contract'
+require_text CHANGELOG.md 'exact foreign-exchange evidence boundary'
 require_text apps/web/package.json '"packageManager": "pnpm@12.3.4"'
 require_text docs/architecture/toolchain-compatibility.md '| pnpm | 12.3.4 |'
 

@@ -261,6 +261,7 @@ mod tests {
             currency: "USD".to_string(),
             jurisdiction: "US-CA".to_string(),
             jurisdiction_resolution: None,
+            fx_conversion: None,
             facts_digest: digest(9),
             rule_digest: digest(8),
             gross_atomic: 1500,

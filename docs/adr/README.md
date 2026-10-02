@@ -244,3 +244,4 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0241: Executable Linux conformance workflow contract](0241-linux-conformance-workflow-contract.md)
 - [ADR-0242: Protocol pause gates vault-release execution](0242-protocol-pause-vault-release-execution.md)
 - [ADR-0243: Executable program pause-coverage contract](0243-executable-program-pause-coverage.md)
+- [ADR-0244: Exact foreign-exchange evidence boundary](0244-exact-fx-evidence-boundary.md)

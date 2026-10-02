@@ -400,6 +400,7 @@ mod tests {
                 currency: "USD".to_string(),
                 jurisdiction: "US-CA".to_string(),
                 jurisdiction_resolution: None,
+                fx_conversion: None,
                 exemption_codes: Vec::new(),
                 cumulative_period: None,
             },

@@ -1812,3 +1812,16 @@ ABI, and keep the review surface explicit.
 | Unit tests only | Precise behavior tests | Does not guarantee every entry point remains covered | Rejected |
 | Runtime reflection or macro registry | Centralized metadata | Adds on-chain/build complexity and ABI risk | Rejected |
 | **Explicit static entry-point coverage contract** | Deterministic, low overhead, credential-free, discovers all public functions containing token CPIs, and fails before deployment review | New movement paths require an intentional allowlist/guard update | **Selected in ADR-0243** |
+
+### Foreign-exchange normalization
+
+**Criteria:** exact arithmetic, replayable provider evidence, no network access
+in the calculation hot path, bounded latency, and explicit source/target
+currency semantics.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Browser/API floating-point conversion | Simple | Client authority, rounding drift, and weak replay evidence | Rejected |
+| Live provider call from the tax engine | Fresh quote | Nondeterministic latency and impure calculation | Rejected |
+| Caller-provided normalized amount without evidence | Small domain surface | Rate and rounding cannot be replayed or audited | Rejected |
+| **Typed exact FX evidence and pure normalization** | Deterministic, bounded, auditable, and cache-friendly | Requires upstream provider verification and freshness policy | **Selected in ADR-0244** |
