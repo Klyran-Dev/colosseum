@@ -72,6 +72,7 @@ for expected_case in \
     'extension-free Token-2022' \
     'settles a document-bound payment' \
     'immutable two-recipient Split Plan' \
+    'rejects wrong recipient order without balance drift' \
     'extension-free Token-2022 two-recipient Split Plan' \
     'real Token-2022 TransferFeeConfig' \
     'revoked policy attestations'; do

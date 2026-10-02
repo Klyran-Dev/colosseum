@@ -1272,7 +1272,7 @@ describe("validator-backed settlement conformance", () => {
     expect(afterReplay.map((account) => account.amount)).toEqual([0n, 25n, 75n]);
   }, 30_000);
 
-  test("settles an immutable two-recipient Split Plan and rejects unsafe retries", async () => {
+  test("settles an immutable two-recipient Split Plan, rejects duplicate retries, and rejects wrong recipient order without balance drift", async () => {
     await airdrop(payer.publicKey, 10_000_000_000);
     await airdrop(merchant.publicKey);
     await airdrop(issuer.publicKey);

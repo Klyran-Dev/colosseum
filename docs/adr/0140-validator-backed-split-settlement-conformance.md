@@ -77,4 +77,7 @@ The test output, validator logs, Compose configuration, program hash, and
 runtime metadata are retained by the existing conformance harness. This closes
 only the local validator Split Plan evidence once CI executes successfully; a
 program audit, target-cluster compute/priority-fee measurements, staging
-governance, and production deployment approval remain separate gates.
+governance, and production deployment approval remain separate gates. The
+retained evidence verifier requires the explicit
+`rejects wrong recipient order without balance drift` case label so reviewers
+can distinguish the atomic rollback assertion from the successful fan-out.
