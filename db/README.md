@@ -30,9 +30,13 @@ seed and must never be copied into a release migration.
 The generated sortable-ID inventory is executable in
 `db/verification/uuidv7_contract.sql`. Clean-stack integration and the
 PostgreSQL logical restore drill run it against the final catalog, checking
-native `uuid` columns, `uuidv7()` defaults, and version-7 constraints. It
-deliberately excludes CSPRNG replay claim tokens, external identity claims,
-Solana identifiers, and cryptographic digests.
+native `uuid` columns, `uuidv7()` defaults, and validated version-7
+constraints. Migration `0058` closes the same invariant for upgraded schemas
+by discovering generated columns from PostgreSQL catalog metadata and
+validating deterministic checks; a future generated default is automatically
+covered without a second hand-maintained allow-list. It deliberately excludes
+CSPRNG replay claim tokens, external identity claims, Solana identifiers, and
+cryptographic digests.
 
 Migration `0004` enforces immutable published and retired rule releases and
 rejects overlapping published effective windows for the same rule, jurisdiction,

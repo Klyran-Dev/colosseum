@@ -2,6 +2,12 @@
 
 ## 2026-10-01
 
+- Added ADR-0239 and migration `0058` to close UUIDv7 schema drift. The
+  executable PostgreSQL contract now discovers every public `uuidv7()` default
+  from catalog metadata and requires a native UUID type plus a validated
+  version-7 check constraint. Existing rows fail the migration if invalid;
+  clean-bootstrap, upgraded-schema, and Linux backup/restore evidence remain
+  release gates.
 - Added the ADR-0238 automatic cancellation reconciler. The indexer now claims
   submitted cancellation intents with a short PostgreSQL UUIDv7 lease, performs
   bounded finalized recovery without holding database locks across RPC, and

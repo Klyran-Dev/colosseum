@@ -1757,3 +1757,17 @@ authority changes auditable.
 | Periodic background registry polling | Automatic rotation | Requires provider authentication, stale-cache, backoff, and split-brain policy | Rejected for this contract |
 | Mutable registry behind `RwLock` | Simple implementation | Adds request-path lock contention and reload coupling | Rejected |
 | **Immutable registry snapshot with atomic file reload on `SIGHUP`** | Bounded validation, zero request-path I/O, deterministic last-known-good behavior, explicit secret-manager ownership | Requires atomic delivery and signal/runbook discipline | **Selected in ADR-0235** |
+
+### UUIDv7 schema invariant coverage
+
+**Criteria:** cover clean bootstraps and upgraded PostgreSQL schemas, detect
+new generated identifiers without a second manual registry, validate existing
+rows before accepting the schema, and keep UUID generation and request paths
+free of new coordination overhead.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Hand-written expected-column list | Easy to read and review | Drifts when a migration adds a generated identifier | Rejected |
+| Migration-source text scan | Works without a database | Cannot prove live defaults, types, or validated constraints after upgrades | Rejected |
+| Database trigger on all UUID writes | Central enforcement | Adds write-path cost and incorrectly couples UUIDv7 policy to external references and protocol identifiers | Rejected |
+| **PostgreSQL catalog discovery plus validated corrective migration** | Covers clean/upgraded schemas, no request-path cost, fail-closed drift detection | Migration validation may scan existing tables and requires bounded rollout planning | **Selected in ADR-0239** |

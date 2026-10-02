@@ -1001,6 +1001,20 @@ release gates.
 - [ ] Extend the pinned Linux validator conformance suite with the complete
   cancellation lifecycle and unchanged tax-vault, funder, and payer balances.
 
+## ADR-0239 — catalog-driven UUIDv7 invariant closure
+
+- [x] Compare manual allow-lists, migration-source scans, triggers, and live
+  PostgreSQL catalog discovery with explicit drift and latency criteria.
+- [x] Replace the hand-written UUIDv7 verification list with catalog discovery
+  of every public `uuidv7()` default and require native UUID type, default
+  preservation, and a validated version-7 check constraint.
+- [x] Add migration `0058` to close the invariant for existing generated
+  identifiers using deterministic bounded constraint names and fail-closed
+  validation.
+- [ ] Retain clean-bootstrap, upgraded-schema, invalid-row, and backup/restore
+  evidence on Linux PostgreSQL 18; no local Docker evidence is claimed while
+  the Docker daemon is unavailable.
+
 ## ADR-0234 — atomic API JWKS reload for bounded identity rotation
 
 - [x] Add an optional file-backed JWKS source that is mutually exclusive with

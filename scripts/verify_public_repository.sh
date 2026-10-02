@@ -38,6 +38,7 @@ for file in \
   docs/plans/production-readiness.md \
   docs/product/tax-coverage-matrix.md \
   docs/public-repository-release.md \
+  db/README.md \
   docs/adr/README.md \
   docs/adr/0135-slo-error-budget-incident-and-dependency-controls.md \
   docs/adr/0138-versioned-database-migration-runner.md \
@@ -63,9 +64,11 @@ for file in \
   docs/adr/0230-tax-engine-runtime-contract.md \
   docs/adr/0231-tax-engine-request-rejection-semantics.md \
   docs/adr/0232-tax-engine-service-concurrency-evidence.md \
+  docs/adr/0233-tax-engine-container-mtls-contract.md \
   docs/adr/0236-tax-engine-mtls-client-identity.md \
   docs/adr/0237-tax-engine-service-token-rotation.md \
   docs/adr/0238-governed-refund-claim-cancellation-workflow.md \
+  docs/adr/0239-catalog-driven-uuidv7-invariant-closure.md \
   docs/adr/0234-api-jwks-atomic-reload.md \
   docs/adr/0235-jurisdiction-provider-key-atomic-reload.md \
   ops/docker/Dockerfile.tax-engine \
@@ -133,7 +136,9 @@ for file in \
   scripts/verify_refund_claim_cancellation_reconciliation_contract.sh \
   scripts/refund_cancellation_reconciliation_drill.sh \
   apps/web/scripts/refund_cancellation_fixture.mjs \
-  docs/plans/tier-1-product-standard.md
+  docs/plans/tier-1-product-standard.md \
+  db/migrations/0058_catalog_driven_uuidv7_invariant_closure.sql \
+  db/verification/uuidv7_contract.sql
 do
   require_file "$file"
 done

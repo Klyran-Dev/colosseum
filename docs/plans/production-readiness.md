@@ -421,6 +421,12 @@ exists.
   produced on a Docker-enabled CI runner. Linux validator/provider,
   governance-key, production-load, and operational evidence remain required
   before cancellation is enabled in production.
+- [x] ADR-0239 closes UUIDv7 schema drift by discovering every public
+  `uuidv7()` default from PostgreSQL catalog metadata and requiring a validated
+  version-7 check constraint through migration `0058`.
+- [ ] ADR-0239 clean-bootstrap, upgraded-schema, invalid-row, and
+  backup/restore evidence must be retained from Linux PostgreSQL 18 before
+  release approval.
 - [x] Compiled-rule cache hit/miss/eviction/entry metrics are exported with
   fixed labels and bounded cardinality; concurrent-load and invalidation
   performance evidence remains open.
