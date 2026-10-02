@@ -5,8 +5,8 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 
-for crate_root in crates/*/src/lib.rs crates/*/src/main.rs; do
-    [ -f "$crate_root" ] || continue
+find crates programs -type f \( -path '*/src/lib.rs' -o -path '*/src/main.rs' -o -path '*/src/bin/*.rs' \) -print |
+while IFS= read -r crate_root; do
     grep -Fq '#![cfg_attr(' "$crate_root" || {
         echo "Rust panic-safety cfg_attr missing from $crate_root" >&2
         exit 1
