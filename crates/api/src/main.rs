@@ -17,6 +17,7 @@ use tokio::net::TcpListener;
 use tracing::info;
 mod config;
 use config::DeploymentConfig;
+mod fx_bootstrap;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -254,6 +255,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
         None => None,
     };
+    let fx_issuance = fx_bootstrap::build_from_environment(deployment.environment)?;
     let shutdown_authenticator = authenticator.clone();
     let shutdown_jwks_file = auth_jwks_file.clone();
     let shutdown_provider_registry = jurisdiction_provider_registry.clone();
@@ -267,7 +269,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         storage,
         authenticator,
         jurisdiction_provider_registry,
-        fx_issuance: None,
+        fx_issuance,
         settlement_coordinator,
         targeted_recovery,
         metrics: std::sync::Arc::new(ServiceMetrics::new(

@@ -2,6 +2,10 @@
 
 ## 2026-10-02
 
+- Added ADR-0261's vendor-neutral FX issuer process bootstrap. Local
+  development can compose bounded HTTP provider and signer adapters once at
+  startup through strict server-owned configuration; partial, malformed, and
+  non-local activation remains fail-closed.
 - Added ADR-0260's authenticated server-owned FX quote composition boundary:
   source currency is an explicit request fact, while provider policy, evidence,
   and signing remain server-owned and non-local activation remains fail-closed.

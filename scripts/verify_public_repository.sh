@@ -79,6 +79,7 @@ for file in \
   docs/adr/0255-bounded-http-fx-provider-adapter.md \
   docs/adr/0256-bounded-http-fx-signer-adapter.md \
   docs/adr/0257-server-owned-fx-issuance-coordinator.md \
+  docs/adr/0261-fx-issuer-process-bootstrap.md \
   docs/adr/0248-registry-bound-fx-issuance.md \
   docs/adr/0234-api-jwks-atomic-reload.md \
   docs/adr/0235-jurisdiction-provider-key-atomic-reload.md \
@@ -214,6 +215,7 @@ require_text docs/adr/README.md '0247-fx-provider-policy-snapshot-reload.md'
 require_text docs/adr/README.md '0248-registry-bound-fx-issuance.md'
 require_text docs/adr/README.md '0249-fx-provider-identity-allowlist.md'
 require_text docs/adr/README.md '0250-deterministic-fx-provider-agreement.md'
+require_text docs/adr/README.md '0261-fx-issuer-process-bootstrap.md'
 require_text CHANGELOG.md 'container and workflow pinning contract'
 require_text CHANGELOG.md 'conformance workflow contract'
 require_text CHANGELOG.md 'emergency pause cover governed vault'
@@ -233,6 +235,7 @@ require_text CHANGELOG.md 'bounded vendor-neutral HTTP FX signer adapter'
 require_text CHANGELOG.md 'server-owned FX issuance coordinator'
 require_text CHANGELOG.md 'historical FX-envelope integrity verification'
 require_text CHANGELOG.md 'authenticated server-owned FX quote composition boundary'
+require_text CHANGELOG.md 'vendor-neutral FX issuer process bootstrap'
 require_text CHANGELOG.md 'public Tier-1 decision register'
 require_text docs/adr/README.md 'ADR-0251: Accelerated Tier-1 delivery and decision freeze'
 require_text docs/adr/README.md 'ADR-0252: Bounded concurrent FX provider acquisition'

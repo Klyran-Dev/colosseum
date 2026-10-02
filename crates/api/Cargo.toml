@@ -15,6 +15,8 @@ observability = { path = "../observability" }
 base64.workspace = true
 ed25519-dalek.workspace = true
 fx-provider = { path = "../fx-provider" }
+fx-provider-http = { path = "../fx-provider-http" }
+fx-signer-http = { path = "../fx-signer-http" }
 jurisdiction = { path = "../jurisdiction" }
 indexer.workspace = true
 indexer-service = { path = "../indexer-service" }

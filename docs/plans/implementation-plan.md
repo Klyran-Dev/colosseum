@@ -852,6 +852,17 @@ The decision register must be updated whenever a frozen choice changes.
 - [ ] Retain provider agreement, legal acceptance, regional latency, and
   production FX enablement evidence before enabling non-local traffic.
 
+## ADR-0261 — vendor-neutral FX issuer process bootstrap
+
+- [x] Add a strict, bounded process configuration contract for the policy
+  registry, provider sources, signer identity, and secret indirection.
+- [x] Construct the existing provider/signer adapters once at startup and
+  inject the warm server-owned issuance port into `AppState`.
+- [x] Prove partial-configuration, duplicate-topology, invalid-identity,
+  local-construction, and non-local fail-closed behavior before listener bind.
+- [ ] Enable staging/production only after DEC-0251-01/03/04/06/07/09 are
+  frozen with retained provider, legal, custody, residency, and SLO evidence.
+
 ## ADR-0154 — governed adjustment refund movement
 
 Implement only the first explicit movement contract: a negative `Refund` claim

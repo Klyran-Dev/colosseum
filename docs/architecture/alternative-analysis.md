@@ -2004,6 +2004,19 @@ operational decisions remain open.
 | Concrete vendor integration now | Immediate external connectivity | Invents unresolved provider/legal/custody decisions | Rejected |
 | **Server-owned API issuance port backed by the bounded coordinator** | Shared binding contract, bounded latency, explicit fail-closed activation, and future vendor composition | Requires configuration and release evidence before non-local traffic | **Selected in ADR-0260** |
 
+### FX issuer process bootstrap
+
+**Criteria:** construct provider and signer adapters once at startup, keep
+secrets and authority server-owned, preserve bounded hot-path behavior, and
+prevent open operational decisions from enabling non-local traffic.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Keep the API issuer permanently absent | Zero configuration | The real local authenticated cross-currency path cannot be exercised | Rejected |
+| Construct adapters in quote handlers | Minimal bootstrap code | Repeated allocation/configuration and secret-handling work in the latency-critical path | Rejected |
+| Vendor-specific SDK bootstrap | Direct provider integration | Invents unresolved provider, legal, and custody decisions | Rejected |
+| **Dedicated local-only process bootstrap over existing bounded ports** | Warm immutable topology, strict startup validation, and explicit non-local gate | Requires a versioned configuration contract and fixture endpoints | **Selected in ADR-0261** |
+
 ### FX evidence signing
 
 **Criteria:** protect key custody, avoid blocking async executors, bind the

@@ -261,3 +261,4 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0258: FX evidence replay integrity and shared signer ownership](0258-fx-evidence-replay-integrity-and-shared-signer-ownership.md)
 - [ADR-0259: Durable FX envelope quote binding](0259-durable-fx-envelope-quote-binding.md)
 - [ADR-0260: Authenticated server-owned FX quote composition](0260-authenticated-server-owned-fx-quote-composition.md)
+- [ADR-0261: Vendor-neutral FX issuer process bootstrap](0261-fx-issuer-process-bootstrap.md)

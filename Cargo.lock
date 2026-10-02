@@ -327,6 +327,8 @@ dependencies = [
  "ed25519-dalek",
  "fx-evidence",
  "fx-provider",
+ "fx-provider-http",
+ "fx-signer-http",
  "indexer",
  "indexer-service",
  "jurisdiction",

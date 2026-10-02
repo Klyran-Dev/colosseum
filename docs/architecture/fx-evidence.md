@@ -116,3 +116,8 @@ envelope fails closed. Same-currency requests bypass the issuer; cross-currency
 requests fail closed when no approved issuer is configured. Quote idempotency
 is based on pre-resolution facts and normalized source currency rather than
 mutable provider quote metadata.
+
+ADR-0261 composes the bounded HTTP provider and signer adapters once during
+local API startup. The bootstrap uses strict policy/source/signer configuration
+and secret indirection; it does not select a vendor or activate
+staging/production while the Tier-1 decision register remains open.
