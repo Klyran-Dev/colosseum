@@ -669,6 +669,15 @@ validator release gate.
 - [ ] Keep policy publication, legal approval, file provenance, permissions,
   reload timing, and production activation evidence as separate gates.
 
+## ADR-0248 — registry-bound FX evidence issuance
+
+- [x] Require production composition to resolve the exact policy digest from
+  the active immutable registry before constructing an FX evidence issuer.
+- [x] Fail closed for missing or zero policy digests before provider or signer
+  work, and isolate in-flight issuers from later snapshot replacement.
+- [ ] Migrate a concrete production provider adapter and HSM/KMS signer to the
+  bound API after provider, legal, custody, and staging decisions are approved.
+
 ## ADR-0154 — governed adjustment refund movement
 
 Implement only the first explicit movement contract: a negative `Refund` claim

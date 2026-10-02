@@ -44,3 +44,6 @@ provider evidence, policy version, and approved legal-authority digest.
 
 ADR-0247 provides the warm digest-keyed policy snapshot. Reload validation is
  atomic and invalid replacements retain the last known-good policy set.
+Production issuance must resolve the exact approved digest through that
+registry before creating an issuer; direct issuer construction is reserved for
+isolated tests or explicitly reviewed adapters.

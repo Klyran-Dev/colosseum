@@ -74,6 +74,7 @@ for file in \
   docs/adr/0238-governed-refund-claim-cancellation-workflow.md \
   docs/adr/0239-catalog-driven-uuidv7-invariant-closure.md \
   docs/adr/0240-refund-claim-cancellation-lease-trigger.md \
+  docs/adr/0248-registry-bound-fx-issuance.md \
   docs/adr/0234-api-jwks-atomic-reload.md \
   docs/adr/0235-jurisdiction-provider-key-atomic-reload.md \
   ops/docker/Dockerfile.tax-engine \
@@ -205,6 +206,7 @@ require_text docs/adr/README.md '0244-exact-fx-evidence-boundary.md'
 require_text docs/adr/README.md '0245-server-owned-signed-fx-evidence.md'
 require_text docs/adr/README.md '0246-fx-provider-policy-and-issuance.md'
 require_text docs/adr/README.md '0247-fx-provider-policy-snapshot-reload.md'
+require_text docs/adr/README.md '0248-registry-bound-fx-issuance.md'
 require_text CHANGELOG.md 'container and workflow pinning contract'
 require_text CHANGELOG.md 'conformance workflow contract'
 require_text CHANGELOG.md 'emergency pause cover governed vault'
@@ -212,6 +214,7 @@ require_text CHANGELOG.md 'program pause-coverage contract'
 require_text CHANGELOG.md 'exact foreign-exchange evidence boundary'
 require_text CHANGELOG.md 'server-owned signed FX evidence bounded context'
 require_text CHANGELOG.md 'atomic digest-keyed FX provider policy snapshot'
+require_text CHANGELOG.md 'registry-bound FX evidence issuance'
 require_text apps/web/package.json '"packageManager": "pnpm@12.3.4"'
 require_text docs/architecture/toolchain-compatibility.md '| pnpm | 12.3.4 |'
 

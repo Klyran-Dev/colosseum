@@ -1862,3 +1862,16 @@ operation, and provider replacement without tax-engine changes.
 | Restart for policy rotation | Simple | Slow rotation and broad failure blast radius | Rejected |
 | Mutable shared policy object | Low code volume | Partial reads and weak digest binding | Rejected |
 | **Bounded immutable digest-keyed atomic snapshot** | Fast lock-free reads, deterministic replay, fail-closed reload | Requires governed delivery and activation evidence | **Selected in ADR-0247** |
+
+### Registry-bound FX evidence issuance
+
+**Criteria:** prevent unapproved policy bypass, preserve exact request
+authority, keep the issuance path bounded, and retain snapshot replacement
+isolation.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Direct issuer construction | Minimal API surface | Allows evidence under a policy absent from the active registry | Rejected |
+| Caller assertion that a policy is approved | Small request type | No cryptographic or registry-verifiable authority | Rejected |
+| Database/remote policy lookup per request | Centralized | Hot-path dependency and mutable replay semantics | Rejected |
+| **Exact digest lookup through the immutable registry before issuer construction** | Fail-closed, lock-free, deterministic request snapshot | Production adapters must use the bound API | **Selected in ADR-0248** |

@@ -16,6 +16,9 @@
   replaceable ports outside the deterministic tax-engine hot path.
 - Added ADR-0247 for an atomic digest-keyed FX provider policy snapshot. Invalid
   policy replacements fail closed and retain the last known-good snapshot.
+- Added ADR-0248 for registry-bound FX evidence issuance. Production adapters
+  must resolve the exact active policy digest before constructing an issuer;
+  missing or zero digests fail closed before provider or signer work.
 - Added ADR-0243 and a program pause-coverage contract. CI and normal checks
   now discover every public `transfer_checked` entry point and fail closed if
   movement is outside the explicit allowlist, if an allowlisted instruction
