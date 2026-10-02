@@ -54,3 +54,12 @@ For policies requiring more than one provider, every candidate must pass the
 same policy and exact economic terms must agree. The selector uses policy
 priority rather than response order and fails closed on disagreement or
 insufficient candidates.
+
+ADR-0252 adds the bounded asynchronous acquisition boundary before that
+selector. It validates request/source topology before network work, binds each
+returned candidate to the source's server-owned provider identity, caps in-flight
+calls at sixteen, applies per-provider and aggregate deadlines, propagates
+cancellation, and returns bounded partial-failure classifications. Acquisition
+results remain non-authoritative until ADR-0250 admission succeeds. No real
+vendor adapter, retry policy, regional routing, or production SLO is implied by
+the library implementation.

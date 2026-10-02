@@ -1,6 +1,6 @@
 # ADR-0252: Bounded concurrent FX provider acquisition
 
-- Status: Accepted for implementation
+- Status: Implemented as a vendor-neutral library boundary; production adapter pending
 - Date: 2026-10-02
 - Scope: FX provider adapter orchestration before deterministic admission
 
@@ -83,10 +83,12 @@ error-budget evidence.
 
 ## Verification
 
-Failing-first tests must cover invalid topology, duplicate/unapproved source
-identities, source identity substitution, request rejection before network,
-bounded concurrency, provider timeout, aggregate cancellation, partial failure,
-candidate-order independence, and successful agreement handoff to the existing
-selector. A concurrency test must measure maximum in-flight calls and prove it
-never exceeds the configured bound. Production provider SLO, regional failover,
-HSM/KMS, legal ownership, and live transport evidence remain separate gates.
+The `fx-provider` crate now has coverage for invalid topology,
+duplicate/unapproved source identities, source identity substitution, request
+rejection before network, bounded concurrency, provider timeout, aggregate
+cancellation, partial failure, and successful agreement handoff to the existing
+selector. The concurrency test measures maximum in-flight calls and proves it
+never exceeds the configured bound. `cargo test --locked -p fx-provider` and
+`cargo clippy --locked -p fx-provider --all-targets -- -D warnings` pass.
+Production provider SLO, regional failover, HSM/KMS, legal ownership, and live
+transport evidence remain separate gates.

@@ -1472,6 +1472,7 @@ name = "fx-provider"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
+ "async-trait",
  "ed25519-dalek",
  "fx-evidence",
  "serde",
@@ -1479,6 +1480,7 @@ dependencies = [
  "sha2 0.11.0",
  "tax-engine",
  "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]

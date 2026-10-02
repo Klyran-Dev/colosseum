@@ -18,12 +18,19 @@ use fx_evidence::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tax_engine::{MAX_ATOMIC_AMOUNT, RoundingMode};
 use thiserror::Error;
+use tokio::{sync::Semaphore, task::JoinSet, time::timeout};
 
 pub const MAX_ALLOWED_PAIRS: usize = 64;
 pub const MAX_ALLOWED_PROVIDERS: usize = 16;
+pub const DEFAULT_PROVIDER_CONCURRENCY: usize = 8;
+pub const MAX_PROVIDER_CONCURRENCY: usize = MAX_ALLOWED_PROVIDERS;
+pub const DEFAULT_PROVIDER_TIMEOUT_MILLIS: u64 = 750;
+pub const MAX_PROVIDER_TIMEOUT_MILLIS: u64 = 5_000;
+pub const DEFAULT_PROVIDER_AGGREGATE_TIMEOUT_MILLIS: u64 = 1_000;
+pub const MAX_PROVIDER_AGGREGATE_TIMEOUT_MILLIS: u64 = 10_000;
 pub const MAX_POLICY_REGISTRY_POLICIES: usize = 32;
 pub const MAX_POLICY_REGISTRY_DOCUMENT_BYTES: usize = 64 * 1024;
 pub const MAX_PROVIDER_OBSERVATION_AGE_SECONDS: i64 = 86_400;
@@ -429,6 +436,191 @@ pub struct FxQuoteRequest {
     pub target_currency: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FxProviderAcquisitionConfig {
+    pub max_concurrency: usize,
+    pub per_provider_timeout: Duration,
+    pub aggregate_timeout: Duration,
+}
+
+impl Default for FxProviderAcquisitionConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrency: DEFAULT_PROVIDER_CONCURRENCY,
+            per_provider_timeout: Duration::from_millis(DEFAULT_PROVIDER_TIMEOUT_MILLIS),
+            aggregate_timeout: Duration::from_millis(DEFAULT_PROVIDER_AGGREGATE_TIMEOUT_MILLIS),
+        }
+    }
+}
+
+impl FxProviderAcquisitionConfig {
+    fn validate(self) -> Result<Self, FxProviderError> {
+        if self.max_concurrency == 0 || self.max_concurrency > MAX_PROVIDER_CONCURRENCY {
+            return Err(FxProviderError::InvalidConfiguration(
+                "provider concurrency is empty or unbounded",
+            ));
+        }
+        if self.per_provider_timeout.is_zero()
+            || self.per_provider_timeout > Duration::from_millis(MAX_PROVIDER_TIMEOUT_MILLIS)
+        {
+            return Err(FxProviderError::InvalidConfiguration(
+                "provider timeout is empty or unbounded",
+            ));
+        }
+        if self.aggregate_timeout.is_zero()
+            || self.aggregate_timeout > Duration::from_millis(MAX_PROVIDER_AGGREGATE_TIMEOUT_MILLIS)
+        {
+            return Err(FxProviderError::InvalidConfiguration(
+                "aggregate provider timeout is empty or unbounded",
+            ));
+        }
+        Ok(self)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FxProviderFailureKind {
+    Timeout,
+    SourceRejected,
+    IdentityMismatch,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FxProviderAttemptFailure {
+    pub provider: String,
+    pub kind: FxProviderFailureKind,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FxProviderAcquisition {
+    pub candidates: Vec<FxQuoteCandidate>,
+    pub failures: Vec<FxProviderAttemptFailure>,
+}
+
+#[async_trait::async_trait]
+pub trait AsyncFxQuoteSource: Send + Sync {
+    fn provider_id(&self) -> &str;
+
+    async fn quote(&self, request: &FxQuoteRequest) -> Result<FxQuoteCandidate, FxProviderError>;
+}
+
+pub async fn acquire_candidates(
+    policy: &FxProviderPolicy,
+    sources: &[Arc<dyn AsyncFxQuoteSource>],
+    request: &FxQuoteRequest,
+    config: FxProviderAcquisitionConfig,
+) -> Result<FxProviderAcquisition, FxProviderError> {
+    policy.validate()?;
+    config.validate()?;
+    validate_acquisition_request(policy, request, sources)?;
+
+    timeout(
+        config.aggregate_timeout,
+        acquire_candidates_inner(sources, request, config),
+    )
+    .await
+    .map_err(|_| FxProviderError::AcquisitionDeadlineExceeded)?
+}
+
+async fn acquire_candidates_inner(
+    sources: &[Arc<dyn AsyncFxQuoteSource>],
+    request: &FxQuoteRequest,
+    config: FxProviderAcquisitionConfig,
+) -> Result<FxProviderAcquisition, FxProviderError> {
+    let semaphore = Arc::new(Semaphore::new(config.max_concurrency));
+    let mut tasks = JoinSet::new();
+
+    for source in sources {
+        let source = Arc::clone(source);
+        let request = request.clone();
+        let semaphore = Arc::clone(&semaphore);
+        let provider = source.provider_id().to_string();
+        tasks.spawn(async move {
+            let permit = match semaphore.acquire_owned().await {
+                Ok(permit) => permit,
+                Err(_) => return Err((provider, FxProviderFailureKind::SourceRejected)),
+            };
+            let result = timeout(config.per_provider_timeout, source.quote(&request)).await;
+            drop(permit);
+            match result {
+                Ok(Ok(candidate)) if candidate.provider == provider => Ok((provider, candidate)),
+                Ok(Ok(_)) => Err((provider, FxProviderFailureKind::IdentityMismatch)),
+                Ok(Err(_)) => Err((provider, FxProviderFailureKind::SourceRejected)),
+                Err(_) => Err((provider, FxProviderFailureKind::Timeout)),
+            }
+        });
+    }
+
+    let mut acquisition = FxProviderAcquisition {
+        candidates: Vec::with_capacity(sources.len()),
+        failures: Vec::with_capacity(sources.len()),
+    };
+    while let Some(result) = tasks.join_next().await {
+        match result {
+            Ok(Ok((_provider, candidate))) => acquisition.candidates.push(candidate),
+            Ok(Err((provider, kind))) => acquisition
+                .failures
+                .push(FxProviderAttemptFailure { provider, kind }),
+            Err(_) => {
+                tasks.abort_all();
+                return Err(FxProviderError::ProviderTaskFailed);
+            }
+        }
+    }
+    Ok(acquisition)
+}
+
+fn validate_acquisition_request(
+    policy: &FxProviderPolicy,
+    request: &FxQuoteRequest,
+    sources: &[Arc<dyn AsyncFxQuoteSource>],
+) -> Result<(), FxProviderError> {
+    if request.merchant_id == [0; 32] || request.facts_digest == [0; 32] {
+        return Err(FxProviderError::InvalidCandidate(
+            "merchant and facts digests must be non-zero",
+        ));
+    }
+    validate_currency(&request.source_currency)?;
+    validate_currency(&request.target_currency)?;
+    if !policy
+        .allowed_pairs
+        .iter()
+        .any(|pair| pair.matches(&request.source_currency, &request.target_currency))
+    {
+        return Err(FxProviderError::UnsupportedCurrencyPair);
+    }
+    if sources.is_empty() || sources.len() > MAX_ALLOWED_PROVIDERS {
+        return Err(FxProviderError::InvalidConfiguration(
+            "provider source set is empty or unbounded",
+        ));
+    }
+    if sources.len() < usize::from(policy.minimum_provider_agreement) {
+        return Err(FxProviderError::ProviderAgreementInsufficient);
+    }
+    for (index, source) in sources.iter().enumerate() {
+        let provider = source.provider_id();
+        if provider.trim().is_empty() || provider.len() > MAX_CODE_BYTES {
+            return Err(FxProviderError::InvalidConfiguration(
+                "provider source identity is empty or unbounded",
+            ));
+        }
+        if !policy
+            .allowed_providers
+            .iter()
+            .any(|allowed| allowed == provider)
+        {
+            return Err(FxProviderError::UnsupportedProvider);
+        }
+        if sources[..index]
+            .iter()
+            .any(|previous| previous.provider_id() == provider)
+        {
+            return Err(FxProviderError::DuplicateProvider);
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IssuedFxEvidence {
     pub envelope: FxEvidenceEnvelope,
@@ -583,6 +775,10 @@ pub enum FxProviderError {
     ProviderAgreementInsufficient,
     #[error("provider candidates disagree on economic terms")]
     ProviderAgreementDisagreement,
+    #[error("FX provider acquisition exceeded its aggregate deadline")]
+    AcquisitionDeadlineExceeded,
+    #[error("FX provider acquisition task failed")]
+    ProviderTaskFailed,
     #[error("legal FX acceptance is required")]
     LegalAcceptanceRequired,
     #[error("FX observation is too old")]
@@ -1080,6 +1276,251 @@ mod tests {
             FxProviderPolicyRegistry::from_json(&oversized),
             Err(FxProviderError::InvalidPolicyRegistry(_))
         ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn acquires_candidates_with_bounded_concurrency_and_partial_failure_evidence() {
+        let mut acquisition_policy = policy();
+        acquisition_policy.allowed_providers = vec![
+            "provider-a".to_string(),
+            "provider-b".to_string(),
+            "provider-c".to_string(),
+            "provider-d".to_string(),
+        ];
+        acquisition_policy.minimum_provider_agreement = 2;
+        acquisition_policy.max_deviation_basis_points = None;
+        let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let maximum = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let sources = [
+            source("provider-a", 20, false, None, &active, &maximum),
+            source("provider-b", 20, false, None, &active, &maximum),
+            source("provider-c", 20, true, None, &active, &maximum),
+            source("provider-d", 20, false, None, &active, &maximum),
+        ];
+        let sources: Vec<Arc<dyn AsyncFxQuoteSource>> = sources
+            .into_iter()
+            .map(|source| Arc::new(source) as Arc<dyn AsyncFxQuoteSource>)
+            .collect();
+
+        let acquisition = acquire_candidates(
+            &acquisition_policy,
+            &sources,
+            &request(),
+            FxProviderAcquisitionConfig {
+                max_concurrency: 2,
+                per_provider_timeout: Duration::from_millis(200),
+                aggregate_timeout: Duration::from_millis(500),
+            },
+        )
+        .await
+        .expect("bounded acquisition");
+
+        assert_eq!(acquisition.candidates.len(), 3);
+        assert_eq!(acquisition.failures.len(), 1);
+        assert_eq!(
+            acquisition.failures[0],
+            FxProviderAttemptFailure {
+                provider: "provider-c".to_string(),
+                kind: FxProviderFailureKind::SourceRejected,
+            }
+        );
+        assert_eq!(active.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(maximum.load(std::sync::atomic::Ordering::SeqCst) <= 2);
+
+        let selected = acquisition_policy
+            .select_candidate(&acquisition.candidates, 1_800_000_100, None)
+            .expect("partial failure still leaves sufficient agreement");
+        assert_eq!(selected.provider, "provider-a");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn classifies_timeout_and_source_identity_substitution() {
+        let mut acquisition_policy = policy();
+        acquisition_policy.allowed_providers =
+            vec!["provider-a".to_string(), "provider-b".to_string()];
+        acquisition_policy.max_deviation_basis_points = None;
+        let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let maximum = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let sources: Vec<Arc<dyn AsyncFxQuoteSource>> = vec![
+            Arc::new(source("provider-a", 50, false, None, &active, &maximum)),
+            Arc::new(source(
+                "provider-b",
+                1,
+                false,
+                Some("provider-a"),
+                &active,
+                &maximum,
+            )),
+        ];
+
+        let acquisition = acquire_candidates(
+            &acquisition_policy,
+            &sources,
+            &request(),
+            FxProviderAcquisitionConfig {
+                max_concurrency: 2,
+                per_provider_timeout: Duration::from_millis(10),
+                aggregate_timeout: Duration::from_millis(100),
+            },
+        )
+        .await
+        .expect("individual failures are reported in the acquisition");
+
+        assert!(acquisition.candidates.is_empty());
+        assert!(acquisition.failures.contains(&FxProviderAttemptFailure {
+            provider: "provider-a".to_string(),
+            kind: FxProviderFailureKind::Timeout,
+        }));
+        assert!(acquisition.failures.contains(&FxProviderAttemptFailure {
+            provider: "provider-b".to_string(),
+            kind: FxProviderFailureKind::IdentityMismatch,
+        }));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn aggregate_deadline_cancels_outstanding_provider_work() {
+        let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let maximum = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let sources: Vec<Arc<dyn AsyncFxQuoteSource>> = vec![Arc::new(source(
+            "provider-a",
+            200,
+            false,
+            None,
+            &active,
+            &maximum,
+        ))];
+        let error = acquire_candidates(
+            &policy(),
+            &sources,
+            &request(),
+            FxProviderAcquisitionConfig {
+                max_concurrency: 1,
+                per_provider_timeout: Duration::from_secs(5),
+                aggregate_timeout: Duration::from_millis(20),
+            },
+        )
+        .await
+        .expect_err("aggregate deadline");
+        assert_eq!(error, FxProviderError::AcquisitionDeadlineExceeded);
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        assert_eq!(active.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rejects_duplicate_sources_before_any_provider_call() {
+        let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let maximum = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let sources: Vec<Arc<dyn AsyncFxQuoteSource>> = vec![
+            Arc::new(source("provider-a", 0, false, None, &active, &maximum)),
+            Arc::new(source("provider-a", 0, false, None, &active, &maximum)),
+        ];
+        assert_eq!(
+            acquire_candidates(
+                &FxProviderPolicy {
+                    allowed_providers: vec!["provider-a".to_string()],
+                    ..policy()
+                },
+                &sources,
+                &request(),
+                FxProviderAcquisitionConfig::default(),
+            )
+            .await
+            .expect_err("duplicate source identity"),
+            FxProviderError::DuplicateProvider
+        );
+        assert_eq!(active.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    fn request() -> FxQuoteRequest {
+        FxQuoteRequest {
+            merchant_id: [7; 32],
+            facts_digest: [8; 32],
+            source_currency: "USD".to_string(),
+            target_currency: "EUR".to_string(),
+        }
+    }
+
+    struct TestAsyncSource {
+        provider: String,
+        returned_provider: String,
+        delay_millis: u64,
+        reject: bool,
+        candidate: FxQuoteCandidate,
+        active: Arc<std::sync::atomic::AtomicUsize>,
+        maximum: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl AsyncFxQuoteSource for TestAsyncSource {
+        fn provider_id(&self) -> &str {
+            &self.provider
+        }
+
+        async fn quote(
+            &self,
+            _request: &FxQuoteRequest,
+        ) -> Result<FxQuoteCandidate, FxProviderError> {
+            let _guard = ActiveGuard::new(Arc::clone(&self.active), Arc::clone(&self.maximum));
+            tokio::time::sleep(Duration::from_millis(self.delay_millis)).await;
+            if self.reject {
+                return Err(FxProviderError::SignerFailed);
+            }
+            let mut candidate = self.candidate.clone();
+            candidate.provider = self.returned_provider.clone();
+            Ok(candidate)
+        }
+    }
+
+    struct ActiveGuard {
+        active: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl ActiveGuard {
+        fn new(
+            active: Arc<std::sync::atomic::AtomicUsize>,
+            maximum: Arc<std::sync::atomic::AtomicUsize>,
+        ) -> Self {
+            let current = active.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            let mut observed = maximum.load(std::sync::atomic::Ordering::SeqCst);
+            while current > observed {
+                match maximum.compare_exchange(
+                    observed,
+                    current,
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                ) {
+                    Ok(_) => break,
+                    Err(next) => observed = next,
+                }
+            }
+            Self { active }
+        }
+    }
+
+    impl Drop for ActiveGuard {
+        fn drop(&mut self) {
+            self.active
+                .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    fn source(
+        provider: &str,
+        delay_millis: u64,
+        reject: bool,
+        returned_provider: Option<&str>,
+        active: &Arc<std::sync::atomic::AtomicUsize>,
+        maximum: &Arc<std::sync::atomic::AtomicUsize>,
+    ) -> TestAsyncSource {
+        TestAsyncSource {
+            provider: provider.to_string(),
+            returned_provider: returned_provider.unwrap_or(provider).to_string(),
+            delay_millis,
+            reject,
+            candidate: candidate(),
+            active: Arc::clone(active),
+            maximum: Arc::clone(maximum),
+        }
     }
 
     fn policy_document(policy: &FxProviderPolicy) -> String {

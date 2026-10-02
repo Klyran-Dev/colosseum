@@ -33,7 +33,9 @@
 - Added ADR-0252 for bounded concurrent FX provider acquisition. Provider
   fan-out now has an explicit design boundary for source identity, concurrency,
   per-provider deadlines, aggregate cancellation, and partial-failure evidence
-  before any real vendor adapter is enabled.
+  before any real vendor adapter is enabled. The vendor-neutral Rust boundary
+  and focused concurrency/cancellation tests are implemented; provider,
+  regional, legal, custody, and production-SLO gates remain open.
 - Added ADR-0243 and a program pause-coverage contract. CI and normal checks
   now discover every public `transfer_checked` entry point and fail closed if
   movement is outside the explicit allowlist, if an allowlisted instruction
