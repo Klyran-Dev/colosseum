@@ -97,3 +97,18 @@ and issuer from one registry snapshot before provider work, then composes
 bounded acquisition, deterministic agreement, one async signature, and local
 envelope verification. It is a reusable application boundary, not a legal,
 tax, persistence, or Solana settlement authority.
+
+ADR-0258 separates current issuance validity from historical replay integrity.
+`FxEvidenceEnvelope::verify_integrity` proves the immutable merchant/facts
+binding, canonical payload digest, and signature without applying the original
+freshness window. The async signer port also supports `Arc` ownership so a
+shared HSM/KMS adapter does not need to clone private-key state. Complete
+envelope persistence and quote replay integration are implemented by ADR-0259
+at the storage boundary, while authenticated API composition remains gated.
+
+ADR-0259 makes that evidence durable inside the immutable quote
+`evidence_refs` document. The storage adapter binds the complete envelope to
+the pre-resolution facts digest, checks it against the exact tax-engine FX
+projection, and revalidates it during tenant-scoped replay. Quotes without FX
+remain unchanged; a quote that claims FX conversion without the complete
+envelope fails closed.

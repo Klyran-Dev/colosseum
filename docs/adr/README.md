@@ -258,3 +258,5 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0255: Bounded HTTP FX provider adapter](0255-bounded-http-fx-provider-adapter.md)
 - [ADR-0256: Bounded HTTP FX signer adapter](0256-bounded-http-fx-signer-adapter.md)
 - [ADR-0257: Server-owned FX issuance coordinator](0257-server-owned-fx-issuance-coordinator.md)
+- [ADR-0258: FX evidence replay integrity and shared signer ownership](0258-fx-evidence-replay-integrity-and-shared-signer-ownership.md)
+- [ADR-0259: Durable FX envelope quote binding](0259-durable-fx-envelope-quote-binding.md)

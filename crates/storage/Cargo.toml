@@ -11,6 +11,8 @@ document-payment = { path = "../document-payment" }
 aes-gcm-siv.workspace = true
 base64.workspace = true
 deadpool-postgres.workspace = true
+ed25519-dalek.workspace = true
+fx-evidence = { path = "../fx-evidence" }
 settlement-adjustments = { path = "../settlement-adjustments" }
 jurisdiction = { path = "../jurisdiction" }
 indexer.workspace = true

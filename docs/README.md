@@ -22,6 +22,8 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [Bounded HTTP FX provider adapter](adr/0255-bounded-http-fx-provider-adapter.md)
 - [Bounded HTTP FX signer adapter](adr/0256-bounded-http-fx-signer-adapter.md)
 - [Server-owned FX issuance coordinator](adr/0257-server-owned-fx-issuance-coordinator.md)
+- [FX evidence replay integrity and shared signer ownership](adr/0258-fx-evidence-replay-integrity-and-shared-signer-ownership.md)
+- [Durable FX envelope quote binding](adr/0259-durable-fx-envelope-quote-binding.md)
 - [Document quote, attestation, payment binding, and checkout contracts](adr/0204-authoritative-document-quote-boundary.md)
 - [Jurisdiction-resolution bounded context](architecture/jurisdiction-resolution.md)
 - [Gold-standard UI/UX](architecture/ui-ux.md)

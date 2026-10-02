@@ -813,6 +813,29 @@ The decision register must be updated whenever a frozen choice changes.
   durable evidence/outbox and provider/legal/custody release decisions are
   explicit; caller-owned FX evidence remains forbidden.
 
+## ADR-0258 — FX evidence replay integrity and shared signer ownership
+
+- [x] Separate historical signed-envelope integrity verification from current
+  issuance freshness and future-skew checks.
+- [x] Allow the async signer port to be shared through `Arc` without requiring
+  adapter cloning or private-key export.
+- [ ] Persist the complete typed FX envelope with the quote, bind it to the
+  pre-FX facts digest, audit access, and verify it during authenticated replay.
+- [ ] Integrate the persisted envelope into the authenticated quote path only
+  after provider, legal, custody, and evidence-retention decisions are frozen.
+
+## ADR-0259 — durable FX envelope quote binding
+
+- [x] Persist the complete typed FX envelope in immutable quote evidence
+  metadata in the same transaction as encrypted facts and the first outbox
+  record.
+- [x] Bind the envelope to the pre-resolution facts digest and verify its
+  projected conversion against normalized tax facts.
+- [x] Revalidate the envelope and projection during tenant-scoped historical
+  replay without applying current issuance expiry.
+- [ ] Supply this storage boundary only from the server-owned coordinator after
+  provider, legal, custody, and evidence-retention decisions are frozen.
+
 ## ADR-0154 — governed adjustment refund movement
 
 Implement only the first explicit movement contract: a negative `Refund` claim

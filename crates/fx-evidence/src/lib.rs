@@ -182,31 +182,21 @@ impl FxEvidenceEnvelope {
         )
     }
 
-    pub fn verify_with_key_at_and_future_skew(
+    /// Verifies immutable historical evidence without applying its issuance
+    /// freshness window. Callers must still resolve `expected_key` from the
+    /// active or historical provider-key registry before invoking this method.
+    pub fn verify_integrity(
         &self,
         expected_key: &VerifyingKey,
         merchant_id: Digest32,
         facts_digest: Digest32,
-        now_unix: i64,
-        max_future_skew_seconds: i64,
     ) -> Result<FxConversionEvidence, FxEvidenceError> {
         self.unsigned.validate()?;
-        if max_future_skew_seconds < 0 {
-            return Err(FxEvidenceError::InvalidValidityWindow);
-        }
         if self.provider_public_key != expected_key.to_bytes()
             || self.unsigned.merchant_id != merchant_id
             || self.unsigned.facts_digest != facts_digest
         {
             return Err(FxEvidenceError::EvidenceBindingMismatch);
-        }
-        let future_skew = self
-            .unsigned
-            .observed_at_unix
-            .checked_sub(now_unix)
-            .unwrap_or(i64::MAX);
-        if future_skew > max_future_skew_seconds || now_unix >= self.unsigned.expires_at_unix {
-            return Err(FxEvidenceError::EvidenceOutsideValidityWindow);
         }
         let payload = self.unsigned.canonical_payload()?;
         let expected_digest: Digest32 = Sha256::digest(&payload).into();
@@ -230,6 +220,29 @@ impl FxEvidenceEnvelope {
             observed_at_unix: self.unsigned.observed_at_unix,
             evidence_digest: self.unsigned.evidence_digest,
         })
+    }
+
+    pub fn verify_with_key_at_and_future_skew(
+        &self,
+        expected_key: &VerifyingKey,
+        merchant_id: Digest32,
+        facts_digest: Digest32,
+        now_unix: i64,
+        max_future_skew_seconds: i64,
+    ) -> Result<FxConversionEvidence, FxEvidenceError> {
+        if max_future_skew_seconds < 0 {
+            return Err(FxEvidenceError::InvalidValidityWindow);
+        }
+        let conversion = self.verify_integrity(expected_key, merchant_id, facts_digest)?;
+        let future_skew = self
+            .unsigned
+            .observed_at_unix
+            .checked_sub(now_unix)
+            .unwrap_or(i64::MAX);
+        if future_skew > max_future_skew_seconds || now_unix >= self.unsigned.expires_at_unix {
+            return Err(FxEvidenceError::EvidenceOutsideValidityWindow);
+        }
+        Ok(conversion)
     }
 }
 
@@ -471,6 +484,43 @@ mod tests {
                 observed_at_unix: 1_800_000_000,
                 evidence_digest: [9; 32],
             }
+        );
+    }
+
+    #[test]
+    fn integrity_replay_verification_accepts_historical_evidence_without_time_validation() {
+        let signing_key = SigningKey::from_bytes(&[3; 32]);
+        let envelope = FxEvidenceEnvelope::sign(sample_unsigned([4; 32]), &signing_key)
+            .expect("signed fixture");
+
+        let mapped = envelope
+            .verify_integrity(&signing_key.verifying_key(), [7; 32], [8; 32])
+            .expect("historical integrity verification");
+
+        assert_eq!(mapped.provider, "provider-a");
+        assert_eq!(mapped.evidence_digest, [9; 32]);
+    }
+
+    #[test]
+    fn integrity_replay_verification_rejects_tampering_and_scope_substitution() {
+        let signing_key = SigningKey::from_bytes(&[3; 32]);
+        let envelope = FxEvidenceEnvelope::sign(sample_unsigned([4; 32]), &signing_key)
+            .expect("signed fixture");
+
+        assert_eq!(
+            envelope.verify_integrity(&signing_key.verifying_key(), [6; 32], [8; 32]),
+            Err(FxEvidenceError::EvidenceBindingMismatch)
+        );
+        assert_eq!(
+            envelope.verify_integrity(&signing_key.verifying_key(), [7; 32], [6; 32]),
+            Err(FxEvidenceError::EvidenceBindingMismatch)
+        );
+
+        let mut tampered = envelope.clone();
+        tampered.signature[0] ^= 1;
+        assert_eq!(
+            tampered.verify_integrity(&signing_key.verifying_key(), [7; 32], [8; 32]),
+            Err(FxEvidenceError::InvalidSignature)
         );
     }
 

@@ -463,6 +463,24 @@ pub trait AsyncFxEvidenceSigner: Send + Sync {
     async fn sign(&self, payload: &[u8]) -> Result<Vec<u8>, FxProviderError>;
 }
 
+#[async_trait::async_trait]
+impl<S> AsyncFxEvidenceSigner for Arc<S>
+where
+    S: AsyncFxEvidenceSigner + ?Sized,
+{
+    fn key_id(&self) -> Digest32 {
+        (**self).key_id()
+    }
+
+    fn public_key(&self) -> [u8; 32] {
+        (**self).public_key()
+    }
+
+    async fn sign(&self, payload: &[u8]) -> Result<Vec<u8>, FxProviderError> {
+        (**self).sign(payload).await
+    }
+}
+
 pub trait FxQuoteSource {
     fn quote(&self, request: &FxQuoteRequest) -> Result<FxQuoteCandidate, FxProviderError>;
 }
@@ -1822,6 +1840,43 @@ mod tests {
         assert_eq!(issued.envelope.unsigned.facts_digest, [8; 32]);
         assert_eq!(issued.envelope.unsigned.provider, "provider-a");
         assert_eq!(active.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn coordinator_accepts_shared_arc_signer_without_cloning_key_state() {
+        let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let maximum = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let registry = FxProviderPolicyRegistry::from_json(&policy_document(&policy()))
+            .expect("policy registry");
+        let signer: Arc<dyn AsyncFxEvidenceSigner> = Arc::new(TestSigner::new([31; 32], [32; 32]));
+        let coordinator = FxEvidenceCoordinator::new(
+            registry,
+            vec![
+                Arc::new(source("provider-a", 0, false, None, &active, &maximum))
+                    as Arc<dyn AsyncFxQuoteSource>,
+            ],
+            signer,
+            FxProviderAcquisitionConfig::default(),
+            FxSigningConfig::default(),
+        );
+
+        let issued = coordinator
+            .issue(FxEvidenceRequest {
+                policy_digest: [6; 32],
+                merchant_id: [7; 32],
+                facts_digest: [8; 32],
+                source_currency: "USD".to_string(),
+                target_currency: "EUR".to_string(),
+                now_unix: 1_800_000_100,
+                reference_rate: Some(ExactRate {
+                    numerator: 9,
+                    denominator: 8,
+                }),
+            })
+            .await
+            .expect("shared signer issued evidence");
+
+        assert_eq!(issued.policy_digest, [6; 32]);
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -65,6 +65,10 @@
   registry snapshot, bounded provider acquisition, deterministic agreement,
   async signing, and local envelope verification without accepting caller-owned
   FX authority or inventing provider/legal/custody decisions.
+- Added ADR-0258 for historical FX-envelope integrity verification and shared
+  async signer ownership without requiring private-key cloning.
+- Added ADR-0259 for atomic durable FX-envelope binding in quote evidence and
+  tenant-scoped historical replay.
 - Added ADR-0243 and a program pause-coverage contract. CI and normal checks
   now discover every public `transfer_checked` entry point and fail closed if
   movement is outside the explicit allowlist, if an allowlisted instruction

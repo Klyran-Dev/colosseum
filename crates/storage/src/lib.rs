@@ -118,6 +118,7 @@ const EVIDENCE_LOOKUP_BACKOFF: Duration = Duration::from_millis(2);
 pub const MAX_RULE_GOVERNANCE_EVIDENCE_BYTES: usize = 16 * 1024;
 pub const MAX_RULE_DRAFT_PROVENANCE_BYTES: usize = 16 * 1024;
 pub const MAX_JURISDICTION_POLICY_PROVENANCE_BYTES: usize = 16 * 1024;
+pub const MAX_FX_EVIDENCE_DOCUMENT_BYTES: usize = 64 * 1024;
 pub const MAX_VAULT_RELEASE_EVIDENCE_BYTES: usize = 16 * 1024;
 pub const MAX_VAULT_RELEASE_WINDOW: Duration = Duration::from_secs(90 * 24 * 60 * 60);
 pub const MAX_PERSISTED_FACTS_BYTES: usize = 64 * 1024;
@@ -156,6 +157,8 @@ pub enum StorageError {
     Serialization(#[from] serde_json::Error),
     #[error("tax calculation error: {0}")]
     Tax(#[from] TaxError),
+    #[error("FX evidence is missing or invalid: {0}")]
+    FxEvidenceIntegrity(String),
     #[error("published rule release was not found")]
     RuleNotFound,
     #[error("stored rule release digest does not match its canonical rule document")]
@@ -857,6 +860,14 @@ pub struct QuoteCommand {
     pub regime: String,
     pub facts: TaxFacts,
     pub jurisdiction_candidates: Vec<JurisdictionCandidate>,
+    pub fx_evidence: Option<PersistedFxEvidence>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PersistedFxEvidence {
+    pub pre_resolution_facts_digest: Digest32,
+    pub envelope: fx_evidence::FxEvidenceEnvelope,
 }
 
 #[derive(Clone, Debug)]
@@ -870,6 +881,7 @@ pub struct DocumentQuoteCommand {
     pub regime: String,
     pub facts: TaxDocumentFacts,
     pub jurisdiction_candidates: Vec<JurisdictionCandidate>,
+    pub fx_evidence: Option<PersistedFxEvidence>,
 }
 
 #[derive(Clone, Debug)]
@@ -7341,7 +7353,8 @@ impl PgStore {
             .query_opt(
                 "SELECT dc.status, dc.document_schema, dc.engine_version,
                         dc.facts_digest, dc.result_document,
-                        dc.facts_ciphertext, dc.facts_nonce, dc.facts_key_id,
+                        dc.evidence_refs, dc.facts_ciphertext, dc.facts_nonce,
+                        dc.facts_key_id,
                         rs.rule_document, rs.rule_digest
                  FROM tax_document_calculations dc
                  JOIN rule_sets rs ON rs.id = dc.rule_set_id
@@ -7369,9 +7382,10 @@ impl PgStore {
         let engine_version: String = row.get(2);
         let facts_digest_bytes: Vec<u8> = row.get(3);
         let result_document: Value = row.get(4);
-        let ciphertext: Vec<u8> = row.get(5);
-        let nonce: Vec<u8> = row.get(6);
-        let key_id: String = row.get(7);
+        let evidence_refs: Value = row.get(5);
+        let ciphertext: Vec<u8> = row.get(6);
+        let nonce: Vec<u8> = row.get(7);
+        let key_id: String = row.get(8);
         let facts_digest: Digest32 = facts_digest_bytes.clone().try_into().map_err(|_| {
             StorageError::DocumentReplayEvidenceIntegrity(
                 "facts digest is not 32 bytes".to_string(),
@@ -7383,15 +7397,16 @@ impl PgStore {
             .ok_or(StorageError::EvidenceCipherUnavailable)?
             .decrypt_facts(merchant_id, &facts_digest, &key_id, &nonce, &ciphertext)
             .map_err(|error| StorageError::DocumentReplayEvidenceIntegrity(error.to_string()))?;
-        let rule_set = decode_persisted_rule_document(row.get(8))
+        let rule_set = decode_persisted_rule_document(row.get(9))
             .map_err(|error| StorageError::DocumentReplayEvidenceIntegrity(error.to_string()))?;
-        let stored_rule_digest: Digest32 = row.get::<_, Vec<u8>>(9).try_into().map_err(|_| {
+        let stored_rule_digest: Digest32 = row.get::<_, Vec<u8>>(10).try_into().map_err(|_| {
             StorageError::DocumentReplayEvidenceIntegrity("rule digest is not 32 bytes".into())
         })?;
         let document_facts: TaxDocumentFacts = serde_json::from_value(facts)
             .map_err(|error| StorageError::DocumentReplayEvidenceIntegrity(error.to_string()))?;
         let result: TaxDocumentResult = serde_json::from_value(result_document)
             .map_err(|error| StorageError::DocumentReplayEvidenceIntegrity(error.to_string()))?;
+        verify_replayed_document_fx_evidence(merchant_id, &document_facts, &evidence_refs)?;
         if schema != TAX_DOCUMENT_SCHEMA_V1
             || engine_version != self.engine_version
             || document_facts.canonical_digest()? != facts_digest
@@ -8227,7 +8242,8 @@ impl PgStore {
             .query_opt(
                 "SELECT tc.status, tc.engine_version, tc.facts_digest,
                         tc.result_document, tc.facts_document,
-                        tc.facts_ciphertext, tc.facts_nonce, tc.facts_key_id,
+                        tc.evidence_refs, tc.facts_ciphertext, tc.facts_nonce,
+                        tc.facts_key_id,
                         rs.rule_document, rs.rule_digest
                  FROM tax_calculations AS tc
                  JOIN rule_sets AS rs ON rs.id = tc.rule_set_id
@@ -8246,9 +8262,10 @@ impl PgStore {
         })?;
         let result_document: Value = row.get(3);
         let plaintext_facts: Option<Value> = row.get(4);
-        let ciphertext: Option<Vec<u8>> = row.get(5);
-        let nonce: Option<Vec<u8>> = row.get(6);
-        let key_id: Option<String> = row.get(7);
+        let evidence_refs: Value = row.get(5);
+        let ciphertext: Option<Vec<u8>> = row.get(6);
+        let nonce: Option<Vec<u8>> = row.get(7);
+        let key_id: Option<String> = row.get(8);
         let facts_document = match (plaintext_facts, ciphertext, nonce, key_id) {
             (Some(_), Some(_), _, _) => {
                 return Err(StorageError::ReplayEvidenceIntegrity(
@@ -8269,15 +8286,17 @@ impl PgStore {
                 ));
             }
         };
-        let rule_document: Value = row.get(8);
-        let rule_digest: Vec<u8> = row.get(9);
+        let rule_document: Value = row.get(9);
+        let rule_digest: Vec<u8> = row.get(10);
         verify_persisted_calculation_evidence(
+            merchant_id,
             calculation_id,
             status,
             engine_version,
             facts_digest_bytes,
             result_document,
             facts_document,
+            evidence_refs,
             rule_document,
             rule_digest,
             &self.engine_version,
@@ -11286,6 +11305,227 @@ fn outbox_payload(merchant_id: Uuid, quote: Value) -> Value {
     })
 }
 
+fn verify_fx_evidence_projection(
+    merchant_id: Uuid,
+    pre_resolution_facts_digest: Digest32,
+    conversion: &tax_engine::FxConversionEvidence,
+    evidence: &PersistedFxEvidence,
+) -> Result<(), StorageError> {
+    if evidence.pre_resolution_facts_digest != pre_resolution_facts_digest {
+        return Err(StorageError::FxEvidenceIntegrity(
+            "pre-resolution facts digest does not match the signed envelope".to_string(),
+        ));
+    }
+    let expected_key =
+        ed25519_dalek::VerifyingKey::from_bytes(&evidence.envelope.provider_public_key).map_err(
+            |_| StorageError::FxEvidenceIntegrity("signed FX provider key is invalid".to_string()),
+        )?;
+    let signed_conversion = evidence
+        .envelope
+        .verify_integrity(
+            &expected_key,
+            merchant_identity_digest(merchant_id.as_bytes()),
+            pre_resolution_facts_digest,
+        )
+        .map_err(|error| StorageError::FxEvidenceIntegrity(error.to_string()))?;
+    if signed_conversion != *conversion {
+        return Err(StorageError::FxEvidenceIntegrity(
+            "signed FX projection does not match normalized facts".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn verify_persisted_fx_evidence(
+    merchant_id: Uuid,
+    pre_resolution_facts: &TaxFacts,
+    persisted_facts: &TaxFacts,
+    evidence: &PersistedFxEvidence,
+) -> Result<(), StorageError> {
+    if pre_resolution_facts.jurisdiction_resolution.is_some()
+        || pre_resolution_facts.fx_conversion.is_some()
+    {
+        return Err(StorageError::FxEvidenceIntegrity(
+            "pre-resolution facts must not contain server evidence".to_string(),
+        ));
+    }
+    let pre_resolution_facts_digest = pre_resolution_facts.canonical_digest()?;
+    let conversion = persisted_facts.fx_conversion.as_ref().ok_or_else(|| {
+        StorageError::FxEvidenceIntegrity(
+            "FX evidence exists without an FX conversion projection".to_string(),
+        )
+    })?;
+    verify_fx_evidence_projection(
+        merchant_id,
+        pre_resolution_facts_digest,
+        conversion,
+        evidence,
+    )
+}
+
+fn verify_persisted_document_fx_evidence(
+    merchant_id: Uuid,
+    pre_resolution_facts: &TaxDocumentFacts,
+    persisted_facts: &TaxDocumentFacts,
+    evidence: &PersistedFxEvidence,
+) -> Result<(), StorageError> {
+    if pre_resolution_facts.jurisdiction_resolution.is_some()
+        || pre_resolution_facts.fx_conversion.is_some()
+    {
+        return Err(StorageError::FxEvidenceIntegrity(
+            "pre-resolution document facts must not contain server evidence".to_string(),
+        ));
+    }
+    let pre_resolution_facts_digest = pre_resolution_facts.canonical_digest()?;
+    let conversion = persisted_facts.fx_conversion.as_ref().ok_or_else(|| {
+        StorageError::FxEvidenceIntegrity(
+            "FX evidence exists without an FX conversion projection".to_string(),
+        )
+    })?;
+    verify_fx_evidence_projection(
+        merchant_id,
+        pre_resolution_facts_digest,
+        conversion,
+        evidence,
+    )
+}
+
+fn parse_fx_evidence_ref(value: &Value) -> Result<PersistedFxEvidence, StorageError> {
+    if !value.is_object() || serde_json::to_vec(value)?.len() > MAX_FX_EVIDENCE_DOCUMENT_BYTES {
+        return Err(StorageError::FxEvidenceIntegrity(
+            "persisted FX evidence reference is outside the bounded object shape".to_string(),
+        ));
+    }
+    serde_json::from_value(value.clone()).map_err(|error| {
+        StorageError::FxEvidenceIntegrity(format!("persisted FX evidence is invalid: {error}"))
+    })
+}
+
+fn verify_replayed_fx_evidence(
+    merchant_id: Uuid,
+    persisted_facts: &TaxFacts,
+    evidence_refs: &Value,
+) -> Result<(), StorageError> {
+    let evidence_value = evidence_refs.get("fx_evidence");
+    match (persisted_facts.fx_conversion.is_some(), evidence_value) {
+        (false, None) => Ok(()),
+        (false, Some(_)) => Err(StorageError::FxEvidenceIntegrity(
+            "persisted FX envelope exists without an FX projection".to_string(),
+        )),
+        (true, None) => Err(StorageError::FxEvidenceIntegrity(
+            "persisted FX projection is missing its signed envelope".to_string(),
+        )),
+        (true, Some(value)) => {
+            let evidence = parse_fx_evidence_ref(value)?;
+            let mut pre_resolution_facts = persisted_facts.clone();
+            pre_resolution_facts.jurisdiction_resolution = None;
+            pre_resolution_facts.fx_conversion = None;
+            verify_persisted_fx_evidence(
+                merchant_id,
+                &pre_resolution_facts,
+                persisted_facts,
+                &evidence,
+            )
+        }
+    }
+}
+
+fn verify_replayed_document_fx_evidence(
+    merchant_id: Uuid,
+    persisted_facts: &TaxDocumentFacts,
+    evidence_refs: &Value,
+) -> Result<(), StorageError> {
+    let evidence_value = evidence_refs.get("fx_evidence");
+    match (persisted_facts.fx_conversion.is_some(), evidence_value) {
+        (false, None) => Ok(()),
+        (false, Some(_)) => Err(StorageError::DocumentReplayEvidenceIntegrity(
+            "persisted FX envelope exists without a document FX projection".to_string(),
+        )),
+        (true, None) => Err(StorageError::DocumentReplayEvidenceIntegrity(
+            "persisted document FX projection is missing its signed envelope".to_string(),
+        )),
+        (true, Some(value)) => {
+            let evidence = parse_fx_evidence_ref(value).map_err(|error| {
+                StorageError::DocumentReplayEvidenceIntegrity(error.to_string())
+            })?;
+            let mut pre_resolution_facts = persisted_facts.clone();
+            pre_resolution_facts.jurisdiction_resolution = None;
+            pre_resolution_facts.fx_conversion = None;
+            verify_persisted_document_fx_evidence(
+                merchant_id,
+                &pre_resolution_facts,
+                persisted_facts,
+                &evidence,
+            )
+            .map_err(|error| StorageError::DocumentReplayEvidenceIntegrity(error.to_string()))
+        }
+    }
+}
+
+fn build_fx_evidence_ref(
+    merchant_id: Uuid,
+    pre_resolution_facts: &TaxFacts,
+    persisted_facts: &TaxFacts,
+    evidence: Option<&PersistedFxEvidence>,
+) -> Result<Option<Value>, StorageError> {
+    match (persisted_facts.fx_conversion.as_ref(), evidence) {
+        (None, None) => Ok(None),
+        (None, Some(_)) => Err(StorageError::FxEvidenceIntegrity(
+            "FX evidence exists without an FX conversion projection".to_string(),
+        )),
+        (Some(_), None) => Err(StorageError::FxEvidenceIntegrity(
+            "FX conversion projection is missing its signed envelope".to_string(),
+        )),
+        (Some(_), Some(evidence)) => {
+            verify_persisted_fx_evidence(
+                merchant_id,
+                pre_resolution_facts,
+                persisted_facts,
+                evidence,
+            )?;
+            let document = serde_json::to_value(evidence)?;
+            if serde_json::to_vec(&document)?.len() > MAX_FX_EVIDENCE_DOCUMENT_BYTES {
+                return Err(StorageError::FxEvidenceIntegrity(
+                    "signed FX evidence exceeds the bounded persistence limit".to_string(),
+                ));
+            }
+            Ok(Some(document))
+        }
+    }
+}
+
+fn build_document_fx_evidence_ref(
+    merchant_id: Uuid,
+    pre_resolution_facts: &TaxDocumentFacts,
+    persisted_facts: &TaxDocumentFacts,
+    evidence: Option<&PersistedFxEvidence>,
+) -> Result<Option<Value>, StorageError> {
+    match (persisted_facts.fx_conversion.as_ref(), evidence) {
+        (None, None) => Ok(None),
+        (None, Some(_)) => Err(StorageError::FxEvidenceIntegrity(
+            "FX evidence exists without a document FX conversion projection".to_string(),
+        )),
+        (Some(_), None) => Err(StorageError::FxEvidenceIntegrity(
+            "document FX conversion projection is missing its signed envelope".to_string(),
+        )),
+        (Some(_), Some(evidence)) => {
+            verify_persisted_document_fx_evidence(
+                merchant_id,
+                pre_resolution_facts,
+                persisted_facts,
+                evidence,
+            )?;
+            let document = serde_json::to_value(evidence)?;
+            if serde_json::to_vec(&document)?.len() > MAX_FX_EVIDENCE_DOCUMENT_BYTES {
+                return Err(StorageError::FxEvidenceIntegrity(
+                    "signed FX evidence exceeds the bounded persistence limit".to_string(),
+                ));
+            }
+            Ok(Some(document))
+        }
+    }
+}
+
 async fn insert_calculation(
     transaction: &deadpool_postgres::Transaction<'_>,
     command: &QuoteCommand,
@@ -11299,18 +11539,29 @@ async fn insert_calculation(
     let total_net = result.total_net_atomic.to_string();
     let result_document = serde_json::to_value(result)?;
     let evidence_cipher = evidence_cipher.ok_or(StorageError::EvidenceCipherUnavailable)?;
+    let fx_evidence = build_fx_evidence_ref(
+        command.merchant_id,
+        &command.facts,
+        persisted_facts,
+        command.fx_evidence.as_ref(),
+    )?;
     let encrypted_facts = evidence_cipher.encrypt_facts(
         command.merchant_id,
         &result.facts_digest,
         persisted_facts,
     )?;
-    let evidence_refs = serde_json::json!({
+    let mut evidence_refs = serde_json::json!({
         "facts_digest": result.facts_digest,
         "facts_ciphertext": "tax_calculations.facts_ciphertext",
         "facts_key_id": encrypted_facts.key_id,
         "rule_digest": result.rule_digest,
         "engine_version": engine_version,
     });
+    if let Some(fx_evidence) = fx_evidence
+        && let Some(object) = evidence_refs.as_object_mut()
+    {
+        object.insert("fx_evidence".to_string(), fx_evidence);
+    }
     let row = transaction
         .query_one(
             "INSERT INTO tax_calculations
@@ -11358,12 +11609,18 @@ async fn insert_document_calculation(
     let total_net = result.total_net_atomic.to_string();
     let result_document = serde_json::to_value(result)?;
     let evidence_cipher = evidence_cipher.ok_or(StorageError::EvidenceCipherUnavailable)?;
+    let fx_evidence = build_document_fx_evidence_ref(
+        command.merchant_id,
+        &command.facts,
+        persisted_facts,
+        command.fx_evidence.as_ref(),
+    )?;
     let encrypted_facts = evidence_cipher.encrypt_document_facts(
         command.merchant_id,
         &result.facts_digest,
         persisted_facts,
     )?;
-    let evidence_refs = serde_json::json!({
+    let mut evidence_refs = serde_json::json!({
         "schema": command.schema,
         "facts_digest": result.facts_digest,
         "facts_ciphertext": "tax_document_calculations.facts_ciphertext",
@@ -11371,6 +11628,11 @@ async fn insert_document_calculation(
         "rule_digest": result.rule_digest,
         "engine_version": engine_version,
     });
+    if let Some(fx_evidence) = fx_evidence
+        && let Some(object) = evidence_refs.as_object_mut()
+    {
+        object.insert("fx_evidence".to_string(), fx_evidence);
+    }
     let row = transaction
         .query_one(
             "INSERT INTO tax_document_calculations
@@ -11462,18 +11724,22 @@ fn validate_persisted_rule_for_simulation(
 
 #[allow(clippy::too_many_arguments)]
 fn verify_persisted_calculation_evidence(
+    merchant_id: Uuid,
     calculation_id: Uuid,
     status: String,
     stored_engine_version: String,
     stored_facts_digest: Vec<u8>,
     result_document: Value,
     facts_document: Option<Value>,
+    evidence_refs: Value,
     rule_document: Value,
     stored_rule_digest: Vec<u8>,
     expected_engine_version: &str,
 ) -> Result<QuoteReplayVerification, StorageError> {
     let facts_document = facts_document.ok_or(StorageError::ReplayEvidenceUnavailable)?;
     let facts: TaxFacts = serde_json::from_value(facts_document)
+        .map_err(|error| StorageError::ReplayEvidenceIntegrity(error.to_string()))?;
+    verify_replayed_fx_evidence(merchant_id, &facts, &evidence_refs)
         .map_err(|error| StorageError::ReplayEvidenceIntegrity(error.to_string()))?;
     let rule_set = decode_persisted_rule_document(rule_document)
         .map_err(|error| StorageError::ReplayEvidenceIntegrity(error.to_string()))?;
@@ -14407,6 +14673,7 @@ mod tests {
                 source: jurisdiction::EvidenceSource::ShippingDestination,
                 evidence_digest: [7; 32],
             }],
+            fx_evidence: None,
         }
     }
 
@@ -15097,6 +15364,7 @@ mod tests {
                 source: jurisdiction::EvidenceSource::ShippingDestination,
                 evidence_digest: [7; 32],
             }],
+            fx_evidence: None,
         };
         validate_document_quote_command(&first).expect("document quote is valid");
         let digest = document_quote_request_digest(&first).expect("digest");
@@ -15243,17 +15511,143 @@ mod tests {
     }
 
     #[test]
+    fn persisted_fx_evidence_binds_projection_and_pre_resolution_facts() {
+        let command = command();
+        let pre_resolution_digest = command.facts.canonical_digest().unwrap();
+        let record = persisted_fx_record(command.merchant_id, pre_resolution_digest);
+        let mut persisted_facts = command.facts.clone();
+        persisted_facts.fx_conversion = Some(tax_engine::FxConversionEvidence {
+            source_currency: "EUR".to_string(),
+            target_currency: "USD".to_string(),
+            numerator: 2,
+            denominator: 3,
+            rounding_mode: RoundingMode::HalfEven,
+            quantum_atomic: 1,
+            provider: "provider-a".to_string(),
+            quote_id: "quote-1".to_string(),
+            observed_at_unix: 1_800_000_000,
+            evidence_digest: [9; 32],
+        });
+
+        let evidence_ref = build_fx_evidence_ref(
+            command.merchant_id,
+            &command.facts,
+            &persisted_facts,
+            Some(&record),
+        )
+        .expect("persisted FX evidence");
+
+        assert_eq!(
+            evidence_ref
+                .as_ref()
+                .and_then(|value| value.get("envelope"))
+                .and_then(|value| value.get("unsigned"))
+                .and_then(|value| value.get("facts_digest"))
+                .and_then(|value| value.as_array())
+                .map(Vec::len),
+            Some(32)
+        );
+
+        let mut mismatch = persisted_facts;
+        mismatch
+            .fx_conversion
+            .as_mut()
+            .expect("FX projection")
+            .numerator = 4;
+        assert!(matches!(
+            build_fx_evidence_ref(
+                command.merchant_id,
+                &command.facts,
+                &mismatch,
+                Some(&record),
+            ),
+            Err(StorageError::FxEvidenceIntegrity(_))
+        ));
+    }
+
+    #[test]
+    fn persisted_fx_evidence_replay_is_integrity_only_and_fails_closed_on_tampering() {
+        let command = command();
+        let pre_resolution_digest = command.facts.canonical_digest().unwrap();
+        let record = persisted_fx_record(command.merchant_id, pre_resolution_digest);
+        let conversion = record
+            .envelope
+            .verify_integrity(
+                &ed25519_dalek::VerifyingKey::from_bytes(&record.envelope.provider_public_key)
+                    .unwrap(),
+                merchant_identity_digest(command.merchant_id.as_bytes()),
+                pre_resolution_digest,
+            )
+            .unwrap();
+        let mut persisted_facts = command.facts.clone();
+        persisted_facts.fx_conversion = Some(conversion);
+        verify_persisted_fx_evidence(
+            command.merchant_id,
+            &command.facts,
+            &persisted_facts,
+            &record,
+        )
+        .expect("historical FX evidence");
+
+        let mut tampered = record;
+        tampered.envelope.payload_digest[0] ^= 1;
+        assert!(matches!(
+            verify_persisted_fx_evidence(
+                command.merchant_id,
+                &command.facts,
+                &persisted_facts,
+                &tampered,
+            ),
+            Err(StorageError::FxEvidenceIntegrity(_))
+        ));
+    }
+
+    fn persisted_fx_record(
+        merchant_id: Uuid,
+        pre_resolution_facts_digest: Digest32,
+    ) -> PersistedFxEvidence {
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&[3; 32]);
+        let envelope = fx_evidence::FxEvidenceEnvelope::sign(
+            fx_evidence::UnsignedFxEvidence {
+                schema_version: fx_evidence::FX_EVIDENCE_SCHEMA_VERSION,
+                merchant_id: merchant_identity_digest(merchant_id.as_bytes()),
+                facts_digest: pre_resolution_facts_digest,
+                source_currency: "EUR".to_string(),
+                target_currency: "USD".to_string(),
+                numerator: 2,
+                denominator: 3,
+                rounding_mode: RoundingMode::HalfEven,
+                quantum_atomic: 1,
+                provider: "provider-a".to_string(),
+                quote_id: "quote-1".to_string(),
+                observed_at_unix: 1_800_000_000,
+                expires_at_unix: 1_800_000_300,
+                evidence_digest: [9; 32],
+                provider_key_id: [4; 32],
+            },
+            &signing_key,
+        )
+        .unwrap();
+        PersistedFxEvidence {
+            pre_resolution_facts_digest,
+            envelope,
+        }
+    }
+
+    #[test]
     fn persisted_normalized_facts_replay_the_complete_evidence_envelope() {
         let facts = command().facts;
         let rules = rule_set();
         let result = tax_engine::calculate(&rules, &facts).unwrap();
         let verified = verify_persisted_calculation_evidence(
             Uuid::now_v7(),
+            Uuid::now_v7(),
             CALCULATION_STATUS.to_string(),
             tax_engine::ENGINE_VERSION.to_string(),
             result.facts_digest.to_vec(),
             serde_json::to_value(&result).unwrap(),
             Some(serde_json::to_value(&facts).unwrap()),
+            serde_json::json!({}),
             serde_json::to_value(&rules).unwrap(),
             result.rule_digest.to_vec(),
             tax_engine::ENGINE_VERSION,
@@ -15272,11 +15666,13 @@ mod tests {
         facts.net_atomic += 1;
         let tampered = verify_persisted_calculation_evidence(
             Uuid::now_v7(),
+            Uuid::now_v7(),
             CALCULATION_STATUS.to_string(),
             tax_engine::ENGINE_VERSION.to_string(),
             result.facts_digest.to_vec(),
             serde_json::to_value(&result).unwrap(),
             Some(serde_json::to_value(&facts).unwrap()),
+            serde_json::json!({}),
             serde_json::to_value(&rules).unwrap(),
             result.rule_digest.to_vec(),
             tax_engine::ENGINE_VERSION,
@@ -15288,11 +15684,13 @@ mod tests {
 
         let legacy = verify_persisted_calculation_evidence(
             Uuid::now_v7(),
+            Uuid::now_v7(),
             CALCULATION_STATUS.to_string(),
             tax_engine::ENGINE_VERSION.to_string(),
             result.facts_digest.to_vec(),
             serde_json::to_value(&result).unwrap(),
             None,
+            serde_json::json!({}),
             serde_json::to_value(&rules).unwrap(),
             result.rule_digest.to_vec(),
             tax_engine::ENGINE_VERSION,

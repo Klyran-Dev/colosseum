@@ -1389,6 +1389,11 @@ impl From<StorageError> for ApiError {
             StorageError::Tax(tax_error) => {
                 return ApiError::from(tax_error);
             }
+            StorageError::FxEvidenceIntegrity(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "FX_EVIDENCE_INTEGRITY_FAILED",
+                "server-owned FX evidence failed integrity validation".to_string(),
+            ),
             StorageError::RuleNotFound => (
                 StatusCode::NOT_FOUND,
                 "PUBLISHED_RULE_NOT_FOUND",
@@ -2299,6 +2304,7 @@ async fn quote_tax_inner(
             regime: request.regime,
             facts: request.facts,
             jurisdiction_candidates: candidates,
+            fx_evidence: None,
         })
         .await
         .map_err(ApiError::from)?;
@@ -2379,6 +2385,7 @@ async fn document_quote_tax_inner(
             regime: request.regime,
             facts: request.facts,
             jurisdiction_candidates: candidates,
+            fx_evidence: None,
         })
         .await
         .map_err(ApiError::from)?;

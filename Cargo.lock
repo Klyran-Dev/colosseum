@@ -4637,6 +4637,8 @@ dependencies = [
  "base64 0.23.1",
  "deadpool-postgres",
  "document-payment",
+ "ed25519-dalek",
+ "fx-evidence",
  "indexer",
  "jurisdiction",
  "policy",

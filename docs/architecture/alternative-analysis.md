@@ -1979,6 +1979,15 @@ broker to the low-latency quote path.
 | Broker-backed issuance workflow | Durable delivery | Quote expiry, delivery, and duplicate-sign ambiguity | Rejected |
 | **Server-owned bounded coordinator in `fx-provider`** | One snapshot, one verified evidence result, reusable ports, and no second authority | Requires later API persistence/authorization composition | **Selected in ADR-0257** |
 
+### FX replay integrity and signer ownership
+
+| Alternative | Benefits | Risks / rejection reason | Decision |
+| --- | --- | --- | --- |
+| Reuse current-time validity verification for historical replay | One verifier | Expired but valid historical quotes cannot be replayed | Rejected |
+| Store only typed conversion fields and an evidence digest | Small persistence payload | Does not prove canonical payload or signature integrity | Rejected |
+| Require signer adapters to be cloneable | Simple coordinator ownership | Couples the port to key material ownership and excludes non-exportable HSM/KMS sessions | Rejected |
+| **Separate integrity verification from time validity and share signers through `Arc`** | Correct historical replay semantics and one shared custody boundary | Requires an explicit durable-envelope persistence integration | **Selected in ADR-0258** |
+
 ### FX evidence signing
 
 **Criteria:** protect key custody, avoid blocking async executors, bind the
