@@ -41,3 +41,6 @@ ports while preserving the same fail-closed cross-currency gate. A concrete
 provider and custody implementation must be approved and measured before it
 can be enabled. Issued evidence derives its signed evidence digest from the
 provider evidence, policy version, and approved legal-authority digest.
+
+ADR-0247 provides the warm digest-keyed policy snapshot. Reload validation is
+ atomic and invalid replacements retain the last known-good policy set.

@@ -1471,9 +1471,11 @@ dependencies = [
 name = "fx-provider"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "ed25519-dalek",
  "fx-evidence",
  "serde",
+ "serde_json",
  "sha2 0.11.0",
  "tax-engine",
  "thiserror 2.0.21",

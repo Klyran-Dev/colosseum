@@ -1852,3 +1852,13 @@ operation, and provider replacement without tax-engine changes.
 | Caller-provided rate with later review | Low initial latency | Forged authority and settlement ambiguity | Rejected |
 | One vendor-specific adapter immediately | Fast vendor integration | Premature legal, regional, and commercial coupling | Rejected |
 | **Vendor-neutral source, policy, and signer ports** | Exact, bounded, auditable, low-latency, replaceable | Requires explicit production provider and custody gates | **Selected in ADR-0246** |
+
+### FX provider policy snapshot lifecycle
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| PostgreSQL read per issuance | Centralized | Adds hot-path latency and mutable replay behavior | Rejected |
+| Remote configuration read per issuance | Centralized rollout | External dependency and tail-latency variance | Rejected |
+| Restart for policy rotation | Simple | Slow rotation and broad failure blast radius | Rejected |
+| Mutable shared policy object | Low code volume | Partial reads and weak digest binding | Rejected |
+| **Bounded immutable digest-keyed atomic snapshot** | Fast lock-free reads, deterministic replay, fail-closed reload | Requires governed delivery and activation evidence | **Selected in ADR-0247** |

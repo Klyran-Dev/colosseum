@@ -660,6 +660,15 @@ validator release gate.
 - [ ] Approve a concrete provider, regional routing, legal owner, custody
   ceremony, production SLO, and cross-currency enablement evidence.
 
+## ADR-0247 — atomic FX provider policy snapshot reload
+
+- [x] Add a bounded digest-keyed policy registry with atomic replacement and
+  lock-free request-path reads.
+- [x] Reject malformed, empty, duplicate, oversized, unknown-field, and
+  semantically invalid replacements while retaining the last good snapshot.
+- [ ] Keep policy publication, legal approval, file provenance, permissions,
+  reload timing, and production activation evidence as separate gates.
+
 ## ADR-0154 — governed adjustment refund movement
 
 Implement only the first explicit movement contract: a negative `Refund` claim

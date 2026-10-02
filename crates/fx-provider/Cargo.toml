@@ -7,9 +7,11 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+arc-swap.workspace = true
 ed25519-dalek.workspace = true
 fx-evidence = { path = "../fx-evidence" }
 serde.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 tax-engine = { path = "../tax-engine" }
 thiserror.workspace = true

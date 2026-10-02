@@ -11,6 +11,7 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [Tier-1 tax engine](architecture/tax-engine.md)
 - [Server-owned FX evidence bounded context](architecture/fx-evidence.md)
 - [FX provider policy and issuance boundary](adr/0246-fx-provider-policy-and-issuance.md)
+- [FX provider policy snapshot lifecycle](adr/0247-fx-provider-policy-snapshot-reload.md)
 - [Document quote, attestation, payment binding, and checkout contracts](adr/0204-authoritative-document-quote-boundary.md)
 - [Jurisdiction-resolution bounded context](architecture/jurisdiction-resolution.md)
 - [Gold-standard UI/UX](architecture/ui-ux.md)

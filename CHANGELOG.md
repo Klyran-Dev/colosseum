@@ -14,6 +14,8 @@
 - Added ADR-0246 for a vendor-neutral FX provider policy and issuance boundary.
   Provider acquisition, exact policy evaluation, and HSM/KMS signing remain
   replaceable ports outside the deterministic tax-engine hot path.
+- Added ADR-0247 for an atomic digest-keyed FX provider policy snapshot. Invalid
+  policy replacements fail closed and retain the last known-good snapshot.
 - Added ADR-0243 and a program pause-coverage contract. CI and normal checks
   now discover every public `transfer_checked` entry point and fail closed if
   movement is outside the explicit allowlist, if an allowlisted instruction

@@ -10,6 +10,7 @@
 //! application concerns. This crate keeps policy evaluation exact and bounded
 //! before it creates an envelope consumed by the deterministic tax engine.
 
+use arc_swap::ArcSwap;
 use ed25519_dalek::{Signature, VerifyingKey};
 use fx_evidence::{
     Digest32, FX_EVIDENCE_SCHEMA_VERSION, FxEvidenceEnvelope, FxEvidenceError, MAX_CODE_BYTES,
@@ -17,10 +18,13 @@ use fx_evidence::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::{collections::HashMap, sync::Arc};
 use tax_engine::{MAX_ATOMIC_AMOUNT, RoundingMode};
 use thiserror::Error;
 
 pub const MAX_ALLOWED_PAIRS: usize = 64;
+pub const MAX_POLICY_REGISTRY_POLICIES: usize = 32;
+pub const MAX_POLICY_REGISTRY_DOCUMENT_BYTES: usize = 64 * 1024;
 pub const MAX_PROVIDER_OBSERVATION_AGE_SECONDS: i64 = 86_400;
 pub const MAX_PROVIDER_FUTURE_SKEW_SECONDS: i64 = 300;
 pub const MAX_PROVIDER_POLICY_LIFETIME_SECONDS: i64 = 86_400;
@@ -29,6 +33,7 @@ const ISSUED_EVIDENCE_DOMAIN_SEPARATOR: &[u8] =
     b"solana-tax-protocol/fx-provider-issued-evidence/v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CurrencyPair {
     pub source_currency: String,
     pub target_currency: String,
@@ -93,6 +98,7 @@ impl ExactRate {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FxProviderPolicy {
     pub policy_digest: Digest32,
     pub allowed_pairs: Vec<CurrencyPair>,
@@ -236,6 +242,70 @@ impl FxProviderPolicy {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct FxProviderPolicyRegistry {
+    policies: Arc<ArcSwap<HashMap<Digest32, FxProviderPolicy>>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PolicyRegistryDocument {
+    policies: Vec<FxProviderPolicy>,
+}
+
+impl FxProviderPolicyRegistry {
+    pub fn from_json(document: &str) -> Result<Self, FxProviderError> {
+        let policies = parse_policy_registry(document)?;
+        Ok(Self {
+            policies: Arc::new(ArcSwap::from_pointee(policies)),
+        })
+    }
+
+    pub fn reload_json(&self, document: &str) -> Result<usize, FxProviderError> {
+        let policies = parse_policy_registry(document)?;
+        let policy_count = policies.len();
+        self.policies.store(Arc::new(policies));
+        Ok(policy_count)
+    }
+
+    pub fn policy_count(&self) -> usize {
+        self.policies.load().len()
+    }
+
+    pub fn policy(&self, policy_digest: Digest32) -> Option<FxProviderPolicy> {
+        self.policies.load().get(&policy_digest).cloned()
+    }
+}
+
+fn parse_policy_registry(
+    document: &str,
+) -> Result<HashMap<Digest32, FxProviderPolicy>, FxProviderError> {
+    if document.len() > MAX_POLICY_REGISTRY_DOCUMENT_BYTES {
+        return Err(FxProviderError::InvalidPolicyRegistry(
+            "policy registry exceeds the bounded document size".to_string(),
+        ));
+    }
+    let document: PolicyRegistryDocument = serde_json::from_str(document)
+        .map_err(|error| FxProviderError::InvalidPolicyRegistry(format!("JSON: {error}")))?;
+    if document.policies.is_empty() || document.policies.len() > MAX_POLICY_REGISTRY_POLICIES {
+        return Err(FxProviderError::InvalidPolicyRegistry(
+            "policy registry is empty or unbounded".to_string(),
+        ));
+    }
+    let mut policies = HashMap::with_capacity(document.policies.len());
+    for policy in document.policies {
+        policy
+            .validate()
+            .map_err(|error| FxProviderError::InvalidPolicyRegistry(error.to_string()))?;
+        if policies.insert(policy.policy_digest, policy).is_some() {
+            return Err(FxProviderError::InvalidPolicyRegistry(
+                "policy registry contains duplicate policy digests".to_string(),
+            ));
+        }
+    }
+    Ok(policies)
+}
+
 pub trait FxEvidenceSigner {
     fn key_id(&self) -> Digest32;
     fn public_key(&self) -> [u8; 32];
@@ -363,6 +433,8 @@ where
 pub enum FxProviderError {
     #[error("invalid FX provider configuration: {0}")]
     InvalidConfiguration(&'static str),
+    #[error("invalid FX policy registry: {0}")]
+    InvalidPolicyRegistry(String),
     #[error("invalid FX quote candidate: {0}")]
     InvalidCandidate(&'static str),
     #[error("unsupported FX currency pair")]
@@ -637,6 +709,82 @@ mod tests {
             ),
             Err(FxProviderError::SignerFailed)
         );
+    }
+
+    #[test]
+    fn policy_registry_replaces_atomically_and_retains_last_good_snapshot() {
+        let first = policy();
+        let second = FxProviderPolicy {
+            policy_digest: [11; 32],
+            ..first.clone()
+        };
+        let registry = FxProviderPolicyRegistry::from_json(&policy_document(&first))
+            .expect("initial policy registry");
+        assert_eq!(registry.policy_count(), 1);
+        assert_eq!(registry.policy(first.policy_digest), Some(first.clone()));
+
+        registry
+            .reload_json(&policy_document(&second))
+            .expect("valid replacement");
+        assert_eq!(registry.policy_count(), 1);
+        assert_eq!(registry.policy(second.policy_digest), Some(second));
+        assert_eq!(registry.policy(first.policy_digest), None);
+
+        assert!(registry.reload_json("{not-json").is_err());
+        assert!(registry.reload_json("{\"policies\":[]}").is_err());
+        assert_eq!(registry.policy_count(), 1);
+        assert!(registry.policy([11; 32]).is_some());
+    }
+
+    #[test]
+    fn policy_registry_rejects_duplicate_invalid_oversized_and_unknown_documents() {
+        let first = policy();
+        let duplicate = format!(
+            "{{\"policies\":[{},{}]}}",
+            serde_json::to_string(&first).expect("policy JSON"),
+            serde_json::to_string(&first).expect("policy JSON")
+        );
+        assert!(matches!(
+            FxProviderPolicyRegistry::from_json(&duplicate),
+            Err(FxProviderError::InvalidPolicyRegistry(_))
+        ));
+
+        let mut invalid = first.clone();
+        invalid.allowed_pairs.clear();
+        assert!(matches!(
+            FxProviderPolicyRegistry::from_json(&policy_document(&invalid)),
+            Err(FxProviderError::InvalidPolicyRegistry(_))
+        ));
+
+        assert!(matches!(
+            FxProviderPolicyRegistry::from_json("{\"policies\":[]}"),
+            Err(FxProviderError::InvalidPolicyRegistry(_))
+        ));
+
+        let unknown = format!(
+            "{{\"policies\":[{}],\"unexpected\":true}}",
+            serde_json::to_string(&first).expect("policy JSON")
+        );
+        assert!(matches!(
+            FxProviderPolicyRegistry::from_json(&unknown),
+            Err(FxProviderError::InvalidPolicyRegistry(_))
+        ));
+
+        let oversized = format!(
+            "{{\"policies\":[]}}{}",
+            "x".repeat(MAX_POLICY_REGISTRY_DOCUMENT_BYTES)
+        );
+        assert!(matches!(
+            FxProviderPolicyRegistry::from_json(&oversized),
+            Err(FxProviderError::InvalidPolicyRegistry(_))
+        ));
+    }
+
+    fn policy_document(policy: &FxProviderPolicy) -> String {
+        format!(
+            "{{\"policies\":[{}]}}",
+            serde_json::to_string(policy).expect("policy JSON")
+        )
     }
 
     #[derive(Clone)]
