@@ -10,6 +10,7 @@ DECLARE
     constraint_name text;
     constraint_exists boolean;
     constraint_name_taken boolean;
+    found_generated_column boolean := false;
 BEGIN
     FOR generated_column IN
         SELECT table_schema, table_name, column_name
@@ -20,6 +21,7 @@ BEGIN
            ) > 0
          ORDER BY table_name, column_name
     LOOP
+        found_generated_column := true;
         constraint_name := left(
             format('%s_%s_uuidv7_check', generated_column.table_name, generated_column.column_name),
             55
@@ -75,6 +77,10 @@ BEGIN
             constraint_name
         );
     END LOOP;
+
+    IF NOT found_generated_column THEN
+        RAISE EXCEPTION 'UUIDv7 invariant closure found no public uuidv7() defaults';
+    END IF;
 END
 $$;
 
