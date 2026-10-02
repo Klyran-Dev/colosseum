@@ -255,3 +255,4 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0252: Bounded concurrent FX provider acquisition](0252-bounded-concurrent-fx-provider-acquisition.md)
 - [ADR-0253: Bounded async FX signing boundary](0253-bounded-async-fx-signing-boundary.md)
 - [ADR-0254: Deterministic FX acquisition outcome order](0254-deterministic-fx-acquisition-outcome-order.md)
+- [ADR-0255: Bounded HTTP FX provider adapter](0255-bounded-http-fx-provider-adapter.md)

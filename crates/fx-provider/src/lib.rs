@@ -975,6 +975,8 @@ pub enum FxProviderError {
     AcquisitionDeadlineExceeded,
     #[error("FX provider acquisition task failed")]
     ProviderTaskFailed,
+    #[error("FX provider source failed")]
+    ProviderSourceFailed,
     #[error("legal FX acceptance is required")]
     LegalAcceptanceRequired,
     #[error("FX observation is too old")]

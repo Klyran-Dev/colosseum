@@ -53,6 +53,10 @@
   provider candidates and bounded failure classifications are normalized by
   policy priority after task completion, so response timing cannot change
   replayable evidence order; the focused test suite now has 18 passing tests.
+- Added ADR-0255 for a bounded vendor-neutral HTTP FX provider adapter. The
+  transport contract will enforce endpoint, credential, timeout, body-size,
+  strict-decoding, exact-decimal, provider-identity, and raw-response evidence
+  controls without selecting a concrete provider or weakening release gates.
 - Added ADR-0243 and a program pause-coverage contract. CI and normal checks
   now discover every public `transfer_checked` entry point and fail closed if
   movement is outside the explicit allowlist, if an allowlisted instruction

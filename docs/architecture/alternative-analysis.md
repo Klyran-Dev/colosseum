@@ -1939,6 +1939,20 @@ network work, unbounded memory, or a second authority for provider admission.
 | Normalize independently in each consumer | Consumer-specific flexibility | Duplicated security-sensitive behavior and inconsistent evidence | Rejected |
 | **Normalize once by policy priority in the acquisition coordinator** | Stable, bounded, aligned with policy, and auditable | Small bounded post-processing step | **Selected in ADR-0254** |
 
+### FX provider HTTP transport
+
+**Criteria:** preserve provider neutrality, bound network and memory exposure,
+prevent credential/endpoint misuse, and keep transport failure separate from
+policy admission and evidence signing.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| HTTP inside the policy/orchestration crate | Fewer crates | Couples transport security to admission and makes testing less isolated | Rejected |
+| Vendor-specific adapter first | Fast path to one integration | Freezes unresolved provider, legal, regional, and custody decisions | Rejected |
+| Unbounded generic HTTP client | Flexible | Implicit body, timeout, proxy, retry, and credential behavior | Rejected |
+| Broker-backed provider request | Durable asynchronous delivery | Adds expiry and delivery ambiguity to the quote path | Rejected |
+| **Separate bounded vendor-neutral HTTP source** | Explicit limits, strict decoding, transport isolation, and open provider gates | Requires a later approved provider adapter/configuration | **Selected in ADR-0255** |
+
 ### FX evidence signing
 
 **Criteria:** protect key custody, avoid blocking async executors, bind the

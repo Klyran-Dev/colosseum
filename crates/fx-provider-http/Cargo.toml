@@ -1,0 +1,21 @@
+[package]
+name = "fx-provider-http"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+async-trait.workspace = true
+fx-provider = { path = "../fx-provider" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tax-engine = { path = "../tax-engine" }
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

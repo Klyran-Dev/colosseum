@@ -779,6 +779,18 @@ The decision register must be updated whenever a frozen choice changes.
 - [ ] Preserve the ordering contract in the approved provider adapter's
   production evidence and any future canonical acquisition serialization.
 
+## ADR-0255 — bounded HTTP FX provider adapter
+
+- [x] Implement the vendor-neutral bounded HTTP source with strict endpoint,
+  credential, timeout, request, response, and body-size controls.
+- [x] Prove transport failure, identity binding, exact decimal parsing,
+  evidence hashing, cancellation, and credential-redaction behavior with local
+  fixture tests.
+- [ ] Keep provider selection, jurisdiction/assets, legal owner, custody,
+  regional SLO, and production enablement in the decision register.
+- [ ] Enable a concrete provider only after independent security, legal,
+  HSM/KMS, failover, and regional latency evidence is approved.
+
 ## ADR-0154 — governed adjustment refund movement
 
 Implement only the first explicit movement contract: a negative `Refund` claim

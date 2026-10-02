@@ -29,7 +29,8 @@ or policy disagreement fails closed.
 ## Scope and release status
 
 The signed envelope and atomic key-registry verifier are implemented as the
-`fx-evidence` crate. The production provider adapter, HSM/KMS key custody,
+`fx-evidence` crate. The vendor-neutral HTTP transport adapter is implemented
+as `fx-provider-http`; a concrete production provider adapter, HSM/KMS key custody,
 freshness/deviation policy, legal acceptance, regional provider SLOs, and
 cross-currency quote enablement remain separate release gates. Until those
 gates are satisfied, the API rejects caller-supplied FX envelopes and does not
@@ -77,3 +78,10 @@ the async issuer, so an HSM/KMS adapter cannot bypass the active policy
 snapshot. The synchronous signer remains a test/local adapter path; key
 ceremony, rotation, revocation, recovery, and production custody evidence
 remain release gates.
+
+ADR-0255 adds a vendor-neutral bounded HTTP source adapter. It makes endpoint
+scheme, loopback development use, credential handling, timeout, body size,
+strict JSON decoding, exact decimal parsing, configured provider identity, and
+raw-response evidence hashing explicit. It does not select a provider or make
+HTTP transport evidence sufficient for legal, regional, custody, or production
+release approval.
