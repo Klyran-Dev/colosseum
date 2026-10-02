@@ -696,7 +696,7 @@ async function createExtendedMint(): Promise<PublicKey> {
 describe("validator-backed settlement conformance", () => {
   const test = enabled ? it : it.skip;
 
-  test("settles legacy SPL, records adjustment evidence, executes a payer-bound refund claim with governance cancellation, and rejects duplicate movement without balance drift", async () => {
+  test("settles legacy SPL, records adjustment evidence, executes a payer-bound refund claim with governance cancellation, rejects duplicate movement without balance drift, and blocks paused vault release without balance drift", async () => {
     await airdrop(payer.publicKey, 10_000_000_000);
     await airdrop(merchant.publicKey);
     await airdrop(issuer.publicKey);

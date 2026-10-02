@@ -60,7 +60,8 @@ See `docs/architecture/alternative-analysis.md`.
 
 - A failing-first program test rejects release execution with a paused context.
 - The real localnet conformance case proves paused release execution leaves
-  vault and destination balances unchanged.
+  vault and destination balances unchanged; the retained evidence verifier
+  requires the explicit `blocks paused vault release` case label.
 - The unpaused release and duplicate/cancelled-claim cases remain covered.
 - `cargo fmt --all -- --check`, Clippy, workspace tests, and the Linux validator
   conformance gate remain required.

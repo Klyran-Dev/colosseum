@@ -67,6 +67,7 @@ for expected_case in \
     'settles legacy SPL' \
     'payer-bound refund claim' \
     'governance cancellation' \
+    'blocks paused vault release' \
     'real v0 address lookup table' \
     'extension-free Token-2022' \
     'settles a document-bound payment' \
