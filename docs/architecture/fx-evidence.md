@@ -63,3 +63,10 @@ cancellation, and returns bounded partial-failure classifications. Acquisition
 results remain non-authoritative until ADR-0250 admission succeeds. No real
 vendor adapter, retry policy, regional routing, or production SLO is implied by
 the library implementation.
+
+ADR-0253 adds a non-blocking async signing port for HSM/KMS-compatible
+adapters. The issuer applies an explicit signing deadline, signs one canonical
+payload exactly once, and verifies the resulting envelope locally before
+returning evidence. The synchronous signer remains a test/local adapter path;
+key ceremony, rotation, revocation, recovery, and production custody evidence
+remain release gates.

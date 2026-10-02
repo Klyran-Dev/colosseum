@@ -1926,3 +1926,17 @@ socket usage, tail latency, cancellation, and provider identity.
 | First successful response | Lowest apparent latency | Nondeterministic authority and no agreement proof | Rejected |
 | Broker-backed acquisition | Durable retries | Adds a dependency and expiry complexity to quote issuance | Rejected |
 | **Bounded concurrent acquisition with per-provider and aggregate deadlines** | Low latency, bounded resources, explicit cancellation, and deterministic handoff to policy | Requires adapter-level retry/circuit controls | **Selected in ADR-0252** |
+
+### FX evidence signing
+
+**Criteria:** protect key custody, avoid blocking async executors, bind the
+signature to exact canonical evidence, and fail closed under remote signer
+failure or timeout.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Synchronous signer for remote HSM/KMS | Small interface | Blocks or hides executor isolation and has no explicit deadline | Rejected |
+| Sign inside the tax engine | Fewer calls | Breaks purity and couples calculation to custody | Rejected |
+| Trust returned signature bytes | Lower latency | Payload/key/signature substitution risk | Rejected |
+| Broker-backed signing | Durable retry | Ambiguous issuance/idempotency and excessive quote latency | Rejected |
+| **Async signer port with deadline and local envelope verification** | Non-blocking, vendor-neutral, bounded, and auditable | Requires explicit custody adapter and rotation ceremonies | **Selected in ADR-0253** |
