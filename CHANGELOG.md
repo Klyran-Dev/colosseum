@@ -8,6 +8,9 @@
   version-7 check constraint. Existing rows fail the migration if invalid;
   clean-bootstrap, upgraded-schema, and Linux backup/restore evidence remain
   release gates.
+- Pinned the web package manager to pnpm 12.3.4 in the package manifest and
+  compatibility matrix so local, Docker, and CI installs share one resolver
+  version.
 - Added the ADR-0238 automatic cancellation reconciler. The indexer now claims
   submitted cancellation intents with a short PostgreSQL UUIDv7 lease, performs
   bounded finalized recovery without holding database locks across RPC, and

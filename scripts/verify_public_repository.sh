@@ -26,6 +26,8 @@ require_text() {
 for file in \
   .gitignore \
   AGENTS.md \
+  rust-toolchain.toml \
+  Cargo.lock \
   README.md \
   CONTRIBUTING.md \
   SECURITY.md \
@@ -34,6 +36,7 @@ for file in \
   docs/README.md \
   docs/api-contract.md \
   docs/architecture/alternative-analysis.md \
+  docs/architecture/toolchain-compatibility.md \
   docs/plans/implementation-plan.md \
   docs/plans/production-readiness.md \
   docs/product/tax-coverage-matrix.md \
@@ -138,7 +141,9 @@ for file in \
   apps/web/scripts/refund_cancellation_fixture.mjs \
   docs/plans/tier-1-product-standard.md \
   db/migrations/0058_catalog_driven_uuidv7_invariant_closure.sql \
-  db/verification/uuidv7_contract.sql
+  db/verification/uuidv7_contract.sql \
+  apps/web/package.json \
+  apps/web/pnpm-lock.yaml
 do
   require_file "$file"
 done

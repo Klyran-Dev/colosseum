@@ -365,6 +365,7 @@ The baseline is recorded as of 2026-09-25 and must be reproduced from lockfiles 
 | Anchor CLI | 1.2.0 documentation baseline | Verify the exact compatible release during bootstrap and commit the chosen version. |
 | React | 19.3 | Use a Vite SPA; no Next.js and no server components. |
 | Node.js | 24.21.0 LTS | Build tooling only; pin the exact patch release and package-manager lockfile. |
+| pnpm | 12.3.4 | Declare the exact version in `apps/web/package.json` and use frozen-lockfile installs. |
 | PostgreSQL | 18.x | Latest security patch for major 18; native `uuid` storage and UUIDv7 for sortable internal IDs. |
 | Solidity | 0.8.37 | Optional EVM adapter only; separate package, chain, threat model, and audit. |
 | NGINX | 1.30.5 stable | Serve the compiled SPA and reverse-proxy non-blocking APIs; keep the transaction path out of NGINX. |

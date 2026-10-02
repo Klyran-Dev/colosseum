@@ -15,6 +15,7 @@ digests, and compiler boundaries below.
 | Anchor/AVM | 1.2.0 baseline | `Anchor.toml`, CI bootstrap | IDL and account-layout vectors |
 | React | 19.3.0 | `apps/web/package.json` and lockfile | Typecheck, unit, axe, Playwright |
 | Node.js | 24.21.0 LTS | Docker web images and CI | Clean Docker build |
+| pnpm | 12.3.4 | `apps/web/package.json` `packageManager` and CI | Frozen-lockfile install |
 | PostgreSQL | 18.6 | `compose.yaml` image digest | Migration, backup/restore, PITR, index drills |
 | NGINX | 1.30.5 stable | `ops/docker/Dockerfile.web` | Config, image, header, and browser checks |
 | Solidity | 0.8.37, optional | EVM adapter only | Separate audit and chain-specific conformance |

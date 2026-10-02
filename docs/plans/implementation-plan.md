@@ -2012,7 +2012,7 @@ Exit criteria: controlled production meets the Tier-1 product standard for the p
 
 ## Version and dependency governance
 
-As of 2026-09-25, the documentation sources report Rust stable 1.98, Agave/Solana CLI 4.3.0, React 19.3, Node.js 24.21.0 LTS, Solidity 0.8.37, Anchor CLI 1.2.0, and NGINX stable 1.30.5. Confirm availability and Solana compatibility during bootstrap, then pin exact versions in source and CI. Do not use a floating `stable` or `latest` channel in production CI. The off-chain workspace remains on Rust 1.98.1; the on-chain package explicitly declares Rust 1.95 compatibility because Agave 4.3.0's platform-tools v1.57 SBF compiler reports rustc 1.95.0-dev. See [ADR-0067](../adr/0067-sbf-compiler-compatibility-boundary.md).
+As of 2026-09-25, the documentation sources report Rust stable 1.98, Agave/Solana CLI 4.3.0, React 19.3, Node.js 24.21.0 LTS, pnpm 12.3.4, Solidity 0.8.37, Anchor CLI 1.2.0, and NGINX stable 1.30.5. Confirm availability and Solana compatibility during bootstrap, then pin exact versions in source and CI. Do not use a floating `stable` or `latest` channel in production CI. The off-chain workspace remains on Rust 1.98.1; the on-chain package explicitly declares Rust 1.95 compatibility because Agave 4.3.0's platform-tools v1.57 SBF compiler reports rustc 1.95.0-dev. See [ADR-0067](../adr/0067-sbf-compiler-compatibility-boundary.md).
 
 References:
 
