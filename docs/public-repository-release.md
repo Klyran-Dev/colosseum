@@ -53,6 +53,11 @@ automation, legal/tax ownership, or approved operational on-call coverage.
 
 Run `make public-docs-check` from a clean checkout. The check verifies the
 required public files, root documentation links, ADR-index coverage, explicit
-status language, and tracked-secret filename hygiene. It intentionally does
-not approve a license or production readiness; those are human governance
-decisions and remain release blockers until evidenced in the readiness plan.
+status language, tracked-secret filename hygiene, and presence of the
+repository's current executable safety contracts and reconciliation drill. The
+separate `make rust-panic-safety-contract`, `make container-pinning-contract`,
+and `make refund-cancellation-reconciliation-drill` gates verify runtime lint
+coverage, immutable container/action inputs, and validator-backed cancellation
+evidence respectively. The public-docs check intentionally does not approve a
+license or production readiness; those are human governance decisions and
+remain release blockers until evidenced in the readiness plan.

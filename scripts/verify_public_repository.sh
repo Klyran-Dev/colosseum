@@ -63,6 +63,9 @@ for file in \
   docs/adr/0230-tax-engine-runtime-contract.md \
   docs/adr/0231-tax-engine-request-rejection-semantics.md \
   docs/adr/0232-tax-engine-service-concurrency-evidence.md \
+  docs/adr/0236-tax-engine-mtls-client-identity.md \
+  docs/adr/0237-tax-engine-service-token-rotation.md \
+  docs/adr/0238-governed-refund-claim-cancellation-workflow.md \
   docs/adr/0234-api-jwks-atomic-reload.md \
   docs/adr/0235-jurisdiction-provider-key-atomic-reload.md \
   ops/docker/Dockerfile.tax-engine \
@@ -124,7 +127,13 @@ for file in \
   scripts/verify_deployment_config.sh \
   scripts/verify_deployment_config_contract.sh \
   scripts/verify_service_lifecycle_contract.sh \
-  scripts/verify_tax_engine_runtime_contract.sh
+  scripts/verify_tax_engine_runtime_contract.sh \
+  scripts/verify_rust_panic_safety_contract.sh \
+  scripts/verify_container_pinning_contract.sh \
+  scripts/verify_refund_claim_cancellation_reconciliation_contract.sh \
+  scripts/refund_cancellation_reconciliation_drill.sh \
+  apps/web/scripts/refund_cancellation_fixture.mjs \
+  docs/plans/tier-1-product-standard.md
 do
   require_file "$file"
 done
@@ -168,6 +177,13 @@ require_text docs/README.md 'operations/dependency-register.md'
 require_text docs/runbooks/README.md 'incident-severity-and-error-budget.md'
 require_text docs/runbooks/README.md 'tax-engine-mtls-rotation.md'
 require_text docs/plans/production-readiness.md 'SLOs, error budgets, RTO/RPO, support ownership, and incident severity policy are published under ADR-0135'
+require_text Makefile 'public-docs-check'
+require_text Makefile 'rust-panic-safety-contract'
+require_text Makefile 'container-pinning-contract'
+require_text Makefile 'refund-cancellation-reconciliation-drill'
+require_text README.md 'refund-cancellation-reconciliation-drill'
+require_text docs/adr/README.md '0238-governed-refund-claim-cancellation-workflow.md'
+require_text CHANGELOG.md 'container and workflow pinning contract'
 
 tracked_secret_names=$(git ls-files | grep -E '(^|/)(\.env|\.env\.|id_rsa|id_ed25519|credentials\.json|service-account.*\.json|.*\.pem|.*\.key)$' || true)
 if [ -n "$tracked_secret_names" ]; then
