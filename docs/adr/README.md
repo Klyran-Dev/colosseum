@@ -245,3 +245,4 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0242: Protocol pause gates vault-release execution](0242-protocol-pause-vault-release-execution.md)
 - [ADR-0243: Executable program pause-coverage contract](0243-executable-program-pause-coverage.md)
 - [ADR-0244: Exact foreign-exchange evidence boundary](0244-exact-fx-evidence-boundary.md)
+- [ADR-0245: Server-owned signed FX evidence bounded context](0245-server-owned-signed-fx-evidence.md)

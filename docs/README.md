@@ -9,6 +9,7 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [Domain model and bounded contexts](architecture/domain-model.md)
 - [Refund Movement bounded context](adr/0175-durable-refund-claim-execute-intents.md)
 - [Tier-1 tax engine](architecture/tax-engine.md)
+- [Server-owned FX evidence bounded context](architecture/fx-evidence.md)
 - [Document quote, attestation, payment binding, and checkout contracts](adr/0204-authoritative-document-quote-boundary.md)
 - [Jurisdiction-resolution bounded context](architecture/jurisdiction-resolution.md)
 - [Gold-standard UI/UX](architecture/ui-ux.md)

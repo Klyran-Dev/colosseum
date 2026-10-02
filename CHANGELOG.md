@@ -7,6 +7,10 @@
   preserves it for replay; API entry points reject caller-supplied FX until a
   separately governed provider adapter can attach verified evidence. Provider
   freshness and legal rate acceptance remain outside the tax hot path.
+- Added ADR-0245 for a server-owned signed FX evidence bounded context. The
+  provider authenticity and key-rotation boundary is designed before wiring a
+  production provider adapter; freshness, legal acceptance, and custody remain
+  explicit release gates.
 - Added ADR-0243 and a program pause-coverage contract. CI and normal checks
   now discover every public `transfer_checked` entry point and fail closed if
   movement is outside the explicit allowlist, if an allowlisted instruction

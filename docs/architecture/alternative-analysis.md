@@ -1825,3 +1825,16 @@ currency semantics.
 | Live provider call from the tax engine | Fresh quote | Nondeterministic latency and impure calculation | Rejected |
 | Caller-provided normalized amount without evidence | Small domain surface | Rate and rounding cannot be replayed or audited | Rejected |
 | **Typed exact FX evidence and pure normalization** | Deterministic, bounded, auditable, and cache-friendly | Requires upstream provider verification and freshness policy | **Selected in ADR-0244** |
+
+### Server-owned signed FX evidence
+
+**Criteria:** cryptographic provider authenticity, exact payload binding,
+bounded verification, atomic key rotation, replayability, and no provider
+network call in the tax hot path.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Generic jurisdiction evidence envelope | Reuses signing code | Rate semantics and lifecycle become ambiguous across bounded contexts | Rejected |
+| Unsigned registry/provider data | Minimal latency | No cryptographic proof of provider output | Rejected |
+| FX lookup inside the tax engine | Freshness | Nondeterministic and non-replayable domain behavior | Rejected |
+| **Dedicated signed `fx-evidence` context with server-owned adapter** | Typed, bounded, replayable, and independently rotatable | Requires provider key/custody operations | **Selected in ADR-0245** |

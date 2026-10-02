@@ -16,6 +16,7 @@ members = [
     "crates/storage",
     "crates/settlement-client",
     "crates/document-payment",
+    "crates/fx-evidence",
     "crates/settlement-adjustments",
     "crates/settlement-coordinator",
     "crates/tax-engine",

@@ -637,6 +637,18 @@ validator release gate.
 - [ ] Keep provider freshness, legal rate acceptance, and production FX
   availability as separately governed release gates.
 
+## ADR-0245 — server-owned signed FX evidence bounded context
+
+- [x] Add a pure `fx-evidence` crate for canonical signed provider envelopes,
+  exact tax-engine mapping, freshness-window validation, and bounded failures.
+- [x] Add failing-first vectors for signature/payload tampering, merchant and
+  facts substitution, expiry/future observation, unknown keys, malformed
+  bounds, and atomic provider-key rotation.
+- [x] Keep public quote payloads unable to supply FX authority; attach evidence
+  only through a separately authenticated server-owned provider adapter.
+- [ ] Keep provider freshness, legal acceptance, HSM/KMS custody, provider
+  availability, and Linux/production SLO evidence as release gates.
+
 ## ADR-0154 — governed adjustment refund movement
 
 Implement only the first explicit movement contract: a negative `Refund` claim

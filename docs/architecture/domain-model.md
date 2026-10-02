@@ -7,6 +7,7 @@
 | Merchant | merchant identity, accepted assets, policy issuer set, default split plan | legal tax interpretation or private keys |
 | Policy | canonical tax parameter attestations, issuer keys, validity, sequence, revocation | payment balances or recipient payouts |
 | Tax Engine | normalized tax facts, jurisdiction resolution, rule graphs, calculations, explanations, evidence | wallet custody or on-chain authority |
+| FX Evidence | signed provider envelopes, exact rate evidence, freshness/authenticity boundary, key rotation | legal rate selection, provider network calls in the tax engine, settlement authority |
 | Settlement | quote-to-receipt lifecycle and atomic accounting rules | fiat settlement or database projections |
 | Split plan | ordered recipients, basis points, fixed/variable constraints, version | tax policy |
 | Vault | segregated reserves, release claims, release governance | how a tax amount was legally calculated |

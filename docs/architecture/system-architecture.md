@@ -73,6 +73,12 @@ The policy issuer is an independently governed service or signer set. Its output
 
 The Tax Engine is a separate bounded context and pure Rust domain library. It normalizes transaction facts, resolves jurisdiction inputs, compiles approved rule graphs, evaluates tax components, produces a complete calculation trace, and signs a `CalculationAttestation`. It is the authoritative calculator for the quote; the Solana program is the authoritative settlement executor.
 
+The FX Evidence bounded context authenticates server-owned signed provider
+envelopes before the Tax Engine normalizes cross-currency amounts. It owns
+provider-key snapshots and exact evidence validation; provider selection,
+freshness/deviation policy, legal acceptance, and HSM/KMS custody remain
+application and operational boundaries.
+
 The engine must be deterministic, replayable, bounded, and fail closed on ambiguous rules. It supports progressive brackets, tax-on-tax dependencies, inclusive/exclusive prices, thresholds, exemptions, credits, min/max, caps/floors, truncation, and explicit rounding scope. It never performs arbitrary network calls during calculation.
 
 The pure library is also packaged as a warm `tax-engine-service` Rust/Tokio

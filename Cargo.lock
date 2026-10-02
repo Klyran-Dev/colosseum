@@ -1454,6 +1454,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "fx-evidence"
+version = "0.1.0"
+dependencies = [
+ "arc-swap",
+ "base64 0.23.1",
+ "ed25519-dalek",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tax-engine",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
