@@ -38,7 +38,9 @@
   regional, legal, custody, and production-SLO gates remain open.
 - Added ADR-0253 for a bounded async FX signing boundary. HSM/KMS-compatible
   adapters can sign without blocking the Tokio executor, subject to an explicit
-  deadline and mandatory local envelope verification.
+  deadline and mandatory local envelope verification. The vendor-neutral Rust
+  path and focused async signing tests are implemented; custody, rotation,
+  recovery, and production HSM/KMS evidence remain open.
 - Added ADR-0243 and a program pause-coverage contract. CI and normal checks
   now discover every public `transfer_checked` entry point and fail closed if
   movement is outside the explicit allowlist, if an allowlisted instruction

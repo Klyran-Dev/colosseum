@@ -1,6 +1,6 @@
 # ADR-0253: Bounded async FX signing boundary
 
-- Status: Accepted for implementation
+- Status: Implemented as a vendor-neutral library boundary; production adapter pending
 - Date: 2026-10-02
 - Scope: HSM/KMS-compatible signing for server-owned FX evidence
 

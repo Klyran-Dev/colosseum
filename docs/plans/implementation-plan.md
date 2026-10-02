@@ -754,11 +754,11 @@ The decision register must be updated whenever a frozen choice changes.
 
 ## ADR-0253 — bounded async FX signing boundary
 
-- [ ] Add the object-safe async HSM/KMS-compatible signer port and bounded
+- [x] Add the object-safe async HSM/KMS-compatible signer port and bounded
   signing-timeout configuration.
-- [ ] Share canonical payload preparation and final envelope verification with
+- [x] Share canonical payload preparation and final envelope verification with
   the synchronous local path; never accept unverified signer bytes.
-- [ ] Add tests for successful async issuance, timeout, signer failure,
+- [x] Add tests for successful async issuance, timeout, signer failure,
   malformed signature, public-key mismatch, and rejection before signer use.
 - [ ] Integrate an approved HSM/KMS adapter only after key ceremony,
   rotation/revocation, recovery, regional latency, and custody evidence.

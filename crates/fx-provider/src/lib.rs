@@ -31,6 +31,8 @@ pub const DEFAULT_PROVIDER_TIMEOUT_MILLIS: u64 = 750;
 pub const MAX_PROVIDER_TIMEOUT_MILLIS: u64 = 5_000;
 pub const DEFAULT_PROVIDER_AGGREGATE_TIMEOUT_MILLIS: u64 = 1_000;
 pub const MAX_PROVIDER_AGGREGATE_TIMEOUT_MILLIS: u64 = 10_000;
+pub const DEFAULT_SIGNING_TIMEOUT_MILLIS: u64 = 500;
+pub const MAX_SIGNING_TIMEOUT_MILLIS: u64 = 5_000;
 pub const MAX_POLICY_REGISTRY_POLICIES: usize = 32;
 pub const MAX_POLICY_REGISTRY_DOCUMENT_BYTES: usize = 64 * 1024;
 pub const MAX_PROVIDER_OBSERVATION_AGE_SECONDS: i64 = 86_400;
@@ -424,6 +426,13 @@ pub trait FxEvidenceSigner {
     fn sign(&self, payload: &[u8]) -> Result<Vec<u8>, FxProviderError>;
 }
 
+#[async_trait::async_trait]
+pub trait AsyncFxEvidenceSigner: Send + Sync {
+    fn key_id(&self) -> Digest32;
+    fn public_key(&self) -> [u8; 32];
+    async fn sign(&self, payload: &[u8]) -> Result<Vec<u8>, FxProviderError>;
+}
+
 pub trait FxQuoteSource {
     fn quote(&self, request: &FxQuoteRequest) -> Result<FxQuoteCandidate, FxProviderError>;
 }
@@ -472,6 +481,32 @@ impl FxProviderAcquisitionConfig {
         {
             return Err(FxProviderError::InvalidConfiguration(
                 "aggregate provider timeout is empty or unbounded",
+            ));
+        }
+        Ok(self)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FxSigningConfig {
+    pub timeout: Duration,
+}
+
+impl Default for FxSigningConfig {
+    fn default() -> Self {
+        Self {
+            timeout: Duration::from_millis(DEFAULT_SIGNING_TIMEOUT_MILLIS),
+        }
+    }
+}
+
+impl FxSigningConfig {
+    fn validate(self) -> Result<Self, FxProviderError> {
+        if self.timeout.is_zero()
+            || self.timeout > Duration::from_millis(MAX_SIGNING_TIMEOUT_MILLIS)
+        {
+            return Err(FxProviderError::InvalidConfiguration(
+                "FX signing timeout is empty or unbounded",
             ));
         }
         Ok(self)
@@ -634,14 +669,16 @@ pub struct FxEvidenceIssuer<S> {
     signer: S,
 }
 
+impl<S> FxEvidenceIssuer<S> {
+    pub fn new(policy: FxProviderPolicy, signer: S) -> Self {
+        Self { policy, signer }
+    }
+}
+
 impl<S> FxEvidenceIssuer<S>
 where
     S: FxEvidenceSigner,
 {
-    pub fn new(policy: FxProviderPolicy, signer: S) -> Self {
-        Self { policy, signer }
-    }
-
     pub fn issue(
         &self,
         candidate: FxQuoteCandidate,
@@ -687,72 +724,195 @@ where
         facts_digest: Digest32,
         now_unix: i64,
     ) -> Result<IssuedFxEvidence, FxProviderError> {
-        let legal_authority_digest = match candidate.legal_acceptance {
-            LegalAcceptance::Approved { authority_digest } if authority_digest != [0; 32] => {
-                authority_digest
-            }
-            _ if self.policy.require_legal_acceptance => {
-                return Err(FxProviderError::LegalAcceptanceRequired);
-            }
-            _ => [0; 32],
-        };
-        let key_id = self.signer.key_id();
-        let public_key = self.signer.public_key();
-        if key_id == [0; 32] || public_key == [0; 32] {
-            return Err(FxProviderError::SignerIdentityInvalid);
-        }
-        let source_evidence_digest = candidate.evidence_digest;
-        let evidence_digest = issued_evidence_digest(
-            source_evidence_digest,
-            self.policy.policy_digest,
-            legal_authority_digest,
-        );
-        let unsigned = UnsignedFxEvidence {
-            schema_version: FX_EVIDENCE_SCHEMA_VERSION,
+        let prepared = prepare_evidence(
+            &self.policy,
+            self.signer.key_id(),
+            self.signer.public_key(),
+            candidate,
             merchant_id,
             facts_digest,
-            source_currency: candidate.source_currency,
-            target_currency: candidate.target_currency,
-            numerator: candidate.numerator,
-            denominator: candidate.denominator,
-            rounding_mode: candidate.rounding_mode,
-            quantum_atomic: candidate.quantum_atomic,
-            provider: candidate.provider,
-            quote_id: candidate.quote_id,
-            observed_at_unix: candidate.observed_at_unix,
-            expires_at_unix: candidate.expires_at_unix,
-            evidence_digest,
-            provider_key_id: key_id,
-        };
-        let payload = unsigned.canonical_payload()?;
-        let signature = self.signer.sign(&payload)?;
-        if Signature::from_slice(&signature).is_err() {
-            return Err(FxProviderError::SignerReturnedInvalidSignature);
-        }
-        let verifying_key = VerifyingKey::from_bytes(&public_key)
-            .map_err(|_| FxProviderError::SignerIdentityInvalid)?;
-        let envelope = FxEvidenceEnvelope {
-            unsigned,
-            provider_public_key: public_key,
-            payload_digest: Sha256::digest(&payload).into(),
-            signature,
-        };
-        envelope
-            .verify_with_key_at_and_future_skew(
-                &verifying_key,
-                merchant_id,
-                facts_digest,
-                now_unix,
-                self.policy.max_future_skew_seconds,
-            )
-            .map_err(FxProviderError::Evidence)?;
-        Ok(IssuedFxEvidence {
-            envelope,
-            source_evidence_digest,
-            policy_digest: self.policy.policy_digest,
-            legal_authority_digest,
-        })
+        )?;
+        let signature = self.signer.sign(&prepared.payload)?;
+        finalize_evidence(&self.policy, prepared, signature, now_unix)
     }
+}
+
+impl<S> FxEvidenceIssuer<S>
+where
+    S: AsyncFxEvidenceSigner,
+{
+    pub async fn issue_async(
+        &self,
+        candidate: FxQuoteCandidate,
+        merchant_id: Digest32,
+        facts_digest: Digest32,
+        now_unix: i64,
+        reference_rate: Option<ExactRate>,
+        signing_config: FxSigningConfig,
+    ) -> Result<IssuedFxEvidence, FxProviderError> {
+        self.policy.validate()?;
+        signing_config.validate()?;
+        if merchant_id == [0; 32] || facts_digest == [0; 32] {
+            return Err(FxProviderError::InvalidCandidate(
+                "merchant and facts digests must be non-zero",
+            ));
+        }
+        self.policy
+            .validate_candidate(&candidate, now_unix, reference_rate)?;
+        self.issue_validated_async(
+            candidate,
+            merchant_id,
+            facts_digest,
+            now_unix,
+            signing_config,
+        )
+        .await
+    }
+
+    pub async fn issue_candidates_async(
+        &self,
+        candidates: &[FxQuoteCandidate],
+        merchant_id: Digest32,
+        facts_digest: Digest32,
+        now_unix: i64,
+        reference_rate: Option<ExactRate>,
+        signing_config: FxSigningConfig,
+    ) -> Result<IssuedFxEvidence, FxProviderError> {
+        signing_config.validate()?;
+        if merchant_id == [0; 32] || facts_digest == [0; 32] {
+            return Err(FxProviderError::InvalidCandidate(
+                "merchant and facts digests must be non-zero",
+            ));
+        }
+        let candidate = self
+            .policy
+            .select_candidate(candidates, now_unix, reference_rate)?;
+        self.issue_validated_async(
+            candidate,
+            merchant_id,
+            facts_digest,
+            now_unix,
+            signing_config,
+        )
+        .await
+    }
+
+    async fn issue_validated_async(
+        &self,
+        candidate: FxQuoteCandidate,
+        merchant_id: Digest32,
+        facts_digest: Digest32,
+        now_unix: i64,
+        signing_config: FxSigningConfig,
+    ) -> Result<IssuedFxEvidence, FxProviderError> {
+        let prepared = prepare_evidence(
+            &self.policy,
+            self.signer.key_id(),
+            self.signer.public_key(),
+            candidate,
+            merchant_id,
+            facts_digest,
+        )?;
+        let signature = timeout(signing_config.timeout, self.signer.sign(&prepared.payload))
+            .await
+            .map_err(|_| FxProviderError::SigningDeadlineExceeded)??;
+        finalize_evidence(&self.policy, prepared, signature, now_unix)
+    }
+}
+
+struct PreparedFxEvidence {
+    unsigned: UnsignedFxEvidence,
+    payload: Vec<u8>,
+    public_key: [u8; 32],
+    source_evidence_digest: Digest32,
+    legal_authority_digest: Digest32,
+}
+
+fn prepare_evidence(
+    policy: &FxProviderPolicy,
+    key_id: Digest32,
+    public_key: [u8; 32],
+    candidate: FxQuoteCandidate,
+    merchant_id: Digest32,
+    facts_digest: Digest32,
+) -> Result<PreparedFxEvidence, FxProviderError> {
+    let legal_authority_digest = match candidate.legal_acceptance {
+        LegalAcceptance::Approved { authority_digest } if authority_digest != [0; 32] => {
+            authority_digest
+        }
+        _ if policy.require_legal_acceptance => {
+            return Err(FxProviderError::LegalAcceptanceRequired);
+        }
+        _ => [0; 32],
+    };
+    if key_id == [0; 32] || public_key == [0; 32] {
+        return Err(FxProviderError::SignerIdentityInvalid);
+    }
+    let source_evidence_digest = candidate.evidence_digest;
+    let evidence_digest = issued_evidence_digest(
+        source_evidence_digest,
+        policy.policy_digest,
+        legal_authority_digest,
+    );
+    let unsigned = UnsignedFxEvidence {
+        schema_version: FX_EVIDENCE_SCHEMA_VERSION,
+        merchant_id,
+        facts_digest,
+        source_currency: candidate.source_currency,
+        target_currency: candidate.target_currency,
+        numerator: candidate.numerator,
+        denominator: candidate.denominator,
+        rounding_mode: candidate.rounding_mode,
+        quantum_atomic: candidate.quantum_atomic,
+        provider: candidate.provider,
+        quote_id: candidate.quote_id,
+        observed_at_unix: candidate.observed_at_unix,
+        expires_at_unix: candidate.expires_at_unix,
+        evidence_digest,
+        provider_key_id: key_id,
+    };
+    let payload = unsigned.canonical_payload()?;
+    Ok(PreparedFxEvidence {
+        unsigned,
+        payload,
+        public_key,
+        source_evidence_digest,
+        legal_authority_digest,
+    })
+}
+
+fn finalize_evidence(
+    policy: &FxProviderPolicy,
+    prepared: PreparedFxEvidence,
+    signature: Vec<u8>,
+    now_unix: i64,
+) -> Result<IssuedFxEvidence, FxProviderError> {
+    if Signature::from_slice(&signature).is_err() {
+        return Err(FxProviderError::SignerReturnedInvalidSignature);
+    }
+    let verifying_key = VerifyingKey::from_bytes(&prepared.public_key)
+        .map_err(|_| FxProviderError::SignerIdentityInvalid)?;
+    let envelope = FxEvidenceEnvelope {
+        unsigned: prepared.unsigned,
+        provider_public_key: prepared.public_key,
+        payload_digest: Sha256::digest(&prepared.payload).into(),
+        signature,
+    };
+    envelope
+        .verify_with_key_at_and_future_skew(
+            &verifying_key,
+            envelope.unsigned.merchant_id,
+            envelope.unsigned.facts_digest,
+            now_unix,
+            policy.max_future_skew_seconds,
+        )
+        .map_err(FxProviderError::Evidence)?;
+    Ok(IssuedFxEvidence {
+        envelope,
+        source_evidence_digest: prepared.source_evidence_digest,
+        policy_digest: policy.policy_digest,
+        legal_authority_digest: prepared.legal_authority_digest,
+    })
 }
 
 #[derive(Debug, Error, Eq, PartialEq)]
@@ -803,6 +963,8 @@ pub enum FxProviderError {
     SignerIdentityInvalid,
     #[error("FX signer returned an invalid signature")]
     SignerReturnedInvalidSignature,
+    #[error("FX signing exceeded its deadline")]
+    SigningDeadlineExceeded,
     #[error("FX evidence envelope is invalid: {0}")]
     Evidence(#[from] FxEvidenceError),
 }
@@ -1431,6 +1593,145 @@ mod tests {
         assert_eq!(active.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn issues_exact_evidence_through_the_async_signer_boundary() {
+        let issuer = FxEvidenceIssuer::new(policy(), TestSigner::new([31; 32], [32; 32]));
+        let issued = issuer
+            .issue_async(
+                candidate(),
+                [7; 32],
+                [8; 32],
+                1_800_000_100,
+                Some(ExactRate {
+                    numerator: 9,
+                    denominator: 8,
+                }),
+                FxSigningConfig::default(),
+            )
+            .await
+            .expect("async signing");
+        assert_eq!(issued.envelope.unsigned.merchant_id, [7; 32]);
+        assert_eq!(issued.envelope.unsigned.provider_key_id, [32; 32]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rejects_async_signing_timeout_without_issuing() {
+        let signer = SlowAsyncSigner {
+            inner: TestSigner::new([33; 32], [34; 32]),
+            delay: Duration::from_millis(50),
+        };
+        let issuer = FxEvidenceIssuer::new(policy(), signer);
+        assert_eq!(
+            issuer
+                .issue_async(
+                    candidate(),
+                    [7; 32],
+                    [8; 32],
+                    1_800_000_100,
+                    Some(ExactRate {
+                        numerator: 9,
+                        denominator: 8,
+                    }),
+                    FxSigningConfig {
+                        timeout: Duration::from_millis(10),
+                    },
+                )
+                .await
+                .expect_err("signing timeout"),
+            FxProviderError::SigningDeadlineExceeded
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rejects_malformed_async_signature_and_invalid_identity() {
+        let malformed = FxEvidenceIssuer::new(
+            policy(),
+            MalformedAsyncSigner {
+                inner: TestSigner::new([35; 32], [36; 32]),
+            },
+        );
+        assert_eq!(
+            malformed
+                .issue_async(
+                    candidate(),
+                    [7; 32],
+                    [8; 32],
+                    1_800_000_100,
+                    Some(ExactRate {
+                        numerator: 9,
+                        denominator: 8,
+                    }),
+                    FxSigningConfig::default(),
+                )
+                .await
+                .expect_err("malformed signature"),
+            FxProviderError::SignerReturnedInvalidSignature
+        );
+
+        let invalid_identity = FxEvidenceIssuer::new(policy(), InvalidIdentityAsyncSigner);
+        assert_eq!(
+            invalid_identity
+                .issue_async(
+                    candidate(),
+                    [7; 32],
+                    [8; 32],
+                    1_800_000_100,
+                    Some(ExactRate {
+                        numerator: 9,
+                        denominator: 8,
+                    }),
+                    FxSigningConfig::default(),
+                )
+                .await
+                .expect_err("invalid signer identity"),
+            FxProviderError::SignerIdentityInvalid
+        );
+
+        let mismatch = FxEvidenceIssuer::new(
+            policy(),
+            MismatchedAsyncSigner {
+                inner: TestSigner::new([37; 32], [38; 32]),
+                public_key: FxEvidenceSigner::public_key(&TestSigner::new([39; 32], [40; 32])),
+            },
+        );
+        assert_eq!(
+            mismatch
+                .issue_async(
+                    candidate(),
+                    [7; 32],
+                    [8; 32],
+                    1_800_000_100,
+                    Some(ExactRate {
+                        numerator: 9,
+                        denominator: 8,
+                    }),
+                    FxSigningConfig::default(),
+                )
+                .await
+                .expect_err("public-key mismatch"),
+            FxProviderError::Evidence(FxEvidenceError::InvalidSignature)
+        );
+
+        let failed = FxEvidenceIssuer::new(policy(), TestSigner::failing([41; 32], [42; 32]));
+        assert_eq!(
+            failed
+                .issue_async(
+                    candidate(),
+                    [7; 32],
+                    [8; 32],
+                    1_800_000_100,
+                    Some(ExactRate {
+                        numerator: 9,
+                        denominator: 8,
+                    }),
+                    FxSigningConfig::default(),
+                )
+                .await
+                .expect_err("signer failure"),
+            FxProviderError::SignerFailed
+        );
+    }
+
     fn request() -> FxQuoteRequest {
         FxQuoteRequest {
             merchant_id: [7; 32],
@@ -1523,6 +1824,83 @@ mod tests {
         }
     }
 
+    struct SlowAsyncSigner {
+        inner: TestSigner,
+        delay: Duration,
+    }
+
+    #[async_trait::async_trait]
+    impl AsyncFxEvidenceSigner for SlowAsyncSigner {
+        fn key_id(&self) -> Digest32 {
+            FxEvidenceSigner::key_id(&self.inner)
+        }
+
+        fn public_key(&self) -> [u8; 32] {
+            FxEvidenceSigner::public_key(&self.inner)
+        }
+
+        async fn sign(&self, payload: &[u8]) -> Result<Vec<u8>, FxProviderError> {
+            tokio::time::sleep(self.delay).await;
+            FxEvidenceSigner::sign(&self.inner, payload)
+        }
+    }
+
+    struct MalformedAsyncSigner {
+        inner: TestSigner,
+    }
+
+    #[async_trait::async_trait]
+    impl AsyncFxEvidenceSigner for MalformedAsyncSigner {
+        fn key_id(&self) -> Digest32 {
+            FxEvidenceSigner::key_id(&self.inner)
+        }
+
+        fn public_key(&self) -> [u8; 32] {
+            FxEvidenceSigner::public_key(&self.inner)
+        }
+
+        async fn sign(&self, _payload: &[u8]) -> Result<Vec<u8>, FxProviderError> {
+            Ok(vec![1; 3])
+        }
+    }
+
+    struct InvalidIdentityAsyncSigner;
+
+    #[async_trait::async_trait]
+    impl AsyncFxEvidenceSigner for InvalidIdentityAsyncSigner {
+        fn key_id(&self) -> Digest32 {
+            [0; 32]
+        }
+
+        fn public_key(&self) -> [u8; 32] {
+            [0; 32]
+        }
+
+        async fn sign(&self, _payload: &[u8]) -> Result<Vec<u8>, FxProviderError> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct MismatchedAsyncSigner {
+        inner: TestSigner,
+        public_key: [u8; 32],
+    }
+
+    #[async_trait::async_trait]
+    impl AsyncFxEvidenceSigner for MismatchedAsyncSigner {
+        fn key_id(&self) -> Digest32 {
+            FxEvidenceSigner::key_id(&self.inner)
+        }
+
+        fn public_key(&self) -> [u8; 32] {
+            self.public_key
+        }
+
+        async fn sign(&self, payload: &[u8]) -> Result<Vec<u8>, FxProviderError> {
+            FxEvidenceSigner::sign(&self.inner, payload)
+        }
+    }
+
     fn policy_document(policy: &FxProviderPolicy) -> String {
         format!(
             "{{\"policies\":[{}]}}",
@@ -1569,6 +1947,21 @@ mod tests {
             Ok(ed25519_dalek::Signer::sign(&self.signing_key, _payload)
                 .to_bytes()
                 .to_vec())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AsyncFxEvidenceSigner for TestSigner {
+        fn key_id(&self) -> Digest32 {
+            self.key_id
+        }
+
+        fn public_key(&self) -> [u8; 32] {
+            self.signing_key.verifying_key().to_bytes()
+        }
+
+        async fn sign(&self, payload: &[u8]) -> Result<Vec<u8>, FxProviderError> {
+            <Self as FxEvidenceSigner>::sign(self, payload)
         }
     }
 
