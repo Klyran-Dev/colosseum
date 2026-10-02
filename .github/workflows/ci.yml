@@ -212,6 +212,8 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Verify public repository contract
         run: make public-docs-check
+      - name: Verify authoritative Solana workflow contract
+        run: make solana-conformance-workflow-contract
 
   integration:
     name: Docker quote and idempotency integration

@@ -192,10 +192,13 @@ require_text docs/plans/production-readiness.md 'SLOs, error budgets, RTO/RPO, s
 require_text Makefile 'public-docs-check'
 require_text Makefile 'rust-panic-safety-contract'
 require_text Makefile 'container-pinning-contract'
+require_text Makefile 'solana-conformance-workflow-contract'
 require_text Makefile 'refund-cancellation-reconciliation-drill'
 require_text README.md 'refund-cancellation-reconciliation-drill'
 require_text docs/adr/README.md '0238-governed-refund-claim-cancellation-workflow.md'
+require_text docs/adr/README.md '0241-linux-conformance-workflow-contract.md'
 require_text CHANGELOG.md 'container and workflow pinning contract'
+require_text CHANGELOG.md 'conformance workflow contract'
 require_text apps/web/package.json '"packageManager": "pnpm@12.3.4"'
 require_text docs/architecture/toolchain-compatibility.md '| pnpm | 12.3.4 |'
 

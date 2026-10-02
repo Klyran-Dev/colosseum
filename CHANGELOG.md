@@ -2,6 +2,11 @@
 
 ## 2026-10-02
 
+- Added ADR-0241 and an executable conformance workflow contract. Normal
+  checks now fail closed if CI or release-candidate workflows lose the pinned
+  Linux/amd64 assertion, Dockerized validator command, evidence postcondition,
+  or required retained-artifact handling. This protects workflow shape; a
+  successful Linux validator run remains a separate release gate.
 - Added ADR-0240 and migration `0059` to make refund-claim cancellation
   reconciliation leases compatible with the database lifecycle trigger. A
   same-status update may change only lease coordination fields; signature,

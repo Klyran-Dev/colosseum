@@ -589,6 +589,17 @@ identity, and all named real-RPC test cases. Local `io_uring` failures remain
 fail-closed diagnostics; only retained successful Linux evidence can close the
 validator release gate.
 
+## ADR-0241 — executable Linux conformance workflow contract
+
+- [x] Add a static contract over CI and release-candidate workflows requiring
+  the pinned Ubuntu runner, Linux/amd64 Docker assertions, the Dockerized
+  conformance command, postcondition verification, and fail-closed retained
+  evidence handling.
+- [x] Run the contract from normal repository checks and the public CI job.
+- [ ] Retain a successful Linux/amd64 validator artifact for the exact release
+  commit; the workflow contract protects the gate but cannot create validator,
+  provider, identity, or production-operational evidence.
+
 ## ADR-0154 — governed adjustment refund movement
 
 Implement only the first explicit movement contract: a negative `Refund` claim

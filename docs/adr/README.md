@@ -241,3 +241,4 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0238: Governed refund-claim cancellation workflow](0238-governed-refund-claim-cancellation-workflow.md)
 - [ADR-0239: Catalog-driven UUIDv7 invariant closure](0239-catalog-driven-uuidv7-invariant-closure.md)
 - [ADR-0240: Lease-safe refund-claim cancellation transition trigger](0240-refund-claim-cancellation-lease-trigger.md)
+- [ADR-0241: Executable Linux conformance workflow contract](0241-linux-conformance-workflow-contract.md)

@@ -1772,3 +1772,17 @@ free of new coordination overhead.
 | Migration-source text scan | Works without a database | Cannot prove live defaults, types, or validated constraints after upgrades | Rejected |
 | Database trigger on all UUID writes | Central enforcement | Adds write-path cost and incorrectly couples UUIDv7 policy to external references and protocol identifiers | Rejected |
 | **PostgreSQL catalog discovery plus validated corrective migration** | Covers clean/upgraded schemas, no request-path cost, fail-closed drift detection | Migration validation may scan existing tables and requires bounded rollout planning | **Selected in ADR-0239** |
+
+### Linux conformance workflow integrity
+
+**Criteria:** prevent workflow drift from weakening the authoritative
+Linux/amd64 validator boundary, keep the check deterministic and credential
+free, preserve fail-closed artifact handling, and avoid duplicating the
+conformance execution path.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Reviewer checklist only | No implementation work | Human review can miss removal of runner, verifier, or retention invariants | Rejected |
+| Runtime evidence verifier only | Strong postcondition after execution | Cannot prove the workflow invoked the authoritative command on the required runner | Rejected |
+| Second independent conformance workflow | Extra separation | Duplicate cost and two sources of release truth | Rejected |
+| **Static contract over CI and release-candidate workflows** | Deterministic, public-safe, credential-free, and runs in normal checks | Requires intentional updates with workflow changes | **Selected in ADR-0241** |

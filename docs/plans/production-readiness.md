@@ -89,6 +89,12 @@ failure remains a typed non-zero result and cannot satisfy this gate; the
 successful Linux run is still an open release item until retained evidence
 exists.
 
+ADR-0241 adds an executable workflow-shape contract to the normal repository
+checks. It prevents CI or release-candidate edits from removing the required
+Linux/amd64 assertion, Dockerized command, evidence postcondition, or
+fail-closed artifact retention. It protects the release boundary but does not
+close the separate successful Linux validator evidence gate.
+
 ## Correctness
 
 - [x] Canonical settlement serialization has a shared versioned golden vector
