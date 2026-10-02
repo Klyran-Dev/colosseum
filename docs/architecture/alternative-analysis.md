@@ -1530,6 +1530,7 @@ legal/tax compliance.
 | Broker-owned cancellation queue | Familiar delivery model | Adds a second durable work authority, duplicate delivery semantics, and queue recovery coupling | Rejected |
 | Database lock held across finalized RPC recovery | Strong local serialization | Holds a pool connection and row lock across network I/O; stalls unrelated governance work | Rejected |
 | **Bounded indexer worker with PostgreSQL UUIDv7 lease, `SKIP LOCKED`, stale reclaim, and token-fenced final CAS** | Self-healing convergence, replica coordination, crash recovery, replayable evidence, and no lock across RPC | Adds lease columns, worker telemetry, and a deterministic Docker drill | **Selected in ADR-0238** |
+| **Forward migration with same-status lease-only trigger branch** | Repairs durable lease acquisition without changing lifecycle state or weakening immutable-field checks | Adds one corrective trigger migration and a regression drill | **Selected in ADR-0240** |
 
 ### Refund-funding topology verification concurrency
 

@@ -376,9 +376,10 @@ exists.
   telemetry remain open.
 - [x] ADR-0232 adds a real-image warm Tax Engine concurrency contract: 256
   authenticated aggregate requests at concurrency 32, exact response checks,
-  bounded timeouts, and p50/p95/p99 metadata. The 2026-10-01 local arm64 run
-  returned 256/256 HTTP 200 responses with p50/p95/p99 of 1.344/3.650/10.302
-  ms. This is local synthetic service evidence; Linux/amd64 retention,
+  bounded timeouts, and p50/p95/p99 metadata. The 2026-10-02 local arm64 run
+  returned 256/256 HTTP 200 responses at concurrency 32 with p50/p95/p99 of
+  1.205/2.788/5.791 ms. This is local synthetic service evidence;
+  Linux/amd64 retention,
   resource profiles, regional SLOs, mTLS, and production identity issuance
   remain open.
 - [x] ADR-0233 adds a real pinned-image staging-mode mTLS contract covering
@@ -411,22 +412,29 @@ exists.
   critical rejection alert. Production secret-manager delivery,
   permissions, overlap/revocation, compromise response, regional reload SLO,
   and alert/on-call evidence remain open.
-- [ ] ADR-0238 governed refund-claim cancellation has a server-owned compiler,
+- [x] ADR-0238 governed refund-claim cancellation has a server-owned compiler,
   exact signed-byte verification, a separate UUIDv7 cancellation intent, and
   finalized cancellation-event reconciliation. The compiler, verifier,
   durable intent migration, API/UI lifecycle, typed finalized event decoder,
   bounded leased indexer reconciler, and atomic claim transition are
-  implemented. `make refund-cancellation-reconciliation-drill` provides the
-  two-replica Docker evidence harness, but its evidence artifact still must be
-  produced on a Docker-enabled CI runner. Linux validator/provider,
-  governance-key, production-load, and operational evidence remain required
-  before cancellation is enabled in production.
+  implemented. On 2026-10-02, `make refund-cancellation-reconciliation-drill`
+  passed on the local macOS arm64 Docker host with two replicas, one finalized
+  cancellation event, one cancelled-claim event, two outbox events, one raw
+  transaction/evidence record, and zero pending backlog. This is local
+  synthetic evidence only; Linux validator/provider, governance-key,
+  production-load, and operational evidence remain required before
+  cancellation is enabled in production.
 - [x] ADR-0239 closes UUIDv7 schema drift by discovering every public
   `uuidv7()` default from PostgreSQL catalog metadata and requiring a validated
   version-7 check constraint through migration `0058`.
-- [ ] ADR-0239 clean-bootstrap, upgraded-schema, invalid-row, and
-  backup/restore evidence must be retained from Linux PostgreSQL 18 before
-  release approval.
+- [x] ADR-0239 clean-bootstrap, upgraded-schema, invalid-row, and
+  backup/restore contracts pass in the local Docker PostgreSQL 18.6 arm64
+  environment; Linux PostgreSQL 18 evidence remains required before release.
+- [x] ADR-0240 adds a forward-only lease-safe cancellation trigger migration:
+  same-status writes can change only lease fields, while lifecycle and
+  authority fields remain fenced. The focused signature-page regression test
+  and two-replica cancellation drill pass locally; Linux/amd64 and production
+  evidence remain open.
 - [x] Compiled-rule cache hit/miss/eviction/entry metrics are exported with
   fixed labels and bounded cardinality; concurrent-load and invalidation
   performance evidence remains open.

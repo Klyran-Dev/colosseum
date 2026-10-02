@@ -30,9 +30,9 @@ open.
   and rejects local identity/provider material; provider rotation and HSM/KMS
   ceremony evidence remain deployment gates.
 - The PostgreSQL schema contract is catalog-driven for all `uuidv7()` defaults;
-  migration `0058` and `db/verification/uuidv7_contract.sql` remain public so
-  clean-bootstrap and upgraded-schema checks cannot drift from the UUIDv7
-  mandate.
+  migrations `0058`/`0059` and `db/verification/uuidv7_contract.sql` remain
+  public so clean-bootstrap, upgraded-schema, and lease-trigger checks cannot
+  drift from the UUIDv7 and reconciliation mandates.
 - CI records the exact toolchain, dependency lockfiles, container image
   digests, security-scan result, test result, and validator-conformance result
   for every release candidate. ADR-0129 provides the tag/manual workflow,

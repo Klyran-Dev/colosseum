@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-10-02
+
+- Added ADR-0240 and migration `0059` to make refund-claim cancellation
+  reconciliation leases compatible with the database lifecycle trigger. A
+  same-status update may change only lease coordination fields; signature,
+  commitment, slot, error, authority, and artifact fields remain fenced. The
+  local two-replica Docker drill exposed and verified this regression on the
+  arm64 host; Linux/amd64 and production evidence remain release gates.
+- Re-ran the bounded warm Tax Engine service workload on the pinned local arm64
+  image: 256/256 HTTP 200 responses at concurrency 32 with p50/p95/p99 of
+  1.205/2.788/5.791 ms. This remains local synthetic evidence, not a regional
+  or production SLO claim.
+
 ## 2026-10-01
 
 - Added ADR-0239 and migration `0058` to close UUIDv7 schema drift. The

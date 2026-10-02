@@ -27,7 +27,7 @@ export RPC_FIXTURE_SIGNATURE_STATUS="finalized"
 
 merchant_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d51"
 adjustment_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d52"
-funding_configuration_id="01992f1b-4a70-8ea2-b6e37a9d9d53"
+funding_configuration_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d53"
 claim_intent_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d54"
 cancellation_intent_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d55"
 original_settlement_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d56"
@@ -75,7 +75,7 @@ export RPC_FIXTURE_REFUND_CANCELLATION_MINT="$(fixture_value '.mint')"
 export RPC_FIXTURE_REFUND_CANCELLATION_GOVERNANCE="$(fixture_value '.governance')"
 export RPC_FIXTURE_REFUND_CANCELLATION_SIGNATURE="$(fixture_value '.cancellation_signature')"
 export RPC_FIXTURE_REFUND_CANCELLATION_REFERENCE_DIGEST_HEX="$(fixture_value '.reference_digest_hex')"
-export RPC_FIXTURE_REFUND_CANCELLATION_NONCE="$(fixture_value '.nonce')"
+export RPC_FIXTURE_REFUND_CANCELLATION_NONCE="$(fixture_value '.artifact.instruction.claim_nonce')"
 export RPC_FIXTURE_REFUND_CANCELLATION_SLOT="$(fixture_value '.cancellation_slot')"
 
 docker compose -p "$project_name" --profile settlement-submit-drill --profile indexer \
@@ -256,7 +256,9 @@ fi
 evidence_state=$(docker compose -p "$project_name" exec -T postgres psql -qAt $psql_args -c \
     "SELECT count(*) || '|' || min(slot::text) || '|' || min(event_index::text) || '|' ||
             (SELECT count(*) FROM raw_chain_transactions WHERE stream_key = '$stream_key' AND signature = '$cancellation_signature') || '|' ||
-            (SELECT encode(evidence_digest, 'hex') FROM raw_chain_evidence WHERE stream_key = '$stream_key' AND signature = '$cancellation_signature');")
+            (SELECT encode(evidence_digest, 'hex') FROM raw_chain_evidence WHERE stream_key = '$stream_key' AND signature = '$cancellation_signature')
+     FROM raw_chain_evidence
+     WHERE stream_key = '$stream_key' AND signature = '$cancellation_signature';")
 if [ "$evidence_state" != "1|901|0|1|$evidence_digest_hex" ]; then
     echo "finalized cancellation evidence cardinality or digest was unexpected: $evidence_state" >&2
     exit 1

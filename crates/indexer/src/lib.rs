@@ -694,7 +694,7 @@ impl<T: JsonRpcTransport> SolanaRpcSignaturePageSource<T> {
         } else {
             None
         };
-        if next_before.as_deref() == before.as_deref() {
+        if next_before.is_some() && next_before.as_deref() == before.as_deref() {
             return Err(ProviderError::InvalidResponse(
                 "signature page cursor did not make progress".to_string(),
             ));
@@ -6187,6 +6187,31 @@ mod tests {
         assert_eq!(calls[0].1[1]["commitment"], "finalized");
         assert_eq!(calls[0].1[1]["limit"], 2);
         assert!(calls[0].1[1].get("before").is_none());
+    }
+
+    #[tokio::test]
+    async fn complete_initial_signature_page_does_not_report_cursor_stall() {
+        let signature = test_signature(6);
+        let rpc = FakeRpc {
+            results: Mutex::new(VecDeque::from([json!([
+                {
+                    "signature": signature,
+                    "slot": 20,
+                    "err": null,
+                    "confirmationStatus": "finalized"
+                }
+            ])])),
+            calls: Mutex::new(Vec::new()),
+        };
+        let source = SolanaRpcSignaturePageSource::new(rpc);
+
+        let page = source
+            .fetch_page(&Pubkey::new_from_array([9; 32]).to_string(), None, 10)
+            .await
+            .unwrap();
+
+        assert!(page.complete);
+        assert!(page.next_before.is_none());
     }
 
     #[tokio::test]

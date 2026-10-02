@@ -911,9 +911,9 @@ release gates.
 
 - [x] Add the bounded Docker benchmark with warm-up, exact response checks,
   bounded request timeout, scoped cleanup, and p50/p95/p99 calculation.
-- [x] Execute the default workload on 2026-10-01: 256/256 HTTP 200 responses
+- [x] Execute the default workload on 2026-10-02: 256/256 HTTP 200 responses
   at concurrency 32 on the pinned local arm64 image, with p50/p95/p99 of
-  1.344/3.650/10.302 ms.
+  1.205/2.788/5.791 ms.
 - [ ] Retain Linux/amd64 CI evidence, resource-profile samples, regional
   measurements, mTLS/client-identity evidence, and production SLO approval.
 
@@ -989,9 +989,11 @@ release gates.
   two real indexer replicas, synthetic finalized RPC recovery, stale lease
   reclaim, exact raw-evidence digest, atomic claim/cancellation convergence,
   idempotent outbox cardinality, and zero pending telemetry.
-- [ ] Run and retain the Docker drill artifact on a Docker-enabled CI runner;
-  the current macOS host has no reachable Docker daemon, so this evidence is
-  not claimed locally yet.
+- [x] Run the Docker drill locally: on 2026-10-02 the arm64 host produced
+  `finalized|cancelled`, one cancellation event, one cancelled-claim event,
+  two outbox events, one raw transaction/evidence record, and zero backlog.
+  Linux/amd64 CI retention, validator/provider, and production evidence remain
+  release gates.
 - [x] Require finalized `AdjustmentRefundClaimCancelled` evidence before the
   claim projection becomes cancelled; preserve unknown provider outcomes and
   idempotent replay semantics.
@@ -1011,9 +1013,21 @@ release gates.
 - [x] Add migration `0058` to close the invariant for existing generated
   identifiers using deterministic bounded constraint names and fail-closed
   validation.
-- [ ] Retain clean-bootstrap, upgraded-schema, invalid-row, and backup/restore
-  evidence on Linux PostgreSQL 18; no local Docker evidence is claimed while
-  the Docker daemon is unavailable.
+- [x] Clean bootstrap, upgraded-schema, invalid-row, and backup/restore
+  contracts pass locally against Docker PostgreSQL 18.6 on arm64; Linux
+  PostgreSQL 18 evidence remains a release gate.
+
+## ADR-0240 — lease-safe refund-claim cancellation transition trigger
+
+- [x] Add migration `0059` so cancellation reconciliation can acquire a
+  UUIDv7 lease without changing status; same-status lifecycle-field mutation
+  remains rejected.
+- [x] Add a failing-then-passing signature-page regression test for complete
+  initial pages, preserving non-null cursor-progress fail-closed behavior.
+- [x] Pass the two-replica Docker cancellation drill and retain the exact
+  finalized evidence/outbox/cardinality result locally.
+- [ ] Retain Linux/amd64 migration, validator, provider-failover, and
+  production operational evidence before enabling the workflow.
 
 ## ADR-0234 — atomic API JWKS reload for bounded identity rotation
 

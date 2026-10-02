@@ -72,6 +72,7 @@ for file in \
   docs/adr/0237-tax-engine-service-token-rotation.md \
   docs/adr/0238-governed-refund-claim-cancellation-workflow.md \
   docs/adr/0239-catalog-driven-uuidv7-invariant-closure.md \
+  docs/adr/0240-refund-claim-cancellation-lease-trigger.md \
   docs/adr/0234-api-jwks-atomic-reload.md \
   docs/adr/0235-jurisdiction-provider-key-atomic-reload.md \
   ops/docker/Dockerfile.tax-engine \
@@ -141,6 +142,7 @@ for file in \
   apps/web/scripts/refund_cancellation_fixture.mjs \
   docs/plans/tier-1-product-standard.md \
   db/migrations/0058_catalog_driven_uuidv7_invariant_closure.sql \
+  db/migrations/0059_refund_claim_cancellation_lease_trigger.sql \
   db/verification/uuidv7_contract.sql \
   apps/web/package.json \
   apps/web/pnpm-lock.yaml
