@@ -21,6 +21,7 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [Deterministic FX acquisition outcome order](adr/0254-deterministic-fx-acquisition-outcome-order.md)
 - [Bounded HTTP FX provider adapter](adr/0255-bounded-http-fx-provider-adapter.md)
 - [Bounded HTTP FX signer adapter](adr/0256-bounded-http-fx-signer-adapter.md)
+- [Server-owned FX issuance coordinator](adr/0257-server-owned-fx-issuance-coordinator.md)
 - [Document quote, attestation, payment binding, and checkout contracts](adr/0204-authoritative-document-quote-boundary.md)
 - [Jurisdiction-resolution bounded context](architecture/jurisdiction-resolution.md)
 - [Gold-standard UI/UX](architecture/ui-ux.md)

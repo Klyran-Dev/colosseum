@@ -91,3 +91,9 @@ It transmits one exact canonical payload with a server-owned key identity,
 rejects redirects and non-canonical signatures, and never retries a remote
 signing operation. The async issuer still performs the authoritative envelope
 verification; HSM/KMS custody and key-ceremony evidence remain release gates.
+
+ADR-0257 adds the server-owned `FxEvidenceCoordinator`. It captures the policy
+and issuer from one registry snapshot before provider work, then composes
+bounded acquisition, deterministic agreement, one async signature, and local
+envelope verification. It is a reusable application boundary, not a legal,
+tax, persistence, or Solana settlement authority.

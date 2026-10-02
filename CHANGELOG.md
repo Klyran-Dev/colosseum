@@ -61,6 +61,10 @@
   signer transport preserves exact payload bytes, server-owned key identity,
   strict signature shape, bounded timeout/body behavior, and no duplicate
   signing retries while leaving HSM/KMS custody decisions open.
+- Added ADR-0257 for the server-owned FX issuance coordinator. It composes one
+  registry snapshot, bounded provider acquisition, deterministic agreement,
+  async signing, and local envelope verification without accepting caller-owned
+  FX authority or inventing provider/legal/custody decisions.
 - Added ADR-0243 and a program pause-coverage contract. CI and normal checks
   now discover every public `transfer_checked` entry point and fail closed if
   movement is outside the explicit allowlist, if an allowlisted instruction

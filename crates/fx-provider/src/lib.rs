@@ -403,6 +403,22 @@ impl FxProviderPolicyRegistry {
             .ok_or(FxProviderError::PolicyNotFound)?;
         Ok(FxEvidenceIssuer::new(policy, signer))
     }
+
+    pub fn policy_and_issuer_async<S: AsyncFxEvidenceSigner>(
+        &self,
+        policy_digest: Digest32,
+        signer: S,
+    ) -> Result<(FxProviderPolicy, FxEvidenceIssuer<S>), FxProviderError> {
+        if policy_digest == [0; 32] {
+            return Err(FxProviderError::PolicyNotFound);
+        }
+        let snapshot = self.policies.load();
+        let policy = snapshot
+            .get(&policy_digest)
+            .cloned()
+            .ok_or(FxProviderError::PolicyNotFound)?;
+        Ok((policy.clone(), FxEvidenceIssuer::new(policy, signer)))
+    }
 }
 
 fn parse_policy_registry(
@@ -703,6 +719,78 @@ pub struct IssuedFxEvidence {
 pub struct FxEvidenceIssuer<S> {
     policy: FxProviderPolicy,
     signer: S,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FxEvidenceRequest {
+    pub policy_digest: Digest32,
+    pub merchant_id: Digest32,
+    pub facts_digest: Digest32,
+    pub source_currency: String,
+    pub target_currency: String,
+    pub now_unix: i64,
+    pub reference_rate: Option<ExactRate>,
+}
+
+pub struct FxEvidenceCoordinator<S> {
+    registry: FxProviderPolicyRegistry,
+    sources: Vec<Arc<dyn AsyncFxQuoteSource>>,
+    signer: S,
+    acquisition_config: FxProviderAcquisitionConfig,
+    signing_config: FxSigningConfig,
+}
+
+impl<S> FxEvidenceCoordinator<S>
+where
+    S: AsyncFxEvidenceSigner + Clone,
+{
+    pub fn new(
+        registry: FxProviderPolicyRegistry,
+        sources: Vec<Arc<dyn AsyncFxQuoteSource>>,
+        signer: S,
+        acquisition_config: FxProviderAcquisitionConfig,
+        signing_config: FxSigningConfig,
+    ) -> Self {
+        Self {
+            registry,
+            sources,
+            signer,
+            acquisition_config,
+            signing_config,
+        }
+    }
+
+    pub async fn issue(
+        &self,
+        request: FxEvidenceRequest,
+    ) -> Result<IssuedFxEvidence, FxProviderError> {
+        let (policy, issuer) = self
+            .registry
+            .policy_and_issuer_async(request.policy_digest, self.signer.clone())?;
+        let quote_request = FxQuoteRequest {
+            merchant_id: request.merchant_id,
+            facts_digest: request.facts_digest,
+            source_currency: request.source_currency,
+            target_currency: request.target_currency,
+        };
+        let acquisition = acquire_candidates(
+            &policy,
+            &self.sources,
+            &quote_request,
+            self.acquisition_config,
+        )
+        .await?;
+        issuer
+            .issue_candidates_async(
+                &acquisition.candidates,
+                quote_request.merchant_id,
+                quote_request.facts_digest,
+                request.now_unix,
+                request.reference_rate,
+                self.signing_config,
+            )
+            .await
+    }
 }
 
 impl<S> FxEvidenceIssuer<S> {
@@ -1697,6 +1785,129 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn server_owned_coordinator_acquires_selects_signs_and_verifies_evidence() {
+        let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let maximum = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let registry = FxProviderPolicyRegistry::from_json(&policy_document(&policy()))
+            .expect("policy registry");
+        let coordinator = FxEvidenceCoordinator::new(
+            registry,
+            vec![
+                Arc::new(source("provider-a", 0, false, None, &active, &maximum))
+                    as Arc<dyn AsyncFxQuoteSource>,
+            ],
+            TestSigner::new([31; 32], [32; 32]),
+            FxProviderAcquisitionConfig::default(),
+            FxSigningConfig::default(),
+        );
+
+        let issued = coordinator
+            .issue(FxEvidenceRequest {
+                policy_digest: [6; 32],
+                merchant_id: [7; 32],
+                facts_digest: [8; 32],
+                source_currency: "USD".to_string(),
+                target_currency: "EUR".to_string(),
+                now_unix: 1_800_000_100,
+                reference_rate: Some(ExactRate {
+                    numerator: 9,
+                    denominator: 8,
+                }),
+            })
+            .await
+            .expect("server-owned issued evidence");
+
+        assert_eq!(issued.policy_digest, [6; 32]);
+        assert_eq!(issued.envelope.unsigned.merchant_id, [7; 32]);
+        assert_eq!(issued.envelope.unsigned.facts_digest, [8; 32]);
+        assert_eq!(issued.envelope.unsigned.provider, "provider-a");
+        assert_eq!(active.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn server_owned_coordinator_rejects_missing_policy_before_provider_work() {
+        let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let maximum = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let registry = FxProviderPolicyRegistry::from_json(&policy_document(&policy()))
+            .expect("policy registry");
+        let coordinator = FxEvidenceCoordinator::new(
+            registry,
+            vec![
+                Arc::new(source("provider-a", 0, false, None, &active, &maximum))
+                    as Arc<dyn AsyncFxQuoteSource>,
+            ],
+            TestSigner::new([31; 32], [32; 32]),
+            FxProviderAcquisitionConfig::default(),
+            FxSigningConfig::default(),
+        );
+
+        let error = coordinator
+            .issue(FxEvidenceRequest {
+                policy_digest: [7; 32],
+                merchant_id: [7; 32],
+                facts_digest: [8; 32],
+                source_currency: "USD".to_string(),
+                target_currency: "EUR".to_string(),
+                now_unix: 1_800_000_100,
+                reference_rate: None,
+            })
+            .await
+            .expect_err("missing policy");
+
+        assert_eq!(error, FxProviderError::PolicyNotFound);
+        assert_eq!(active.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn server_owned_coordinator_keeps_one_policy_snapshot_during_reload() {
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let registry = FxProviderPolicyRegistry::from_json(&policy_document(&policy()))
+            .expect("policy registry");
+        let mut replacement = policy();
+        replacement.policy_digest = [7; 32];
+        let source = SnapshotGateSource {
+            started: Arc::clone(&started),
+            release: Arc::clone(&release),
+            candidate: candidate(),
+        };
+        let coordinator = FxEvidenceCoordinator::new(
+            registry.clone(),
+            vec![Arc::new(source) as Arc<dyn AsyncFxQuoteSource>],
+            TestSigner::new([31; 32], [32; 32]),
+            FxProviderAcquisitionConfig::default(),
+            FxSigningConfig::default(),
+        );
+        let task = tokio::spawn(async move {
+            coordinator
+                .issue(FxEvidenceRequest {
+                    policy_digest: [6; 32],
+                    merchant_id: [7; 32],
+                    facts_digest: [8; 32],
+                    source_currency: "USD".to_string(),
+                    target_currency: "EUR".to_string(),
+                    now_unix: 1_800_000_100,
+                    reference_rate: Some(ExactRate {
+                        numerator: 9,
+                        denominator: 8,
+                    }),
+                })
+                .await
+        });
+        started.notified().await;
+        registry
+            .reload_json(&policy_document(&replacement))
+            .expect("replacement policy");
+        release.notify_one();
+
+        let issued = task
+            .await
+            .expect("coordinator task")
+            .expect("issued evidence");
+        assert_eq!(issued.policy_digest, [6; 32]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn rejects_duplicate_sources_before_any_provider_call() {
         let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let maximum = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -1897,6 +2108,28 @@ mod tests {
             let mut candidate = self.candidate.clone();
             candidate.provider = self.returned_provider.clone();
             Ok(candidate)
+        }
+    }
+
+    struct SnapshotGateSource {
+        started: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+        candidate: FxQuoteCandidate,
+    }
+
+    #[async_trait::async_trait]
+    impl AsyncFxQuoteSource for SnapshotGateSource {
+        fn provider_id(&self) -> &str {
+            "provider-a"
+        }
+
+        async fn quote(
+            &self,
+            _request: &FxQuoteRequest,
+        ) -> Result<FxQuoteCandidate, FxProviderError> {
+            self.started.notify_one();
+            self.release.notified().await;
+            Ok(self.candidate.clone())
         }
     }
 

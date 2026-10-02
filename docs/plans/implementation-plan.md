@@ -802,6 +802,17 @@ The decision register must be updated whenever a frozen choice changes.
   rotation/revocation, recovery, audit, and regional latency evidence before
   enabling production issuance.
 
+## ADR-0257 — server-owned FX issuance coordinator
+
+- [x] Compose the exact registry snapshot, bounded provider acquisition,
+  deterministic policy agreement, async signing, and final envelope verification
+  into one server-owned coordinator.
+- [x] Prove successful issuance, missing-policy short circuit, snapshot
+  isolation, provider disagreement, signer failure/timeout, and cancellation.
+- [ ] Wire the coordinator into an authenticated tenant-scoped API only after
+  durable evidence/outbox and provider/legal/custody release decisions are
+  explicit; caller-owned FX evidence remains forbidden.
+
 ## ADR-0154 — governed adjustment refund movement
 
 Implement only the first explicit movement contract: a negative `Refund` claim

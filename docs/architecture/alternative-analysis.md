@@ -1966,6 +1966,19 @@ bound remote signing behavior, and avoid duplicate or ambiguous signing.
 | Accept arbitrary signature bytes | Low apparent latency | No strict shape or transport contract; substitution risk | Rejected |
 | **Separate bounded vendor-neutral HTTP signer** | Exact payload, bounded response, no retry, and explicit custody release gates | Requires later HSM/KMS and service-identity evidence | **Selected in ADR-0256** |
 
+### FX issuance composition
+
+**Criteria:** compose acquisition, policy selection, signing, and verification
+without mixing registry snapshots, duplicating authority logic, or adding a
+broker to the low-latency quote path.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| API calls acquisition and issuance separately | Small endpoint changes | Duplicated orchestration and policy-reload race | Rejected |
+| Orchestrate inside the pure Tax Engine | One apparent flow | Violates domain purity and introduces network/custody dependencies | Rejected |
+| Broker-backed issuance workflow | Durable delivery | Quote expiry, delivery, and duplicate-sign ambiguity | Rejected |
+| **Server-owned bounded coordinator in `fx-provider`** | One snapshot, one verified evidence result, reusable ports, and no second authority | Requires later API persistence/authorization composition | **Selected in ADR-0257** |
+
 ### FX evidence signing
 
 **Criteria:** protect key custody, avoid blocking async executors, bind the

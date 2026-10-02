@@ -78,6 +78,7 @@ for file in \
   docs/adr/0250-deterministic-fx-provider-agreement.md \
   docs/adr/0255-bounded-http-fx-provider-adapter.md \
   docs/adr/0256-bounded-http-fx-signer-adapter.md \
+  docs/adr/0257-server-owned-fx-issuance-coordinator.md \
   docs/adr/0248-registry-bound-fx-issuance.md \
   docs/adr/0234-api-jwks-atomic-reload.md \
   docs/adr/0235-jurisdiction-provider-key-atomic-reload.md \
@@ -229,6 +230,7 @@ require_text CHANGELOG.md 'bounded async FX signing boundary'
 require_text CHANGELOG.md 'deterministic FX acquisition outcome order'
 require_text CHANGELOG.md 'bounded vendor-neutral HTTP FX provider adapter'
 require_text CHANGELOG.md 'bounded vendor-neutral HTTP FX signer adapter'
+require_text CHANGELOG.md 'server-owned FX issuance coordinator'
 require_text CHANGELOG.md 'public Tier-1 decision register'
 require_text docs/adr/README.md 'ADR-0251: Accelerated Tier-1 delivery and decision freeze'
 require_text docs/adr/README.md 'ADR-0252: Bounded concurrent FX provider acquisition'
@@ -236,6 +238,7 @@ require_text docs/adr/README.md 'ADR-0253: Bounded async FX signing boundary'
 require_text docs/adr/README.md 'ADR-0254: Deterministic FX acquisition outcome order'
 require_text docs/adr/README.md 'ADR-0255: Bounded HTTP FX provider adapter'
 require_text docs/adr/README.md 'ADR-0256: Bounded HTTP FX signer adapter'
+require_text docs/adr/README.md 'ADR-0257: Server-owned FX issuance coordinator'
 require_text docs/README.md 'Accelerated Tier-1 delivery and decision freeze'
 require_text docs/README.md 'Bounded concurrent FX provider acquisition'
 require_text docs/README.md 'Bounded async FX signing boundary'
