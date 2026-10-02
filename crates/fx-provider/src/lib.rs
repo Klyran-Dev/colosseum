@@ -389,6 +389,20 @@ impl FxProviderPolicyRegistry {
             .ok_or(FxProviderError::PolicyNotFound)?;
         Ok(FxEvidenceIssuer::new(policy, signer))
     }
+
+    pub fn issuer_async<S: AsyncFxEvidenceSigner>(
+        &self,
+        policy_digest: Digest32,
+        signer: S,
+    ) -> Result<FxEvidenceIssuer<S>, FxProviderError> {
+        if policy_digest == [0; 32] {
+            return Err(FxProviderError::PolicyNotFound);
+        }
+        let policy = self
+            .policy(policy_digest)
+            .ok_or(FxProviderError::PolicyNotFound)?;
+        Ok(FxEvidenceIssuer::new(policy, signer))
+    }
 }
 
 fn parse_policy_registry(
@@ -1396,6 +1410,45 @@ mod tests {
             .issuer(second.policy_digest, TestSigner::new([19; 32], [20; 32]))
             .expect("replacement policy issuer");
         assert_eq!(replacement_issuer.policy, second);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn registry_bound_async_issuer_requires_exact_digest_and_is_snapshot_isolated() {
+        let first = policy();
+        let second = FxProviderPolicy {
+            policy_digest: [25; 32],
+            ..first.clone()
+        };
+        let registry = FxProviderPolicyRegistry::from_json(&policy_document(&first))
+            .expect("initial policy registry");
+
+        let issuer = registry
+            .issuer_async(first.policy_digest, TestSigner::new([26; 32], [27; 32]))
+            .expect("active async policy issuer");
+        let issued = issuer
+            .issue_async(
+                candidate(),
+                [7; 32],
+                [8; 32],
+                1_800_000_100,
+                Some(ExactRate {
+                    numerator: 9,
+                    denominator: 8,
+                }),
+                FxSigningConfig::default(),
+            )
+            .await
+            .expect("async evidence");
+        assert_eq!(issued.policy_digest, first.policy_digest);
+
+        assert!(matches!(
+            registry.issuer_async([0; 32], TestSigner::new([28; 32], [29; 32])),
+            Err(FxProviderError::PolicyNotFound)
+        ));
+        registry
+            .reload_json(&policy_document(&second))
+            .expect("policy replacement");
+        assert_eq!(issuer.policy, first);
     }
 
     #[test]

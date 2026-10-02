@@ -673,6 +673,9 @@ validator release gate.
 
 - [x] Require production composition to resolve the exact policy digest from
   the active immutable registry before constructing an FX evidence issuer.
+- [x] Provide the same fail-closed exact-digest binding for synchronous and
+  asynchronous HSM/KMS-compatible issuer construction, with snapshot-isolation
+  coverage.
 - [x] Fail closed for missing or zero policy digests before provider or signer
   work, and isolate in-flight issuers from later snapshot replacement.
 - [ ] Migrate a concrete production provider adapter and HSM/KMS signer to the

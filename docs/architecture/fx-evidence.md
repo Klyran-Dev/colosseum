@@ -72,6 +72,8 @@ future canonical digest input.
 ADR-0253 adds a non-blocking async signing port for HSM/KMS-compatible
 adapters. The issuer applies an explicit signing deadline, signs one canonical
 payload exactly once, and verifies the resulting envelope locally before
-returning evidence. The synchronous signer remains a test/local adapter path;
-key ceremony, rotation, revocation, recovery, and production custody evidence
+returning evidence. The registry now exposes the same exact-policy binding for
+the async issuer, so an HSM/KMS adapter cannot bypass the active policy
+snapshot. The synchronous signer remains a test/local adapter path; key
+ceremony, rotation, revocation, recovery, and production custody evidence
 remain release gates.

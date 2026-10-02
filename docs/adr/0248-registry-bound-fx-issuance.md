@@ -14,12 +14,13 @@ deployment snapshot.
 
 ## Decision
 
-Expose a registry-bound issuance method that resolves the exact requested
-policy digest from the active snapshot and constructs the issuer only after a
-successful lookup. The method returns a bounded `PolicyNotFound` error for a
-missing or zero digest. Direct construction remains available to the pure
-crate for isolated tests and explicitly controlled adapters, but production
-composition must use the registry-bound method.
+Expose registry-bound synchronous and asynchronous issuance methods that
+resolve the exact requested policy digest from the active snapshot and
+construct the issuer only after a successful lookup. Both methods return a
+bounded `PolicyNotFound` error for a missing or zero digest. Direct
+construction remains available to the pure crate for isolated tests and
+explicitly controlled adapters, but production composition must use the
+registry-bound method, including the async HSM/KMS path.
 
 The resolved policy is cloned into the issuer as an immutable request-scoped
 value. No lock, filesystem, database, broker, or provider call occurs after
@@ -51,7 +52,8 @@ request, preserving evidence replay and avoiding partial reads.
 ## Verification
 
 - Failing-first tests prove exact digest selection, missing/zero digest
-  rejection, and request isolation across snapshot replacement.
+  rejection, async issuance, and request isolation across snapshot
+  replacement.
 - Existing policy validation, signing, freshness, deviation, and replay tests
   remain required.
 - Runtime composition must use the registry-bound method; direct construction
