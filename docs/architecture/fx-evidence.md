@@ -64,6 +64,11 @@ results remain non-authoritative until ADR-0250 admission succeeds. No real
 vendor adapter, retry policy, regional routing, or production SLO is implied by
 the library implementation.
 
+ADR-0254 normalizes successful candidates and bounded failure classifications
+by the policy's provider priority after concurrent work completes. Response
+timing therefore cannot change replay order, operational evidence order, or a
+future canonical digest input.
+
 ADR-0253 adds a non-blocking async signing port for HSM/KMS-compatible
 adapters. The issuer applies an explicit signing deadline, signs one canonical
 payload exactly once, and verifies the resulting envelope locally before

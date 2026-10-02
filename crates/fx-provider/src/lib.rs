@@ -549,12 +549,34 @@ pub async fn acquire_candidates(
     config.validate()?;
     validate_acquisition_request(policy, request, sources)?;
 
-    timeout(
+    let mut acquisition = timeout(
         config.aggregate_timeout,
         acquire_candidates_inner(sources, request, config),
     )
     .await
-    .map_err(|_| FxProviderError::AcquisitionDeadlineExceeded)?
+    .map_err(|_| FxProviderError::AcquisitionDeadlineExceeded)??;
+    normalize_acquisition_order(policy, &mut acquisition);
+    Ok(acquisition)
+}
+
+fn normalize_acquisition_order(policy: &FxProviderPolicy, acquisition: &mut FxProviderAcquisition) {
+    acquisition
+        .candidates
+        .sort_by_key(|candidate| provider_priority(policy, &candidate.provider));
+    acquisition
+        .failures
+        .sort_by_key(|failure| provider_priority(policy, &failure.provider));
+}
+
+fn provider_priority(policy: &FxProviderPolicy, provider: &str) -> usize {
+    match policy
+        .allowed_providers
+        .iter()
+        .position(|allowed| allowed == provider)
+    {
+        Some(index) => index,
+        None => policy.allowed_providers.len(),
+    }
 }
 
 async fn acquire_candidates_inner(
@@ -1493,6 +1515,57 @@ mod tests {
             .select_candidate(&acquisition.candidates, 1_800_000_100, None)
             .expect("partial failure still leaves sufficient agreement");
         assert_eq!(selected.provider, "provider-a");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn orders_acquisition_outcomes_by_policy_priority_not_completion() {
+        let mut acquisition_policy = policy();
+        acquisition_policy.allowed_providers = vec![
+            "provider-a".to_string(),
+            "provider-b".to_string(),
+            "provider-c".to_string(),
+            "provider-d".to_string(),
+        ];
+        acquisition_policy.minimum_provider_agreement = 1;
+        acquisition_policy.max_deviation_basis_points = None;
+        let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let maximum = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let sources: Vec<Arc<dyn AsyncFxQuoteSource>> = vec![
+            Arc::new(source("provider-a", 40, false, None, &active, &maximum)),
+            Arc::new(source("provider-b", 10, true, None, &active, &maximum)),
+            Arc::new(source("provider-c", 30, false, None, &active, &maximum)),
+            Arc::new(source("provider-d", 0, true, None, &active, &maximum)),
+        ];
+
+        let acquisition = acquire_candidates(
+            &acquisition_policy,
+            &sources,
+            &request(),
+            FxProviderAcquisitionConfig {
+                max_concurrency: 4,
+                per_provider_timeout: Duration::from_millis(200),
+                aggregate_timeout: Duration::from_millis(500),
+            },
+        )
+        .await
+        .expect("bounded acquisition");
+
+        assert_eq!(
+            acquisition
+                .candidates
+                .iter()
+                .map(|candidate| candidate.provider.as_str())
+                .collect::<Vec<_>>(),
+            vec!["provider-a", "provider-c"]
+        );
+        assert_eq!(
+            acquisition
+                .failures
+                .iter()
+                .map(|failure| failure.provider.as_str())
+                .collect::<Vec<_>>(),
+            vec!["provider-b", "provider-d"]
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

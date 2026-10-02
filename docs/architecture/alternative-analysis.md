@@ -1927,6 +1927,18 @@ socket usage, tail latency, cancellation, and provider identity.
 | Broker-backed acquisition | Durable retries | Adds a dependency and expiry complexity to quote issuance | Rejected |
 | **Bounded concurrent acquisition with per-provider and aggregate deadlines** | Low latency, bounded resources, explicit cancellation, and deterministic handoff to policy | Requires adapter-level retry/circuit controls | **Selected in ADR-0252** |
 
+### FX acquisition outcome normalization
+
+**Criteria:** preserve replayability and evidence comparability without adding
+network work, unbounded memory, or a second authority for provider admission.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Preserve task completion order | Zero normalization work | Scheduler and provider latency change replay order | Rejected |
+| Lexicographic provider ordering | Stable and simple | Can diverge from policy priority and admission order | Rejected |
+| Normalize independently in each consumer | Consumer-specific flexibility | Duplicated security-sensitive behavior and inconsistent evidence | Rejected |
+| **Normalize once by policy priority in the acquisition coordinator** | Stable, bounded, aligned with policy, and auditable | Small bounded post-processing step | **Selected in ADR-0254** |
+
 ### FX evidence signing
 
 **Criteria:** protect key custody, avoid blocking async executors, bind the

@@ -749,6 +749,8 @@ The decision register must be updated whenever a frozen choice changes.
   deadlines, aggregate cancellation, and bounded failure classifications.
 - [x] Prove maximum in-flight calls, timeout/cancellation behavior, partial
   failure, and deterministic handoff to ADR-0250 admission with tests.
+- [x] Normalize candidates and failure classifications by policy priority so
+  response completion order cannot change replayable acquisition evidence.
 - [ ] Integrate approved regional adapters only after provider selection,
   legal ownership, HSM/KMS, and production SLO evidence are approved.
 
@@ -762,6 +764,14 @@ The decision register must be updated whenever a frozen choice changes.
   malformed signature, public-key mismatch, and rejection before signer use.
 - [ ] Integrate an approved HSM/KMS adapter only after key ceremony,
   rotation/revocation, recovery, regional latency, and custody evidence.
+
+## ADR-0254 — deterministic FX acquisition outcome order
+
+- [x] Normalize concurrent provider candidates and bounded failure outcomes by
+  the immutable policy provider priority.
+- [x] Add a reversed-completion test proving stable candidate and failure order.
+- [ ] Preserve the ordering contract in the approved provider adapter's
+  production evidence and any future canonical acquisition serialization.
 
 ## ADR-0154 — governed adjustment refund movement
 

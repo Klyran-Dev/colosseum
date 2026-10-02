@@ -254,3 +254,4 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0251: Accelerated Tier-1 delivery and decision freeze](0251-accelerated-tier1-delivery-and-decision-freeze.md)
 - [ADR-0252: Bounded concurrent FX provider acquisition](0252-bounded-concurrent-fx-provider-acquisition.md)
 - [ADR-0253: Bounded async FX signing boundary](0253-bounded-async-fx-signing-boundary.md)
+- [ADR-0254: Deterministic FX acquisition outcome order](0254-deterministic-fx-acquisition-outcome-order.md)
