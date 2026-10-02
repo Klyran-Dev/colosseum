@@ -2,6 +2,10 @@
 
 ## 2026-10-02
 
+- Added the public Tier-1 decision register required by ADR-0251. Provider,
+  jurisdiction, legal ownership, staging, SLO, retention, rollback, custody,
+  and license choices remain explicitly open until accountable owners attach
+  evidence; no external decision is inferred from a missing value.
 - Added ADR-0244 for the exact foreign-exchange evidence boundary required by
   global taxation. The pure engine now normalizes exact evidence once and
   preserves it for replay; API entry points reject caller-supplied FX until a

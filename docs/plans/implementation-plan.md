@@ -701,6 +701,9 @@ Acceleration changes sequencing and ownership, not the Tier-1 definition of
 done. The planning estimate is a 3–4 week production candidate and a 5–7 week
 controlled production launch, conditional on external approvals and evidence.
 
+- [x] Create and link the public decision register with explicit open states,
+  accountable roles, evidence requirements, and revisit triggers.
+
 - [ ] **Days 1–2 — freeze decisions:** record the initial FX provider and
   backup/allowlist, supported jurisdictions and assets, legal/tax owner,
   staging environment and regions, RPC providers, SLOs, evidence retention,
