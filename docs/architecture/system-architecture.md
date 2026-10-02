@@ -79,6 +79,12 @@ provider-key snapshots and exact evidence validation; provider selection,
 freshness/deviation policy, legal acceptance, and HSM/KMS custody remain
 application and operational boundaries.
 
+The FX Provider bounded context is the executable application boundary for
+those decisions. It evaluates bounded provider candidates with exact rational
+arithmetic and an injected clock, then issues evidence through a signer port.
+Provider HTTP, legal ownership, and HSM/KMS calls remain outside the tax
+calculation library and wallet-signing critical path.
+
 The engine must be deterministic, replayable, bounded, and fail closed on ambiguous rules. It supports progressive brackets, tax-on-tax dependencies, inclusive/exclusive prices, thresholds, exemptions, credits, min/max, caps/floors, truncation, and explicit rounding scope. It never performs arbitrary network calls during calculation.
 
 The pure library is also packaged as a warm `tax-engine-service` Rust/Tokio

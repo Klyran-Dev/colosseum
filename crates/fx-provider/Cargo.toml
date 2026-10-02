@@ -1,0 +1,15 @@
+[package]
+name = "fx-provider"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+ed25519-dalek.workspace = true
+fx-evidence = { path = "../fx-evidence" }
+serde.workspace = true
+sha2.workspace = true
+tax-engine = { path = "../tax-engine" }
+thiserror.workspace = true

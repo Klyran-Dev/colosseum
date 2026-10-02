@@ -1838,3 +1838,17 @@ network call in the tax hot path.
 | Unsigned registry/provider data | Minimal latency | No cryptographic proof of provider output | Rejected |
 | FX lookup inside the tax engine | Freshness | Nondeterministic and non-replayable domain behavior | Rejected |
 | **Dedicated signed `fx-evidence` context with server-owned adapter** | Typed, bounded, replayable, and independently rotatable | Requires provider key/custody operations | **Selected in ADR-0245** |
+
+### FX provider policy and issuance
+
+**Criteria:** exact deviation semantics, legal-policy ownership, bounded
+freshness, signer custody separation, deterministic testing, low-latency
+operation, and provider replacement without tax-engine changes.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Provider HTTP and signing inside the Tax Engine | Fewer processes | Impure, nondeterministic, and difficult to replay | Rejected |
+| Provider-defined freshness/legal decisions | Simple integration | Inconsistent policy and weak governance | Rejected |
+| Caller-provided rate with later review | Low initial latency | Forged authority and settlement ambiguity | Rejected |
+| One vendor-specific adapter immediately | Fast vendor integration | Premature legal, regional, and commercial coupling | Rejected |
+| **Vendor-neutral source, policy, and signer ports** | Exact, bounded, auditable, low-latency, replaceable | Requires explicit production provider and custody gates | **Selected in ADR-0246** |

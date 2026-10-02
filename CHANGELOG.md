@@ -11,6 +11,9 @@
   provider authenticity and key-rotation boundary is designed before wiring a
   production provider adapter; freshness, legal acceptance, and custody remain
   explicit release gates.
+- Added ADR-0246 for a vendor-neutral FX provider policy and issuance boundary.
+  Provider acquisition, exact policy evaluation, and HSM/KMS signing remain
+  replaceable ports outside the deterministic tax-engine hot path.
 - Added ADR-0243 and a program pause-coverage contract. CI and normal checks
   now discover every public `transfer_checked` entry point and fail closed if
   movement is outside the explicit allowlist, if an allowlisted instruction

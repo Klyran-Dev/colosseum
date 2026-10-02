@@ -649,6 +649,17 @@ validator release gate.
 - [ ] Keep provider freshness, legal acceptance, HSM/KMS custody, provider
   availability, and Linux/production SLO evidence as release gates.
 
+## ADR-0246 — server-owned FX provider policy and issuance boundary
+
+- [x] Add vendor-neutral source, policy, and HSM/KMS signer ports before
+  choosing a concrete FX provider.
+- [x] Enforce exact pair, freshness, future-skew, lifetime, legal-acceptance,
+  and reference-rate deviation policy with failing-first vectors.
+- [x] Issue only server-bound signed FX envelopes and preserve the existing
+  no-client-authority API boundary.
+- [ ] Approve a concrete provider, regional routing, legal owner, custody
+  ceremony, production SLO, and cross-currency enablement evidence.
+
 ## ADR-0154 — governed adjustment refund movement
 
 Implement only the first explicit movement contract: a negative `Refund` claim

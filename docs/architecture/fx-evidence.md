@@ -34,3 +34,10 @@ freshness/deviation policy, legal acceptance, regional provider SLOs, and
 cross-currency quote enablement remain separate release gates. Until those
 gates are satisfied, the API rejects caller-supplied FX envelopes and does not
 claim global legal or filing compliance.
+
+ADR-0246 adds the vendor-neutral `fx-provider` issuance boundary. It keeps
+provider acquisition, exact policy evaluation, and signing behind explicit
+ports while preserving the same fail-closed cross-currency gate. A concrete
+provider and custody implementation must be approved and measured before it
+can be enabled. Issued evidence derives its signed evidence digest from the
+provider evidence, policy version, and approved legal-authority digest.

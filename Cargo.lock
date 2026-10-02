@@ -1468,6 +1468,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "fx-provider"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "fx-evidence",
+ "serde",
+ "sha2 0.11.0",
+ "tax-engine",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -173,14 +173,39 @@ impl FxEvidenceEnvelope {
         facts_digest: Digest32,
         now_unix: i64,
     ) -> Result<FxConversionEvidence, FxEvidenceError> {
+        self.verify_with_key_at_and_future_skew(
+            expected_key,
+            merchant_id,
+            facts_digest,
+            now_unix,
+            0,
+        )
+    }
+
+    pub fn verify_with_key_at_and_future_skew(
+        &self,
+        expected_key: &VerifyingKey,
+        merchant_id: Digest32,
+        facts_digest: Digest32,
+        now_unix: i64,
+        max_future_skew_seconds: i64,
+    ) -> Result<FxConversionEvidence, FxEvidenceError> {
         self.unsigned.validate()?;
+        if max_future_skew_seconds < 0 {
+            return Err(FxEvidenceError::InvalidValidityWindow);
+        }
         if self.provider_public_key != expected_key.to_bytes()
             || self.unsigned.merchant_id != merchant_id
             || self.unsigned.facts_digest != facts_digest
         {
             return Err(FxEvidenceError::EvidenceBindingMismatch);
         }
-        if now_unix < self.unsigned.observed_at_unix || now_unix >= self.unsigned.expires_at_unix {
+        let future_skew = self
+            .unsigned
+            .observed_at_unix
+            .checked_sub(now_unix)
+            .unwrap_or(i64::MAX);
+        if future_skew > max_future_skew_seconds || now_unix >= self.unsigned.expires_at_unix {
             return Err(FxEvidenceError::EvidenceOutsideValidityWindow);
         }
         let payload = self.unsigned.canonical_payload()?;
