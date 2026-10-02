@@ -19,6 +19,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Lint
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Verify production Rust panic-safety crate-root contract
+        run: make rust-panic-safety-contract
       - name: Test
         run: cargo test --locked --workspace --all-targets
 

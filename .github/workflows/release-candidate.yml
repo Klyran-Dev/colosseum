@@ -105,6 +105,12 @@ jobs:
           mkdir -p release-bundle/refund-proof-integration
           make refund-proof-integration-drill | tee release-bundle/refund-proof-integration/evidence.txt
 
+      - name: Run automated refund-claim cancellation reconciliation drill
+        run: |
+          make refund-cancellation-reconciliation-drill
+          mkdir -p release-bundle/refund-cancellation-reconciliation
+          cp -R test-results/refund-cancellation-reconciliation/. release-bundle/refund-cancellation-reconciliation/
+
       - name: Run Alertmanager delivery drill
         run: |
           make alert-delivery-drill

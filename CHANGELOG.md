@@ -297,7 +297,9 @@ All notable changes to this project will be documented here. The project follows
   token movement and paid-state semantics remain explicitly gated.
 - Closed the ADR-0212 crate-root lint gap in the warm Tax Engine library and
   added a checked-in contract that verifies every Rust library/binary crate
-  applies the non-test `expect`/`panic`/`unwrap` denial policy.
+  applies the non-test `expect`/`panic`/`unwrap` denial policy. CI now runs the
+  contract explicitly, and release-candidate evidence runs the two-replica
+  cancellation reconciliation drill.
 - Added the executable two-replica Docker drill for ADR-0238 refund-claim
   cancellation reconciliation. It exercises synthetic finalized RPC recovery,
   UUIDv7 lease fencing, immutable raw evidence, atomic claim cancellation, and
