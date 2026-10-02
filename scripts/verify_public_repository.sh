@@ -75,6 +75,7 @@ for file in \
   docs/adr/0239-catalog-driven-uuidv7-invariant-closure.md \
   docs/adr/0240-refund-claim-cancellation-lease-trigger.md \
   docs/adr/0249-fx-provider-identity-allowlist.md \
+  docs/adr/0250-deterministic-fx-provider-agreement.md \
   docs/adr/0248-registry-bound-fx-issuance.md \
   docs/adr/0234-api-jwks-atomic-reload.md \
   docs/adr/0235-jurisdiction-provider-key-atomic-reload.md \
@@ -209,6 +210,7 @@ require_text docs/adr/README.md '0246-fx-provider-policy-and-issuance.md'
 require_text docs/adr/README.md '0247-fx-provider-policy-snapshot-reload.md'
 require_text docs/adr/README.md '0248-registry-bound-fx-issuance.md'
 require_text docs/adr/README.md '0249-fx-provider-identity-allowlist.md'
+require_text docs/adr/README.md '0250-deterministic-fx-provider-agreement.md'
 require_text CHANGELOG.md 'container and workflow pinning contract'
 require_text CHANGELOG.md 'conformance workflow contract'
 require_text CHANGELOG.md 'emergency pause cover governed vault'
@@ -218,6 +220,7 @@ require_text CHANGELOG.md 'server-owned signed FX evidence bounded context'
 require_text CHANGELOG.md 'atomic digest-keyed FX provider policy snapshot'
 require_text CHANGELOG.md 'registry-bound FX evidence issuance'
 require_text CHANGELOG.md 'policy-scoped FX provider identity authorization'
+require_text CHANGELOG.md 'deterministic FX provider agreement'
 require_text apps/web/package.json '"packageManager": "pnpm@12.3.4"'
 require_text docs/architecture/toolchain-compatibility.md '| pnpm | 12.3.4 |'
 

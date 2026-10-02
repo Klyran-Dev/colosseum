@@ -104,6 +104,7 @@ pub struct FxProviderPolicy {
     pub policy_digest: Digest32,
     pub allowed_pairs: Vec<CurrencyPair>,
     pub allowed_providers: Vec<String>,
+    pub minimum_provider_agreement: u8,
     pub max_observation_age_seconds: i64,
     pub max_future_skew_seconds: i64,
     pub max_quote_lifetime_seconds: i64,
@@ -127,6 +128,13 @@ impl FxProviderPolicy {
         {
             return Err(FxProviderError::InvalidConfiguration(
                 "allowed providers are empty or unbounded",
+            ));
+        }
+        if self.minimum_provider_agreement == 0
+            || usize::from(self.minimum_provider_agreement) > self.allowed_providers.len()
+        {
+            return Err(FxProviderError::InvalidConfiguration(
+                "minimum provider agreement is invalid",
             ));
         }
         if self.max_observation_age_seconds <= 0
@@ -175,6 +183,59 @@ impl FxProviderPolicy {
             }
         }
         Ok(())
+    }
+
+    pub fn select_candidate(
+        &self,
+        candidates: &[FxQuoteCandidate],
+        now_unix: i64,
+        reference_rate: Option<ExactRate>,
+    ) -> Result<FxQuoteCandidate, FxProviderError> {
+        self.validate()?;
+        if candidates.len() < usize::from(self.minimum_provider_agreement) {
+            return Err(FxProviderError::ProviderAgreementInsufficient);
+        }
+        if candidates.len() > MAX_ALLOWED_PROVIDERS {
+            return Err(FxProviderError::InvalidCandidate(
+                "provider candidate set is unbounded",
+            ));
+        }
+
+        let mut validated = Vec::with_capacity(candidates.len());
+        for candidate in candidates {
+            self.validate_candidate(candidate, now_unix, reference_rate)?;
+            if validated
+                .iter()
+                .any(|previous: &FxQuoteCandidate| previous.provider == candidate.provider)
+            {
+                return Err(FxProviderError::DuplicateProvider);
+            }
+            validated.push(candidate.clone());
+        }
+        if validated.len() < usize::from(self.minimum_provider_agreement) {
+            return Err(FxProviderError::ProviderAgreementInsufficient);
+        }
+
+        let first = validated
+            .first()
+            .ok_or(FxProviderError::ProviderAgreementInsufficient)?;
+        if validated
+            .iter()
+            .skip(1)
+            .any(|candidate| !same_economic_terms(first, candidate))
+        {
+            return Err(FxProviderError::ProviderAgreementDisagreement);
+        }
+
+        for provider in &self.allowed_providers {
+            if let Some(candidate) = validated
+                .iter()
+                .find(|candidate| candidate.provider == *provider)
+            {
+                return Ok((*candidate).clone());
+            }
+        }
+        Err(FxProviderError::ProviderAgreementInsufficient)
     }
 
     fn validate_candidate(
@@ -405,6 +466,35 @@ where
         }
         self.policy
             .validate_candidate(&candidate, now_unix, reference_rate)?;
+        self.issue_validated(candidate, merchant_id, facts_digest, now_unix)
+    }
+
+    pub fn issue_candidates(
+        &self,
+        candidates: &[FxQuoteCandidate],
+        merchant_id: Digest32,
+        facts_digest: Digest32,
+        now_unix: i64,
+        reference_rate: Option<ExactRate>,
+    ) -> Result<IssuedFxEvidence, FxProviderError> {
+        if merchant_id == [0; 32] || facts_digest == [0; 32] {
+            return Err(FxProviderError::InvalidCandidate(
+                "merchant and facts digests must be non-zero",
+            ));
+        }
+        let candidate = self
+            .policy
+            .select_candidate(candidates, now_unix, reference_rate)?;
+        self.issue_validated(candidate, merchant_id, facts_digest, now_unix)
+    }
+
+    fn issue_validated(
+        &self,
+        candidate: FxQuoteCandidate,
+        merchant_id: Digest32,
+        facts_digest: Digest32,
+        now_unix: i64,
+    ) -> Result<IssuedFxEvidence, FxProviderError> {
         let legal_authority_digest = match candidate.legal_acceptance {
             LegalAcceptance::Approved { authority_digest } if authority_digest != [0; 32] => {
                 authority_digest
@@ -487,6 +577,12 @@ pub enum FxProviderError {
     UnsupportedCurrencyPair,
     #[error("FX provider is not approved by policy")]
     UnsupportedProvider,
+    #[error("provider candidates contain duplicate identities")]
+    DuplicateProvider,
+    #[error("provider agreement is insufficient")]
+    ProviderAgreementInsufficient,
+    #[error("provider candidates disagree on economic terms")]
+    ProviderAgreementDisagreement,
     #[error("legal FX acceptance is required")]
     LegalAcceptanceRequired,
     #[error("FX observation is too old")]
@@ -513,6 +609,15 @@ pub enum FxProviderError {
     SignerReturnedInvalidSignature,
     #[error("FX evidence envelope is invalid: {0}")]
     Evidence(#[from] FxEvidenceError),
+}
+
+fn same_economic_terms(first: &FxQuoteCandidate, second: &FxQuoteCandidate) -> bool {
+    first.source_currency == second.source_currency
+        && first.target_currency == second.target_currency
+        && first.numerator == second.numerator
+        && first.denominator == second.denominator
+        && first.rounding_mode == second.rounding_mode
+        && first.quantum_atomic == second.quantum_atomic
 }
 
 fn validate_deviation(
@@ -741,6 +846,82 @@ mod tests {
     }
 
     #[test]
+    fn selects_agreeing_provider_candidates_by_policy_priority_not_input_order() {
+        let mut agreement_policy = policy();
+        agreement_policy.allowed_providers =
+            vec!["provider-a".to_string(), "provider-b".to_string()];
+        agreement_policy.minimum_provider_agreement = 2;
+        agreement_policy.max_deviation_basis_points = None;
+        let preferred = candidate();
+        let mut secondary = preferred.clone();
+        secondary.provider = "provider-b".to_string();
+        secondary.quote_id = "quote-2".to_string();
+        secondary.evidence_digest = [11; 32];
+
+        let selected = agreement_policy
+            .select_candidate(
+                &[secondary.clone(), preferred.clone()],
+                1_800_000_100,
+                Some(ExactRate {
+                    numerator: 9,
+                    denominator: 8,
+                }),
+            )
+            .expect("agreeing candidates");
+        assert_eq!(selected, preferred);
+
+        let issued = FxEvidenceIssuer::new(agreement_policy, TestSigner::new([23; 32], [24; 32]))
+            .issue_candidates(
+                &[secondary, preferred],
+                [7; 32],
+                [8; 32],
+                1_800_000_100,
+                Some(ExactRate {
+                    numerator: 9,
+                    denominator: 8,
+                }),
+            )
+            .expect("agreement-bound issuance");
+        assert_eq!(issued.envelope.unsigned.provider, "provider-a");
+    }
+
+    #[test]
+    fn rejects_insufficient_duplicate_and_disagreeing_provider_candidates() {
+        let mut agreement_policy = policy();
+        agreement_policy.allowed_providers =
+            vec!["provider-a".to_string(), "provider-b".to_string()];
+        agreement_policy.minimum_provider_agreement = 2;
+        agreement_policy.max_deviation_basis_points = None;
+        let first = candidate();
+        let mut duplicate = first.clone();
+        duplicate.quote_id = "quote-duplicate".to_string();
+        let mut disagreeing = first.clone();
+        disagreeing.provider = "provider-b".to_string();
+        disagreeing.numerator = 10;
+        disagreeing.quote_id = "quote-disagreeing".to_string();
+
+        let reference = None;
+        assert_eq!(
+            agreement_policy
+                .select_candidate(std::slice::from_ref(&first), 1_800_000_100, reference)
+                .expect_err("one provider is insufficient"),
+            FxProviderError::ProviderAgreementInsufficient
+        );
+        assert_eq!(
+            agreement_policy
+                .select_candidate(&[first.clone(), duplicate], 1_800_000_100, reference)
+                .expect_err("duplicate provider must fail"),
+            FxProviderError::DuplicateProvider
+        );
+        assert_eq!(
+            agreement_policy
+                .select_candidate(&[first, disagreeing], 1_800_000_100, reference)
+                .expect_err("rate disagreement must fail"),
+            FxProviderError::ProviderAgreementDisagreement
+        );
+    }
+
+    #[test]
     fn rejects_overflow_and_signer_failures_without_issuing() {
         let overflow_policy = policy();
         let signer = TestSigner::new([3; 32], [4; 32]);
@@ -864,6 +1045,19 @@ mod tests {
             Err(FxProviderError::InvalidPolicyRegistry(_))
         ));
 
+        let mut invalid_agreement = first.clone();
+        invalid_agreement.minimum_provider_agreement = 0;
+        assert!(matches!(
+            FxProviderPolicyRegistry::from_json(&policy_document(&invalid_agreement)),
+            Err(FxProviderError::InvalidPolicyRegistry(_))
+        ));
+
+        invalid_agreement.minimum_provider_agreement = 2;
+        assert!(matches!(
+            FxProviderPolicyRegistry::from_json(&policy_document(&invalid_agreement)),
+            Err(FxProviderError::InvalidPolicyRegistry(_))
+        ));
+
         assert!(matches!(
             FxProviderPolicyRegistry::from_json("{\"policies\":[]}"),
             Err(FxProviderError::InvalidPolicyRegistry(_))
@@ -942,6 +1136,7 @@ mod tests {
             policy_digest: [6; 32],
             allowed_pairs: vec![CurrencyPair::new("USD", "EUR").expect("pair")],
             allowed_providers: vec!["provider-a".to_string()],
+            minimum_provider_agreement: 1,
             max_observation_age_seconds: 600,
             max_future_skew_seconds: 60,
             max_quote_lifetime_seconds: 900,

@@ -1888,3 +1888,16 @@ unapproved quote sources.
 | Global process-wide allowlist | Easy lookup | Cannot express policy-scoped approval or clean replay | Rejected |
 | Caller-supplied provider authorization | Flexible | Untrusted request becomes an authority boundary | Rejected |
 | **Exact bounded provider allowlist in the immutable policy** | Policy-scoped, deterministic, and fail-closed | Provider rotation requires a new policy version | **Selected in ADR-0249** |
+
+### FX provider agreement
+
+**Criteria:** deterministic replay, exact financial semantics, bounded provider
+fan-out, explicit disagreement behavior, and no provider networking in the
+tax-engine hot path.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| First successful provider | Lowest latency | Transient order/outage changes tax results | Rejected |
+| Average or median rates | Tolerates market differences | Adds ambiguous legal and rounding semantics; can hide bad data | Rejected |
+| Silently discard invalid/disagreeing candidates | Higher availability | Masks provider faults and weakens evidence | Rejected |
+| **Exact economic agreement with policy-priority selection** | Deterministic, auditable, bounded, and conservative | Lower availability on disagreement | **Selected in ADR-0250** |

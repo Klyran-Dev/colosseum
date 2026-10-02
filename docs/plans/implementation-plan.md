@@ -686,6 +686,15 @@ validator release gate.
 - [ ] Select and exercise concrete providers, regional routing, quorum policy,
   legal ownership, and provider failover evidence.
 
+## ADR-0250 — deterministic FX provider agreement
+
+- [x] Add a policy-defined minimum provider agreement count and bounded pure
+  candidate-set selector.
+- [x] Require exact economic agreement, distinct approved identities, and
+  policy-priority selection; fail closed on disagreement or insufficient data.
+- [ ] Exercise bounded concurrent provider acquisition, regional failover,
+  provider SLOs, legal ownership, and production agreement evidence.
+
 ## ADR-0154 — governed adjustment refund movement
 
 Implement only the first explicit movement contract: a negative `Refund` claim

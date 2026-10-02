@@ -50,3 +50,7 @@ isolated tests or explicitly reviewed adapters.
 Each policy also carries a bounded exact-match provider allowlist. A quote from
 an unapproved provider fails before signing; provider rotation requires a new
 immutable policy version.
+For policies requiring more than one provider, every candidate must pass the
+same policy and exact economic terms must agree. The selector uses policy
+priority rather than response order and fails closed on disagreement or
+insufficient candidates.
