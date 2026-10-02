@@ -132,6 +132,14 @@ proof, finalizes the execute intent/outbox once, and rejects mutation/replay
 duplication. It is local synthetic-provider evidence only and does not claim
 live RPC-provider, validator, production SLO, or paid-state readiness.
 
+Run `make refund-cancellation-reconciliation-drill` for the two-replica Docker
+reconciliation contract. It exercises synthetic finalized governance recovery,
+UUIDv7 lease ownership and stale reclaim, immutable raw-event evidence, atomic
+claim cancellation, idempotent outbox publication, and zero pending backlog
+telemetry. It requires a reachable Docker daemon and remains local synthetic
+evidence; it does not claim Linux validator, live-provider, governance-key, or
+production readiness.
+
 Run `make encrypted-backup-restore-drill` for the isolated PostgreSQL 18
 encrypted-artifact and tamper-rejection contract. It uses an ephemeral
 synthetic key and does not claim production KMS/HSM, off-site retention, or

@@ -323,6 +323,15 @@ contract. It proves two replicas exhaust exactly eight attempts, release the
 lease, persist dead-letter state, and refresh the dead-letter metric without
 advancing the forward checkpoint; production alert delivery remains open.
 
+Run `make refund-cancellation-reconciliation-drill` for the two-replica
+governed refund-claim cancellation contract. It recovers a synthetic finalized
+governance event through the real targeted RPC path, proves UUIDv7 lease
+ownership and stale reclaim, persists immutable raw evidence, atomically
+converges the cancellation and original claim, and checks idempotent outbox
+cardinality. The drill is local synthetic evidence and requires Docker; Linux
+validator, live-provider, governance-key, and production evidence remain
+separate gates.
+
 Run `make observability-config` to validate the Prometheus configuration and
 versioned alert rules with pinned Prometheus and Alertmanager images. Run
 `make alert-delivery-drill` to induce an isolated worker scrape outage and
