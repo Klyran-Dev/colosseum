@@ -42,7 +42,7 @@ describe("quote workspace financial-input boundary", () => {
     expect((screen.getByLabelText("Document ID") as HTMLInputElement).value).toBe("");
     expect((screen.getByLabelText("Currency") as HTMLInputElement).value).toBe("");
     expect((screen.getByLabelText("Jurisdiction") as HTMLInputElement).value).toBe("");
-    expect((screen.getByLabelText("Tax regime") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("Tax category") as HTMLInputElement).value).toBe("");
     expect((screen.getByLabelText("Rule version") as HTMLInputElement).value).toBe("");
     expect((screen.getByLabelText("Amount before tax") as HTMLInputElement).value).toBe("");
     expect((screen.getByLabelText("Amount after tax") as HTMLInputElement).value).toBe("");

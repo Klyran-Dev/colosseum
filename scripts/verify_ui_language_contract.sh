@@ -49,6 +49,8 @@ require_text apps/web/src/ProductShell.tsx 'Records & issues'
 require_text apps/web/src/GovernancePanel.tsx 'Review and publish a rule'
 require_text apps/web/src/GovernancePanel.tsx 'Run controlled simulation'
 require_text apps/web/src/DocumentQuotePanel.tsx 'Calculate tax for an invoice'
+require_text apps/web/src/DocumentQuotePanel.tsx 'Location verification'
+require_text apps/web/src/DocumentQuotePanel.tsx 'Provider-signed location record (advanced)'
 require_text apps/web/src/DocumentQuotePanel.tsx 'Retry protection selected automatically'
 require_text apps/web/src/DocumentCheckoutPanel.tsx 'Payment ready for review'
 require_text apps/web/src/VaultReconciliationPanel.tsx 'Check tax balances'
@@ -60,6 +62,7 @@ require_text apps/web/src/CheckoutPanel.tsx 'Prepare payment for review'
 require_text apps/web/src/CheckoutPanel.tsx 'Technical payment details'
 require_text apps/web/src/CheckoutPanel.tsx 'Payment safeguards selected automatically'
 require_text apps/web/src/App.tsx 'Retry protection selected automatically'
+require_text apps/web/src/App.tsx 'Location verification'
 
 if [ "$failures" -ne 0 ]; then
   echo "ui language contract failed with $failures issue(s)" >&2

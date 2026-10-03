@@ -16,6 +16,7 @@
 | Settlement Route Registry | tenant-scoped merchant/mint/vault/destination/token configuration, route versions, activation lifecycle | payer keys, tax interpretation, funds, on-chain ownership proof |
 | Route Verification | finalized account topology proofs, bounded provider agreement, activation evidence | route authoring, tax interpretation, funds, program governance |
 | Refund Movement | governed claim/execute intents, wallet artifacts, signer separation, nonce fencing, movement reconciliation | tax-rule authoring, wallet custody, finality without chain proof |
+| Revenue Streaming | finalized settlement accruals, immutable stream plans, bounded single-use release claims, correction accounting | tax recalculation, direct wallet custody, settlement finality authority |
 | Reconciliation | raw events, balance snapshots, status projections, gap detection | on-chain authority |
 
 ## Core aggregates and accounts
@@ -32,6 +33,9 @@
 | RuleSet | database identity + immutable content hash | one effective version, provenance, approval state, no overlapping published versions |
 | TaxCalculation | calculation id, input/rule digests | deterministic output, complete trace, replayable result |
 | SettlementRoute | route id, tenant, account tuple, version, lifecycle/effective window | immutable active account fields, supported programs, distinct token accounts |
+| StreamPlan | merchant, asset, recipient, named payout-preparer subject, plan/policy digests, bounded window/caps, governance status | tax semantics, arbitrary fan-out, signer custody |
+| StreamAccrual | finalized source signature, receipt/evidence digests, recipient allocation | mutable settlement receipt or unfinalized balances |
+| StreamReleaseClaim | claim id, nonce, exact amount/topology, finality lifecycle | authority to move funds before exact chain verification |
 
 ## Value objects
 

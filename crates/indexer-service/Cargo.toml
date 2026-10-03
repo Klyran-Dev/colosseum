@@ -15,7 +15,11 @@ reqwest.workspace = true
 serde_json.workspace = true
 storage = { path = "../storage" }
 settlement-adjustments = { path = "../settlement-adjustments" }
+revenue-streaming = { path = "../revenue-streaming" }
+split-plan = { path = "../split-plan" }
 solana-pubkey.workspace = true
+solana-signature.workspace = true
+uuid.workspace = true
 tax-engine = { path = "../tax-engine" }
 thiserror.workspace = true
 tokio.workspace = true

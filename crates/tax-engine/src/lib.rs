@@ -11,6 +11,7 @@
 use jurisdiction::JurisdictionResolution;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use thiserror::Error;
 
@@ -577,10 +578,10 @@ impl TaxDocumentFacts {
         Ok(encoder.digest())
     }
 
-    fn normalized_for_calculation(&self) -> Result<Self, TaxError> {
+    fn normalized_for_calculation(&self) -> Result<Cow<'_, Self>, TaxError> {
         self.validate()?;
         let Some(fx) = &self.fx_conversion else {
-            return Ok(self.clone());
+            return Ok(Cow::Borrowed(self));
         };
         let mut normalized = self.clone();
         for line in &mut normalized.lines {
@@ -592,7 +593,7 @@ impl TaxDocumentFacts {
         }
         normalized.fx_conversion = None;
         normalized.validate()?;
-        Ok(normalized)
+        Ok(Cow::Owned(normalized))
     }
 }
 
@@ -680,10 +681,10 @@ impl TaxFacts {
         Ok(encoder.digest())
     }
 
-    fn normalized_for_calculation(&self) -> Result<Self, TaxError> {
+    fn normalized_for_calculation(&self) -> Result<Cow<'_, Self>, TaxError> {
         self.validate()?;
         let Some(fx) = &self.fx_conversion else {
-            return Ok(self.clone());
+            return Ok(Cow::Borrowed(self));
         };
         let mut normalized = self.clone();
         normalized.gross_atomic = fx.convert_amount(normalized.gross_atomic)?;
@@ -693,7 +694,7 @@ impl TaxFacts {
         }
         normalized.fx_conversion = None;
         normalized.validate()?;
-        Ok(normalized)
+        Ok(Cow::Owned(normalized))
     }
 }
 
@@ -977,7 +978,11 @@ impl CompiledRuleSet {
         let facts = facts.normalized_for_calculation()?;
         match self.rule_set.components[0].rounding.scope {
             RoundingScope::Settlement => {
-                return self.calculate_settlement_scope(&facts, facts_digest, fx_conversion);
+                return self.calculate_settlement_scope(
+                    facts.as_ref(),
+                    facts_digest,
+                    fx_conversion,
+                );
             }
             RoundingScope::Line | RoundingScope::Invoice => {
                 return Err(TaxError::UnsupportedDocumentScope(
@@ -990,7 +995,7 @@ impl CompiledRuleSet {
         let mut results = BTreeMap::<String, ComponentResult>::new();
         for &index in &self.evaluation_order {
             let component = &self.rule_set.components[index];
-            let base_atomic = evaluate_base(&component.base, &facts, &computed)?;
+            let base_atomic = evaluate_base(&component.base, facts.as_ref(), &computed)?;
             let exemption_applied = component
                 .exemption_codes
                 .iter()
@@ -998,7 +1003,7 @@ impl CompiledRuleSet {
             let effective_base_atomic = if exemption_applied {
                 0
             } else {
-                apply_threshold(component, base_atomic, &facts)?
+                apply_threshold(component, base_atomic, facts.as_ref())?
             };
             let raw_tax = if exemption_applied {
                 Rational::zero()
@@ -3143,6 +3148,22 @@ mod tests {
             observed_at_unix: 1_759_000_000,
             evidence_digest: [7; 32],
         }
+    }
+
+    #[test]
+    fn calculation_without_fx_reuses_borrowed_facts_on_the_hot_path() {
+        let transaction_facts = facts(1_000, 500);
+        let normalized = transaction_facts.normalized_for_calculation().unwrap();
+        assert!(matches!(normalized, std::borrow::Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn calculation_with_fx_owns_normalized_facts() {
+        let mut transaction_facts = facts(1_000, 500);
+        transaction_facts.currency = "EUR".to_string();
+        transaction_facts.fx_conversion = Some(fx_evidence("USD", "EUR", 3, 2));
+        let normalized = transaction_facts.normalized_for_calculation().unwrap();
+        assert!(matches!(normalized, std::borrow::Cow::Owned(_)));
     }
 
     #[test]

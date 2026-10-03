@@ -200,7 +200,7 @@ export default function GovernancePanel({ apiBase, serviceOnline, accessToken, l
       if (!loaded) return;
       setDraftIdempotencyKey(null);
       setDraftIdempotencyPayload(null);
-      setNotice(`Draft ${created.external_id} v${created.version} was created with immutable creation evidence. It is not published.`);
+      setNotice(`Draft ${created.external_id} v${created.version} was created with a permanent record. It is not published.`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Rule draft creation failed");
     } finally {
@@ -238,7 +238,7 @@ export default function GovernancePanel({ apiBase, serviceOnline, accessToken, l
       if (!response.ok) throw new Error(responseError(response, payload, `Governance transition failed (${response.status})`));
       const reloaded = await loadGovernanceFor(state.rule_set_id, false);
       if (reloaded) {
-        setNotice(`Transition to ${targetStatus} was accepted and the snapshot was reloaded from PostgreSQL.`);
+        setNotice("The rule was updated and the latest record was loaded again.");
       } else {
         setError("The transition was accepted, but the follow-up governance reload failed. Reload before taking another action.");
       }
@@ -281,7 +281,7 @@ export default function GovernancePanel({ apiBase, serviceOnline, accessToken, l
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok) throw new Error(responseError(response, payload, `Rule simulation failed (${response.status})`));
       setSimulation(parseTaxSimulation(payload));
-      setNotice("The server simulated the persisted rule document. This result is unattested and cannot authorize settlement.");
+      setNotice("The saved rule was checked in a controlled simulation. This result cannot authorize a payment.");
     } catch (cause) {
       setSimulation(null);
       setError(cause instanceof Error ? cause.message : "Rule simulation failed");
@@ -304,13 +304,13 @@ export default function GovernancePanel({ apiBase, serviceOnline, accessToken, l
           <summary>Create a governed draft</summary>
           <p className="evidence-note">The service checks the complete rule, records who created it and where it came from, and keeps it in draft until the required review and approval steps are complete.</p>
           <form onSubmit={createRuleDraft} className="form-grid">
-            <label><span>External rule ID</span><input value={draftExternalId} onChange={(event) => { const value = event.target.value; setDraftExternalId(value); setStructuredRuleDraft((current) => ({ ...current, id: value })); }} autoComplete="off" required /></label>
+            <label><span>Rule name or reference</span><input value={draftExternalId} onChange={(event) => { const value = event.target.value; setDraftExternalId(value); setStructuredRuleDraft((current) => ({ ...current, id: value })); }} autoComplete="off" required /></label>
             <label><span>Version</span><input inputMode="numeric" min="1" value={draftVersion} onChange={(event) => { const value = event.target.value; setDraftVersion(value); setStructuredRuleDraft((current) => ({ ...current, version: value })); }} required /></label>
             <label><span>Jurisdiction</span><input value={draftJurisdiction} onChange={(event) => setDraftJurisdiction(event.target.value.toUpperCase())} required /></label>
-            <label><span>Tax regime</span><input value={draftRegime} onChange={(event) => setDraftRegime(event.target.value)} required /></label>
-            <label className="full-field"><span>Effective from (browser local time, sent as UTC)</span><input type="datetime-local" value={draftEffectiveFrom} onChange={(event) => setDraftEffectiveFrom(event.target.value)} required /></label>
+            <label><span>Tax category</span><input value={draftRegime} onChange={(event) => setDraftRegime(event.target.value)} required /></label>
+            <label className="full-field"><span>Starts on</span><input type="datetime-local" value={draftEffectiveFrom} onChange={(event) => setDraftEffectiveFrom(event.target.value)} aria-describedby="effective-from-help" required /><small id="effective-from-help" className="field-help">Choose when this approved rule begins. The service stores the time in UTC.</small></label>
             <div className="full-field rule-editor-mode">
-              <label><span>Rule editing mode</span><select value={ruleEditorMode} onChange={(event) => {
+              <label><span>How would you like to enter the rule?</span><select value={ruleEditorMode} onChange={(event) => {
                 const nextMode = event.target.value as "structured" | "json";
                 if (nextMode === "json") {
                   try { setDraftRuleDocument(JSON.stringify(buildRuleSet(structuredRuleDraft), null, 2)); } catch { /* structured validation is shown inline */ }
@@ -322,29 +322,29 @@ export default function GovernancePanel({ apiBase, serviceOnline, accessToken, l
                 <p className="field-help">Advanced mode is for exact rule exchange. The service still validates and governs every document; this browser does not calculate or publish it.</p>
               </>}
             </div>
-            <label className="full-field"><span>Provenance JSON object (max 16 KiB)</span><textarea value={draftProvenance} onChange={(event) => setDraftProvenance(event.target.value)} rows={4} spellCheck={false} required /></label>
+            <label className="full-field"><span>Source record</span><textarea value={draftProvenance} onChange={(event) => setDraftProvenance(event.target.value)} aria-describedby="source-record-help" rows={4} spellCheck={false} required /><small id="source-record-help" className="field-help">Record where the rule came from. Use the advanced format supplied by your tax or legal review process.</small></label>
             <button type="submit" disabled={!serviceOnline || isCreating || !accessToken.trim()}>{isCreating ? "Creating immutable draft…" : "Create governed draft"}</button>
           </form>
         </details>
         <form onSubmit={loadGovernance} className="form-grid">
-          <label className="full-field"><span>Rule reference</span><input value={ruleSetId} onChange={(event) => setRuleSetId(event.target.value)} placeholder="Paste the saved rule reference" autoComplete="off" spellCheck={false} required /></label>
+          <label className="full-field"><span>Saved rule reference</span><input value={ruleSetId} onChange={(event) => setRuleSetId(event.target.value)} placeholder="Enter the saved rule reference" autoComplete="off" spellCheck={false} required /></label>
           <button type="submit" disabled={!serviceOnline || isLoading || !ruleSetId.trim() || !accessToken.trim()}>{isLoading ? "Loading rule details…" : "Load rule details"}</button>
         </form>
         {!serviceOnline && <p className="inline-warning" role="alert">The service is unavailable. Governance actions are disabled and no local state is substituted.</p>}
         {error && <p className="inline-error" role="alert">{error}</p>}
         {notice && <p className="inline-success" role="status">{notice}</p>}
         {state && <form onSubmit={submitTransition} className="governance-action-form">
-          <div className="governance-current-state"><span>Current status</span><strong>{state.status}</strong><small>{roleCopy(state.status)} · revision {state.governance_revision}</small></div>
+          <div className="governance-current-state"><span>Current status</span><strong>{state.status}</strong><small>{roleCopy(state.status)} · change {state.governance_revision}</small></div>
           {nextStatuses.length > 0 ? <>
             <label><span>Next governed action</span><select value={targetStatus} onChange={(event) => setTargetStatus(event.target.value as GovernanceState["status"])}>{nextStatuses.map((status) => <option key={status} value={status}>{transitionLabel(state.status, status)}</option>)}</select></label>
-            <label><span>Decision evidence (JSON object, max 16 KiB)</span><textarea value={evidence} onChange={(event) => setEvidence(event.target.value)} rows={6} spellCheck={false} /></label>
+            <label><span>Reason for this decision</span><textarea value={evidence} onChange={(event) => setEvidence(event.target.value)} aria-describedby="decision-evidence-help" rows={6} spellCheck={false} /><small id="decision-evidence-help" className="field-help">Add the approved reason and supporting record in the format required by your review process.</small></label>
             <button type="submit" disabled={isSubmitting || !targetStatus || !accessToken.trim() || !serviceOnline}>{isSubmitting ? "Submitting transition…" : targetStatus ? transitionLabel(state.status, targetStatus) : "Advance rule"}</button>
           </> : <p className="inline-warning">This rule is retired. No further transition is available.</p>}
         </form>}
       </article>
 
       <article className="panel governance-evidence-panel" aria-live="polite">
-        <div className="panel-heading"><div><p className="eyebrow">Immutable read model</p><h2>Governance evidence</h2></div>{state && <span className="status-pill status-pill-warning">{state.status}</span>}</div>
+        <div className="panel-heading"><div><p className="eyebrow">Rule history</p><h2>Review record</h2></div>{state && <span className="status-pill status-pill-warning">{state.status}</span>}</div>
         <details className="authoring-section simulation-section" open>
           <summary>Try the saved rule</summary>
           <p className="evidence-note">This uses the saved rule and the service tax engine to show a what-if result. It does not create a quote, publish the rule, or authorize a payment.</p>
@@ -356,7 +356,7 @@ export default function GovernancePanel({ apiBase, serviceOnline, accessToken, l
             <button type="submit" disabled={!state || !serviceOnline || isSimulating || !accessToken.trim()}>{isSimulating ? "Running controlled simulation…" : "Run controlled simulation"}</button>
           </form>
         {simulation && <div className="simulation-result" role="status">
-            <div className="governance-current-state"><span>Unattested server result</span><strong>{formatAtomicValue(simulation.result.total_tax_atomic, simulation.result.currency, locale)} tax</strong><small>Calculation reference {simulation.calculation_id} · rule {simulation.result.rule_set_id} v{simulation.result.rule_version}</small></div>
+            <div className="governance-current-state"><span>Controlled scenario result</span><strong>{formatAtomicValue(simulation.result.total_tax_atomic, simulation.result.currency, locale)} tax</strong><small>Calculation reference {simulation.calculation_id} · rule {simulation.result.rule_set_id} v{simulation.result.rule_version}</small></div>
             <dl className="summary-list"><div><dt>Net after tax</dt><dd>{formatAtomicValue(simulation.result.total_net_atomic, simulation.result.currency, locale)}</dd></div><div><dt>Engine</dt><dd>{simulation.result.engine_version}</dd></div><div><dt>Rule digest</dt><dd><code>{simulation.result.rule_digest.slice(0, 8).map((byte) => byte.toString(16).padStart(2, "0")).join("")}…</code></dd></div></dl>
             <div className="trace-list">{simulation.result.components.map((component) => <div className="trace-row" key={component.id}><div><strong>{component.label}</strong><small>{component.explanation}</small></div><strong>{formatAtomicValue(component.tax_atomic, simulation.result.currency, locale)}</strong></div>)}</div>
           </div>}

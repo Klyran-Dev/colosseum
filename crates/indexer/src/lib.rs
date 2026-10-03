@@ -7,6 +7,11 @@ use anchor_lang::prelude::Pubkey;
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use reqwest::Url;
+use revenue_streaming::{
+    AssetId as RevenueAssetId, Digest as RevenueDigest, FinalityCommitment,
+    FinalizedSettlementAllocationProof, RecipientId as RevenueRecipientId,
+    Signature as RevenueSignature,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use settlement_adjustments::{
@@ -1085,6 +1090,54 @@ pub struct SettlementRouteVerification {
     pub verification_digest: [u8; 32],
 }
 
+/// Server-owned destination topology for a revenue-stream payout. This is
+/// configuration only until [`verify_revenue_stream_destination_route`]
+/// produces finalized account evidence.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RevenueStreamDestinationRouteConfig {
+    pub route_id: uuid::Uuid,
+    pub version: i32,
+    pub recipient_owner: String,
+    pub mint: String,
+    pub destination_token_account: String,
+    pub token_program: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RevenueStreamDestinationRouteVerification {
+    pub route_id: uuid::Uuid,
+    pub route_version: i32,
+    pub recipient_owner: String,
+    pub mint: String,
+    pub destination_token_account: String,
+    pub token_program: String,
+    pub verification_slot: u64,
+    pub verification_commitment: &'static str,
+    pub mint_decimals: u8,
+    pub accounts: Vec<VerifiedRouteAccount>,
+    pub verification_digest: [u8; 32],
+}
+
+#[derive(Debug, Error, Eq, PartialEq)]
+pub enum RevenueStreamDestinationVerificationError {
+    #[error("invalid revenue stream destination route: {0}")]
+    InvalidRoute(String),
+    #[error("revenue stream destination verification provider failed: {0}")]
+    Provider(#[from] ProviderError),
+    #[error("revenue stream destination verification response is invalid: {0}")]
+    InvalidResponse(String),
+    #[error("revenue stream destination account is missing: {0}")]
+    MissingAccount(String),
+    #[error("revenue stream destination account owner does not match the token program: {0}")]
+    AccountOwnerMismatch(&'static str),
+    #[error("revenue stream destination account has an unsupported layout: {0}")]
+    UnsupportedAccountLayout(&'static str),
+    #[error("revenue stream destination token account is bound to a different mint")]
+    TokenAccountMintMismatch,
+    #[error("revenue stream destination token authority does not match the recipient owner")]
+    TokenAuthorityMismatch,
+}
+
 /// Server-owned funding topology supplied by the approved configuration. It
 /// is data only until [`verify_refund_funding_topology`] proves the finalized
 /// chain accounts.
@@ -1267,6 +1320,135 @@ pub async fn verify_settlement_route<T: JsonRpcTransport + ?Sized>(
         mint: route.mint.clone(),
         tax_vault: route.tax_vault.clone(),
         net_destination: route.net_destination.clone(),
+        token_program: route.token_program.clone(),
+        verification_slot: slot,
+        verification_commitment: "finalized",
+        mint_decimals,
+        accounts,
+        verification_digest,
+    })
+}
+
+/// Verifies the mint and recipient token account for a revenue payout route at
+/// one finalized commitment. It deliberately accepts only extension-free
+/// legacy SPL or Token-2022 account layouts until extension semantics have a
+/// separately audited compatibility contract.
+pub async fn verify_revenue_stream_destination_route<T: JsonRpcTransport + ?Sized>(
+    transport: &T,
+    route: &RevenueStreamDestinationRouteConfig,
+) -> Result<RevenueStreamDestinationRouteVerification, RevenueStreamDestinationVerificationError> {
+    if route.route_id.is_nil() || route.version <= 0 {
+        return Err(RevenueStreamDestinationVerificationError::InvalidRoute(
+            "route identity and positive version are required".to_string(),
+        ));
+    }
+    let recipient_owner =
+        parse_destination_route_pubkey("recipient_owner", &route.recipient_owner)?;
+    let mint = parse_destination_route_pubkey("mint", &route.mint)?;
+    let destination = parse_destination_route_pubkey(
+        "destination_token_account",
+        &route.destination_token_account,
+    )?;
+    let token_program = parse_destination_route_pubkey("token_program", &route.token_program)?;
+    let spl_token =
+        parse_destination_route_pubkey("token_program", settlement_client::SPL_TOKEN_PROGRAM_ID)?;
+    let token_2022 =
+        parse_destination_route_pubkey("token_program", settlement_client::TOKEN_2022_PROGRAM_ID)?;
+    if token_program != spl_token && token_program != token_2022 {
+        return Err(RevenueStreamDestinationVerificationError::InvalidRoute(
+            "token program is not supported".to_string(),
+        ));
+    }
+    if mint == destination || recipient_owner == destination {
+        return Err(RevenueStreamDestinationVerificationError::InvalidRoute(
+            "destination route addresses must be distinct".to_string(),
+        ));
+    }
+    let addresses = [
+        route.mint.as_str(),
+        route.destination_token_account.as_str(),
+    ];
+    let response = transport
+        .call(
+            "getMultipleAccounts",
+            json!([addresses, { "commitment": "finalized", "encoding": "base64" }]),
+        )
+        .await?;
+    let encoded_response = serde_json::to_vec(&response).map_err(|error| {
+        RevenueStreamDestinationVerificationError::InvalidResponse(error.to_string())
+    })?;
+    if encoded_response.len() > MAX_ROUTE_RPC_RESULT_BYTES {
+        return Err(RevenueStreamDestinationVerificationError::InvalidResponse(
+            "getMultipleAccounts response exceeds the bounded route limit".to_string(),
+        ));
+    }
+    let context = response
+        .get("context")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            RevenueStreamDestinationVerificationError::InvalidResponse(
+                "context is missing".to_string(),
+            )
+        })?;
+    let slot = context.get("slot").and_then(Value::as_u64).ok_or_else(|| {
+        RevenueStreamDestinationVerificationError::InvalidResponse(
+            "context.slot is invalid".to_string(),
+        )
+    })?;
+    let values = response
+        .get("value")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            RevenueStreamDestinationVerificationError::InvalidResponse(
+                "value is not an array".to_string(),
+            )
+        })?;
+    if values.len() != addresses.len() {
+        return Err(RevenueStreamDestinationVerificationError::InvalidResponse(
+            "getMultipleAccounts returned an unexpected account count".to_string(),
+        ));
+    }
+    let snapshots = values
+        .iter()
+        .zip(addresses)
+        .map(|(value, address)| {
+            parse_route_account(value, address).map_err(map_destination_route_error)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mint_account = &snapshots[0];
+    verify_destination_token_account_container(mint_account, &token_program, "mint", 82)?;
+    let mint_decimals = *mint_account
+        .data
+        .get(44)
+        .ok_or(RevenueStreamDestinationVerificationError::UnsupportedAccountLayout("mint"))?;
+    let destination_account = &snapshots[1];
+    verify_destination_token_account_container(
+        destination_account,
+        &token_program,
+        "destination_token_account",
+        165,
+    )?;
+    let destination_mint = read_destination_pubkey_field(destination_account, 0, "destination")?;
+    if destination_mint != mint {
+        return Err(RevenueStreamDestinationVerificationError::TokenAccountMintMismatch);
+    }
+    let destination_authority =
+        read_destination_pubkey_field(destination_account, 32, "destination")?;
+    if destination_authority != recipient_owner {
+        return Err(RevenueStreamDestinationVerificationError::TokenAuthorityMismatch);
+    }
+    let accounts = snapshots
+        .into_iter()
+        .map(route_account_evidence)
+        .collect::<Vec<_>>();
+    let verification_digest =
+        revenue_destination_verification_digest(route, slot, mint_decimals, &accounts);
+    Ok(RevenueStreamDestinationRouteVerification {
+        route_id: route.route_id,
+        route_version: route.version,
+        recipient_owner: route.recipient_owner.clone(),
+        mint: route.mint.clone(),
+        destination_token_account: route.destination_token_account.clone(),
         token_program: route.token_program.clone(),
         verification_slot: slot,
         verification_commitment: "finalized",
@@ -3455,6 +3637,106 @@ fn route_verification_digest(
     hasher.finalize().into()
 }
 
+fn map_destination_route_error(
+    error: RouteVerificationError,
+) -> RevenueStreamDestinationVerificationError {
+    match error {
+        RouteVerificationError::Provider(error) => {
+            RevenueStreamDestinationVerificationError::Provider(error)
+        }
+        RouteVerificationError::MissingAccount(address) => {
+            RevenueStreamDestinationVerificationError::MissingAccount(address)
+        }
+        RouteVerificationError::InvalidResponse(message) => {
+            RevenueStreamDestinationVerificationError::InvalidResponse(message)
+        }
+        RouteVerificationError::InvalidRoute(message) => {
+            RevenueStreamDestinationVerificationError::InvalidRoute(message)
+        }
+        RouteVerificationError::AccountOwnerMismatch(field) => {
+            RevenueStreamDestinationVerificationError::AccountOwnerMismatch(field)
+        }
+        RouteVerificationError::UnsupportedAccountLayout(field) => {
+            RevenueStreamDestinationVerificationError::UnsupportedAccountLayout(field)
+        }
+        RouteVerificationError::TokenAccountMintMismatch(_) => {
+            RevenueStreamDestinationVerificationError::TokenAccountMintMismatch
+        }
+        RouteVerificationError::VaultAuthorityMismatch => {
+            RevenueStreamDestinationVerificationError::InvalidResponse(
+                "unexpected vault authority error while parsing destination route".to_string(),
+            )
+        }
+    }
+}
+
+fn parse_destination_route_pubkey(
+    field: &'static str,
+    value: &str,
+) -> Result<Pubkey, RevenueStreamDestinationVerificationError> {
+    Pubkey::from_str(value.trim()).map_err(|_| {
+        RevenueStreamDestinationVerificationError::InvalidRoute(format!(
+            "{field} is not a valid public key"
+        ))
+    })
+}
+
+fn verify_destination_token_account_container(
+    account: &RouteAccountSnapshot,
+    token_program: &Pubkey,
+    field: &'static str,
+    expected_len: usize,
+) -> Result<(), RevenueStreamDestinationVerificationError> {
+    if account.executable || account.owner != token_program.to_string() {
+        return Err(RevenueStreamDestinationVerificationError::AccountOwnerMismatch(field));
+    }
+    if account.data.len() != expected_len {
+        return Err(RevenueStreamDestinationVerificationError::UnsupportedAccountLayout(field));
+    }
+    Ok(())
+}
+
+fn read_destination_pubkey_field(
+    account: &RouteAccountSnapshot,
+    offset: usize,
+    field: &'static str,
+) -> Result<Pubkey, RevenueStreamDestinationVerificationError> {
+    let bytes = account
+        .data
+        .get(offset..offset.saturating_add(32))
+        .ok_or(RevenueStreamDestinationVerificationError::UnsupportedAccountLayout(field))?;
+    Pubkey::try_from(bytes)
+        .map_err(|_| RevenueStreamDestinationVerificationError::UnsupportedAccountLayout(field))
+}
+
+fn revenue_destination_verification_digest(
+    route: &RevenueStreamDestinationRouteConfig,
+    slot: u64,
+    mint_decimals: u8,
+    accounts: &[VerifiedRouteAccount],
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"solana-tax-protocol/revenue-stream-destination-verification/v1");
+    hasher.update(route.route_id.as_bytes());
+    hasher.update(route.version.to_le_bytes());
+    write_route_text(&mut hasher, &route.recipient_owner);
+    write_route_text(&mut hasher, &route.mint);
+    write_route_text(&mut hasher, &route.destination_token_account);
+    write_route_text(&mut hasher, &route.token_program);
+    hasher.update(slot.to_le_bytes());
+    write_route_text(&mut hasher, "finalized");
+    hasher.update([mint_decimals]);
+    for account in accounts {
+        write_route_text(&mut hasher, &account.address);
+        write_route_text(&mut hasher, &account.owner);
+        hasher.update([u8::from(account.executable)]);
+        hasher.update(account.lamports.to_le_bytes());
+        hasher.update((account.data_len as u64).to_le_bytes());
+        hasher.update(account.data_digest);
+    }
+    hasher.finalize().into()
+}
+
 fn write_route_text(hasher: &mut Sha256, value: &str) {
     hasher.update((value.len() as u64).to_le_bytes());
     hasher.update(value.as_bytes());
@@ -4010,6 +4292,45 @@ impl SplitSettlementExecutedEvent {
             policy_digest,
         })
     }
+}
+
+/// Maps an already validated finalized split projection plus a server-resolved
+/// recipient allocation into the revenue domain's finality proof contract.
+/// The recipient and amount must come from an immutable, tenant-scoped split
+/// plan projection; this function deliberately has no browser/API input path.
+pub fn build_revenue_stream_allocation_proof(
+    split: &IndexedSplitSettlement,
+    recipient: [u8; 32],
+    recipient_atomic: u64,
+    observed_finalized_slot: u64,
+) -> Result<FinalizedSettlementAllocationProof, IndexerError> {
+    split.validate(
+        ScanRange {
+            start_slot: split.slot,
+            end_slot: split.slot,
+        },
+        observed_finalized_slot,
+    )?;
+    let signature =
+        Signature::from_str(&split.signature).map_err(|_| IndexerError::InvalidSplitSettlement)?;
+    let proof = FinalizedSettlementAllocationProof {
+        source_signature: RevenueSignature(signature.as_ref().to_vec()),
+        source_slot: split.slot,
+        observed_finalized_slot,
+        commitment: FinalityCommitment::Finalized,
+        receipt_digest: RevenueDigest(split.evidence_digest),
+        plan_digest: RevenueDigest(split.split_plan_digest),
+        policy_digest: RevenueDigest(split.policy_digest),
+        asset: RevenueAssetId(split.mint),
+        recipient: RevenueRecipientId(recipient),
+        gross_atomic: split.gross_atomic,
+        tax_atomic: split.tax_atomic,
+        net_atomic: split.net_atomic,
+        recipient_atomic,
+    };
+    revenue_streaming::finalized_accrual_from_proof(proof.clone())
+        .map(|_| proof)
+        .map_err(|_| IndexerError::InvalidSplitSettlement)
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -6500,6 +6821,101 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn revenue_destination_verifier_binds_owner_mint_and_finality() {
+        let mint = Pubkey::new_from_array([21; 32]);
+        let destination = Pubkey::new_from_array([22; 32]);
+        let recipient_owner = Pubkey::new_from_array([23; 32]);
+        let mut mint_data = vec![0; 82];
+        mint_data[44] = 6;
+        let mut destination_data = vec![0; 165];
+        destination_data[..32].copy_from_slice(mint.as_ref());
+        destination_data[32..64].copy_from_slice(recipient_owner.as_ref());
+        let account = |owner: &str, data: Vec<u8>| {
+            json!({
+                "lamports": 1_000_000,
+                "owner": owner,
+                "executable": false,
+                "data": [BASE64.encode(data), "base64"]
+            })
+        };
+        let route = RevenueStreamDestinationRouteConfig {
+            route_id: uuid::Uuid::from_u128(23),
+            version: 1,
+            recipient_owner: recipient_owner.to_string(),
+            mint: mint.to_string(),
+            destination_token_account: destination.to_string(),
+            token_program: settlement_client::SPL_TOKEN_PROGRAM_ID.to_string(),
+        };
+        let response = json!({
+            "context": {"slot": 901},
+            "value": [
+                account(settlement_client::SPL_TOKEN_PROGRAM_ID, mint_data),
+                account(settlement_client::SPL_TOKEN_PROGRAM_ID, destination_data)
+            ]
+        });
+        let rpc = FakeRpc {
+            results: Mutex::new(VecDeque::from([response])),
+            calls: Mutex::new(Vec::new()),
+        };
+        let evidence = verify_revenue_stream_destination_route(&rpc, &route)
+            .await
+            .unwrap();
+        assert_eq!(evidence.verification_slot, 901);
+        assert_eq!(evidence.mint_decimals, 6);
+        assert_ne!(evidence.verification_digest, [0; 32]);
+        let calls = rpc.calls.lock().unwrap();
+        assert_eq!(calls[0].1[1]["commitment"], "finalized");
+        assert_eq!(calls[0].1[0].as_array().unwrap().len(), 2);
+
+        let mut tampered = evidence;
+        tampered.destination_token_account = Pubkey::new_from_array([24; 32]).to_string();
+        assert_ne!(
+            tampered.destination_token_account,
+            route.destination_token_account
+        );
+    }
+
+    #[tokio::test]
+    async fn revenue_destination_verifier_rejects_recipient_owner_substitution() {
+        let mint = Pubkey::new_from_array([31; 32]);
+        let destination = Pubkey::new_from_array([32; 32]);
+        let recipient_owner = Pubkey::new_from_array([33; 32]);
+        let mut mint_data = vec![0; 82];
+        mint_data[44] = 6;
+        let mut destination_data = vec![0; 165];
+        destination_data[..32].copy_from_slice(mint.as_ref());
+        destination_data[32..64].copy_from_slice(Pubkey::new_from_array([34; 32]).as_ref());
+        let account = |data: Vec<u8>| {
+            json!({
+                "lamports": 1_000_000,
+                "owner": settlement_client::SPL_TOKEN_PROGRAM_ID,
+                "executable": false,
+                "data": [BASE64.encode(data), "base64"]
+            })
+        };
+        let route = RevenueStreamDestinationRouteConfig {
+            route_id: uuid::Uuid::from_u128(24),
+            version: 1,
+            recipient_owner: recipient_owner.to_string(),
+            mint: mint.to_string(),
+            destination_token_account: destination.to_string(),
+            token_program: settlement_client::SPL_TOKEN_PROGRAM_ID.to_string(),
+        };
+        let response = json!({
+            "context": {"slot": 902},
+            "value": [account(mint_data), account(destination_data)]
+        });
+        let rpc = FakeRpc {
+            results: Mutex::new(VecDeque::from([response])),
+            calls: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            verify_revenue_stream_destination_route(&rpc, &route).await,
+            Err(RevenueStreamDestinationVerificationError::TokenAuthorityMismatch)
+        );
+    }
+
+    #[tokio::test]
     async fn refund_funding_verifier_requires_complete_finalized_topology() {
         let (topology, response) = verified_refund_funding_fixture();
         let rpc = FakeRpc {
@@ -6905,6 +7321,36 @@ mod tests {
         assert_eq!(
             decoded.raw_evidence[0].event_discriminator,
             SPLIT_SETTLEMENT_EVENT_DISCRIMINATOR
+        );
+    }
+
+    #[test]
+    fn finalized_split_projection_maps_to_revenue_proof_only_with_finalized_observation() {
+        let split = IndexedSplitSettlement {
+            signature: Signature::from([60; 64]).to_string(),
+            slot: 42,
+            receipt: [1; 32],
+            payer: [2; 32],
+            merchant: [3; 32],
+            mint: [4; 32],
+            nonce: 9,
+            gross_atomic: 100,
+            tax_atomic: 25,
+            net_atomic: 75,
+            split_plan_version: 2,
+            split_plan_digest: [15; 32],
+            policy_digest: [16; 32],
+            evidence_digest: [17; 32],
+        };
+        let proof = build_revenue_stream_allocation_proof(&split, [5; 32], 50, 42)
+            .expect("finalized split proof");
+        assert_eq!(proof.source_slot, 42);
+        assert_eq!(proof.recipient_atomic, 50);
+        assert_eq!(proof.commitment, FinalityCommitment::Finalized);
+
+        assert_eq!(
+            build_revenue_stream_allocation_proof(&split, [5; 32], 50, 41),
+            Err(IndexerError::InvalidSplitSettlement)
         );
     }
 

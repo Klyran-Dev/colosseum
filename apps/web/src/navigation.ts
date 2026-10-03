@@ -9,6 +9,7 @@ export type ProductWorkspace =
   | "replay-ops"
   | "vault-release"
   | "vault-reconciliation"
+  | "revenue-streaming"
   | "adjustments"
   | "refund-claims"
   | "refund-cancellations"
@@ -24,6 +25,7 @@ const WORKSPACE_PATHS: Readonly<Record<ProductWorkspace, string>> = {
   "access-control": "/rules/access-approvals",
   "vault-release": "/money/treasury",
   "vault-reconciliation": "/money/balance-checks",
+  "revenue-streaming": "/money/partner-payouts",
   adjustments: "/money/adjustments",
   "refund-claims": "/money/refund-requests",
   "refund-cancellations": "/money/refund-cancellations",

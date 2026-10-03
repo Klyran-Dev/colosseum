@@ -9,9 +9,10 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use indexer::{AdaptiveProviderHealth, JsonRpcTransport, ProviderError};
 use serde_json::{Value, json};
 use settlement_client::{
-    COMPUTE_BUDGET_PROGRAM_ID, CompiledSettlementAdjustmentInstruction,
-    CompiledSettlementInstruction, CompiledSettlementRefundCancellationInstruction,
-    CompiledSettlementRefundInstruction, ComputeBudgetPolicy, MAX_SETTLEMENT_SIGNED_BYTES,
+    COMPUTE_BUDGET_PROGRAM_ID, CompiledRevenueStreamInstruction,
+    CompiledSettlementAdjustmentInstruction, CompiledSettlementInstruction,
+    CompiledSettlementRefundCancellationInstruction, CompiledSettlementRefundInstruction,
+    ComputeBudgetPolicy, MAX_SETTLEMENT_SIGNED_BYTES,
     estimate_legacy_settlement_wire_bytes_with_compute_budget,
 };
 use sha2::{Digest, Sha256};
@@ -562,6 +563,154 @@ impl SignedTransaction {
             if !unique_accounts.insert(actual_key) {
                 return Err(CoordinatorError::InvalidSignedTransaction(
                     "signed refund cancellation contains duplicate instruction accounts".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Proves that a wallet signed exactly one server-compiled revenue-stream
+    /// instruction. Revenue-stream movement remains deliberately bounded: no
+    /// lookup tables, compute-budget additions, extra instructions, account
+    /// substitution, or client-selected signer topology are accepted here.
+    pub fn verify_revenue_stream_instruction(
+        &self,
+        expected: &CompiledRevenueStreamInstruction,
+    ) -> Result<(), CoordinatorError> {
+        if expected.status != "prepared_unsubmitted" {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "revenue stream instruction is not prepared for submission".into(),
+            ));
+        }
+        let transaction = self.decode_verified_transaction()?;
+        if self.bytes.len() > MAX_SIGNED_TRANSACTION_BYTES {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "signed revenue stream instruction exceeds the bounded packet size".into(),
+            ));
+        }
+        let message = &transaction.message;
+        if !lookup_table_keys(message)?.is_empty() {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "revenue stream instructions do not permit address lookup tables".into(),
+            ));
+        }
+        let instructions = message.instructions();
+        if instructions.len() != 1 {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "revenue stream transaction must contain exactly one instruction".into(),
+            ));
+        }
+        let static_accounts = message.static_account_keys();
+        let instruction = &instructions[0];
+        let program_index = usize::from(instruction.program_id_index);
+        let program_id = static_accounts.get(program_index).ok_or_else(|| {
+            CoordinatorError::InvalidSignedTransaction(
+                "revenue stream program index is out of bounds".into(),
+            )
+        })?;
+        if program_id.to_string() != expected.program_id {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "signed revenue stream program id does not match the compiled instruction".into(),
+            ));
+        }
+        let expected_data = BASE64
+            .decode(&expected.instruction_data_base64)
+            .map_err(|_| {
+                CoordinatorError::InvalidSignedTransaction(
+                    "compiled revenue stream instruction data is not valid base64".into(),
+                )
+            })?;
+        if instruction.data != expected_data {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "signed revenue stream instruction data does not match the compiled instruction"
+                    .into(),
+            ));
+        }
+        if instruction.accounts.len() != expected.accounts.len() {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "signed revenue stream account count does not match the compiled instruction"
+                    .into(),
+            ));
+        }
+        if static_accounts.len() != expected.accounts.len() + 1
+            && static_accounts.len() != expected.accounts.len() + 2
+        {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "signed revenue stream contains unexpected static account keys".into(),
+            ));
+        }
+        let expected_keys = expected
+            .accounts
+            .iter()
+            .map(|account| account.pubkey.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        if expected_keys.len() != expected.accounts.len() {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "compiled revenue stream contains duplicate account keys".into(),
+            ));
+        }
+        let fee_payer_key = static_accounts.first().map(ToString::to_string);
+        if static_accounts.len() == expected.accounts.len() + 2
+            && fee_payer_key
+                .as_deref()
+                .is_some_and(|payer| expected_keys.contains(payer))
+        {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "revenue stream fee payer must not duplicate an expected account".into(),
+            ));
+        }
+        if static_accounts
+            .iter()
+            .filter(|account| account.to_string() == expected.program_id)
+            .count()
+            != 1
+        {
+            return Err(CoordinatorError::InvalidSignedTransaction(
+                "revenue stream program id must occur exactly once in static accounts".into(),
+            ));
+        }
+        for (index, account) in static_accounts.iter().enumerate() {
+            let key = account.to_string();
+            if !expected_keys.contains(key.as_str()) && key != expected.program_id && index != 0 {
+                return Err(CoordinatorError::InvalidSignedTransaction(
+                    "signed revenue stream contains an unused unexpected static account".into(),
+                ));
+            }
+        }
+        let reserved_addresses = std::collections::BTreeSet::<solana_transaction::Address>::new();
+        let mut unique_accounts = std::collections::BTreeSet::new();
+        for (position, (actual_index, expected_account)) in instruction
+            .accounts
+            .iter()
+            .zip(&expected.accounts)
+            .enumerate()
+        {
+            let actual_index = usize::from(*actual_index);
+            let actual_key = static_accounts.get(actual_index).ok_or_else(|| {
+                CoordinatorError::InvalidSignedTransaction(format!(
+                    "signed revenue stream account index is out of bounds at position {position}"
+                ))
+            })?;
+            let actual_is_signer = message.is_signer(actual_index);
+            let actual_is_writable = message
+                .is_maybe_writable_with_reserved_addresses(actual_index, Some(&reserved_addresses));
+            let fee_payer_writable_elevation = actual_index == 0
+                && actual_is_signer
+                && expected_account.is_signer
+                && actual_is_writable
+                && !expected_account.is_writable;
+            if actual_key.to_string() != expected_account.pubkey
+                || actual_is_signer != expected_account.is_signer
+                || (actual_is_writable != expected_account.is_writable
+                    && !fee_payer_writable_elevation)
+            {
+                return Err(CoordinatorError::InvalidSignedTransaction(format!(
+                    "signed revenue stream account policy does not match the compiled instruction at position {position}"
+                )));
+            }
+            if !unique_accounts.insert(actual_key) {
+                return Err(CoordinatorError::InvalidSignedTransaction(
+                    "signed revenue stream contains duplicate instruction accounts".into(),
                 ));
             }
         }
@@ -1729,10 +1878,12 @@ mod tests {
     use proptest::prelude::*;
     use serde_json::json;
     use settlement_client::{
-        CompiledSettlementAdjustmentInstruction, CompiledSettlementInstruction,
-        CompiledSettlementRefundCancellationInstruction, SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT,
+        CompiledRevenueStreamInstruction, CompiledSettlementAdjustmentInstruction,
+        CompiledSettlementInstruction, CompiledSettlementRefundCancellationInstruction,
+        RevenueStreamClaimCancellationCompileRequest, SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT,
         SettlementAdjustmentCompileRequest, SettlementCompileRequest,
         SettlementRefundCancellationCompileRequest, SettlementRefundClaimCompileRequest,
+        compile_revenue_stream_claim_cancellation_instruction,
         compile_settlement_adjustment_instruction, compile_settlement_instruction,
         compile_settlement_refund_cancellation_instruction,
         compile_settlement_refund_claim_instruction,
@@ -2529,6 +2680,111 @@ mod tests {
         assert!(
             extra
                 .verify_refund_cancellation_instruction(&expected)
+                .is_err()
+        );
+    }
+
+    fn revenue_stream_cancellation_request(
+        governance_authority: &Keypair,
+    ) -> RevenueStreamClaimCancellationCompileRequest {
+        RevenueStreamClaimCancellationCompileRequest {
+            program_id: settlement_client::SETTLEMENT_PROGRAM_ID.to_string(),
+            governance_authority: governance_authority.pubkey().to_string(),
+            plan: solana_transaction::Address::new_unique().to_string(),
+            nonce: 17,
+        }
+    }
+
+    fn signed_revenue_stream_instruction(
+        expected: &CompiledRevenueStreamInstruction,
+        payer: &Keypair,
+    ) -> SignedTransaction {
+        let instruction = solana_transaction::Instruction {
+            program_id: expected.program_id.parse().expect("program id"),
+            accounts: expected
+                .accounts
+                .iter()
+                .map(|account| {
+                    let pubkey = account.pubkey.parse().expect("account pubkey");
+                    if account.is_writable {
+                        solana_transaction::AccountMeta::new(pubkey, account.is_signer)
+                    } else {
+                        solana_transaction::AccountMeta::new_readonly(pubkey, account.is_signer)
+                    }
+                })
+                .collect(),
+            data: BASE64
+                .decode(&expected.instruction_data_base64)
+                .expect("instruction data"),
+        };
+        signed_with_instruction_sequence(payer, &[instruction])
+    }
+
+    #[test]
+    fn verifies_the_exact_signed_revenue_stream_instruction() {
+        let governance_authority = Keypair::new();
+        let request = revenue_stream_cancellation_request(&governance_authority);
+        let expected = compile_revenue_stream_claim_cancellation_instruction(&request)
+            .expect("compile revenue stream cancellation");
+        let signed = signed_revenue_stream_instruction(&expected, &governance_authority);
+        signed
+            .verify_revenue_stream_instruction(&expected)
+            .expect("exact revenue stream instruction must verify");
+
+        let mut wrong_data = expected.clone();
+        wrong_data.instruction_data_base64 = BASE64.encode([0; 16]);
+        assert!(
+            signed
+                .verify_revenue_stream_instruction(&wrong_data)
+                .is_err()
+        );
+
+        let mut wrong_account = expected.clone();
+        wrong_account.accounts.swap(0, 1);
+        assert!(
+            signed
+                .verify_revenue_stream_instruction(&wrong_account)
+                .is_err()
+        );
+
+        let extra = signed_with_instruction_sequence(
+            &governance_authority,
+            &[
+                solana_transaction::Instruction {
+                    program_id: expected.program_id.parse().expect("program id"),
+                    accounts: expected
+                        .accounts
+                        .iter()
+                        .map(|account| {
+                            let pubkey = account.pubkey.parse().expect("account pubkey");
+                            if account.is_writable {
+                                solana_transaction::AccountMeta::new(pubkey, account.is_signer)
+                            } else {
+                                solana_transaction::AccountMeta::new_readonly(
+                                    pubkey,
+                                    account.is_signer,
+                                )
+                            }
+                        })
+                        .collect(),
+                    data: BASE64
+                        .decode(&expected.instruction_data_base64)
+                        .expect("instruction data"),
+                },
+                solana_transaction::Instruction {
+                    program_id: solana_transaction::Address::new_unique(),
+                    accounts: Vec::new(),
+                    data: vec![1],
+                },
+            ],
+        );
+        assert!(extra.verify_revenue_stream_instruction(&expected).is_err());
+
+        let mut not_ready = expected;
+        not_ready.status = "submitted".into();
+        assert!(
+            signed
+                .verify_revenue_stream_instruction(&not_ready)
                 .is_err()
         );
     }

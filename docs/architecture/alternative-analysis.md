@@ -2277,3 +2277,142 @@ workflow, and keep the key out of persistent browser storage.
 | Generate a new key for every submit | Minimal state | Retries can create duplicate durable calculations | Rejected |
 | Persist the key in browser storage | Survives reloads | Retains replay identity and complicates session isolation | Rejected |
 | **In-memory CSPRNG key regenerated on semantic input change** | Stable retries, safe input mutation, no persistence, and plain-language UX | Reload starts a new request identity | **Selected in ADR-0281** |
+
+### Primary UI language and technical disclosure
+
+**Criteria:** keep high-consequence workflows understandable, preserve exact
+audit and support evidence, avoid browser authority, and support WCAG 2.2 AA
+navigation and disclosure semantics.
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Show API, blockchain, and policy terms in every field | Precise for engineers | Increases operator error and cognitive load | Rejected |
+| Remove identifiers and evidence from the UI | Simple first view | Prevents audit and incident response | Rejected |
+| Separate administrator application | Tailored language per audience | Duplicates policy and navigation surfaces | Deferred |
+| **Plain-language primary workflow with progressive technical disclosure** | Understandable tasks, auditable records, one policy surface | Requires copy and accessibility tests | **Selected; see ADR-0282** |
+
+### Continuous revenue streaming scope
+
+**Criteria:** preserve atomic tax and split invariants, keep the settlement hot
+path bounded, support cumulative and corrective tax semantics, prevent a stream
+from becoming an ungoverned token authority, and leave a credible path for a
+future continuous-payout product.
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Continuous on-chain streams as the first settlement authority | Smooth partner payouts and a familiar streaming model | Mutable accrual state, epoch/finality complexity, partial cancellation, tax-window ambiguity, and a larger token-authority surface | Rejected for the first production scope |
+| **Bounded atomic per-transaction split with immutable versioned plans** | Tax, vault deposit, and recipient allocation share one conservation boundary; bounded accounts and deterministic evidence | Payouts occur per settled payment rather than continuously | **Selected for the first production settlement scope; see ADR-0283** |
+| Off-chain accrual ledger with periodic batch payout | Flexible schedules and fewer on-chain accounts | Reintroduces custody/reconciliation ambiguity and delays the authoritative split | Rejected as a settlement authority; may be an integration pattern after finalized evidence |
+
+The word “real-time” in product material therefore means a bounded split at
+the authorized transaction boundary, not an unbounded continuous transfer
+stream. A future stream context must be separately designed, governed, and
+audited.
+
+### Finalized revenue-streaming accrual and release claims
+
+The evaluation material asks for partner streaming, while the current product
+must preserve one authoritative settlement boundary. ADR-0285 selects a pure
+domain ledger that consumes finalized split allocations and prepares bounded,
+single-use release claims. It deliberately does not add a direct transfer
+endpoint or expose an unfinished UI.
+
+| Alternative | Strengths | Risks | Decision |
+| --- | --- | --- | --- |
+| Reuse atomic settlement for each payout | Minimal new code | Does not model accruals or payout windows | Rejected |
+| Off-chain balance with direct transfer | Flexible schedule | Database becomes an unsafe movement authority | Rejected |
+| Mutable on-chain stream first | Continuous payout semantics | Larger authority and tax-correction surface | Rejected for the first implementation slice |
+| **Finalized accrual ledger plus governed release claim** | Finality-bound, replayable, bounded, adapter-friendly | Requires a new context and later chain/UI adapters | **Selected; see ADR-0285** |
+
+The chain boundary is deliberately narrower than the off-chain ledger. A
+bounded plan PDA, finalized-accrual references, and single-use claim PDA are
+selected over reusing the generic vault claim or introducing a continuous
+mutable stream. The program enforces destination, digest, nonce, cap, and
+vault-authority bindings; the proof adapter remains responsible for checking
+finalized chain evidence before the operator signs an accrual or claim.
+See ADR-0286.
+
+Revenue-stream plans bind their immutable chain route at proposal time using
+ADR-0287; this prevents route and account substitution during later claim
+compilation.
+
+Browser E2E execution uses an isolated Compose project with an ephemeral
+database and no host-port publication; see ADR-0288. This preserves real
+service boundaries without reusing developer state or weakening migration
+checksum enforcement.
+
+Revenue-stream signer identity uses an immutable plan subject plus the shared
+wallet-proof boundary with context-qualified roles; see ADR-0289. Browser
+public keys and merchant-side account topology remain forbidden inputs.
+
+### Finalized revenue-accrual proof boundary
+
+The revenue storage model must not treat a caller-constructed accrual as proof
+that its source settlement reached Solana finalized commitment.
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Storage accepts a structurally valid accrual | Small API surface | Caller can self-attest finality and amounts | Rejected |
+| RPC call inside the revenue domain | Direct chain visibility | Breaks pure-domain replay, adds hot-path network variance, and couples tax/revenue logic to providers | Rejected |
+| API trusts provider JSON directly | Low implementation effort | Bypasses bounded indexer validation, provider agreement, and gap handling | Rejected |
+| **Typed finalized indexer projection mapped through a pure proof adapter** | Explicit finality contract, deterministic tests, bounded application boundary | Requires the indexer/reconciliation worker integration | **Selected in ADR-0290** |
+
+### Tax-fact normalization on the hot path
+
+**Criteria:** preserve exact FX normalization and replay binding, avoid an
+allocation in the common no-FX settlement path, keep the calculation API
+read-only, and make the optimization observable through a focused invariant
+test and a representative benchmark.
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Clone normalized facts for every calculation | Simple ownership model and one code path | Copies vectors and strings for every no-FX calculation; directly increases hot-path latency | Rejected |
+| Always allocate a separate normalized facts structure | Makes conversion ownership explicit | Pays the allocation cost even when no conversion is present | Rejected |
+| **Return `Cow` and borrow validated facts when no FX conversion is present** | Zero-copy common path, owned normalized facts only when conversion is required, one semantic boundary | Adds a lifetime-aware return type and an invariant test | **Selected; see ADR-0284** |
+| Maintain separate no-FX and FX calculation implementations | Potentially minimal overhead in each branch | Duplicated tax semantics and higher drift/audit risk | Rejected |
+### Finalized revenue-accrual reconciliation boundary (ADR-0291)
+
+| Criterion | Browser/API supplied allocation | Event-supplied allocation | Storage SQL arithmetic | Typed bounded application assembler |
+| --- | --- | --- | --- | --- |
+| Authority safety | Fail | Fail | Partial | Pass |
+| Deterministic replay | Weak | Partial | Partial | Pass |
+| Shared allocation semantics | N/A | N/A | Risk of drift | Reuses canonical split-plan crate |
+| Latency isolation | Partial | Partial | Weak | Pass; outside signing path |
+| Selected | No | No | No | Yes |
+
+The selected boundary is recorded in ADR-0291.
+
+### Durable revenue-accrual reconciliation jobs (ADR-0292)
+
+| Criterion | Re-scan chain | Hold indexer checkpoint | External broker only | PostgreSQL job in projection transaction |
+| --- | --- | --- | --- | --- |
+| No evidence loss after checkpoint | Partial | Pass | Partial | Pass |
+| Isolation from indexing | Weak | Fail | Pass | Pass |
+| Atomic link to indexed evidence | Weak | Partial | Fail | Pass |
+| Existing operational model | Partial | Partial | New dependency | Reuses bounded leases and PostgreSQL |
+| Selected | No | No | No | Yes |
+
+The selected boundary is recorded in ADR-0292.
+
+### Revenue-stream signed-message verification (ADR-0293)
+
+| Criterion | Browser-supplied digest | Request-field rebuild | Generic transaction inspection | Typed actual-message verifier |
+| --- | --- | --- | --- | --- |
+| Binds proof to wallet-signed bytes | Fail | Partial | Partial | Pass |
+| Prevents extra instructions and account substitution | Fail | Partial | Weak | Pass |
+| Keeps revenue submission bounded | Unknown | Partial | Weak | Pass |
+| Reuses existing coordinator contract | No | No | No | Pass |
+| Selected | No | No | No | Yes |
+
+The selected boundary is recorded in ADR-0293.
+
+### Server-owned revenue payout-destination registry (ADR-0294)
+
+| Criterion | Browser-supplied account | ATA derivation in signing path | Reused merchant destination | Unverified database record | Dedicated finalized-verified route |
+| --- | --- | --- | --- | --- | --- |
+| Account-substitution resistance | Fail | Partial | Fail | Fail | Pass |
+| Hot-path latency isolation | Partial | Fail | Pass | Pass | Pass |
+| Recipient/mint/token binding | Weak | Partial | Fail | Weak | Pass |
+| Replayable operational evidence | Weak | Weak | Partial | Fail | Pass |
+| Token-2022 compatibility boundary | Weak | Weak | Partial | Fail | Pass |
+| Selected | No | No | No | No | **Yes; see ADR-0294** |

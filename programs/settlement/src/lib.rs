@@ -17,6 +17,10 @@ const SPLIT_PLAN_SCHEMA: &[u8] = b"solana-tax-protocol/split-plan/v1";
 const MAX_SPLIT_RECIPIENTS: usize = 8;
 const BASIS_POINTS_DENOMINATOR: u64 = 10_000;
 const MAX_RELEASE_WINDOW_SECONDS: i64 = 90 * 24 * 60 * 60;
+const STREAM_STATUS_PROPOSED: u8 = 1;
+const STREAM_STATUS_APPROVED: u8 = 2;
+const STREAM_STATUS_ACTIVE: u8 = 3;
+const STREAM_STATUS_PAUSED: u8 = 4;
 
 declare_id!("4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi");
 
@@ -444,6 +448,469 @@ pub mod settlement {
             mint: ctx.accounts.claim.mint,
             nonce,
             reference_digest: ctx.accounts.claim.reference_digest,
+            governance_authority: ctx.accounts.governance_authority.key(),
+        });
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn initialize_revenue_stream_plan(
+        ctx: Context<InitializeRevenueStreamPlan>,
+        plan_digest: [u8; 32],
+        policy_digest: [u8; 32],
+        recipient_owner: Pubkey,
+        proposer: Pubkey,
+        approver: Pubkey,
+        operator: Pubkey,
+        start_slot: u64,
+        end_slot: Option<u64>,
+        max_total_atomic: u64,
+        max_claim_atomic: u64,
+    ) -> Result<()> {
+        validate_revenue_stream_plan_inputs(
+            ctx.accounts.governance_authority.key(),
+            recipient_owner,
+            proposer,
+            approver,
+            operator,
+            plan_digest,
+            policy_digest,
+            start_slot,
+            end_slot,
+            max_total_atomic,
+            max_claim_atomic,
+        )?;
+        validate_supported_mint_program(
+            &ctx.accounts.token_program,
+            &ctx.accounts.mint.to_account_info(),
+        )?;
+        validate_revenue_stream_vault(
+            &ctx.accounts.token_program,
+            &ctx.accounts.mint,
+            &ctx.accounts.tax_vault,
+            ctx.accounts.vault_authority.key(),
+            ctx.accounts.merchant.key(),
+        )?;
+        let plan = &mut ctx.accounts.plan;
+        plan.merchant = ctx.accounts.merchant.key();
+        plan.mint = ctx.accounts.mint.key();
+        plan.tax_vault = ctx.accounts.tax_vault.key();
+        plan.recipient_owner = recipient_owner;
+        plan.governance_authority = ctx.accounts.governance_authority.key();
+        plan.proposer = proposer;
+        plan.approver = approver;
+        plan.operator = operator;
+        plan.plan_digest = plan_digest;
+        plan.policy_digest = policy_digest;
+        plan.start_slot = start_slot;
+        plan.end_slot = end_slot;
+        plan.max_total_atomic = max_total_atomic;
+        plan.max_claim_atomic = max_claim_atomic;
+        plan.accrued_total_atomic = 0;
+        plan.reserved_total_atomic = 0;
+        plan.released_total_atomic = 0;
+        plan.next_accrual_nonce = 1;
+        plan.next_claim_nonce = 1;
+        plan.status = STREAM_STATUS_PROPOSED;
+        plan.bump = ctx.bumps.plan;
+        emit!(RevenueStreamPlanCreated {
+            plan: plan.key(),
+            merchant: plan.merchant,
+            mint: plan.mint,
+            recipient_owner,
+            plan_digest,
+            policy_digest,
+            proposer,
+            approver,
+            operator,
+            start_slot,
+            end_slot,
+            max_total_atomic,
+            max_claim_atomic,
+        });
+        Ok(())
+    }
+
+    pub fn approve_revenue_stream_plan(ctx: Context<UpdateRevenueStreamPlan>) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.plan.approver,
+            ctx.accounts.approver.key(),
+            SettlementError::RevenueStreamApproverMismatch
+        );
+        require!(
+            ctx.accounts.plan.status == STREAM_STATUS_PROPOSED,
+            SettlementError::RevenueStreamInvalidState
+        );
+        ctx.accounts.plan.status = STREAM_STATUS_APPROVED;
+        emit!(RevenueStreamPlanStatusChanged {
+            plan: ctx.accounts.plan.key(),
+            status: STREAM_STATUS_APPROVED,
+            actor: ctx.accounts.approver.key(),
+        });
+        Ok(())
+    }
+
+    pub fn activate_revenue_stream_plan(ctx: Context<UpdateRevenueStreamPlan>) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.plan.approver,
+            ctx.accounts.approver.key(),
+            SettlementError::RevenueStreamApproverMismatch
+        );
+        require!(
+            ctx.accounts.plan.status == STREAM_STATUS_APPROVED,
+            SettlementError::RevenueStreamInvalidState
+        );
+        ctx.accounts.plan.status = STREAM_STATUS_ACTIVE;
+        emit!(RevenueStreamPlanStatusChanged {
+            plan: ctx.accounts.plan.key(),
+            status: STREAM_STATUS_ACTIVE,
+            actor: ctx.accounts.approver.key(),
+        });
+        Ok(())
+    }
+
+    pub fn set_revenue_stream_plan_paused(
+        ctx: Context<GovernRevenueStreamPlan>,
+        paused: bool,
+    ) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.plan.governance_authority,
+            ctx.accounts.governance_authority.key(),
+            SettlementError::RevenueStreamGovernanceMismatch
+        );
+        let expected = if paused {
+            STREAM_STATUS_ACTIVE
+        } else {
+            STREAM_STATUS_PAUSED
+        };
+        require!(
+            ctx.accounts.plan.status == expected,
+            SettlementError::RevenueStreamInvalidState
+        );
+        ctx.accounts.plan.status = if paused {
+            STREAM_STATUS_PAUSED
+        } else {
+            STREAM_STATUS_ACTIVE
+        };
+        emit!(RevenueStreamPlanStatusChanged {
+            plan: ctx.accounts.plan.key(),
+            status: ctx.accounts.plan.status,
+            actor: ctx.accounts.governance_authority.key(),
+        });
+        Ok(())
+    }
+
+    pub fn record_revenue_stream_accrual(
+        ctx: Context<RecordRevenueStreamAccrual>,
+        recipient_atomic: u64,
+        finalized_slot: u64,
+        evidence_digest: [u8; 32],
+    ) -> Result<()> {
+        validate_protocol_not_paused(&ctx.accounts.protocol_config)?;
+        let plan = &mut ctx.accounts.plan;
+        require!(
+            plan.status == STREAM_STATUS_ACTIVE,
+            SettlementError::RevenueStreamInvalidState
+        );
+        require_keys_eq!(
+            plan.operator,
+            ctx.accounts.operator.key(),
+            SettlementError::RevenueStreamOperatorMismatch
+        );
+        require_keys_eq!(
+            ctx.accounts.source_receipt.merchant,
+            plan.merchant,
+            SettlementError::RevenueStreamBindingMismatch
+        );
+        require_keys_eq!(
+            ctx.accounts.source_receipt.mint,
+            plan.mint,
+            SettlementError::RevenueStreamBindingMismatch
+        );
+        require!(
+            ctx.accounts.source_receipt.policy_digest == plan.policy_digest,
+            SettlementError::RevenueStreamPolicyMismatch
+        );
+        require!(
+            recipient_atomic > 0 && recipient_atomic <= ctx.accounts.source_receipt.net_atomic,
+            SettlementError::RevenueStreamInvalidAccrual
+        );
+        require!(
+            finalized_slot >= plan.start_slot
+                && plan
+                    .end_slot
+                    .is_none_or(|end_slot| finalized_slot <= end_slot),
+            SettlementError::RevenueStreamOutsideWindow
+        );
+        require!(
+            evidence_digest != [0; 32],
+            SettlementError::RevenueStreamEvidenceRequired
+        );
+        let next_total = plan
+            .accrued_total_atomic
+            .checked_add(recipient_atomic)
+            .ok_or(error!(SettlementError::RevenueStreamArithmeticOverflow))?;
+        require!(
+            next_total <= plan.max_total_atomic,
+            SettlementError::RevenueStreamCapExceeded
+        );
+        let accrual = &mut ctx.accounts.accrual;
+        accrual.plan = plan.key();
+        accrual.source_receipt = ctx.accounts.source_receipt.key();
+        accrual.recipient_atomic = recipient_atomic;
+        accrual.finalized_slot = finalized_slot;
+        accrual.evidence_digest = evidence_digest;
+        accrual.nonce = plan.next_accrual_nonce;
+        accrual.bump = ctx.bumps.accrual;
+        plan.next_accrual_nonce = plan
+            .next_accrual_nonce
+            .checked_add(1)
+            .ok_or(error!(SettlementError::RevenueStreamArithmeticOverflow))?;
+        plan.accrued_total_atomic = next_total;
+        emit!(RevenueStreamAccrualRecorded {
+            plan: plan.key(),
+            accrual: accrual.key(),
+            source_receipt: accrual.source_receipt,
+            recipient_atomic,
+            finalized_slot,
+            evidence_digest,
+            nonce: accrual.nonce,
+        });
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_revenue_stream_claim(
+        ctx: Context<CreateRevenueStreamClaim>,
+        nonce: u64,
+        amount_atomic: u64,
+        claim_digest: [u8; 32],
+        evidence_digest: [u8; 32],
+        execute_after_unix: i64,
+        expires_at_unix: i64,
+    ) -> Result<()> {
+        validate_protocol_not_paused(&ctx.accounts.protocol_config)?;
+        let plan = &mut ctx.accounts.plan;
+        require!(
+            plan.status == STREAM_STATUS_ACTIVE,
+            SettlementError::RevenueStreamInvalidState
+        );
+        require_keys_eq!(
+            plan.operator,
+            ctx.accounts.operator.key(),
+            SettlementError::RevenueStreamOperatorMismatch
+        );
+        require!(
+            nonce == plan.next_claim_nonce,
+            SettlementError::RevenueStreamNonceMismatch
+        );
+        require!(
+            amount_atomic > 0 && amount_atomic <= plan.max_claim_atomic,
+            SettlementError::RevenueStreamInvalidClaim
+        );
+        require!(
+            claim_digest != [0; 32] && evidence_digest != [0; 32],
+            SettlementError::RevenueStreamEvidenceRequired
+        );
+        validate_release_claim_inputs(
+            amount_atomic,
+            claim_digest,
+            execute_after_unix,
+            expires_at_unix,
+            Clock::get()?.unix_timestamp,
+        )?;
+        validate_supported_release_accounts(
+            &ctx.accounts.token_program,
+            &ctx.accounts.mint,
+            &ctx.accounts.tax_vault,
+            &ctx.accounts.destination,
+        )?;
+        require_keys_eq!(
+            ctx.accounts.tax_vault.key(),
+            plan.tax_vault,
+            SettlementError::RevenueStreamVaultMismatch
+        );
+        require_keys_eq!(
+            ctx.accounts.destination.owner,
+            plan.recipient_owner,
+            SettlementError::RevenueStreamRecipientMismatch
+        );
+        let available = plan
+            .accrued_total_atomic
+            .checked_sub(plan.released_total_atomic)
+            .and_then(|value| value.checked_sub(plan.reserved_total_atomic))
+            .ok_or(error!(SettlementError::RevenueStreamArithmeticOverflow))?;
+        require!(
+            amount_atomic <= available,
+            SettlementError::RevenueStreamInsufficientAvailable
+        );
+        let claim = &mut ctx.accounts.claim;
+        claim.plan = plan.key();
+        claim.nonce = nonce;
+        claim.amount_atomic = amount_atomic;
+        claim.destination = ctx.accounts.destination.key();
+        claim.claim_digest = claim_digest;
+        claim.evidence_digest = evidence_digest;
+        claim.execute_after_unix = execute_after_unix;
+        claim.expires_at_unix = expires_at_unix;
+        claim.executed = false;
+        claim.cancelled = false;
+        claim.bump = ctx.bumps.claim;
+        plan.next_claim_nonce = plan
+            .next_claim_nonce
+            .checked_add(1)
+            .ok_or(error!(SettlementError::RevenueStreamArithmeticOverflow))?;
+        plan.reserved_total_atomic = plan
+            .reserved_total_atomic
+            .checked_add(amount_atomic)
+            .ok_or(error!(SettlementError::RevenueStreamArithmeticOverflow))?;
+        emit!(RevenueStreamClaimCreated {
+            plan: plan.key(),
+            claim: claim.key(),
+            nonce,
+            amount_atomic,
+            destination: claim.destination,
+            claim_digest,
+            evidence_digest,
+            execute_after_unix,
+            expires_at_unix,
+            operator: ctx.accounts.operator.key(),
+        });
+        Ok(())
+    }
+
+    pub fn execute_revenue_stream_claim(
+        ctx: Context<ExecuteRevenueStreamClaim>,
+        nonce: u64,
+    ) -> Result<()> {
+        validate_protocol_not_paused(&ctx.accounts.protocol_config)?;
+        let plan = &mut ctx.accounts.plan;
+        require!(
+            plan.status == STREAM_STATUS_ACTIVE || plan.status == STREAM_STATUS_PAUSED,
+            SettlementError::RevenueStreamInvalidState
+        );
+        require_keys_eq!(
+            plan.approver,
+            ctx.accounts.approver.key(),
+            SettlementError::RevenueStreamApproverMismatch
+        );
+        require_keys_eq!(
+            plan.tax_vault,
+            ctx.accounts.tax_vault.key(),
+            SettlementError::RevenueStreamVaultMismatch
+        );
+        require_keys_eq!(
+            plan.recipient_owner,
+            ctx.accounts.destination.owner,
+            SettlementError::RevenueStreamRecipientMismatch
+        );
+        require_keys_eq!(
+            plan.key(),
+            ctx.accounts.claim.plan,
+            SettlementError::RevenueStreamBindingMismatch
+        );
+        require!(
+            ctx.accounts.claim.nonce == nonce
+                && !ctx.accounts.claim.executed
+                && !ctx.accounts.claim.cancelled,
+            SettlementError::RevenueStreamClaimFinalized
+        );
+        require!(
+            Clock::get()?.unix_timestamp >= ctx.accounts.claim.execute_after_unix
+                && Clock::get()?.unix_timestamp <= ctx.accounts.claim.expires_at_unix,
+            SettlementError::RevenueStreamClaimOutsideWindow
+        );
+        validate_supported_release_accounts(
+            &ctx.accounts.token_program,
+            &ctx.accounts.mint,
+            &ctx.accounts.tax_vault,
+            &ctx.accounts.destination,
+        )?;
+        require_keys_eq!(
+            ctx.accounts.tax_vault.owner,
+            ctx.accounts.vault_authority.key(),
+            SettlementError::ReleaseVaultAuthorityMismatch
+        );
+        require_keys_neq!(
+            ctx.accounts.tax_vault.key(),
+            ctx.accounts.destination.key(),
+            SettlementError::AliasedTokenAccounts
+        );
+        require!(
+            ctx.accounts.tax_vault.amount >= ctx.accounts.claim.amount_atomic,
+            SettlementError::RevenueStreamVaultInsufficientFunds
+        );
+        let merchant_key = plan.merchant;
+        let mint_key = plan.mint;
+        let signer_seeds: &[&[u8]] = &[
+            b"vault-authority",
+            merchant_key.as_ref(),
+            mint_key.as_ref(),
+            &[ctx.bumps.vault_authority],
+        ];
+        let transfer_accounts = TransferChecked {
+            from: ctx.accounts.tax_vault.to_account_info(),
+            mint: ctx.accounts.mint.to_account_info(),
+            to: ctx.accounts.destination.to_account_info(),
+            authority: ctx.accounts.vault_authority.to_account_info(),
+        };
+        token_interface::transfer_checked(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.key(),
+                transfer_accounts,
+                &[signer_seeds],
+            ),
+            ctx.accounts.claim.amount_atomic,
+            ctx.accounts.mint.decimals,
+        )?;
+        plan.reserved_total_atomic = plan
+            .reserved_total_atomic
+            .checked_sub(ctx.accounts.claim.amount_atomic)
+            .ok_or(error!(SettlementError::RevenueStreamArithmeticOverflow))?;
+        plan.released_total_atomic = plan
+            .released_total_atomic
+            .checked_add(ctx.accounts.claim.amount_atomic)
+            .ok_or(error!(SettlementError::RevenueStreamArithmeticOverflow))?;
+        ctx.accounts.claim.executed = true;
+        emit!(RevenueStreamClaimExecuted {
+            plan: plan.key(),
+            claim: ctx.accounts.claim.key(),
+            nonce,
+            amount_atomic: ctx.accounts.claim.amount_atomic,
+            destination: ctx.accounts.claim.destination,
+            claim_digest: ctx.accounts.claim.claim_digest,
+            approver: ctx.accounts.approver.key(),
+        });
+        Ok(())
+    }
+
+    pub fn cancel_revenue_stream_claim(
+        ctx: Context<GovernRevenueStreamClaim>,
+        nonce: u64,
+    ) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.plan.governance_authority,
+            ctx.accounts.governance_authority.key(),
+            SettlementError::RevenueStreamGovernanceMismatch
+        );
+        require!(
+            ctx.accounts.claim.nonce == nonce
+                && !ctx.accounts.claim.executed
+                && !ctx.accounts.claim.cancelled,
+            SettlementError::RevenueStreamClaimFinalized
+        );
+        ctx.accounts.plan.reserved_total_atomic = ctx
+            .accounts
+            .plan
+            .reserved_total_atomic
+            .checked_sub(ctx.accounts.claim.amount_atomic)
+            .ok_or(error!(SettlementError::RevenueStreamArithmeticOverflow))?;
+        ctx.accounts.claim.cancelled = true;
+        emit!(RevenueStreamClaimCancelled {
+            plan: ctx.accounts.plan.key(),
+            claim: ctx.accounts.claim.key(),
+            nonce,
+            claim_digest: ctx.accounts.claim.claim_digest,
             governance_authority: ctx.accounts.governance_authority.key(),
         });
         Ok(())
@@ -1531,6 +1998,204 @@ pub struct CancelVaultReleaseClaim<'info> {
 }
 
 #[derive(Accounts)]
+#[instruction(plan_digest: [u8; 32])]
+pub struct InitializeRevenueStreamPlan<'info> {
+    #[account(mut)]
+    pub governance_authority: Signer<'info>,
+    pub merchant: SystemAccount<'info>,
+    pub mint: InterfaceAccount<'info, Mint>,
+    pub token_program: Interface<'info, TokenInterface>,
+    pub tax_vault: InterfaceAccount<'info, TokenAccount>,
+    /// CHECK: constrained by the deterministic vault-authority PDA and used only for validation.
+    #[account(
+        seeds = [b"vault-authority", merchant.key().as_ref(), mint.key().as_ref()],
+        bump,
+    )]
+    pub vault_authority: UncheckedAccount<'info>,
+    #[account(
+        init,
+        payer = governance_authority,
+        space = 8 + RevenueStreamPlan::INIT_SPACE,
+        seeds = [b"revenue-stream-plan", merchant.key().as_ref(), mint.key().as_ref(), &plan_digest],
+        bump,
+    )]
+    pub plan: Account<'info, RevenueStreamPlan>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateRevenueStreamPlan<'info> {
+    pub approver: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [
+            b"revenue-stream-plan",
+            plan.merchant.as_ref(),
+            plan.mint.as_ref(),
+            &plan.plan_digest,
+        ],
+        bump = plan.bump,
+    )]
+    pub plan: Account<'info, RevenueStreamPlan>,
+}
+
+#[derive(Accounts)]
+pub struct GovernRevenueStreamPlan<'info> {
+    pub governance_authority: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [
+            b"revenue-stream-plan",
+            plan.merchant.as_ref(),
+            plan.mint.as_ref(),
+            &plan.plan_digest,
+        ],
+        bump = plan.bump,
+    )]
+    pub plan: Account<'info, RevenueStreamPlan>,
+}
+
+#[derive(Accounts)]
+pub struct RecordRevenueStreamAccrual<'info> {
+    #[account(mut)]
+    pub operator: Signer<'info>,
+    #[account(
+        seeds = [b"protocol-config"],
+        bump = protocol_config.bump,
+    )]
+    pub protocol_config: Account<'info, ProtocolConfig>,
+    #[account(
+        mut,
+        seeds = [
+            b"revenue-stream-plan",
+            plan.merchant.as_ref(),
+            plan.mint.as_ref(),
+            &plan.plan_digest,
+        ],
+        bump = plan.bump,
+    )]
+    pub plan: Account<'info, RevenueStreamPlan>,
+    #[account(
+        seeds = [
+            b"settlement-receipt",
+            source_receipt.merchant.as_ref(),
+            source_receipt.mint.as_ref(),
+            &source_receipt.nonce.to_le_bytes(),
+        ],
+        bump = source_receipt.bump,
+    )]
+    pub source_receipt: Account<'info, SettlementReceipt>,
+    #[account(
+        init,
+        payer = operator,
+        space = 8 + RevenueStreamAccrual::INIT_SPACE,
+        seeds = [b"revenue-stream-accrual", plan.key().as_ref(), source_receipt.key().as_ref()],
+        bump,
+    )]
+    pub accrual: Account<'info, RevenueStreamAccrual>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(nonce: u64)]
+pub struct CreateRevenueStreamClaim<'info> {
+    #[account(mut)]
+    pub operator: Signer<'info>,
+    #[account(
+        seeds = [b"protocol-config"],
+        bump = protocol_config.bump,
+    )]
+    pub protocol_config: Account<'info, ProtocolConfig>,
+    #[account(
+        mut,
+        seeds = [
+            b"revenue-stream-plan",
+            plan.merchant.as_ref(),
+            plan.mint.as_ref(),
+            &plan.plan_digest,
+        ],
+        bump = plan.bump,
+    )]
+    pub plan: Account<'info, RevenueStreamPlan>,
+    pub mint: InterfaceAccount<'info, Mint>,
+    pub token_program: Interface<'info, TokenInterface>,
+    pub tax_vault: InterfaceAccount<'info, TokenAccount>,
+    pub destination: InterfaceAccount<'info, TokenAccount>,
+    #[account(
+        init,
+        payer = operator,
+        space = 8 + RevenueStreamClaim::INIT_SPACE,
+        seeds = [b"revenue-stream-claim", plan.key().as_ref(), &nonce.to_le_bytes()],
+        bump,
+    )]
+    pub claim: Account<'info, RevenueStreamClaim>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(nonce: u64)]
+pub struct ExecuteRevenueStreamClaim<'info> {
+    pub approver: Signer<'info>,
+    #[account(
+        seeds = [b"protocol-config"],
+        bump = protocol_config.bump,
+    )]
+    pub protocol_config: Account<'info, ProtocolConfig>,
+    #[account(
+        mut,
+        seeds = [
+            b"revenue-stream-plan",
+            plan.merchant.as_ref(),
+            plan.mint.as_ref(),
+            &plan.plan_digest,
+        ],
+        bump = plan.bump,
+    )]
+    pub plan: Account<'info, RevenueStreamPlan>,
+    pub mint: InterfaceAccount<'info, Mint>,
+    pub token_program: Interface<'info, TokenInterface>,
+    #[account(mut)]
+    pub tax_vault: InterfaceAccount<'info, TokenAccount>,
+    /// CHECK: constrained by the deterministic vault-authority PDA and used as the CPI signer.
+    #[account(
+        seeds = [b"vault-authority", plan.merchant.as_ref(), plan.mint.as_ref()],
+        bump,
+    )]
+    pub vault_authority: UncheckedAccount<'info>,
+    #[account(mut)]
+    pub destination: InterfaceAccount<'info, TokenAccount>,
+    #[account(
+        mut,
+        seeds = [b"revenue-stream-claim", plan.key().as_ref(), &nonce.to_le_bytes()],
+        bump = claim.bump,
+    )]
+    pub claim: Account<'info, RevenueStreamClaim>,
+}
+
+#[derive(Accounts)]
+#[instruction(nonce: u64)]
+pub struct GovernRevenueStreamClaim<'info> {
+    pub governance_authority: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [
+            b"revenue-stream-plan",
+            plan.merchant.as_ref(),
+            plan.mint.as_ref(),
+            &plan.plan_digest,
+        ],
+        bump = plan.bump,
+    )]
+    pub plan: Account<'info, RevenueStreamPlan>,
+    #[account(
+        mut,
+        seeds = [b"revenue-stream-claim", plan.key().as_ref(), &nonce.to_le_bytes()],
+        bump = claim.bump,
+    )]
+    pub claim: Account<'info, RevenueStreamClaim>,
+}
+
+#[derive(Accounts)]
 pub struct UpdateProtocolConfig<'info> {
     pub authority: Signer<'info>,
     #[account(
@@ -2058,6 +2723,60 @@ pub struct ReleaseClaim {
 
 #[account]
 #[derive(InitSpace)]
+pub struct RevenueStreamPlan {
+    pub merchant: Pubkey,
+    pub mint: Pubkey,
+    pub tax_vault: Pubkey,
+    pub recipient_owner: Pubkey,
+    pub governance_authority: Pubkey,
+    pub proposer: Pubkey,
+    pub approver: Pubkey,
+    pub operator: Pubkey,
+    pub plan_digest: [u8; 32],
+    pub policy_digest: [u8; 32],
+    pub start_slot: u64,
+    pub end_slot: Option<u64>,
+    pub max_total_atomic: u64,
+    pub max_claim_atomic: u64,
+    pub accrued_total_atomic: u64,
+    pub reserved_total_atomic: u64,
+    pub released_total_atomic: u64,
+    pub next_accrual_nonce: u64,
+    pub next_claim_nonce: u64,
+    pub status: u8,
+    pub bump: u8,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct RevenueStreamAccrual {
+    pub plan: Pubkey,
+    pub source_receipt: Pubkey,
+    pub recipient_atomic: u64,
+    pub finalized_slot: u64,
+    pub evidence_digest: [u8; 32],
+    pub nonce: u64,
+    pub bump: u8,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct RevenueStreamClaim {
+    pub plan: Pubkey,
+    pub nonce: u64,
+    pub amount_atomic: u64,
+    pub destination: Pubkey,
+    pub claim_digest: [u8; 32],
+    pub evidence_digest: [u8; 32],
+    pub execute_after_unix: i64,
+    pub expires_at_unix: i64,
+    pub executed: bool,
+    pub cancelled: bool,
+    pub bump: u8,
+}
+
+#[account]
+#[derive(InitSpace)]
 pub struct SettlementReceipt {
     pub payer: Pubkey,
     pub merchant: Pubkey,
@@ -2282,6 +3001,75 @@ pub struct VaultReleaseClaimCancelled {
     pub mint: Pubkey,
     pub nonce: u64,
     pub reference_digest: [u8; 32],
+    pub governance_authority: Pubkey,
+}
+
+#[event]
+pub struct RevenueStreamPlanCreated {
+    pub plan: Pubkey,
+    pub merchant: Pubkey,
+    pub mint: Pubkey,
+    pub recipient_owner: Pubkey,
+    pub plan_digest: [u8; 32],
+    pub policy_digest: [u8; 32],
+    pub proposer: Pubkey,
+    pub approver: Pubkey,
+    pub operator: Pubkey,
+    pub start_slot: u64,
+    pub end_slot: Option<u64>,
+    pub max_total_atomic: u64,
+    pub max_claim_atomic: u64,
+}
+
+#[event]
+pub struct RevenueStreamPlanStatusChanged {
+    pub plan: Pubkey,
+    pub status: u8,
+    pub actor: Pubkey,
+}
+
+#[event]
+pub struct RevenueStreamAccrualRecorded {
+    pub plan: Pubkey,
+    pub accrual: Pubkey,
+    pub source_receipt: Pubkey,
+    pub recipient_atomic: u64,
+    pub finalized_slot: u64,
+    pub evidence_digest: [u8; 32],
+    pub nonce: u64,
+}
+
+#[event]
+pub struct RevenueStreamClaimCreated {
+    pub plan: Pubkey,
+    pub claim: Pubkey,
+    pub nonce: u64,
+    pub amount_atomic: u64,
+    pub destination: Pubkey,
+    pub claim_digest: [u8; 32],
+    pub evidence_digest: [u8; 32],
+    pub execute_after_unix: i64,
+    pub expires_at_unix: i64,
+    pub operator: Pubkey,
+}
+
+#[event]
+pub struct RevenueStreamClaimExecuted {
+    pub plan: Pubkey,
+    pub claim: Pubkey,
+    pub nonce: u64,
+    pub amount_atomic: u64,
+    pub destination: Pubkey,
+    pub claim_digest: [u8; 32],
+    pub approver: Pubkey,
+}
+
+#[event]
+pub struct RevenueStreamClaimCancelled {
+    pub plan: Pubkey,
+    pub claim: Pubkey,
+    pub nonce: u64,
+    pub claim_digest: [u8; 32],
     pub governance_authority: Pubkey,
 }
 
@@ -2925,6 +3713,98 @@ fn validate_release_claim_inputs(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn validate_revenue_stream_plan_inputs(
+    governance_authority: Pubkey,
+    recipient_owner: Pubkey,
+    proposer: Pubkey,
+    approver: Pubkey,
+    operator: Pubkey,
+    plan_digest: [u8; 32],
+    policy_digest: [u8; 32],
+    start_slot: u64,
+    end_slot: Option<u64>,
+    max_total_atomic: u64,
+    max_claim_atomic: u64,
+) -> Result<()> {
+    require!(
+        governance_authority != Pubkey::default()
+            && recipient_owner != Pubkey::default()
+            && proposer != Pubkey::default()
+            && approver != Pubkey::default()
+            && operator != Pubkey::default(),
+        SettlementError::InvalidRevenueStreamAuthority
+    );
+    require!(
+        governance_authority != proposer
+            && governance_authority != approver
+            && governance_authority != operator
+            && proposer != approver
+            && proposer != operator
+            && approver != operator,
+        SettlementError::InvalidRevenueStreamAuthority
+    );
+    require!(
+        plan_digest != [0; 32] && policy_digest != [0; 32],
+        SettlementError::RevenueStreamEvidenceRequired
+    );
+    require!(
+        start_slot > 0 && end_slot.is_none_or(|end| end >= start_slot),
+        SettlementError::RevenueStreamInvalidWindow
+    );
+    require!(
+        max_total_atomic > 0 && max_claim_atomic > 0 && max_claim_atomic <= max_total_atomic,
+        SettlementError::RevenueStreamInvalidAmount
+    );
+    Ok(())
+}
+
+fn validate_revenue_stream_vault(
+    token_program: &Interface<'_, TokenInterface>,
+    mint: &InterfaceAccount<'_, Mint>,
+    tax_vault: &InterfaceAccount<'_, TokenAccount>,
+    vault_authority: Pubkey,
+    merchant: Pubkey,
+) -> Result<()> {
+    let mint_info = mint.to_account_info();
+    let vault_info = tax_vault.to_account_info();
+    require_keys_eq!(
+        tax_vault.mint,
+        mint.key(),
+        SettlementError::TaxVaultMintMismatch
+    );
+    require_keys_eq!(
+        tax_vault.owner,
+        vault_authority,
+        SettlementError::ReleaseVaultAuthorityMismatch
+    );
+    let (expected_authority, _) = Pubkey::find_program_address(
+        &[b"vault-authority", merchant.as_ref(), mint.key().as_ref()],
+        &crate::ID,
+    );
+    require_keys_eq!(
+        expected_authority,
+        vault_authority,
+        SettlementError::ReleaseVaultAuthorityMismatch
+    );
+    require_keys_eq!(
+        *vault_info.owner,
+        token_program.key(),
+        SettlementError::TokenProgramMismatch
+    );
+    require_keys_eq!(
+        *mint_info.owner,
+        token_program.key(),
+        SettlementError::TokenProgramMismatch
+    );
+    validate_supported_token_layout(
+        mint_info.data_len(),
+        vault_info.data_len(),
+        vault_info.data_len(),
+        vault_info.data_len(),
+    )
+}
+
 fn validate_supported_release_accounts(
     token_program: &Interface<'_, TokenInterface>,
     mint: &InterfaceAccount<'_, Mint>,
@@ -3207,6 +4087,50 @@ pub enum SettlementError {
     AdjustmentTaxVaultInsufficientFunds,
     #[msg("adjustment refund source does not have enough funds")]
     AdjustmentRefundSourceInsufficientFunds,
+    #[msg("revenue stream authorities must be non-default and pairwise distinct")]
+    InvalidRevenueStreamAuthority,
+    #[msg("revenue stream plan state does not permit this operation")]
+    RevenueStreamInvalidState,
+    #[msg("revenue stream governance authority does not match the signer")]
+    RevenueStreamGovernanceMismatch,
+    #[msg("revenue stream approver does not match the plan")]
+    RevenueStreamApproverMismatch,
+    #[msg("revenue stream operator does not match the plan")]
+    RevenueStreamOperatorMismatch,
+    #[msg("revenue stream plan, claim, or receipt binding does not match")]
+    RevenueStreamBindingMismatch,
+    #[msg("revenue stream policy digest does not match the source receipt")]
+    RevenueStreamPolicyMismatch,
+    #[msg("revenue stream evidence digest is required")]
+    RevenueStreamEvidenceRequired,
+    #[msg("revenue stream plan window is invalid")]
+    RevenueStreamInvalidWindow,
+    #[msg("revenue stream amount or cap is invalid")]
+    RevenueStreamInvalidAmount,
+    #[msg("revenue stream accrual is invalid")]
+    RevenueStreamInvalidAccrual,
+    #[msg("revenue stream accrual is outside its plan window")]
+    RevenueStreamOutsideWindow,
+    #[msg("revenue stream lifetime cap was exceeded")]
+    RevenueStreamCapExceeded,
+    #[msg("revenue stream claim nonce does not match the next plan nonce")]
+    RevenueStreamNonceMismatch,
+    #[msg("revenue stream claim is invalid")]
+    RevenueStreamInvalidClaim,
+    #[msg("revenue stream claim is already finalized")]
+    RevenueStreamClaimFinalized,
+    #[msg("revenue stream claim is outside its execution window")]
+    RevenueStreamClaimOutsideWindow,
+    #[msg("revenue stream vault does not match the plan")]
+    RevenueStreamVaultMismatch,
+    #[msg("revenue stream destination is not owned by the configured recipient")]
+    RevenueStreamRecipientMismatch,
+    #[msg("revenue stream has insufficient available balance")]
+    RevenueStreamInsufficientAvailable,
+    #[msg("revenue stream vault does not have enough funds")]
+    RevenueStreamVaultInsufficientFunds,
+    #[msg("revenue stream arithmetic overflowed")]
+    RevenueStreamArithmeticOverflow,
 }
 
 fn validate_registration(
@@ -3303,6 +4227,112 @@ mod tests {
     fn adjustment_delta_rejects_positive_refund_and_zero_evidence() {
         assert!(validate_adjustment_delta(1, 0, 100, 0, 25, 0, 75).is_err());
         assert!(validate_adjustment_delta(1, 1, 0, 0, 0, 0, 0).is_err());
+    }
+
+    #[test]
+    fn revenue_stream_plan_requires_distinct_authorities_and_bounded_amounts() {
+        let governance = Pubkey::new_unique();
+        let recipient = Pubkey::new_unique();
+        let proposer = Pubkey::new_unique();
+        let approver = Pubkey::new_unique();
+        let operator = Pubkey::new_unique();
+        let valid = validate_revenue_stream_plan_inputs(
+            governance,
+            recipient,
+            proposer,
+            approver,
+            operator,
+            [1; 32],
+            [2; 32],
+            10,
+            Some(20),
+            1_000,
+            100,
+        );
+        assert!(valid.is_ok());
+
+        assert!(
+            validate_revenue_stream_plan_inputs(
+                governance,
+                recipient,
+                proposer,
+                proposer,
+                operator,
+                [1; 32],
+                [2; 32],
+                10,
+                Some(20),
+                1_000,
+                100,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_revenue_stream_plan_inputs(
+                governance,
+                recipient,
+                proposer,
+                approver,
+                operator,
+                [0; 32],
+                [2; 32],
+                10,
+                Some(20),
+                1_000,
+                100,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_revenue_stream_plan_inputs(
+                governance,
+                recipient,
+                proposer,
+                approver,
+                operator,
+                [1; 32],
+                [2; 32],
+                20,
+                Some(10),
+                1_000,
+                100,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_revenue_stream_plan_inputs(
+                governance,
+                recipient,
+                proposer,
+                approver,
+                operator,
+                [1; 32],
+                [2; 32],
+                10,
+                Some(20),
+                100,
+                101,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn revenue_stream_plan_accepts_open_window_with_nonzero_digests() {
+        let result = validate_revenue_stream_plan_inputs(
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            [7; 32],
+            [8; 32],
+            1,
+            None,
+            u64::MAX,
+            u64::MAX,
+        );
+        assert!(result.is_ok());
     }
 
     #[test]

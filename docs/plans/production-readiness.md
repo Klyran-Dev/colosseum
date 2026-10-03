@@ -12,6 +12,29 @@ for successful and failed CI runs with bounded public-safe artifacts. This
 improves reviewability of the synthetic service boundary but does not replace
 Linux validator, live-provider, production-SLO, identity, or legal evidence.
 
+On 2026-10-04, the current worktree passed `make check`, including the Rust
+workspace, web tests/typecheck/build, security scan, Compose contracts,
+observability checks, migration checks, and runtime identity/provider reload
+contracts. It also passed `make integration-check` with concurrent submission
+fencing, ambiguous-provider reconciliation, process-crash recovery, immutable
+rule rollback, and finalized adjustment evidence. These are local Docker
+evidence gates only; they do not close the Linux validator, live provider,
+staging identity, HSM/KMS, legal, or regional SLO gates.
+
+The final production UI language and location-verification disclosure changes
+also passed `make web-browser-check`: all 17 real-browser journeys passed,
+including the WCAG A/AA audit workspaces, keyboard and responsive behavior,
+wallet rejection, expired-quote, evidence handoff, and fail-closed API states.
+This automated browser evidence does not replace manual assistive-technology,
+legal/tax, live-wallet, or staging identity review.
+
+The 2026-10-03 native arm64 tax-engine benchmark after ADR-0284 measured
+uncached calculation at 1.4336–1.4431 microseconds, compiled calculation at
+669.14–673.97 nanoseconds, and the 64-line/16-component document workload at
+256.24–257.71 microseconds. The zero-copy normalization fix improved the
+comparison for those calculation workloads; Linux/amd64, service, regional,
+and production SLO evidence remain separate gates.
+
 ADR-0065 now provides an executable validator-backed conformance harness and a
 Dockerized SBF build path. The harness is a release-gate implementation, not
 evidence by itself: the localnet boxes below remain unchecked until the pinned

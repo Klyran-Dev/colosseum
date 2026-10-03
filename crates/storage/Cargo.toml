@@ -18,6 +18,7 @@ jurisdiction = { path = "../jurisdiction" }
 indexer.workspace = true
 policy = { path = "../policy" }
 refund-workflow = { path = "../refund-workflow" }
+revenue-streaming = { path = "../revenue-streaming" }
 settlement-client = { path = "../settlement-client" }
 settlement-coordinator = { path = "../settlement-coordinator" }
 solana-pubkey.workspace = true

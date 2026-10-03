@@ -9,6 +9,7 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [Domain model and bounded contexts](architecture/domain-model.md)
 - [Refund Movement bounded context](adr/0175-durable-refund-claim-execute-intents.md)
 - [Tier-1 tax engine](architecture/tax-engine.md)
+- [Revenue Streaming bounded context](architecture/revenue-streaming.md)
 - [Server-owned FX evidence bounded context](architecture/fx-evidence.md)
 - [FX provider policy and issuance boundary](adr/0246-fx-provider-policy-and-issuance.md)
 - [FX provider policy snapshot lifecycle](adr/0247-fx-provider-policy-snapshot-reload.md)

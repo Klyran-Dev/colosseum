@@ -65,12 +65,12 @@ export default function RuleWorkbench({ draft, onChange }: RuleWorkbenchProps) {
     <section className="rule-workbench" aria-labelledby="rule-workbench-heading">
       <div className="workbench-heading">
         <div>
-          <p className="eyebrow">Structured Tier-1 authoring</p>
-          <h3 id="rule-workbench-heading">Rule components and semantics</h3>
+          <p className="eyebrow">Tax rule builder</p>
+          <h3 id="rule-workbench-heading">How the tax is calculated</h3>
         </div>
-        <span className="status-pill">Server validates</span>
+        <span className="status-pill">Checked before publishing</span>
       </div>
-      <p className="evidence-note">Build the canonical rule document from explicit controls. Rates and money remain decimal strings; this browser does not calculate tax or publish policy.</p>
+      <p className="evidence-note">Set the tax base, rate, bands, credits, limits, exemptions, and rounding rules. The service checks the complete rule before it can be reviewed or published.</p>
 
       <div className="workbench-components">
         {draft.components.map((component, componentIndex) => {
@@ -79,10 +79,10 @@ export default function RuleWorkbench({ draft, onChange }: RuleWorkbenchProps) {
             <fieldset className="workbench-component" key={`${component.id}-${componentIndex}`}>
               <legend>Component {componentIndex + 1}</legend>
               <div className="form-grid">
-                <label><span>Component ID</span><input value={component.id} onChange={(event) => onChange(updateComponent(draft, componentIndex, { id: event.target.value }))} autoComplete="off" /></label>
-                <label><span>Display label</span><input value={component.label} onChange={(event) => onChange(updateComponent(draft, componentIndex, { label: event.target.value }))} /></label>
+                <label><span>Internal component name</span><input value={component.id} onChange={(event) => onChange(updateComponent(draft, componentIndex, { id: event.target.value }))} autoComplete="off" /></label>
+                <label><span>Customer-facing label</span><input value={component.label} onChange={(event) => onChange(updateComponent(draft, componentIndex, { label: event.target.value }))} /></label>
                 <div className="full-field">
-                  <span className="field-label">Tax-base sources</span>
+                  <span className="field-label">What amount is taxed?</span>
                   <div className="workbench-source-list">
                     {component.baseSources.map((source, sourceIndex) => (
                       <div className="workbench-inline-row" key={`${source}-${sourceIndex}`}>
@@ -94,13 +94,13 @@ export default function RuleWorkbench({ draft, onChange }: RuleWorkbenchProps) {
                   <button type="button" className="secondary-button" onClick={() => onChange(updateComponent(draft, componentIndex, { baseSources: [...component.baseSources, "Net"] }))} disabled={component.baseSources.length >= 128}>Add base source</button>
                   <small className="field-help">Choose another component to model tax-on-tax or cascading bases. The server resolves dependency order and rejects cycles.</small>
                 </div>
-                <label><span>Rate model</span><select value={component.rateMode} onChange={(event) => onChange(updateComponent(draft, componentIndex, { rateMode: event.target.value as RuleComponentDraft["rateMode"] }))}><option value="flat">Flat rate</option><option value="progressive">Progressive brackets</option></select></label>
-                <label><span>Price mode</span><select value={component.priceMode} onChange={(event) => onChange(updateComponent(draft, componentIndex, { priceMode: event.target.value as RuleComponentDraft["priceMode"] }))}><option value="Exclusive">Exclusive</option><option value="Inclusive">Inclusive</option></select></label>
+                <label><span>How the rate changes</span><select value={component.rateMode} onChange={(event) => onChange(updateComponent(draft, componentIndex, { rateMode: event.target.value as RuleComponentDraft["rateMode"] }))}><option value="flat">One rate</option><option value="progressive">Progressive rate bands</option></select></label>
+                <label><span>How the price is shown</span><select value={component.priceMode} onChange={(event) => onChange(updateComponent(draft, componentIndex, { priceMode: event.target.value as RuleComponentDraft["priceMode"] }))}><option value="Exclusive">Tax added on top</option><option value="Inclusive">Tax included in price</option></select></label>
                 {component.rateMode === "flat" ? <>
-                  <label><span>Rate numerator</span><input inputMode="numeric" value={component.flatNumerator} onChange={(event) => onChange(updateComponent(draft, componentIndex, { flatNumerator: event.target.value }))} /></label>
-                  <label><span>Rate denominator</span><input inputMode="numeric" value={component.flatDenominator} onChange={(event) => onChange(updateComponent(draft, componentIndex, { flatDenominator: event.target.value }))} /></label>
+                  <label><span>Rate value</span><input inputMode="numeric" value={component.flatNumerator} onChange={(event) => onChange(updateComponent(draft, componentIndex, { flatNumerator: event.target.value }))} /></label>
+                  <label><span>Rate scale</span><input inputMode="numeric" value={component.flatDenominator} onChange={(event) => onChange(updateComponent(draft, componentIndex, { flatDenominator: event.target.value }))} /></label>
                 </> : <div className="full-field">
-                  <span className="field-label">Progressive brackets</span>
+                  <span className="field-label">Progressive rate bands</span>
                   <div className="bracket-list">
                     {component.brackets.map((bracket, bracketIndex) => <div className="bracket-row" key={`${bracket.lowerAtomic}-${bracketIndex}`}>
                       <label><span>Lower amount</span><input inputMode="numeric" value={bracket.lowerAtomic} onChange={(event) => onChange(updateBracket(draft, componentIndex, bracketIndex, { lowerAtomic: event.target.value }))} /></label>
@@ -117,20 +117,20 @@ export default function RuleWorkbench({ draft, onChange }: RuleWorkbenchProps) {
                   }} disabled={component.brackets.length >= 128}>Add bracket</button>
                   <small className="field-help">Brackets must start at zero, remain contiguous, and have only a final open-ended row.</small>
                 </div>}
-                <label><span>Tax credit amount</span><input inputMode="numeric" value={component.creditAtomic} onChange={(event) => onChange(updateComponent(draft, componentIndex, { creditAtomic: event.target.value }))} /></label>
-                <label><span>Minimum tax amount (optional)</span><input inputMode="numeric" value={component.floorAtomic} onChange={(event) => onChange(updateComponent(draft, componentIndex, { floorAtomic: event.target.value }))} placeholder="No minimum" /></label>
-                <label><span>Maximum tax amount (optional)</span><input inputMode="numeric" value={component.capAtomic} onChange={(event) => onChange(updateComponent(draft, componentIndex, { capAtomic: event.target.value }))} placeholder="No maximum" /></label>
-                <label><span>Rounding / truncation</span><select value={component.roundingMode} onChange={(event) => onChange(updateComponent(draft, componentIndex, { roundingMode: event.target.value as RuleComponentDraft["roundingMode"] }))}><option value="Floor">Floor / truncate</option><option value="Ceil">Ceil</option><option value="HalfUp">Half up</option><option value="HalfEven">Half even</option><option value="AwayFromZero">Away from zero</option></select></label>
-                <label><span>Rounding scope</span><select value={component.roundingScope} onChange={(event) => onChange(updateComponent(draft, componentIndex, { roundingScope: event.target.value as RuleComponentDraft["roundingScope"] }))}><option value="Component">Each component</option><option value="Settlement">Complete settlement</option><option value="Line">Each invoice line</option><option value="Invoice">Complete invoice</option></select></label>
-                <label><span>Rounding increment</span><input inputMode="numeric" value={component.roundingQuantumAtomic} onChange={(event) => onChange(updateComponent(draft, componentIndex, { roundingQuantumAtomic: event.target.value }))} /></label>
+                <label><span>Tax credit</span><input inputMode="numeric" value={component.creditAtomic} onChange={(event) => onChange(updateComponent(draft, componentIndex, { creditAtomic: event.target.value }))} /></label>
+                <label><span>Minimum tax (optional)</span><input inputMode="numeric" value={component.floorAtomic} onChange={(event) => onChange(updateComponent(draft, componentIndex, { floorAtomic: event.target.value }))} placeholder="No minimum" /></label>
+                <label><span>Maximum tax (optional)</span><input inputMode="numeric" value={component.capAtomic} onChange={(event) => onChange(updateComponent(draft, componentIndex, { capAtomic: event.target.value }))} placeholder="No maximum" /></label>
+                <label><span>How amounts are rounded</span><select value={component.roundingMode} onChange={(event) => onChange(updateComponent(draft, componentIndex, { roundingMode: event.target.value as RuleComponentDraft["roundingMode"] }))}><option value="Floor">Down / truncate</option><option value="Ceil">Up</option><option value="HalfUp">Nearest, ties up</option><option value="HalfEven">Nearest, ties to even</option><option value="AwayFromZero">Away from zero</option></select></label>
+                <label><span>When rounding happens</span><select value={component.roundingScope} onChange={(event) => onChange(updateComponent(draft, componentIndex, { roundingScope: event.target.value as RuleComponentDraft["roundingScope"] }))}><option value="Component">For each tax</option><option value="Settlement">For the full payment</option><option value="Line">For each invoice line</option><option value="Invoice">For the full invoice</option></select></label>
+                <label><span>Smallest tax unit</span><input inputMode="numeric" value={component.roundingQuantumAtomic} onChange={(event) => onChange(updateComponent(draft, componentIndex, { roundingQuantumAtomic: event.target.value }))} /></label>
                 <small className="field-help full-field">Settlement rounds across one aggregate. Line rounds within each line. Invoice rounds across the complete document. These scopes are conserving and deterministic, but tax-on-tax dependencies must use each-component rounding.</small>
                 <small className="field-help full-field">Use a positive atomic quantum to make decimal-scale truncation explicit; 1 preserves one-atomic-unit precision.</small>
                 <div className="full-field workbench-threshold">
-                  <label className="checkbox-control"><span>Enable threshold semantics</span><input type="checkbox" checked={component.thresholdEnabled} onChange={(event) => onChange(updateComponent(draft, componentIndex, { thresholdEnabled: event.target.checked }))} /></label>
+                  <label className="checkbox-control"><span>Use a threshold</span><input type="checkbox" checked={component.thresholdEnabled} onChange={(event) => onChange(updateComponent(draft, componentIndex, { thresholdEnabled: event.target.checked }))} /></label>
                   {component.thresholdEnabled && <div className="form-grid">
                     <label><span>Threshold amount</span><input inputMode="numeric" value={component.thresholdAtomic} onChange={(event) => onChange(updateComponent(draft, componentIndex, { thresholdAtomic: event.target.value }))} /></label>
-                    <label><span>Threshold basis</span><select value={component.thresholdBasis} onChange={(event) => onChange(updateComponent(draft, componentIndex, { thresholdBasis: event.target.value as RuleComponentDraft["thresholdBasis"] }))}><option value="PerTransaction">Per transaction</option><option value="CumulativePeriod">Cumulative period</option></select></label>
-                    <label><span>Threshold behavior</span><select value={component.thresholdMode} onChange={(event) => onChange(updateComponent(draft, componentIndex, { thresholdMode: event.target.value as RuleComponentDraft["thresholdMode"] }))}><option value="ExemptUpTo">Exempt up to</option><option value="TriggerAt">Trigger at</option></select></label>
+                    <label><span>Threshold applies per</span><select value={component.thresholdBasis} onChange={(event) => onChange(updateComponent(draft, componentIndex, { thresholdBasis: event.target.value as RuleComponentDraft["thresholdBasis"] }))}><option value="PerTransaction">Each transaction</option><option value="CumulativePeriod">A running period total</option></select></label>
+                    <label><span>What happens at the threshold</span><select value={component.thresholdMode} onChange={(event) => onChange(updateComponent(draft, componentIndex, { thresholdMode: event.target.value as RuleComponentDraft["thresholdMode"] }))}><option value="ExemptUpTo">Exempt up to this amount</option><option value="TriggerAt">Apply after reaching this amount</option></select></label>
                   </div>}
                   <small className="field-help">Inclusive thresholds require a separately versioned equation and are rejected by DSL v1.</small>
                 </div>
@@ -147,7 +147,7 @@ export default function RuleWorkbench({ draft, onChange }: RuleWorkbenchProps) {
         {errors.length === 0 ? <p className="inline-success">The structured document is internally consistent and ready for server validation.</p> : <div className="inline-warning"><strong>Resolve before submitting</strong><ul>{errors.map((error) => <li key={error}>{error}</li>)}</ul></div>}
       </div>
       <details className="workbench-preview">
-        <summary>Preview canonical RuleSet JSON</summary>
+        <summary>View the exact rule document</summary>
         {generated ? <pre>{generated}</pre> : <p className="inline-warning">The document preview is unavailable until the structured fields are valid.</p>}
       </details>
     </section>

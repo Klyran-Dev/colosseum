@@ -6,12 +6,16 @@
 use indexer::{
     JsonRpcTransport, MAX_PROVIDER_ATTEMPTS, MAX_ROUTE_RPC_RESULT_BYTES,
     RefundFundingTopologyConfig, RefundFundingTopologyVerification, RefundFundingVerificationError,
-    ReqwestJsonRpcTransport, RouteVerificationError, SettlementRouteConfig,
-    SettlementRouteVerification, verify_refund_funding_topology, verify_settlement_route,
+    ReqwestJsonRpcTransport, RevenueStreamDestinationRouteConfig,
+    RevenueStreamDestinationRouteVerification, RevenueStreamDestinationVerificationError,
+    RouteVerificationError, SettlementRouteConfig, SettlementRouteVerification,
+    verify_refund_funding_topology, verify_revenue_stream_destination_route,
+    verify_settlement_route,
 };
 use std::{env, sync::Arc, time::Duration};
 use storage::{
-    DEFAULT_POOL_WAIT_TIMEOUT, PgStore, SettlementRouteVerificationCandidate, StorageError,
+    DEFAULT_POOL_WAIT_TIMEOUT, PgStore, RevenueStreamDestinationRouteVerificationCandidate,
+    SettlementRouteVerificationCandidate, StorageError,
 };
 use thiserror::Error;
 use tokio::time::timeout;
@@ -152,6 +156,8 @@ pub enum RouteVerifierError {
     Verification(#[from] RouteVerificationError),
     #[error("refund funding verifier account proof failed: {0}")]
     RefundFundingVerification(#[from] RefundFundingVerificationError),
+    #[error("revenue stream destination verifier account proof failed: {0}")]
+    RevenueStreamDestinationVerification(#[from] RevenueStreamDestinationVerificationError),
     #[error("all configured RPC providers failed: {0}")]
     ProvidersExhausted(String),
 }
@@ -301,6 +307,48 @@ pub async fn verify_refund_funding_once(
     Ok(summary)
 }
 
+pub async fn verify_revenue_stream_destinations_once(
+    store: &PgStore,
+    transports: &[Arc<dyn JsonRpcTransport>],
+    batch_size: usize,
+    rpc_timeout: Duration,
+) -> Result<VerificationSummary, RouteVerifierError> {
+    validate_verifier_bounds(transports, batch_size, rpc_timeout)?;
+    let candidates = store
+        .list_revenue_stream_destination_routes_for_verification(batch_size)
+        .await?;
+    let mut summary = VerificationSummary {
+        examined: candidates.len(),
+        ..VerificationSummary::default()
+    };
+    for candidate in candidates {
+        let route = destination_route_config(&candidate);
+        match verify_revenue_stream_destination_with_failover(transports, &route, rpc_timeout).await
+        {
+            Ok(verification) => match store
+                .activate_revenue_stream_destination_route(
+                    candidate.merchant_id,
+                    candidate.id,
+                    &verification,
+                )
+                .await
+            {
+                Ok(true) => summary.activated += 1,
+                Ok(false) => summary.already_active += 1,
+                Err(error) => {
+                    summary.failed += 1;
+                    tracing::warn!(route_id = %candidate.id, %error, "revenue destination verification evidence could not be activated");
+                }
+            },
+            Err(error) => {
+                summary.failed += 1;
+                tracing::warn!(route_id = %candidate.id, %error, "revenue destination account verification failed closed");
+            }
+        }
+    }
+    Ok(summary)
+}
+
 async fn verify_with_failover(
     transports: &[Arc<dyn JsonRpcTransport>],
     route: &SettlementRouteConfig,
@@ -321,6 +369,42 @@ async fn verify_with_failover(
         }
     }
     select_agreed_verification(successes, last_error)
+}
+
+async fn verify_revenue_stream_destination_with_failover(
+    transports: &[Arc<dyn JsonRpcTransport>],
+    route: &RevenueStreamDestinationRouteConfig,
+    rpc_timeout: Duration,
+) -> Result<RevenueStreamDestinationRouteVerification, RouteVerifierError> {
+    let mut successes = Vec::new();
+    let mut last_error = None;
+    for transport in transports {
+        match timeout(
+            rpc_timeout,
+            verify_revenue_stream_destination_route(transport.as_ref(), route),
+        )
+        .await
+        {
+            Ok(Ok(verification)) => successes.push(verification),
+            Ok(Err(error)) => last_error = Some(error.to_string()),
+            Err(_) => last_error = Some("RPC verification deadline exceeded".to_string()),
+        }
+    }
+    let Some(first) = successes.first().cloned() else {
+        return Err(RouteVerifierError::ProvidersExhausted(
+            last_error.unwrap_or_else(|| "no provider returned a result".to_string()),
+        ));
+    };
+    if successes
+        .iter()
+        .any(|candidate| candidate.verification_digest != first.verification_digest)
+    {
+        return Err(RouteVerifierError::ProvidersExhausted(
+            "configured providers returned conflicting finalized revenue destination evidence"
+                .to_string(),
+        ));
+    }
+    Ok(first)
 }
 
 fn select_agreed_verification(
@@ -410,6 +494,19 @@ fn route_config(candidate: &SettlementRouteVerificationCandidate) -> SettlementR
         mint: candidate.mint.clone(),
         tax_vault: candidate.tax_vault.clone(),
         net_destination: candidate.net_destination.clone(),
+        token_program: candidate.token_program.clone(),
+    }
+}
+
+fn destination_route_config(
+    candidate: &RevenueStreamDestinationRouteVerificationCandidate,
+) -> RevenueStreamDestinationRouteConfig {
+    RevenueStreamDestinationRouteConfig {
+        route_id: candidate.id,
+        version: candidate.version,
+        recipient_owner: candidate.recipient_owner.clone(),
+        mint: candidate.mint.clone(),
+        destination_token_account: candidate.destination_token_account.clone(),
         token_program: candidate.token_program.clone(),
     }
 }

@@ -282,3 +282,16 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0279: Server-owned checkout policy binding](0279-server-owned-checkout-policy-binding.md)
 - [ADR-0280: Browser never renders bearer credentials](0280-browser-never-renders-bearer-credentials.md)
 - [ADR-0281: Automatic quote retry reference](0281-automatic-quote-retry-reference.md)
+- [ADR-0282: Plain-language primary UI with progressive technical disclosure](0282-plain-language-progressive-disclosure-ui.md)
+- [ADR-0283: Per-transaction atomic splits before continuous streaming](0283-per-transaction-splits-before-streaming.md)
+- [ADR-0284: Zero-copy tax-fact normalization](0284-zero-copy-tax-fact-normalization.md)
+- [ADR-0285: Finalized revenue-streaming claims](0285-finalized-revenue-streaming-claims.md)
+- [ADR-0286: Bounded on-chain revenue-stream accruals and release claims](0286-on-chain-revenue-stream-claim-boundary.md)
+- [ADR-0287: Server-owned revenue-stream settlement-route binding](0287-server-owned-revenue-stream-route-binding.md)
+- [ADR-0288: Isolated browser-test Compose project](0288-isolated-browser-compose-project.md)
+- [ADR-0289: Wallet-bound revenue-stream authorities](0289-wallet-bound-revenue-stream-authorities.md)
+- [ADR-0290: Finalized revenue-accrual proof adapter](0290-finalized-revenue-accrual-proof-adapter.md)
+- [ADR-0291](0291-finalized-revenue-accrual-reconciliation.md) — Finalized revenue-accrual reconciliation boundary
+- [ADR-0292](0292-durable-revenue-accrual-reconciliation-jobs.md) — Durable revenue-accrual reconciliation jobs
+- [ADR-0293](0293-revenue-stream-signed-message-verification.md) — Revenue-stream signed-message verification boundary
+- [ADR-0294](0294-server-owned-revenue-payout-destination-registry.md) — Server-owned revenue payout-destination registry

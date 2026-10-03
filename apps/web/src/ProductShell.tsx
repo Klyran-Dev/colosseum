@@ -58,6 +58,7 @@ const NAVIGATION: readonly NavigationItem[] = [
   { workspace: "access-control", capabilityId: "access.control", label: "Access & approvals", description: "See who can act, what requires approval, and why.", group: "Rules & access", risk: "read" },
   { workspace: "vault-release", capabilityId: "vault.release", label: "Treasury", description: "Prepare and review a controlled treasury release.", group: "Money movement", risk: "financial" },
   { workspace: "vault-reconciliation", capabilityId: "vault.reconciliation", label: "Balance checks", description: "Compare recorded balances with the latest verified observation.", group: "Money movement", risk: "read" },
+  { workspace: "revenue-streaming", capabilityId: "revenue_stream.read", label: "Partner payouts", description: "Review governed payout plans and prepare a verified release.", group: "Money movement", risk: "financial" },
   { workspace: "adjustments", capabilityId: "settlement.adjustment", label: "Adjustments", description: "Prepare a correction for a completed transaction.", group: "Money movement", risk: "governance" },
   { workspace: "refund-claims", capabilityId: "refund.claim.create", label: "Refund requests", description: "Prepare a refund request for review.", group: "Money movement", risk: "financial" },
   { workspace: "refund-cancellations", capabilityId: "refund.claim.cancel", label: "Refund cancellations", description: "Stop a refund request with an approval record.", group: "Money movement", risk: "governance" },

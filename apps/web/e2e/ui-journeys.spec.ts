@@ -43,6 +43,10 @@ async function expectNoBrowserAxeViolations(
 const CAPABILITY_IDS = [
   "access.control",
   "evidence.replay",
+  "revenue_stream.claim.prepare",
+  "revenue_stream.govern",
+  "revenue_stream.propose",
+  "revenue_stream.read",
   "refund.claim.cancel",
   "refund.claim.create",
   "refund.payment.release",
@@ -170,6 +174,91 @@ test.describe("real-browser SPA journeys", () => {
     await expect(page.getByText("operator-b", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Tax simulator", exact: true })).toHaveAttribute("title", /Not available/);
     await expectNoBrowserAxeViolations(page, "multi-tenant capability session reset");
+  });
+
+  test("supports the governed partner payout review flow without claiming a transfer", async ({ page }) => {
+    const plan = {
+      id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d23",
+      merchant_id: "01900000-0000-4000-8000-000000000001",
+      idempotency_key: "plan-fixture",
+      request_digest: Array(32).fill(1),
+      spec: {
+        id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d23",
+        merchant_id: "01900000-0000-4000-8000-000000000001",
+        settlement_route_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d25",
+        operator_subject: "payout-operator-a",
+        asset: Array.from({ length: 32 }, (_, index) => index + 1),
+        recipient: Array.from({ length: 32 }, (_, index) => 32 - index),
+        plan_digest: Array(32).fill(3),
+        policy_digest: Array(32).fill(4),
+        start_slot: "100",
+        end_slot: "200",
+        max_total_atomic: "10000",
+        max_claim_atomic: "1000",
+      },
+      status: "active",
+      proposer_subject: "operator-a",
+      approver_subject: "approver-a",
+      accrued_total_atomic: "2500",
+      released_total_atomic: "500",
+      next_nonce: "2",
+    };
+    const capabilities = completeCapabilityCatalog({
+      "revenue_stream.read": { decision: "allow", reason_code: "scope_and_role_satisfied" },
+      "revenue_stream.propose": { decision: "allow", reason_code: "scope_and_role_satisfied" },
+      "revenue_stream.govern": { decision: "allow", reason_code: "scope_and_role_satisfied" },
+      "revenue_stream.claim.prepare": { decision: "allow", reason_code: "scope_and_role_satisfied" },
+    });
+    await page.route("**/api/v1/authorization/capabilities", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        schema: "authorization-capabilities/v1",
+        snapshot_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d24",
+        subject: "operator-a",
+        tenant_id: "01900000-0000-4000-8000-000000000001",
+        expires_at_unix: Math.floor(Date.now() / 1000) + 30,
+        capabilities,
+      }),
+    }));
+    await page.route("**/api/v1/revenue-streaming/plans", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([plan]),
+    }));
+
+    await page.goto("/money/partner-payouts");
+    await page.getByLabel("Sign-in credential (held in memory)").fill("partner-payout-operator");
+    await expect(page.getByRole("heading", { name: "Partner payouts", exact: true })).toBeVisible();
+    await expect(page.getByText("Receiving accruals", { exact: true })).toBeVisible();
+    await expect(page.getByText("Prepare a payout", { exact: true })).toBeVisible();
+    await expect(page.getByText(/does not move money/i)).toBeVisible();
+    await expect(page.getByText(/finalized Solana evidence/i)).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "partner payout review flow");
+  });
+
+  test("fails closed for partner payouts when the server denies the capability", async ({ page }) => {
+    const capabilities = completeCapabilityCatalog({
+      "revenue_stream.read": { decision: "deny", reason_code: "role_missing" },
+    });
+    await page.route("**/api/v1/authorization/capabilities", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        schema: "authorization-capabilities/v1",
+        snapshot_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d25",
+        subject: "viewer-a",
+        tenant_id: "01900000-0000-4000-8000-000000000001",
+        expires_at_unix: Math.floor(Date.now() / 1000) + 30,
+        capabilities,
+      }),
+    }));
+    await page.goto("/money/partner-payouts");
+    await page.getByLabel("Sign-in credential (held in memory)").fill("viewer-session");
+    await expect(page.getByText("This workspace is not available to your account", { exact: true })).toBeVisible();
+    await expect(page.getByText(/did not grant access to partner payout plans/i)).toBeVisible();
+    await expect(page.getByText("Prepare a payout release", { exact: true })).toHaveCount(0);
+    await expectNoBrowserAxeViolations(page, "partner payout denied state");
   });
 
   test("has no rendered WCAG A/AA violations across the real SPA workspaces", async ({ page }) => {
@@ -304,7 +393,7 @@ test.describe("real-browser SPA journeys", () => {
     await page.goto("/");
     await expect(page.getByText("All systems operational")).toBeVisible();
     await page.getByLabel("Sign-in credential (held in memory)").fill("synthetic-browser-token");
-    await page.getByLabel("Location evidence").fill("[{}]");
+    await page.getByLabel("Provider-signed location record (advanced)").fill("[{}]");
     await page.getByLabel("Total before tax").fill("1100");
     await page.getByLabel("Amount subject to tax").fill("1000");
     await page.getByLabel("Currency").fill("USD");
@@ -468,13 +557,13 @@ test.describe("real-browser SPA journeys", () => {
     await page.getByLabel("Document ID").fill("invoice-1");
     await page.getByLabel("Currency").fill("USD");
     await page.getByLabel("Jurisdiction").fill("US-CA");
-    await page.getByLabel("Tax regime").fill("sales-tax");
-    await page.getByLabel("Published rule set ID").fill("operator-document-flat-rate");
+    await page.getByLabel("Tax category").fill("sales-tax");
+    await page.getByLabel("Approved tax rule").fill("operator-document-flat-rate");
     await page.getByLabel("Rule version").fill("1");
     await page.getByLabel("Line ID").fill("line-a");
     await page.getByLabel("Amount before tax").fill("3000");
     await page.getByLabel("Amount after tax").fill("3000");
-    await page.getByLabel("Location evidence").fill("[{}]");
+    await page.getByLabel("Provider-signed location record (advanced)").fill("[{}]");
     await page.getByRole("button", { name: "Calculate invoice tax", exact: true }).click();
 
     await expect(page.getByRole("alert")).toContainText("document quote service is unavailable");
@@ -672,13 +761,13 @@ test.describe("real-browser SPA journeys", () => {
     await page.getByLabel("Document ID").fill("invoice-1");
     await page.getByLabel("Currency").fill("USD");
     await page.getByLabel("Jurisdiction").fill("US-CA");
-    await page.getByLabel("Tax regime").fill("sales-tax");
-    await page.getByLabel("Published rule set ID").fill("operator-document-flat-rate");
+    await page.getByLabel("Tax category").fill("sales-tax");
+    await page.getByLabel("Approved tax rule").fill("operator-document-flat-rate");
     await page.getByLabel("Rule version").fill("1");
     await page.getByLabel("Line ID").fill("line-a");
     await page.getByLabel("Amount before tax").fill("3000");
     await page.getByLabel("Amount after tax").fill("3000");
-    await page.getByLabel("Location evidence").fill("[{}]");
+    await page.getByLabel("Provider-signed location record (advanced)").fill("[{}]");
     await page.getByRole("button", { name: "Calculate invoice tax", exact: true }).click();
     await expect(page.getByText(`Calculation ID ${calculationId}`, { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Open document checkout", exact: true }).click();

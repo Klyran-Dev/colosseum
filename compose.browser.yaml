@@ -1,0 +1,7 @@
+services:
+  postgres:
+    ports: !reset []
+  api:
+    ports: !reset []
+  edge:
+    ports: !reset []

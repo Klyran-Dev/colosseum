@@ -50,7 +50,7 @@ movement_functions=$(awk '
     END { flush() }
 ' "$program")
 
-expected_movement_functions='execute_adjustment_refund execute_vault_release settle settle_document settle_split'
+expected_movement_functions='execute_adjustment_refund execute_revenue_stream_claim execute_vault_release settle settle_document settle_split'
 for function_name in $movement_functions; do
     case " $expected_movement_functions " in
         *" $function_name "*) ;;
@@ -68,6 +68,7 @@ require_guard settle
 require_guard settle_document
 require_guard settle_split
 require_guard execute_adjustment_refund
+require_guard execute_revenue_stream_claim
 
 release_body=$(function_body execute_vault_release)
 [ -n "$release_body" ] || fail "missing allowlisted instruction: execute_vault_release"

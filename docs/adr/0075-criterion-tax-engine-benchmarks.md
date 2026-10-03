@@ -73,3 +73,22 @@ retained CPU, OS, commit, or toolchain provenance, this run is recorded as
 measurement evidence rather than an attributable code regression. A matched
 Linux/amd64 performance job must establish the release baseline and block or
 approve any regression under the documented service budgets.
+
+## Latest local measurement
+
+On 2026-10-03 UTC, after ADR-0284, `make bench-tax-engine` completed on native
+arm64 macOS 27.0.1 (`Mac16,6`, 14 logical CPUs) with Rust 1.98.1, 3 seconds of
+warm-up, and 100 samples per benchmark. Criterion reported these time ranges:
+
+| Workload | Reported time range | Change against the local comparison |
+| --- | ---: | ---: |
+| `tax_engine_compile` | 775.32–785.73 ns | +1.82%; within noise threshold |
+| `tax_engine_uncached_calculate` | 1.4336–1.4431 µs | −3.08%; improved |
+| `tax_engine_compiled_calculate` | 669.14–673.97 ns | −11.02%; improved |
+| `tax_engine_document_invoice_64x16` | 256.24–257.71 µs | −4.69%; improved |
+
+The prior run flagged a compiled-calculation regression because FX-aware
+normalization cloned facts even when no conversion was present. ADR-0284 now
+returns borrowed facts for that path and owns a normalized copy only when FX
+evidence exists. The result preserves digest and replay semantics; the local
+measurement is still not a production, regional, or Linux/amd64 SLO claim.

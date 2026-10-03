@@ -298,6 +298,96 @@ pub struct CompiledSettlementRefundCancellationInstruction {
     pub claim_nonce: u64,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RevenueStreamPlanCompileRequest {
+    pub program_id: String,
+    pub governance_authority: String,
+    pub merchant: String,
+    pub mint: String,
+    pub token_program: String,
+    pub tax_vault: String,
+    pub recipient_owner: String,
+    pub proposer: String,
+    pub approver: String,
+    pub operator: String,
+    pub plan_digest: [u8; 32],
+    pub policy_digest: [u8; 32],
+    #[serde(with = "policy::serde_u64_string")]
+    pub start_slot: u64,
+    #[serde(default, with = "policy::serde_optional_u64_string")]
+    pub end_slot: Option<u64>,
+    #[serde(with = "policy::serde_u64_string")]
+    pub max_total_atomic: u64,
+    #[serde(with = "policy::serde_u64_string")]
+    pub max_claim_atomic: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RevenueStreamAccrualCompileRequest {
+    pub program_id: String,
+    pub operator: String,
+    pub plan: String,
+    pub source_receipt: String,
+    #[serde(with = "policy::serde_u64_string")]
+    pub recipient_atomic: u64,
+    #[serde(with = "policy::serde_u64_string")]
+    pub finalized_slot: u64,
+    pub evidence_digest: [u8; 32],
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RevenueStreamClaimCompileRequest {
+    pub program_id: String,
+    pub operator: String,
+    pub plan: String,
+    pub mint: String,
+    pub token_program: String,
+    pub tax_vault: String,
+    pub destination: String,
+    #[serde(with = "policy::serde_u64_string")]
+    pub nonce: u64,
+    #[serde(with = "policy::serde_u64_string")]
+    pub amount_atomic: u64,
+    pub claim_digest: [u8; 32],
+    pub evidence_digest: [u8; 32],
+    pub execute_after_unix: i64,
+    pub expires_at_unix: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RevenueStreamClaimExecutionCompileRequest {
+    pub program_id: String,
+    pub approver: String,
+    pub plan: String,
+    pub merchant: String,
+    pub mint: String,
+    pub token_program: String,
+    pub tax_vault: String,
+    pub destination: String,
+    #[serde(with = "policy::serde_u64_string")]
+    pub nonce: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RevenueStreamClaimCancellationCompileRequest {
+    pub program_id: String,
+    pub governance_authority: String,
+    pub plan: String,
+    #[serde(with = "policy::serde_u64_string")]
+    pub nonce: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CompiledRevenueStreamInstruction {
+    pub status: String,
+    pub program_id: String,
+    pub instruction_data_base64: String,
+    pub accounts: Vec<CompiledAccountMeta>,
+    pub plan: String,
+    pub accrual: Option<String>,
+    pub claim: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CompiledAccountMeta {
     pub pubkey: String,
@@ -373,6 +463,20 @@ pub enum SettlementCompileError {
     InvalidRefundCancellationKey { field: &'static str },
     #[error("refund cancellation accounts must be distinct")]
     AliasedRefundCancellationAccounts,
+    #[error("revenue stream plan authorities must be distinct")]
+    RevenueStreamAuthorityConflict,
+    #[error("revenue stream plan or claim field is invalid")]
+    InvalidRevenueStreamInput,
+    #[error("revenue stream digest must not be all zeroes")]
+    EmptyRevenueStreamDigest,
+    #[error("revenue stream nonce must be positive")]
+    InvalidRevenueStreamNonce,
+    #[error("revenue stream execution window is invalid")]
+    InvalidRevenueStreamWindow,
+    #[error("revenue stream amount exceeds its configured bound")]
+    InvalidRevenueStreamAmount,
+    #[error("revenue stream accounts must be distinct")]
+    AliasedRevenueStreamAccounts,
 }
 
 pub fn settlement_program_id() -> Pubkey {
@@ -1000,6 +1104,350 @@ pub fn compile_settlement_refund_cancellation_instruction(
         registry: registry.to_string(),
         claim: claim.to_string(),
         claim_nonce: request.claim_nonce,
+    })
+}
+
+pub fn revenue_stream_plan_pda(
+    merchant: &str,
+    mint: &str,
+    plan_digest: [u8; 32],
+) -> Result<String, SettlementCompileError> {
+    let merchant = parse_pubkey("merchant", merchant)?;
+    let mint = parse_pubkey("mint", mint)?;
+    let (plan, _) = Pubkey::find_program_address(
+        &[
+            b"revenue-stream-plan",
+            merchant.as_ref(),
+            mint.as_ref(),
+            &plan_digest,
+        ],
+        &settlement_program_id(),
+    );
+    Ok(plan.to_string())
+}
+
+pub fn revenue_stream_accrual_pda(
+    plan: &str,
+    source_receipt: &str,
+) -> Result<String, SettlementCompileError> {
+    let plan = parse_pubkey("plan", plan)?;
+    let source_receipt = parse_pubkey("source_receipt", source_receipt)?;
+    let (accrual, _) = Pubkey::find_program_address(
+        &[
+            b"revenue-stream-accrual",
+            plan.as_ref(),
+            source_receipt.as_ref(),
+        ],
+        &settlement_program_id(),
+    );
+    Ok(accrual.to_string())
+}
+
+pub fn revenue_stream_claim_pda(plan: &str, nonce: u64) -> Result<String, SettlementCompileError> {
+    let plan = parse_pubkey("plan", plan)?;
+    if nonce == 0 {
+        return Err(SettlementCompileError::InvalidRevenueStreamNonce);
+    }
+    let (claim, _) = Pubkey::find_program_address(
+        &[b"revenue-stream-claim", plan.as_ref(), &nonce.to_le_bytes()],
+        &settlement_program_id(),
+    );
+    Ok(claim.to_string())
+}
+
+pub fn compile_revenue_stream_plan_instruction(
+    request: &RevenueStreamPlanCompileRequest,
+) -> Result<CompiledRevenueStreamInstruction, SettlementCompileError> {
+    let program_id = parse_pubkey("program_id", &request.program_id)?;
+    validate_settlement_program_id(program_id)?;
+    let governance_authority = parse_pubkey("governance_authority", &request.governance_authority)?;
+    let merchant = parse_pubkey("merchant", &request.merchant)?;
+    let mint = parse_pubkey("mint", &request.mint)?;
+    let token_program = parse_supported_token_program(&request.token_program)?;
+    let tax_vault = parse_pubkey("tax_vault", &request.tax_vault)?;
+    let recipient_owner = parse_pubkey("recipient_owner", &request.recipient_owner)?;
+    let proposer = parse_pubkey("proposer", &request.proposer)?;
+    let approver = parse_pubkey("approver", &request.approver)?;
+    let operator = parse_pubkey("operator", &request.operator)?;
+    let keys = [
+        ("governance_authority", governance_authority),
+        ("merchant", merchant),
+        ("mint", mint),
+        ("tax_vault", tax_vault),
+        ("recipient_owner", recipient_owner),
+        ("proposer", proposer),
+        ("approver", approver),
+        ("operator", operator),
+    ];
+    if keys.iter().any(|(_, key)| *key == Pubkey::default()) {
+        return Err(SettlementCompileError::InvalidRevenueStreamInput);
+    }
+    if governance_authority == proposer
+        || governance_authority == approver
+        || governance_authority == operator
+        || proposer == approver
+        || proposer == operator
+        || approver == operator
+    {
+        return Err(SettlementCompileError::RevenueStreamAuthorityConflict);
+    }
+    if request.plan_digest == [0; 32] || request.policy_digest == [0; 32] {
+        return Err(SettlementCompileError::EmptyRevenueStreamDigest);
+    }
+    if request.start_slot == 0 || request.end_slot.is_some_and(|end| end < request.start_slot) {
+        return Err(SettlementCompileError::InvalidRevenueStreamWindow);
+    }
+    if request.max_total_atomic == 0
+        || request.max_claim_atomic == 0
+        || request.max_claim_atomic > request.max_total_atomic
+    {
+        return Err(SettlementCompileError::InvalidRevenueStreamAmount);
+    }
+    let plan = revenue_stream_plan_pda(&request.merchant, &request.mint, request.plan_digest)?;
+    let plan_key = parse_pubkey("plan", &plan)?;
+    let (vault_authority, _) = Pubkey::find_program_address(
+        &[b"vault-authority", merchant.as_ref(), mint.as_ref()],
+        &program_id,
+    );
+    let accounts = vec![
+        account(governance_authority, true, true),
+        account(merchant, false, false),
+        account(mint, false, false),
+        account(token_program, false, false),
+        account(tax_vault, false, false),
+        account(vault_authority, false, false),
+        account(plan_key, false, true),
+        account(
+            parse_pubkey("system_program", SYSTEM_PROGRAM_ID)?,
+            false,
+            false,
+        ),
+    ];
+    ensure_unique_account_keys(&accounts, &program_id)?;
+    let mut data = instruction_discriminator("global:initialize_revenue_stream_plan");
+    data.extend_from_slice(&request.plan_digest);
+    data.extend_from_slice(&request.policy_digest);
+    data.extend_from_slice(recipient_owner.as_ref());
+    data.extend_from_slice(proposer.as_ref());
+    data.extend_from_slice(approver.as_ref());
+    data.extend_from_slice(operator.as_ref());
+    data.extend_from_slice(&request.start_slot.to_le_bytes());
+    match request.end_slot {
+        Some(end_slot) => {
+            data.push(1);
+            data.extend_from_slice(&end_slot.to_le_bytes());
+        }
+        None => data.push(0),
+    }
+    data.extend_from_slice(&request.max_total_atomic.to_le_bytes());
+    data.extend_from_slice(&request.max_claim_atomic.to_le_bytes());
+    estimate_legacy_settlement_wire_bytes(accounts.len(), data.len())?;
+    Ok(CompiledRevenueStreamInstruction {
+        status: "prepared_unsubmitted".to_string(),
+        program_id: program_id.to_string(),
+        instruction_data_base64: BASE64_STANDARD.encode(data),
+        accounts,
+        plan,
+        accrual: None,
+        claim: None,
+    })
+}
+
+pub fn compile_revenue_stream_accrual_instruction(
+    request: &RevenueStreamAccrualCompileRequest,
+) -> Result<CompiledRevenueStreamInstruction, SettlementCompileError> {
+    let program_id = parse_pubkey("program_id", &request.program_id)?;
+    validate_settlement_program_id(program_id)?;
+    let operator = parse_pubkey("operator", &request.operator)?;
+    let plan = parse_pubkey("plan", &request.plan)?;
+    let source_receipt = parse_pubkey("source_receipt", &request.source_receipt)?;
+    if operator == Pubkey::default()
+        || plan == Pubkey::default()
+        || source_receipt == Pubkey::default()
+        || request.recipient_atomic == 0
+        || request.finalized_slot == 0
+        || request.evidence_digest == [0; 32]
+    {
+        return Err(SettlementCompileError::InvalidRevenueStreamInput);
+    }
+    let (protocol_config, _) = Pubkey::find_program_address(&[b"protocol-config"], &program_id);
+    let accrual = revenue_stream_accrual_pda(&request.plan, &request.source_receipt)?;
+    let accounts = vec![
+        account(operator, true, true),
+        account(protocol_config, false, false),
+        account(plan, false, true),
+        account(source_receipt, false, false),
+        account(parse_pubkey("accrual", &accrual)?, false, true),
+        account(
+            parse_pubkey("system_program", SYSTEM_PROGRAM_ID)?,
+            false,
+            false,
+        ),
+    ];
+    ensure_unique_account_keys(&accounts, &program_id)?;
+    let mut data = instruction_discriminator("global:record_revenue_stream_accrual");
+    data.extend_from_slice(&request.recipient_atomic.to_le_bytes());
+    data.extend_from_slice(&request.finalized_slot.to_le_bytes());
+    data.extend_from_slice(&request.evidence_digest);
+    estimate_legacy_settlement_wire_bytes(accounts.len(), data.len())?;
+    Ok(CompiledRevenueStreamInstruction {
+        status: "prepared_unsubmitted".to_string(),
+        program_id: program_id.to_string(),
+        instruction_data_base64: BASE64_STANDARD.encode(data),
+        accounts,
+        plan: plan.to_string(),
+        accrual: Some(accrual),
+        claim: None,
+    })
+}
+
+pub fn compile_revenue_stream_claim_instruction(
+    request: &RevenueStreamClaimCompileRequest,
+) -> Result<CompiledRevenueStreamInstruction, SettlementCompileError> {
+    let program_id = parse_pubkey("program_id", &request.program_id)?;
+    validate_settlement_program_id(program_id)?;
+    let operator = parse_pubkey("operator", &request.operator)?;
+    let plan = parse_pubkey("plan", &request.plan)?;
+    let mint = parse_pubkey("mint", &request.mint)?;
+    let token_program = parse_supported_token_program(&request.token_program)?;
+    let tax_vault = parse_pubkey("tax_vault", &request.tax_vault)?;
+    let destination = parse_pubkey("destination", &request.destination)?;
+    if request.nonce == 0 || request.amount_atomic == 0 {
+        return Err(SettlementCompileError::InvalidRevenueStreamAmount);
+    }
+    if request.claim_digest == [0; 32] || request.evidence_digest == [0; 32] {
+        return Err(SettlementCompileError::EmptyRevenueStreamDigest);
+    }
+    let window = request
+        .expires_at_unix
+        .checked_sub(request.execute_after_unix)
+        .ok_or(SettlementCompileError::InvalidRevenueStreamWindow)?;
+    if window <= 0 || window > MAX_REFUND_CLAIM_WINDOW_SECONDS {
+        return Err(SettlementCompileError::InvalidRevenueStreamWindow);
+    }
+    if tax_vault == destination {
+        return Err(SettlementCompileError::AliasedRevenueStreamAccounts);
+    }
+    let (protocol_config, _) = Pubkey::find_program_address(&[b"protocol-config"], &program_id);
+    let claim = revenue_stream_claim_pda(&request.plan, request.nonce)?;
+    let accounts = vec![
+        account(operator, true, true),
+        account(protocol_config, false, false),
+        account(plan, false, true),
+        account(mint, false, false),
+        account(token_program, false, false),
+        account(tax_vault, false, false),
+        account(destination, false, false),
+        account(parse_pubkey("claim", &claim)?, false, true),
+        account(
+            parse_pubkey("system_program", SYSTEM_PROGRAM_ID)?,
+            false,
+            false,
+        ),
+    ];
+    ensure_unique_account_keys(&accounts, &program_id)?;
+    let mut data = instruction_discriminator("global:create_revenue_stream_claim");
+    data.extend_from_slice(&request.nonce.to_le_bytes());
+    data.extend_from_slice(&request.amount_atomic.to_le_bytes());
+    data.extend_from_slice(&request.claim_digest);
+    data.extend_from_slice(&request.evidence_digest);
+    data.extend_from_slice(&request.execute_after_unix.to_le_bytes());
+    data.extend_from_slice(&request.expires_at_unix.to_le_bytes());
+    estimate_legacy_settlement_wire_bytes(accounts.len(), data.len())?;
+    Ok(CompiledRevenueStreamInstruction {
+        status: "prepared_unsubmitted".to_string(),
+        program_id: program_id.to_string(),
+        instruction_data_base64: BASE64_STANDARD.encode(data),
+        accounts,
+        plan: plan.to_string(),
+        accrual: None,
+        claim: Some(claim),
+    })
+}
+
+pub fn compile_revenue_stream_claim_execution_instruction(
+    request: &RevenueStreamClaimExecutionCompileRequest,
+) -> Result<CompiledRevenueStreamInstruction, SettlementCompileError> {
+    let program_id = parse_pubkey("program_id", &request.program_id)?;
+    validate_settlement_program_id(program_id)?;
+    let approver = parse_pubkey("approver", &request.approver)?;
+    let plan = parse_pubkey("plan", &request.plan)?;
+    let merchant = parse_pubkey("merchant", &request.merchant)?;
+    let mint = parse_pubkey("mint", &request.mint)?;
+    let token_program = parse_supported_token_program(&request.token_program)?;
+    let tax_vault = parse_pubkey("tax_vault", &request.tax_vault)?;
+    let destination = parse_pubkey("destination", &request.destination)?;
+    if request.nonce == 0
+        || approver == Pubkey::default()
+        || plan == Pubkey::default()
+        || merchant == Pubkey::default()
+    {
+        return Err(SettlementCompileError::InvalidRevenueStreamInput);
+    }
+    if tax_vault == destination {
+        return Err(SettlementCompileError::AliasedRevenueStreamAccounts);
+    }
+    let (protocol_config, _) = Pubkey::find_program_address(&[b"protocol-config"], &program_id);
+    let (vault_authority, _) = Pubkey::find_program_address(
+        &[b"vault-authority", merchant.as_ref(), mint.as_ref()],
+        &program_id,
+    );
+    let claim = revenue_stream_claim_pda(&request.plan, request.nonce)?;
+    let accounts = vec![
+        account(approver, true, false),
+        account(protocol_config, false, false),
+        account(plan, false, true),
+        account(mint, false, false),
+        account(token_program, false, false),
+        account(tax_vault, false, true),
+        account(vault_authority, false, false),
+        account(destination, false, true),
+        account(parse_pubkey("claim", &claim)?, false, true),
+    ];
+    ensure_unique_account_keys(&accounts, &program_id)?;
+    let mut data = instruction_discriminator("global:execute_revenue_stream_claim");
+    data.extend_from_slice(&request.nonce.to_le_bytes());
+    estimate_legacy_settlement_wire_bytes(accounts.len(), data.len())?;
+    Ok(CompiledRevenueStreamInstruction {
+        status: "prepared_unsubmitted".to_string(),
+        program_id: program_id.to_string(),
+        instruction_data_base64: BASE64_STANDARD.encode(data),
+        accounts,
+        plan: plan.to_string(),
+        accrual: None,
+        claim: Some(claim),
+    })
+}
+
+pub fn compile_revenue_stream_claim_cancellation_instruction(
+    request: &RevenueStreamClaimCancellationCompileRequest,
+) -> Result<CompiledRevenueStreamInstruction, SettlementCompileError> {
+    let program_id = parse_pubkey("program_id", &request.program_id)?;
+    validate_settlement_program_id(program_id)?;
+    let governance_authority = parse_pubkey("governance_authority", &request.governance_authority)?;
+    let plan = parse_pubkey("plan", &request.plan)?;
+    if request.nonce == 0 || governance_authority == Pubkey::default() || plan == Pubkey::default()
+    {
+        return Err(SettlementCompileError::InvalidRevenueStreamInput);
+    }
+    let claim = revenue_stream_claim_pda(&request.plan, request.nonce)?;
+    let accounts = vec![
+        account(governance_authority, true, false),
+        account(plan, false, true),
+        account(parse_pubkey("claim", &claim)?, false, true),
+    ];
+    ensure_unique_account_keys(&accounts, &program_id)?;
+    let mut data = instruction_discriminator("global:cancel_revenue_stream_claim");
+    data.extend_from_slice(&request.nonce.to_le_bytes());
+    estimate_legacy_settlement_wire_bytes(accounts.len(), data.len())?;
+    Ok(CompiledRevenueStreamInstruction {
+        status: "prepared_unsubmitted".to_string(),
+        program_id: program_id.to_string(),
+        instruction_data_base64: BASE64_STANDARD.encode(data),
+        accounts,
+        plan: plan.to_string(),
+        accrual: None,
+        claim: Some(claim),
     })
 }
 
@@ -1976,6 +2424,146 @@ mod tests {
         assert_ne!(first, token_2022);
     }
 
+    #[test]
+    fn compiles_revenue_stream_plan_with_deterministic_pda_and_optional_window() {
+        let request = valid_revenue_stream_plan_request();
+        let compiled = compile_revenue_stream_plan_instruction(&request).expect("stream plan");
+        assert_eq!(compiled.accounts.len(), 8);
+        assert_eq!(compiled.accrual, None);
+        assert_eq!(compiled.claim, None);
+        assert_eq!(
+            compiled.plan,
+            revenue_stream_plan_pda(&request.merchant, &request.mint, request.plan_digest)
+                .expect("plan PDA")
+        );
+        let bytes = BASE64_STANDARD
+            .decode(compiled.instruction_data_base64)
+            .expect("instruction bytes");
+        assert_eq!(
+            &bytes[..8],
+            instruction_discriminator("global:initialize_revenue_stream_plan")
+        );
+        assert_eq!(bytes[8 + 32 + 32 + 32 + 32 + 32 + 32 + 8], 1);
+    }
+
+    #[test]
+    fn revenue_stream_compilers_cover_accrual_claim_execute_and_cancel_shapes() {
+        let plan_request = valid_revenue_stream_plan_request();
+        let plan = compile_revenue_stream_plan_instruction(&plan_request).expect("plan");
+        let accrual_request = RevenueStreamAccrualCompileRequest {
+            program_id: settlement_program_id().to_string(),
+            operator: plan_request.operator.clone(),
+            plan: plan.plan.clone(),
+            source_receipt: Pubkey::new_unique().to_string(),
+            recipient_atomic: 25,
+            finalized_slot: 101,
+            evidence_digest: [11; 32],
+        };
+        let accrual =
+            compile_revenue_stream_accrual_instruction(&accrual_request).expect("accrual");
+        assert_eq!(accrual.accounts.len(), 6);
+        assert_eq!(
+            accrual.accrual.as_deref(),
+            Some(
+                revenue_stream_accrual_pda(&plan.plan, &accrual_request.source_receipt)
+                    .expect("accrual PDA")
+                    .as_str()
+            )
+        );
+
+        let claim_request = RevenueStreamClaimCompileRequest {
+            program_id: settlement_program_id().to_string(),
+            operator: plan_request.operator.clone(),
+            plan: plan.plan.clone(),
+            mint: plan_request.mint.clone(),
+            token_program: SPL_TOKEN_PROGRAM_ID.to_string(),
+            tax_vault: plan_request.tax_vault.clone(),
+            destination: Pubkey::new_unique().to_string(),
+            nonce: 1,
+            amount_atomic: 10,
+            claim_digest: [12; 32],
+            evidence_digest: [13; 32],
+            execute_after_unix: 1_800_000_000,
+            expires_at_unix: 1_800_000_600,
+        };
+        let claim = compile_revenue_stream_claim_instruction(&claim_request).expect("claim");
+        assert_eq!(claim.accounts.len(), 9);
+        assert_eq!(
+            claim.claim.as_deref(),
+            Some(
+                revenue_stream_claim_pda(&plan.plan, claim_request.nonce)
+                    .expect("claim PDA")
+                    .as_str()
+            )
+        );
+
+        let execute = compile_revenue_stream_claim_execution_instruction(
+            &RevenueStreamClaimExecutionCompileRequest {
+                program_id: settlement_program_id().to_string(),
+                approver: plan_request.approver.clone(),
+                plan: plan.plan.clone(),
+                merchant: plan_request.merchant.clone(),
+                mint: plan_request.mint.clone(),
+                token_program: SPL_TOKEN_PROGRAM_ID.to_string(),
+                tax_vault: plan_request.tax_vault.clone(),
+                destination: claim_request.destination.clone(),
+                nonce: 1,
+            },
+        )
+        .expect("execution");
+        assert_eq!(execute.accounts.len(), 9);
+        assert_eq!(
+            execute.accounts[6].pubkey,
+            Pubkey::find_program_address(
+                &[
+                    b"vault-authority",
+                    Pubkey::from_str(&plan_request.merchant)
+                        .expect("merchant")
+                        .as_ref(),
+                    Pubkey::from_str(&plan_request.mint).expect("mint").as_ref(),
+                ],
+                &settlement_program_id(),
+            )
+            .0
+            .to_string()
+        );
+
+        let cancel = compile_revenue_stream_claim_cancellation_instruction(
+            &RevenueStreamClaimCancellationCompileRequest {
+                program_id: settlement_program_id().to_string(),
+                governance_authority: plan_request.governance_authority,
+                plan: plan.plan,
+                nonce: 1,
+            },
+        )
+        .expect("cancellation");
+        assert_eq!(cancel.accounts.len(), 3);
+    }
+
+    #[test]
+    fn revenue_stream_compiler_rejects_authority_aliases_windows_and_account_aliases() {
+        let mut request = valid_revenue_stream_plan_request();
+        request.operator = request.approver.clone();
+        assert!(matches!(
+            compile_revenue_stream_plan_instruction(&request),
+            Err(SettlementCompileError::RevenueStreamAuthorityConflict)
+        ));
+
+        let mut claim = valid_revenue_stream_claim_request();
+        claim.expires_at_unix = claim.execute_after_unix;
+        assert!(matches!(
+            compile_revenue_stream_claim_instruction(&claim),
+            Err(SettlementCompileError::InvalidRevenueStreamWindow)
+        ));
+
+        let mut claim = valid_revenue_stream_claim_request();
+        claim.destination = claim.tax_vault.clone();
+        assert!(matches!(
+            compile_revenue_stream_claim_instruction(&claim),
+            Err(SettlementCompileError::AliasedRevenueStreamAccounts)
+        ));
+    }
+
     fn valid_request() -> SettlementCompileRequest {
         SettlementCompileRequest {
             program_id: settlement_program_id().to_string(),
@@ -2076,6 +2664,51 @@ mod tests {
             mint: Pubkey::new_unique().to_string(),
             adjustment: Pubkey::new_unique().to_string(),
             claim_nonce: 17,
+        }
+    }
+
+    fn valid_revenue_stream_plan_request() -> RevenueStreamPlanCompileRequest {
+        RevenueStreamPlanCompileRequest {
+            program_id: settlement_program_id().to_string(),
+            governance_authority: Pubkey::new_unique().to_string(),
+            merchant: Pubkey::new_unique().to_string(),
+            mint: Pubkey::new_unique().to_string(),
+            token_program: SPL_TOKEN_PROGRAM_ID.to_string(),
+            tax_vault: Pubkey::new_unique().to_string(),
+            recipient_owner: Pubkey::new_unique().to_string(),
+            proposer: Pubkey::new_unique().to_string(),
+            approver: Pubkey::new_unique().to_string(),
+            operator: Pubkey::new_unique().to_string(),
+            plan_digest: [21; 32],
+            policy_digest: [22; 32],
+            start_slot: 100,
+            end_slot: Some(200),
+            max_total_atomic: 1_000,
+            max_claim_atomic: 100,
+        }
+    }
+
+    fn valid_revenue_stream_claim_request() -> RevenueStreamClaimCompileRequest {
+        let plan_request = valid_revenue_stream_plan_request();
+        RevenueStreamClaimCompileRequest {
+            program_id: settlement_program_id().to_string(),
+            operator: plan_request.operator,
+            plan: revenue_stream_plan_pda(
+                &plan_request.merchant,
+                &plan_request.mint,
+                plan_request.plan_digest,
+            )
+            .expect("plan PDA"),
+            mint: plan_request.mint,
+            token_program: SPL_TOKEN_PROGRAM_ID.to_string(),
+            tax_vault: plan_request.tax_vault,
+            destination: Pubkey::new_unique().to_string(),
+            nonce: 1,
+            amount_atomic: 10,
+            claim_digest: [31; 32],
+            evidence_digest: [32; 32],
+            execute_after_unix: 1_800_000_000,
+            expires_at_unix: 1_800_000_600,
         }
     }
 }

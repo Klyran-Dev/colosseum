@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-10-04
+
+- Added ADR-0285 and the pure `revenue-streaming` domain slice: finalized
+  settlement accruals, four-eyes stream lifecycle, bounded single-use release
+  claims, replay/conflict rejection, cap/conservation checks, corrections, and
+  cancellation/completion semantics. No unfinished API or UI surface is
+  exposed.
+- Added ADR-0282 for plain-language primary workflows with progressive
+  technical disclosure. Invoice quote, rule review, and access workspaces now
+  keep operator tasks prominent while retaining exact audit references behind
+  accessible record or administrator details.
+- Refined the guided rule builder so tax authors work with rate bands, taxable
+  amounts, thresholds, credits, and rounding decisions in task language while
+  preserving the exact validated rule document.
+- Grouped manual provider-signed location records under an explicit “Location
+  verification” disclosure and marked the raw exchange as advanced, without
+  weakening server-side evidence validation or tenant binding.
+- Added browser assertions for the updated labels and refreshed the real
+  browser journeys for verified location records and approved tax rules.
+- Revalidated the current worktree with `make check`, `make integration-check`,
+  and `make web-browser-check`. Local Docker evidence remains green; Linux
+  validator, live provider, staging identity, custody, legal, and regional SLO
+  release gates remain explicitly open.
+- Added ADR-0283 to make the product boundary explicit: the first settlement
+  scope is an atomic per-transaction split, while continuous partner streaming
+  is a separate future bounded context and is not implied by “real-time” copy.
+- Added ADR-0284 and optimized the Tier-1 tax hot path to borrow validated facts
+  when no FX conversion is present. The full tax-engine suite passes, and the
+  current local benchmark shows improved compiled and document calculation
+  timings; production SLO claims remain gated on Linux/amd64 evidence.
+
 ## 2026-10-03
 
 - Added ADR-0278 for addressable static-SPA workspace navigation, including

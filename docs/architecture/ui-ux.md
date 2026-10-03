@@ -59,6 +59,67 @@ Incident operations
   - Bounded projection repair
 ```
 
+## Production navigation contract
+
+The application uses one stable operations shell with four task-oriented
+groups. A user can open any workspace directly, refresh it, and return to it
+with browser history without placing account, payment, or authorization data
+in the URL.
+
+| Navigation group | Workspaces | Primary outcome |
+| --- | --- | --- |
+| Daily work | Tax quotes, Tax simulator, Invoice tax, Payment review, Document payment | Review and prepare a customer transaction |
+| Rules & access | Tax rules, Access & approvals | Govern tax behavior and understand who may act |
+| Money movement | Treasury, Balance checks, Partner payouts, Adjustments, Refund requests, Refund cancellations, Refund payments | Control, reconcile, and review money movement |
+| Records & issues | Exceptions & recovery | Investigate an exception and perform a bounded recovery action |
+
+Navigation is capability-aware but never pretends to be the security boundary.
+The shell shows the same information architecture to authorized and
+unauthorized users, while each entry carries a clear state such as
+“Available”, “Not available”, “Needs access check”, or “Sign in to check”.
+The server returns the authoritative RBAC/PBAC/ABAC capability snapshot, and
+the API repeats the decision for every protected request. A denied workspace
+explains the safe next step; it is not silently removed, which prevents a
+reviewer from confusing missing access with missing product functionality.
+
+Every workspace follows the same review rhythm:
+
+1. **Orient:** account, environment, network, service health, and current task.
+2. **Review:** human-readable facts, amounts, status, expiry, and responsibility.
+3. **Inspect:** “Why this tax?”, “Record details”, or “Technical details” only when needed.
+4. **Act:** one clearly named next action with approval requirements beside it.
+5. **Confirm:** server response, evidence reference, and the next safe action.
+
+Sensitive actions use progressive disclosure and four-eyes language. For
+example, Partner payouts begins with active plans, available balance, partner,
+and limits; creation is labelled “Create a payout plan”; approval is separate;
+and “Prepare verified release” explicitly states that it reserves an amount but
+does not transfer money. Chain slots, fingerprints, account keys, and exact
+serialization remain in the advanced record view.
+
+Partner payout setup has a deliberate responsibility sequence:
+
+1. Name the payout preparer by their tenant sign-in identity.
+2. Show that a second authorized person must approve the plan.
+3. Ask the named preparer to connect a wallet only in the separate wallet
+   authority workspace, after the service presents a one-time signed message.
+4. Show the connected wallet as “Verified for payout preparation” only after
+   the server confirms the tenant, role, signature, expiry, and active binding.
+5. Keep the wallet address, route binding, and exact instruction under
+   “Record details”; never ask an operator to paste a merchant-side account
+   topology into a payout form.
+
+The UI may explain the responsibility in plain language, but the server is
+always authoritative for RBAC, policy conditions, tenant scope, wallet proof,
+and final chain status. A subject change creates a new governed plan or an
+explicit migration decision; it never silently changes an active plan’s signer
+topology.
+
+The shell must preserve these states for every async action: loading, empty,
+success, rejected, timed out, retrying, cancelled, stale, and reconciliation
+required. A successful API response never becomes a claim that a wallet
+signature, finalized chain transaction, tax filing, or legal conclusion exists.
+
 ## Checkout UX
 
 The primary checkout card shows:
@@ -167,6 +228,19 @@ Quote workspaces also keep idempotency references out of editable form fields.
 They assign a secure in-memory retry reference automatically, keep it stable
 for an unchanged request, and replace it when financial or rule facts change.
 See [ADR-0281](../adr/0281-automatic-quote-retry-reference.md).
+
+## Primary language and progressive disclosure
+
+First-view labels describe the operator's task, not the transport or storage
+model. Use “Approved tax rule”, “Location verification”, “Review the tax
+calculation”, and “Permission status” in the primary flow. Keep rule IDs,
+fingerprints, engine versions, account keys, and protocol fields behind
+accessible “Record details”, “Technical details”, or administrator disclosures.
+Guided controls are the default; exact JSON remains an advanced exchange for
+users who own that workflow. Provider-signed jurisdiction records are grouped
+under an explicit “Location verification” disclosure and labelled as an
+advanced exchange; the UI never presents a raw provider payload as ordinary
+customer data. See [ADR-0282](../adr/0282-plain-language-progressive-disclosure-ui.md).
 
 ## Frontend architecture
 

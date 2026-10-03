@@ -18,6 +18,7 @@ use indexer::{
     VaultBalanceTarget, canonical_signature,
 };
 use solana_pubkey::Pubkey;
+use split_plan::SplitPlan;
 use std::str::FromStr;
 use std::{
     env,
@@ -28,9 +29,12 @@ use std::{
     time::Duration,
 };
 use storage::{
-    DEFAULT_REPLAY_LEASE, MAX_VAULT_RECONCILIATION_TARGETS, PgStore, ProtocolPauseMetricsSnapshot,
-    RefundBalanceProofTopology, RefundClaimCancellationReconciliationMetricsSnapshot,
-    RefundClaimReconciliationMetricsSnapshot, RefundProofMetricsSnapshot, ReplayGapMetricsSnapshot,
+    DEFAULT_REPLAY_LEASE, MAX_REVENUE_STREAM_RECONCILIATION_CONTEXTS,
+    MAX_VAULT_RECONCILIATION_TARGETS, PgStore, ProtocolPauseMetricsSnapshot,
+    RecordRevenueStreamAccrualCommand, RefundBalanceProofTopology,
+    RefundClaimCancellationReconciliationMetricsSnapshot, RefundClaimReconciliationMetricsSnapshot,
+    RefundProofMetricsSnapshot, ReplayGapMetricsSnapshot, RevenueStreamAccrualReconciliationJob,
+    RevenueStreamPlanRecord, RevenueStreamReconciliationContextRecord, SettlementSplitPlan,
     StorageError, TargetedRecoveryMetricsSnapshot, VaultReconciliationMetricsSnapshot,
     VaultReconciliationRun, refund_claim_evidence_expectation,
 };
@@ -43,6 +47,8 @@ const DEFAULT_VAULT_RECONCILIATION_POLL: Duration = Duration::from_secs(30);
 const REPLAY_CLAIM_BATCH_SIZE: usize = 1;
 pub const MAX_TARGETED_RECOVERY_PAGES: usize = 64;
 const TARGETED_RECOVERY_PAGE_SIZE: usize = 1_000;
+pub const MAX_REVENUE_RECONCILIATION_CONTEXTS: usize = 64;
+pub const REVENUE_RECONCILIATION_ACTOR: &str = "system:indexer-revenue-accrual-reconciler";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeploymentEnvironment {
@@ -347,6 +353,237 @@ pub enum IndexerServiceError {
     RefundClaimDomain(String),
     #[error("refund claim cancellation reconciliation domain validation failed: {0}")]
     RefundClaimCancellationDomain(String),
+    #[error("revenue accrual reconciliation failed: {0}")]
+    RevenueReconciliation(String),
+}
+
+/// The only inputs permitted to the revenue accrual assembler are finalized
+/// chain projections and server-owned, digest-validated configuration. The
+/// browser/API never supplies this context or a recipient amount.
+#[derive(Clone, Debug)]
+pub struct RevenueStreamReconciliationContext {
+    pub merchant_id: uuid::Uuid,
+    pub stream_plan: RevenueStreamPlanRecord,
+    pub settlement_split_plan: SettlementSplitPlan,
+}
+
+/// Builds idempotent storage commands from one finalized indexer page. This
+/// function is deliberately pure: database loading and persistence remain in
+/// the worker/storage boundary, while allocation and evidence mapping remain
+/// deterministic and replayable.
+pub fn build_finalized_revenue_accrual_commands(
+    page: &indexer::FinalizedPage,
+    contexts: &[RevenueStreamReconciliationContext],
+) -> Result<Vec<RecordRevenueStreamAccrualCommand>, IndexerServiceError> {
+    if contexts.len() > MAX_REVENUE_RECONCILIATION_CONTEXTS {
+        return Err(IndexerServiceError::RevenueReconciliation(format!(
+            "reconciliation context count exceeds {MAX_REVENUE_RECONCILIATION_CONTEXTS}"
+        )));
+    }
+    page.validate(page.range)?;
+    let mut commands = Vec::new();
+
+    for context in contexts {
+        let record = &context.stream_plan;
+        let spec = &record.spec;
+        if context.merchant_id != record.merchant_id
+            || record.status != "active"
+            || record.id != spec.id
+            || spec.merchant_id != context.merchant_id
+        {
+            return Err(IndexerServiceError::RevenueReconciliation(
+                "stream context is not tenant-bound and active".to_string(),
+            ));
+        }
+        let split_plan = SplitPlan::new(
+            context.settlement_split_plan.merchant_account.clone(),
+            context.settlement_split_plan.mint.clone(),
+            u64::try_from(context.settlement_split_plan.version).map_err(|_| {
+                IndexerServiceError::RevenueReconciliation(
+                    "split-plan version is outside the supported range".to_string(),
+                )
+            })?,
+            context.settlement_split_plan.recipients.clone(),
+        )
+        .map_err(|error| IndexerServiceError::RevenueReconciliation(error.to_string()))?;
+        let canonical_digest = split_plan
+            .digest()
+            .map_err(|error| IndexerServiceError::RevenueReconciliation(error.to_string()))?;
+        if canonical_digest != context.settlement_split_plan.plan_digest
+            || spec.plan_digest.0 != canonical_digest
+            || spec.asset.0
+                != Pubkey::from_str(&context.settlement_split_plan.mint)
+                    .map_err(|_| {
+                        IndexerServiceError::RevenueReconciliation(
+                            "split-plan mint is not canonical".to_string(),
+                        )
+                    })?
+                    .to_bytes()
+        {
+            return Err(IndexerServiceError::RevenueReconciliation(
+                "stream plan is not bound to the canonical settlement split plan".to_string(),
+            ));
+        }
+        let expected_recipient = spec.recipient.0;
+        let mut matched_source_count = 0_usize;
+        for split in &page.split_settlements {
+            if split.split_plan_version
+                != u64::try_from(context.settlement_split_plan.version).map_err(|_| {
+                    IndexerServiceError::RevenueReconciliation(
+                        "split-plan version is outside the supported range".to_string(),
+                    )
+                })?
+                || split.split_plan_digest != canonical_digest
+                || split.policy_digest != spec.policy_digest.0
+                || split.mint != spec.asset.0
+                || split.slot < spec.start_slot
+                || spec.end_slot.is_some_and(|end_slot| split.slot > end_slot)
+            {
+                continue;
+            }
+            if split.merchant
+                != Pubkey::from_str(&context.settlement_split_plan.merchant_account)
+                    .map_err(|_| {
+                        IndexerServiceError::RevenueReconciliation(
+                            "split-plan merchant is not canonical".to_string(),
+                        )
+                    })?
+                    .to_bytes()
+            {
+                continue;
+            }
+            let allocations = split_plan
+                .allocate(split.net_atomic)
+                .map_err(|error| IndexerServiceError::RevenueReconciliation(error.to_string()))?;
+            let matching_allocations = allocations
+                .iter()
+                .filter(|allocation| {
+                    Pubkey::from_str(&allocation.token_account)
+                        .is_ok_and(|recipient| recipient.to_bytes() == expected_recipient)
+                })
+                .collect::<Vec<_>>();
+            if matching_allocations.len() != 1 {
+                return Err(IndexerServiceError::RevenueReconciliation(
+                    "stream recipient is not uniquely present in the canonical split plan"
+                        .to_string(),
+                ));
+            }
+            let proof = indexer::build_revenue_stream_allocation_proof(
+                split,
+                expected_recipient,
+                matching_allocations[0].amount_atomic,
+                page.observed_finalized_slot,
+            )
+            .map_err(|error| IndexerServiceError::RevenueReconciliation(error.to_string()))?;
+            let accrual = revenue_streaming::finalized_accrual_from_proof(proof)
+                .map_err(|error| IndexerServiceError::RevenueReconciliation(error.to_string()))?;
+            commands.push(RecordRevenueStreamAccrualCommand {
+                merchant_id: context.merchant_id,
+                actor_subject: REVENUE_RECONCILIATION_ACTOR.to_string(),
+                plan_id: record.id,
+                accrual,
+            });
+            matched_source_count = matched_source_count.checked_add(1).ok_or_else(|| {
+                IndexerServiceError::RevenueReconciliation(
+                    "revenue source count overflowed".to_string(),
+                )
+            })?;
+        }
+        if matched_source_count > page.split_settlements.len() {
+            return Err(IndexerServiceError::RevenueReconciliation(
+                "revenue source count exceeded finalized page bounds".to_string(),
+            ));
+        }
+    }
+    Ok(commands)
+}
+
+fn finalized_page_for_revenue_job(
+    job: &RevenueStreamAccrualReconciliationJob,
+) -> indexer::FinalizedPage {
+    indexer::FinalizedPage {
+        range: ScanRange {
+            start_slot: job.split_settlement.slot,
+            end_slot: job.split_settlement.slot,
+        },
+        observed_finalized_slot: job.observed_finalized_slot,
+        receipts: vec![job.receipt.clone()],
+        split_settlements: vec![job.split_settlement.clone()],
+        adjustment_records: Vec::new(),
+        refund_executions: Vec::new(),
+        raw_evidence: Vec::new(),
+        raw_transactions: Vec::new(),
+        protocol_pause_changes: Vec::new(),
+        complete: true,
+    }
+}
+
+fn map_revenue_context_record(
+    record: RevenueStreamReconciliationContextRecord,
+) -> RevenueStreamReconciliationContext {
+    RevenueStreamReconciliationContext {
+        merchant_id: record.merchant_id,
+        stream_plan: record.stream_plan,
+        settlement_split_plan: record.settlement_split_plan,
+    }
+}
+
+/// Claims and processes at most one durable revenue-accrual job. The job is
+/// completed only after every generated tenant-scoped accrual has committed;
+/// a retry after a crash is safe because storage treats identical evidence as
+/// a duplicate.
+pub async fn reconcile_one_revenue_stream_accrual_once(
+    store: &PgStore,
+    stream_key: &str,
+) -> Result<bool, IndexerServiceError> {
+    let Some(job) = store.claim_revenue_stream_accrual_job(stream_key).await? else {
+        return Ok(false);
+    };
+    let page = finalized_page_for_revenue_job(&job);
+    let context_records = match store
+        .load_active_revenue_stream_reconciliation_contexts(
+            MAX_REVENUE_STREAM_RECONCILIATION_CONTEXTS,
+        )
+        .await
+    {
+        Ok(records) => records,
+        Err(error) => {
+            store
+                .fail_revenue_stream_accrual_job(&job, "context_load_failed")
+                .await?;
+            return Err(error.into());
+        }
+    };
+    let contexts = context_records
+        .into_iter()
+        .map(map_revenue_context_record)
+        .collect::<Vec<_>>();
+    let commands = match build_finalized_revenue_accrual_commands(&page, &contexts) {
+        Ok(commands) => commands,
+        Err(error) => {
+            store
+                .fail_revenue_stream_accrual_job(&job, "reconciliation_rejected")
+                .await?;
+            return Err(error);
+        }
+    };
+    let result_code = if commands.is_empty() {
+        "no_matching_plan"
+    } else {
+        "completed"
+    };
+    for command in commands {
+        if let Err(error) = store.record_revenue_stream_accrual(command).await {
+            store
+                .fail_revenue_stream_accrual_job(&job, "accrual_persistence_failed")
+                .await?;
+            return Err(error.into());
+        }
+    }
+    store
+        .complete_revenue_stream_accrual_job(&job, result_code)
+        .await?;
+    Ok(true)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1478,5 +1715,124 @@ mod tests {
         assert!(rendered.contains("stp_settlement_protocol_paused{service=\"indexer\"} 1"));
         assert!(rendered.contains("stp_settlement_protocol_pause_slot{service=\"indexer\"} 777"));
         assert!(!rendered.contains("stream_key"));
+    }
+
+    #[test]
+    fn finalized_revenue_reconciler_recomputes_server_owned_allocation() {
+        let merchant_key = Pubkey::new_from_array([1; 32]);
+        let mint_key = Pubkey::new_from_array([2; 32]);
+        let recipient_key = Pubkey::new_from_array([3; 32]);
+        let other_recipient_key = Pubkey::new_from_array([4; 32]);
+        let split_plan = SplitPlan::new(
+            merchant_key.to_string(),
+            mint_key.to_string(),
+            7,
+            vec![
+                split_plan::SplitRecipient {
+                    token_account: recipient_key.to_string(),
+                    basis_points: 7_000,
+                },
+                split_plan::SplitRecipient {
+                    token_account: other_recipient_key.to_string(),
+                    basis_points: 3_000,
+                },
+            ],
+        )
+        .expect("valid split plan");
+        let plan_digest = split_plan.digest().expect("split plan digest");
+        let policy_digest = [6; 32];
+        let signature = solana_signature::Signature::from([60; 64]).to_string();
+        let split = indexer::IndexedSplitSettlement {
+            signature: signature.clone(),
+            slot: 42,
+            receipt: [7; 32],
+            payer: [8; 32],
+            merchant: merchant_key.to_bytes(),
+            mint: mint_key.to_bytes(),
+            nonce: 9,
+            gross_atomic: 100,
+            tax_atomic: 10,
+            net_atomic: 90,
+            split_plan_version: 7,
+            split_plan_digest: plan_digest,
+            policy_digest,
+            evidence_digest: [10; 32],
+        };
+        let page = indexer::FinalizedPage {
+            range: ScanRange {
+                start_slot: 40,
+                end_slot: 50,
+            },
+            observed_finalized_slot: 60,
+            receipts: vec![indexer::IndexedReceipt {
+                signature,
+                slot: 42,
+                receipt: [7; 32],
+                payer: [8; 32],
+                merchant: merchant_key.to_bytes(),
+                mint: mint_key.to_bytes(),
+                nonce: 9,
+                gross_atomic: 100,
+                tax_atomic: 10,
+                net_atomic: 90,
+                policy_digest,
+                evidence_digest: [10; 32],
+            }],
+            split_settlements: vec![split],
+            adjustment_records: Vec::new(),
+            refund_executions: Vec::new(),
+            raw_evidence: Vec::new(),
+            raw_transactions: Vec::new(),
+            protocol_pause_changes: Vec::new(),
+            complete: true,
+        };
+        let merchant_id = uuid::Uuid::now_v7();
+        let stream_id = revenue_streaming::StreamPlanId(uuid::Uuid::now_v7());
+        let context = RevenueStreamReconciliationContext {
+            merchant_id,
+            stream_plan: RevenueStreamPlanRecord {
+                id: stream_id,
+                merchant_id,
+                idempotency_key: "stream-1".to_string(),
+                request_digest: [11; 32],
+                destination_route_id: None,
+                spec: revenue_streaming::StreamPlanSpec {
+                    id: stream_id,
+                    merchant_id,
+                    settlement_route_id: uuid::Uuid::now_v7(),
+                    operator_subject: Some("operator".to_string()),
+                    asset: revenue_streaming::AssetId(mint_key.to_bytes()),
+                    recipient: revenue_streaming::RecipientId(recipient_key.to_bytes()),
+                    plan_digest: revenue_streaming::Digest(plan_digest),
+                    policy_digest: revenue_streaming::Digest(policy_digest),
+                    start_slot: 1,
+                    end_slot: None,
+                    max_total_atomic: 1_000,
+                    max_claim_atomic: 1_000,
+                },
+                status: "active".to_string(),
+                proposer_subject: "proposer".to_string(),
+                approver_subject: Some("approver".to_string()),
+                accrued_total_atomic: 0,
+                released_total_atomic: 0,
+                next_nonce: 1,
+            },
+            settlement_split_plan: SettlementSplitPlan {
+                id: uuid::Uuid::now_v7(),
+                plan_key: "split-1".to_string(),
+                version: 7,
+                merchant_account: merchant_key.to_string(),
+                mint: mint_key.to_string(),
+                plan_digest,
+                recipients: split_plan.recipients.clone(),
+            },
+        };
+
+        let commands = build_finalized_revenue_accrual_commands(&page, &[context])
+            .expect("revenue accrual command");
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].accrual.recipient_atomic, 63);
+        assert_eq!(commands[0].accrual.finalized_slot, 42);
+        assert_eq!(commands[0].actor_subject, REVENUE_RECONCILIATION_ACTOR);
     }
 }

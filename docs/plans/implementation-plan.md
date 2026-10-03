@@ -1,5 +1,69 @@
 # Implementation plan
 
+## UI language and navigation quality gate
+
+The product shell is organized around operator tasks: daily work, rules and
+access, money movement, and records and issues. Primary labels must stay in
+plain language; exact rule references, fingerprints, engine versions, and
+protocol details belong in accessible progressive disclosures or administrator
+surfaces. Every new workspace must define its breadcrumb, stable path, access
+state, empty/loading/error/reconciliation states, safe next action, and
+keyboard/mobile navigation behavior before implementation. See ADR-0282.
+
+The attached evaluation's “streaming payouts” language is explicitly bounded by
+ADR-0283. The first production settlement authority is a bounded atomic
+per-transaction split: tax withholding, vault deposit, and recipient allocation
+must succeed or fail together. Continuous streaming is a later bounded context
+and must consume finalized, attested accruals without bypassing tax, vault,
+pause, authorization, or evidence controls.
+
+### ADR-0285 — Finalized revenue-streaming claim domain
+
+- [x] Add the pure `revenue-streaming` domain crate for finalized accruals and
+  single-use release claims.
+- [x] Add storage/API adapters with tenant-scoped authorization and durable
+  idempotency after the domain contract is accepted.
+- [x] Add the bounded Solana plan, finalized-accrual reference, single-use
+  claim, cancellation, and vault-CPI instructions with explicit account
+  bindings and checked caps. The program does not claim to verify RPC
+  finality; the operator signature remains downstream of the proof adapter.
+- [x] Add deterministic settlement-client PDA and instruction compilers with
+  account-order, wire-shape, authority, digest, window, and aliasing tests.
+- [x] Add the partner payout UI and real-browser authorized/denied journeys;
+  it still keeps chain signing and finalized evidence behind the explicit
+  production boundary.
+- [x] Bind each plan to exactly one server-resolved active settlement route;
+  browser requests cannot choose merchant-side accounts or route topology.
+- [x] Persist the named payout operator subject and extend the wallet-proof
+  boundary with context-qualified revenue-stream roles before exposing any
+  revenue-stream compiler or wallet submission endpoint; see ADR-0289. The
+  compiler and wallet submission endpoint remain intentionally gated.
+- [x] Add the pure finalized proof adapter and typed finalized split projection;
+  see ADR-0290.
+- [x] Add the bounded application reconciler that resolves server-owned split
+  allocations and records idempotent accruals; see ADR-0291.
+- [x] Persist finalized revenue reconciliation jobs in the same transaction as
+  indexed split evidence and run the leased worker; see ADR-0292.
+- [x] Add the finalized signed-message verifier; it rejects extra instructions,
+  lookup tables, account substitution, and signer/writable drift. The design is
+  recorded in ADR-0293.
+- [ ] Add the server-owned revenue payout-destination registry, immutable
+  versions, tenant-scoped active resolution, and finalized chain verification;
+  see ADR-0294. Browser requests must never supply destination token accounts.
+- [ ] Bind new plans to the resolved destination route version and evidence
+  digest; legacy plans remain readable but claim compilation stays blocked.
+- [ ] Execute the Linux validator conformance matrix before enabling the
+  revenue-stream movement path.
+
+## ADR-0284 — zero-copy tax-fact normalization
+
+- [x] Return borrowed validated facts for the common no-FX calculation path and
+  allocate normalized facts only when server-owned FX evidence is present.
+- [x] Add failing-first ownership invariant tests for no-FX and FX paths.
+- [x] Re-run the full tax-engine suite and Criterion hot-path benchmark;
+  current native arm64 evidence is retained in ADR-0075 and remains separate
+  from Linux/amd64 service and regional SLO evidence.
+
 ## ADR-0153 — On-chain adjustment evidence boundary
 
 The adjustment slice is a separate bounded `record_adjustment` Solana
@@ -2387,6 +2451,11 @@ gates above.
 - [x] Add ADR-0274's explicit currency boundary. Aggregate quotes and
   scenarios no longer silently submit USD; currency is entered and normalized
   at the browser boundary while server-returned currency controls display.
+- [x] Add ADR-0282's progressive technical disclosure to invoice quoting,
+  access review, and guided rule authoring. Tax authors see task language for
+  taxable amounts, rate bands, thresholds, credits, and rounding; exact rule
+  serialization and audit fingerprints remain available in controlled detail
+  views.
 - [ ] Review every domain workspace with finance/tax operators and complete
   real-browser, screen-reader, localization, and legal-copy evidence before
   making production UX claims.

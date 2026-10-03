@@ -36,7 +36,17 @@ pub fn authority_challenge_message(
         return Err(AdjustmentError::InvalidUuid("challenge ID"));
     }
     validate_subject(subject, "authority subject")?;
-    if !matches!(role, "proposer" | "approver" | "refund_funder") {
+    if !matches!(
+        role,
+        "proposer"
+            | "approver"
+            | "refund_funder"
+            | "governance"
+            | "revenue_stream_proposer"
+            | "revenue_stream_approver"
+            | "revenue_stream_operator"
+            | "revenue_stream_governance"
+    ) {
         return Err(AdjustmentError::InvalidAuthorityRole);
     }
     if expires_at_unix <= 0 {
@@ -786,6 +796,18 @@ mod tests {
                 .expect("challenge is UTF-8")
                 .contains("role=refund_funder")
         );
+        for role in [
+            "governance",
+            "revenue_stream_proposer",
+            "revenue_stream_approver",
+            "revenue_stream_operator",
+            "revenue_stream_governance",
+        ] {
+            assert!(
+                authority_challenge_message(id(20), id(21), "subject", role, 10).is_ok(),
+                "role {role} should be supported"
+            );
+        }
         let error = authority_challenge_message(id(20), id(21), "", "proposer", 10)
             .expect_err("empty subject");
         assert_eq!(error, AdjustmentError::InvalidSubject("authority subject"));

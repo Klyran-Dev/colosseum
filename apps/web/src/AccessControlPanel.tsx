@@ -25,7 +25,7 @@ export default function AccessControlPanel({ accessToken, authorizationSnapshot,
       <div className="authorization-posture" role="status">
         <div><span>Signed-in person</span><strong>{snapshot.subject ?? "Not signed in"}</strong></div>
         <div><span>Account</span><strong>{snapshot.tenantId ? "Confirmed for this account" : "Confirmed when you sign in"}</strong></div>
-        <div><span>Access check</span><strong>{authorizationError ? "Unavailable; actions stay closed" : snapshot.state === "server-allowed" ? "Checked by the service" : accessToken ? "Waiting for the service" : "Waiting for sign-in"}</strong></div>
+        <div><span>Permission status</span><strong>{authorizationError ? "Unavailable; actions stay closed" : snapshot.state === "server-allowed" ? "Checked by the service" : accessToken ? "Waiting for the service" : "Waiting for sign-in"}</strong></div>
       </div>
       <div className="policy-dimension-grid">
         <article><span className="dimension-icon">R</span><div><strong>Roles</strong><p>Your responsibilities determine which work you can own or approve.</p></div></article>

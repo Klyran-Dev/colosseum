@@ -24,6 +24,7 @@ These are the governing requirements from the request:
 | Dynamic tax withholding | Constrained | The program consumes a bounded, signed policy attestation. It does not determine law and does not call arbitrary internet data. |
 | Signed regulatory parameter proof | Accepted | Canonical, versioned attestation with signer set, expiry, sequence, jurisdiction, asset, and rate constraints. |
 | Atomic tax escrow and revenue split | Accepted | One transaction; failure rolls back the complete settlement. |
+| Continuous or streamed partner payouts | Deferred and bounded | The first production settlement scope is an atomic per-transaction split. A future stream must consume finalized, attested accruals and may not bypass tax, vault, pause, or evidence controls. |
 | Audited tax vaults | Accepted with controls | PDA-owned vaults, segregated by merchant/asset/policy, explicit release policy, timelocks, multisig/governance, and append-only receipts. |
 | Stablecoin tax reserve | Accepted for v1 | Stablecoin-only hot path. A swap adapter is a later, separately risk-managed bounded route. |
 | SPL token support | Accepted and narrowed | Support the legacy SPL Token Program and Token-2022 only through an explicit asset registry. Do not assume extensions are harmless. |

@@ -335,6 +335,7 @@ dependencies = [
  "observability",
  "policy",
  "refund-workflow",
+ "revenue-streaming",
  "serde",
  "serde_json",
  "settlement-adjustments",
@@ -1886,6 +1887,7 @@ dependencies = [
  "async-trait",
  "base64 0.23.1",
  "reqwest",
+ "revenue-streaming",
  "serde",
  "serde_json",
  "settlement-adjustments",
@@ -1906,14 +1908,18 @@ dependencies = [
  "indexer",
  "observability",
  "reqwest",
+ "revenue-streaming",
  "serde_json",
  "settlement-adjustments",
  "solana-pubkey 4.4.0",
+ "solana-signature",
+ "split-plan",
  "storage",
  "tax-engine",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -3050,6 +3056,16 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "revenue-streaming"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "sha2 0.11.0",
+ "thiserror 2.0.21",
+ "uuid",
 ]
 
 [[package]]
@@ -4648,6 +4664,7 @@ dependencies = [
  "jurisdiction",
  "policy",
  "refund-workflow",
+ "revenue-streaming",
  "serde",
  "serde_json",
  "settlement-adjustments",

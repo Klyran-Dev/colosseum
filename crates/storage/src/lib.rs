@@ -41,6 +41,11 @@ use refund_workflow::{
     claim_request_digest, execute_request_digest, refund_instruction_digest,
     validate_cancellation_artifact, validate_claim_artifact, validate_execute_artifact,
 };
+use revenue_streaming::{
+    AssetId, Digest as RevenueStreamDigest, FinalizedAccrual, FinalizedCorrection,
+    FinalizedRelease, RecipientId, Signature as RevenueStreamSignature, StreamPlan, StreamPlanId,
+    StreamPlanSpec,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settlement_adjustments::{
@@ -96,6 +101,10 @@ pub const REFUND_FUNDING_VERIFICATION_LEASE: Duration = Duration::from_secs(60);
 pub const REFUND_PROOF_CANDIDATE_LEASE: Duration = Duration::from_secs(60);
 pub const MAX_REFUND_PROOF_ATTEMPTS: i16 = 3;
 pub const MAX_REFUND_PROOF_ERROR_BYTES: usize = 1_024;
+pub const REVENUE_STREAM_ACCRUAL_RECONCILIATION_LEASE: Duration = Duration::from_secs(60);
+pub const MAX_REVENUE_STREAM_ACCRUAL_ATTEMPTS: i16 = 8;
+pub const MAX_REVENUE_STREAM_RECONCILIATION_CONTEXTS: usize = 64;
+pub const MAX_REVENUE_STREAM_RECONCILIATION_ERROR_BYTES: usize = 1_024;
 const REFUND_FUNDING_VERIFIER_ACTOR: &str = "system:refund-funding-verifier";
 pub const DEFAULT_REPLAY_BATCH_SIZE: usize = 16;
 pub const MAX_REPLAY_BATCH_SIZE: usize = 64;
@@ -120,6 +129,7 @@ pub const MAX_RULE_DRAFT_PROVENANCE_BYTES: usize = 16 * 1024;
 pub const MAX_JURISDICTION_POLICY_PROVENANCE_BYTES: usize = 16 * 1024;
 pub const MAX_FX_EVIDENCE_DOCUMENT_BYTES: usize = 64 * 1024;
 pub const MAX_VAULT_RELEASE_EVIDENCE_BYTES: usize = 16 * 1024;
+pub const MAX_REVENUE_STREAM_EVIDENCE_BYTES: usize = 16 * 1024;
 pub const MAX_VAULT_RELEASE_WINDOW: Duration = Duration::from_secs(90 * 24 * 60 * 60);
 pub const MAX_PERSISTED_FACTS_BYTES: usize = 64 * 1024;
 pub const MAX_EVIDENCE_KEY_RING_SIZE: usize = 8;
@@ -223,6 +233,14 @@ pub enum StorageError {
     SettlementRouteIntegrity(String),
     #[error("settlement route cannot be activated in its current lifecycle state")]
     SettlementRouteActivationConflict,
+    #[error("revenue stream destination route was not found for this merchant")]
+    RevenueStreamDestinationRouteNotFound,
+    #[error("revenue stream destination route is not active or is outside its effective window")]
+    RevenueStreamDestinationRouteUnavailable,
+    #[error("revenue stream destination route verification evidence is invalid: {0}")]
+    RevenueStreamDestinationRouteVerificationInvalid(String),
+    #[error("revenue stream destination route cannot be activated in its current lifecycle state")]
+    RevenueStreamDestinationRouteActivationConflict,
     #[error("refund funding configuration was not found")]
     RefundFundingConfigurationNotFound,
     #[error("refund funding configuration idempotency key was reused for different input")]
@@ -371,6 +389,28 @@ pub enum StorageError {
     InvalidVaultReleaseClaim(String),
     #[error("vault release claim idempotency key was reused with a different request")]
     VaultReleaseClaimIdempotencyConflict,
+    #[error("revenue stream plan was not found for this merchant")]
+    RevenueStreamPlanNotFound,
+    #[error("revenue stream plan idempotency key was reused with a different request")]
+    RevenueStreamPlanIdempotencyConflict,
+    #[error("revenue stream plan transition is invalid")]
+    InvalidRevenueStreamPlanTransition,
+    #[error("revenue stream plan actor conflict")]
+    RevenueStreamPlanActorConflict,
+    #[error("revenue stream input is invalid: {0}")]
+    InvalidRevenueStream(String),
+    #[error("revenue stream evidence conflicts with an existing record")]
+    RevenueStreamEvidenceConflict,
+    #[error(
+        "revenue stream accrual reconciliation job lease is missing or owned by another worker"
+    )]
+    RevenueStreamAccrualJobLeaseLost,
+    #[error("revenue stream accrual reconciliation job is invalid: {0}")]
+    InvalidRevenueStreamAccrualJob(String),
+    #[error("revenue stream claim was not found for this merchant")]
+    RevenueStreamClaimNotFound,
+    #[error("revenue stream claim has insufficient available balance")]
+    RevenueStreamInsufficientAvailable,
     #[error("normalized tax facts encryption is not configured")]
     EvidenceCipherUnavailable,
     #[error("normalized tax facts encryption failed: {0}")]
@@ -682,6 +722,59 @@ fn evidence_aad(merchant_id: Uuid, facts_digest: &[u8; 32]) -> Vec<u8> {
     aad.push(0);
     aad.extend_from_slice(facts_digest);
     aad
+}
+
+pub fn validate_create_revenue_stream_plan_command(
+    command: &CreateRevenueStreamPlanCommand,
+) -> Result<(), StorageError> {
+    if command.merchant_id.get_version_num() != 7
+        || command.destination_route_id.get_version_num() != 7
+        || command.actor_subject.trim().is_empty()
+        || command.actor_subject.len() > 256
+        || command
+            .actor_subject
+            .bytes()
+            .any(|byte| byte.is_ascii_control())
+        || command.idempotency_key.trim().is_empty()
+        || command.idempotency_key.len() > 200
+        || command
+            .idempotency_key
+            .bytes()
+            .any(|byte| byte.is_ascii_control())
+        || command.spec.merchant_id != command.merchant_id
+        || command
+            .spec
+            .operator_subject
+            .as_deref()
+            .is_none_or(|subject| {
+                subject.trim().is_empty()
+                    || subject.len() > 256
+                    || subject.bytes().any(|byte| byte.is_ascii_control())
+                    || subject == command.actor_subject
+            })
+    {
+        return Err(StorageError::InvalidRevenueStream(
+            "stream plan identity, actor, or idempotency input is invalid".into(),
+        ));
+    }
+    StreamPlan::new(command.spec.clone()).map_err(|error| {
+        StorageError::InvalidRevenueStream(format!("stream plan spec is invalid: {error}"))
+    })?;
+    Ok(())
+}
+
+pub fn revenue_stream_plan_request_digest(
+    command: &CreateRevenueStreamPlanCommand,
+) -> Result<[u8; 32], StorageError> {
+    validate_create_revenue_stream_plan_command(command)?;
+    let canonical = serde_json::to_vec(&serde_json::json!({
+        "schema": "revenue-stream-plan/v1",
+        "merchant_id": command.merchant_id,
+        "destination_route_id": command.destination_route_id,
+        "idempotency_key": command.idempotency_key,
+        "spec": command.spec,
+    }))?;
+    Ok(Sha256::digest(canonical).into())
 }
 
 #[derive(Clone, Debug)]
@@ -1067,6 +1160,142 @@ pub struct VaultReleaseClaimTransitionResult {
     pub approver_subject: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct CreateRevenueStreamPlanCommand {
+    pub merchant_id: Uuid,
+    pub destination_route_id: Uuid,
+    pub actor_subject: String,
+    pub idempotency_key: String,
+    pub spec: StreamPlanSpec,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RevenueStreamPlanRecord {
+    pub id: StreamPlanId,
+    pub merchant_id: Uuid,
+    pub idempotency_key: String,
+    pub request_digest: [u8; 32],
+    pub destination_route_id: Option<Uuid>,
+    pub spec: StreamPlanSpec,
+    pub status: String,
+    pub proposer_subject: String,
+    pub approver_subject: Option<String>,
+    #[serde(with = "policy::serde_u64_string")]
+    pub accrued_total_atomic: u64,
+    #[serde(with = "policy::serde_u64_string")]
+    pub released_total_atomic: u64,
+    #[serde(with = "policy::serde_u64_string")]
+    pub next_nonce: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct RevenueStreamReconciliationContextRecord {
+    pub merchant_id: Uuid,
+    pub stream_plan: RevenueStreamPlanRecord,
+    pub settlement_split_plan: SettlementSplitPlan,
+}
+
+#[derive(Clone, Debug)]
+pub struct RevenueStreamAccrualReconciliationJob {
+    pub stream_key: String,
+    pub source_signature: String,
+    pub evidence_digest: Digest32,
+    pub observed_finalized_slot: u64,
+    pub claim_token: Uuid,
+    pub split_settlement: IndexedSplitSettlement,
+    pub receipt: IndexedReceipt,
+}
+
+#[derive(Clone, Debug)]
+pub enum RevenueStreamPlanOutcome {
+    Created(RevenueStreamPlanRecord),
+    Replay(RevenueStreamPlanRecord),
+}
+
+#[derive(Clone, Debug)]
+pub struct RevenueStreamPlanTransition {
+    pub merchant_id: Uuid,
+    pub plan_id: StreamPlanId,
+    pub actor_subject: String,
+    pub to_status: String,
+    pub observed_slot: Option<u64>,
+    pub evidence: Value,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RevenueStreamPlanTransitionResult {
+    pub plan_id: StreamPlanId,
+    pub from_status: String,
+    pub to_status: String,
+    pub approver_subject: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RecordRevenueStreamAccrualCommand {
+    pub merchant_id: Uuid,
+    pub actor_subject: String,
+    pub plan_id: StreamPlanId,
+    pub accrual: FinalizedAccrual,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RevenueStreamAccrualOutcome {
+    Recorded,
+    Duplicate,
+}
+
+#[derive(Clone, Debug)]
+pub struct RecordRevenueStreamCorrectionCommand {
+    pub merchant_id: Uuid,
+    pub actor_subject: String,
+    pub plan_id: StreamPlanId,
+    pub correction: FinalizedCorrection,
+}
+
+#[derive(Clone, Debug)]
+pub struct PrepareRevenueStreamClaimCommand {
+    pub merchant_id: Uuid,
+    pub actor_subject: String,
+    pub plan_id: StreamPlanId,
+    pub idempotency_key: String,
+    pub claim_id: Uuid,
+    pub amount_atomic: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RevenueStreamClaimRecord {
+    pub id: Uuid,
+    pub plan_id: StreamPlanId,
+    pub merchant_id: Uuid,
+    pub idempotency_key: String,
+    #[serde(with = "policy::serde_u64_string")]
+    pub amount_atomic: u64,
+    #[serde(with = "policy::serde_u64_string")]
+    pub nonce: u64,
+    #[serde(with = "policy::serde_u64_string")]
+    pub accrual_total_atomic: u64,
+    pub plan_digest: [u8; 32],
+    pub asset: [u8; 32],
+    pub recipient: [u8; 32],
+    pub claim_digest: [u8; 32],
+    pub status: String,
+    pub release_signature: Option<Vec<u8>>,
+    pub finalized_slot: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
+pub struct FinalizeRevenueStreamClaimCommand {
+    pub merchant_id: Uuid,
+    pub actor_subject: String,
+    pub release: FinalizedRelease,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RevenueStreamClaimOutcome {
+    Recorded,
+    Duplicate,
+}
+
 #[derive(Clone, Debug)]
 pub struct CreateSettlementAdjustmentCommand {
     pub merchant_id: Uuid,
@@ -1237,6 +1466,22 @@ pub struct SettlementRoute {
     pub tax_vault: String,
     pub net_destination: String,
     pub token_program: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RevenueStreamDestinationRoute {
+    pub id: Uuid,
+    pub merchant_id: Uuid,
+    pub route_key: String,
+    pub version: i32,
+    pub recipient_owner: String,
+    pub mint: String,
+    pub destination_token_account: String,
+    pub token_program: String,
+    pub verification_digest: RevenueStreamDigest,
+    pub verification_slot: u64,
+    pub verification_commitment: String,
+    pub verification_evidence: Value,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1663,6 +1908,18 @@ pub struct SettlementRouteVerificationCandidate {
     pub mint: String,
     pub tax_vault: String,
     pub net_destination: String,
+    pub token_program: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RevenueStreamDestinationRouteVerificationCandidate {
+    pub id: Uuid,
+    pub merchant_id: Uuid,
+    pub route_key: String,
+    pub version: i32,
+    pub recipient_owner: String,
+    pub mint: String,
+    pub destination_token_account: String,
     pub token_program: String,
 }
 
@@ -2618,6 +2875,7 @@ impl PgStore {
                 )
                 .await?;
         }
+        persist_revenue_stream_accrual_jobs(&transaction, stream_key, page).await?;
         persist_indexed_adjustment_refund_executions(
             &transaction,
             stream_key,
@@ -4002,6 +4260,7 @@ impl PgStore {
                 )
                 .await?;
         }
+        persist_revenue_stream_accrual_jobs(&transaction, stream_key, page).await?;
         persist_indexed_adjustment_refund_executions(
             &transaction,
             stream_key,
@@ -6656,6 +6915,1278 @@ impl PgStore {
             to_status: command.to_status,
             approver_subject,
         })
+    }
+
+    /// Persists a proposed stream plan and its first publication event in one
+    /// serializable transaction. The supplied plan identity is already a
+    /// server-generated UUIDv7 at this boundary; callers must not accept it
+    /// from a browser request.
+    pub async fn create_revenue_stream_plan(
+        &self,
+        command: CreateRevenueStreamPlanCommand,
+    ) -> Result<RevenueStreamPlanOutcome, StorageError> {
+        validate_create_revenue_stream_plan_command(&command)?;
+        let request_digest = revenue_stream_plan_request_digest(&command)?;
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let spec = &command.spec;
+        let end_slot = spec.end_slot.map(|value| value.to_string());
+        let start_slot = spec.start_slot.to_string();
+        let max_total_atomic = spec.max_total_atomic.to_string();
+        let max_claim_atomic = spec.max_claim_atomic.to_string();
+        let inserted = transaction
+            .query_opt(
+                "INSERT INTO revenue_stream_plans
+                    (id, merchant_id, settlement_route_id, destination_route_id, idempotency_key,
+                     request_digest, asset, recipient, plan_digest, policy_digest,
+                     start_slot, end_slot, max_total_atomic, max_claim_atomic,
+                     proposer_subject, operator_subject)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::text::numeric,
+                         $12::text::numeric, $13::text::numeric, $14::text::numeric, $15, $16)
+                 ON CONFLICT (merchant_id, idempotency_key) DO NOTHING
+                 RETURNING id, merchant_id, idempotency_key, request_digest,
+                           settlement_route_id, destination_route_id, asset, recipient, plan_digest, policy_digest,
+                           start_slot::text, end_slot::text,
+                           max_total_atomic::text, max_claim_atomic::text,
+                           status, proposer_subject, approver_subject, operator_subject,
+                           accrued_total_atomic::text, released_total_atomic::text,
+                           next_nonce::text",
+                &[
+                    &spec.id.0,
+                    &command.merchant_id,
+                    &spec.settlement_route_id,
+                    &command.destination_route_id,
+                    &command.idempotency_key,
+                    &&request_digest[..],
+                    &&spec.asset.0[..],
+                    &&spec.recipient.0[..],
+                    &&spec.plan_digest.0[..],
+                    &&spec.policy_digest.0[..],
+                    &start_slot,
+                    &end_slot,
+                    &max_total_atomic,
+                    &max_claim_atomic,
+                    &command.actor_subject,
+                    &spec.operator_subject,
+                ],
+            )
+            .await?;
+        if let Some(row) = inserted {
+            let record = parse_revenue_stream_plan_row(row)?;
+            transaction
+                .execute(
+                    "INSERT INTO revenue_stream_plan_events
+                        (plan_id, merchant_id, actor_subject, action,
+                         from_status, to_status, evidence)
+                     VALUES ($1, $2, $3, 'propose', 'none', 'proposed', $4)",
+                    &[
+                        &record.id.0,
+                        &command.merchant_id,
+                        &command.actor_subject,
+                        &serde_json::json!({
+                            "request_digest": request_digest,
+                            "plan_digest": spec.plan_digest,
+                        }),
+                    ],
+                )
+                .await?;
+            transaction
+                .execute(
+                    "INSERT INTO outbox_events
+                        (aggregate_type, aggregate_id, event_type, payload)
+                     VALUES ($1, $2, $3, $4)",
+                    &[
+                        &"revenue_stream_plan",
+                        &record.id.0,
+                        &"tax.revenue_stream_plan.proposed",
+                        &serde_json::json!({
+                            "schema_version": OUTBOX_PAYLOAD_SCHEMA_VERSION,
+                            "merchant_id": command.merchant_id,
+                            "plan": record.clone(),
+                        }),
+                    ],
+                )
+                .await?;
+            transaction.commit().await?;
+            return Ok(RevenueStreamPlanOutcome::Created(record));
+        }
+        let row = transaction
+            .query_one(
+                "SELECT id, merchant_id, idempotency_key, request_digest,
+                        settlement_route_id, destination_route_id, asset, recipient, plan_digest, policy_digest,
+                        start_slot::text, end_slot::text,
+                        max_total_atomic::text, max_claim_atomic::text,
+                        status, proposer_subject, approver_subject, operator_subject,
+                        accrued_total_atomic::text, released_total_atomic::text,
+                        next_nonce::text
+                 FROM revenue_stream_plans
+                 WHERE merchant_id = $1 AND idempotency_key = $2
+                 FOR UPDATE",
+                &[&command.merchant_id, &command.idempotency_key],
+            )
+            .await?;
+        let record = parse_revenue_stream_plan_row(row)?;
+        if record.request_digest != request_digest {
+            return Err(StorageError::RevenueStreamPlanIdempotencyConflict);
+        }
+        transaction.commit().await?;
+        Ok(RevenueStreamPlanOutcome::Replay(record))
+    }
+
+    pub async fn load_revenue_stream_plan(
+        &self,
+        plan_id: StreamPlanId,
+        merchant_id: Uuid,
+    ) -> Result<RevenueStreamPlanRecord, StorageError> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let row = client
+            .query_opt(
+                "SELECT id, merchant_id, idempotency_key, request_digest,
+                        settlement_route_id, destination_route_id, asset, recipient, plan_digest, policy_digest,
+                        start_slot::text, end_slot::text,
+                        max_total_atomic::text, max_claim_atomic::text,
+                        status, proposer_subject, approver_subject, operator_subject,
+                        accrued_total_atomic::text, released_total_atomic::text,
+                        next_nonce::text
+                 FROM revenue_stream_plans
+                 WHERE id = $1 AND merchant_id = $2",
+                &[&plan_id.0, &merchant_id],
+            )
+            .await?
+            .ok_or(StorageError::RevenueStreamPlanNotFound)?;
+        parse_revenue_stream_plan_row(row)
+    }
+
+    pub async fn list_revenue_stream_plans(
+        &self,
+        merchant_id: Uuid,
+        limit: usize,
+    ) -> Result<Vec<RevenueStreamPlanRecord>, StorageError> {
+        if merchant_id.get_version_num() != 7 || !(1..=100).contains(&limit) {
+            return Err(StorageError::InvalidRevenueStream(
+                "merchant identity or plan list limit is invalid".into(),
+            ));
+        }
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let rows = client
+            .query(
+                "SELECT id, merchant_id, idempotency_key, request_digest,
+                        settlement_route_id, destination_route_id, asset, recipient, plan_digest, policy_digest,
+                        start_slot::text, end_slot::text,
+                        max_total_atomic::text, max_claim_atomic::text,
+                        status, proposer_subject, approver_subject, operator_subject,
+                        accrued_total_atomic::text, released_total_atomic::text,
+                        next_nonce::text
+                 FROM revenue_stream_plans
+                 WHERE merchant_id = $1
+                 ORDER BY updated_at DESC, id DESC
+                 LIMIT $2",
+                &[&merchant_id, &(limit as i64)],
+            )
+            .await?;
+        rows.into_iter()
+            .map(parse_revenue_stream_plan_row)
+            .collect()
+    }
+
+    /// Loads a bounded set of active stream plans together with the immutable,
+    /// digest-matched settlement split plan needed by the finalized accrual
+    /// reconciler. This is an internal worker port; it has no browser/API
+    /// inputs and never returns caller-selected account topology.
+    pub async fn load_active_revenue_stream_reconciliation_contexts(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<RevenueStreamReconciliationContextRecord>, StorageError> {
+        if !(1..=MAX_REVENUE_STREAM_RECONCILIATION_CONTEXTS).contains(&limit) {
+            return Err(StorageError::InvalidRevenueStream(
+                "revenue reconciliation context limit is invalid".into(),
+            ));
+        }
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let rows = client
+            .query(
+                "SELECT id, merchant_id, idempotency_key, request_digest,
+                        settlement_route_id, destination_route_id, asset, recipient, plan_digest, policy_digest,
+                        start_slot::text, end_slot::text,
+                        max_total_atomic::text, max_claim_atomic::text,
+                        status, proposer_subject, approver_subject, operator_subject,
+                        accrued_total_atomic::text, released_total_atomic::text,
+                        next_nonce::text
+                 FROM revenue_stream_plans
+                 WHERE status = 'active'
+                 ORDER BY updated_at, id
+                 LIMIT $1",
+                &[&(limit as i64)],
+            )
+            .await?;
+        let mut contexts = Vec::with_capacity(rows.len());
+        for row in rows {
+            let stream_plan = parse_revenue_stream_plan_row(row)?;
+            let settlement_split_plan = self
+                .load_active_settlement_split_plan_by_digest(
+                    stream_plan.merchant_id,
+                    stream_plan.spec.asset.0,
+                    stream_plan.spec.plan_digest.0,
+                )
+                .await?;
+            contexts.push(RevenueStreamReconciliationContextRecord {
+                merchant_id: stream_plan.merchant_id,
+                stream_plan,
+                settlement_split_plan,
+            });
+        }
+        Ok(contexts)
+    }
+
+    pub async fn transition_revenue_stream_plan(
+        &self,
+        command: RevenueStreamPlanTransition,
+    ) -> Result<RevenueStreamPlanTransitionResult, StorageError> {
+        validate_revenue_stream_plan_transition(&command)?;
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let row = transaction
+            .query_opt(
+                "SELECT status, proposer_subject, approver_subject,
+                        accrued_total_atomic::text, released_total_atomic::text,
+                        end_slot::text
+                 FROM revenue_stream_plans
+                 WHERE id = $1 AND merchant_id = $2
+                 FOR UPDATE",
+                &[&command.plan_id.0, &command.merchant_id],
+            )
+            .await?
+            .ok_or(StorageError::RevenueStreamPlanNotFound)?;
+        let from_status: String = row.get(0);
+        let proposer_subject: String = row.get(1);
+        let current_approver: Option<String> = row.get(2);
+        let accrued_total = parse_u64(row.get(3), "revenue stream accrued total")?;
+        let released_total = parse_u64(row.get(4), "revenue stream released total")?;
+        let end_slot = row
+            .get::<_, Option<String>>(5)
+            .as_deref()
+            .map(|value| parse_u64(value, "revenue stream end slot"))
+            .transpose()?;
+        let approver_subject = validate_revenue_stream_plan_transition_state(
+            &from_status,
+            &command.to_status,
+            RevenueStreamTransitionState {
+                proposer_subject: &proposer_subject,
+                current_approver: current_approver.as_deref(),
+                actor_subject: &command.actor_subject,
+                accrued_total_atomic: accrued_total,
+                released_total_atomic: released_total,
+                end_slot,
+                observed_slot: command.observed_slot,
+            },
+        )?;
+        let updated = transaction
+            .execute(
+                "UPDATE revenue_stream_plans
+                 SET status = $3, approver_subject = $4, updated_at = now()
+                 WHERE id = $1 AND merchant_id = $2 AND status = $5",
+                &[
+                    &command.plan_id.0,
+                    &command.merchant_id,
+                    &command.to_status,
+                    &approver_subject,
+                    &from_status,
+                ],
+            )
+            .await?;
+        if updated != 1 {
+            return Err(StorageError::InvalidRevenueStreamPlanTransition);
+        }
+        let action = revenue_stream_plan_action(&from_status, &command.to_status)?;
+        transaction
+            .execute(
+                "INSERT INTO revenue_stream_plan_events
+                    (plan_id, merchant_id, actor_subject, action,
+                     from_status, to_status, evidence)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                &[
+                    &command.plan_id.0,
+                    &command.merchant_id,
+                    &command.actor_subject,
+                    &action,
+                    &from_status,
+                    &command.to_status,
+                    &command.evidence,
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "INSERT INTO outbox_events
+                    (aggregate_type, aggregate_id, event_type, payload)
+                 VALUES ($1, $2, $3, $4)",
+                &[
+                    &"revenue_stream_plan",
+                    &command.plan_id.0,
+                    &format!("tax.revenue_stream_plan.{action}"),
+                    &serde_json::json!({
+                        "schema_version": OUTBOX_PAYLOAD_SCHEMA_VERSION,
+                        "merchant_id": command.merchant_id,
+                        "plan_id": command.plan_id.0,
+                        "from_status": from_status,
+                        "to_status": command.to_status,
+                    }),
+                ],
+            )
+            .await?;
+        transaction.commit().await?;
+        Ok(RevenueStreamPlanTransitionResult {
+            plan_id: command.plan_id,
+            from_status,
+            to_status: command.to_status,
+            approver_subject,
+        })
+    }
+
+    /// Claims one durable finalized split job. The lease is coordination only;
+    /// it is committed before the pure/application reconciliation work runs.
+    pub async fn claim_revenue_stream_accrual_job(
+        &self,
+        stream_key: &str,
+    ) -> Result<Option<RevenueStreamAccrualReconciliationJob>, StorageError> {
+        validate_indexer_stream_key(stream_key)?;
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::ReadCommitted)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let row = transaction
+            .query_opt(
+                "SELECT source_signature, evidence_digest, observed_finalized_slot::text
+                 FROM revenue_stream_accrual_reconciliation_jobs
+                 WHERE stream_key = $1
+                   AND completed_at IS NULL
+                   AND dead_lettered_at IS NULL
+                   AND attempts < $3::smallint
+                   AND (claim_token IS NULL
+                        OR claimed_at < now() - ($2::bigint * interval '1 second'))
+                 ORDER BY created_at, source_signature
+                 FOR UPDATE SKIP LOCKED
+                 LIMIT 1",
+                &[
+                    &stream_key,
+                    &(REVENUE_STREAM_ACCRUAL_RECONCILIATION_LEASE.as_secs() as i64),
+                    &MAX_REVENUE_STREAM_ACCRUAL_ATTEMPTS,
+                ],
+            )
+            .await?;
+        let Some(row) = row else {
+            transaction.commit().await?;
+            return Ok(None);
+        };
+        let source_signature: String = row.get(0);
+        let evidence_bytes: Vec<u8> = row.get(1);
+        let evidence_digest: Digest32 = evidence_bytes.try_into().map_err(|bytes: Vec<u8>| {
+            StorageError::InvalidRevenueStreamAccrualJob(format!(
+                "job evidence digest must contain 32 bytes, got {}",
+                bytes.len()
+            ))
+        })?;
+        let observed_finalized_slot = parse_u64(row.get(2), "revenue job finalized slot")?;
+        let claim_token = Uuid::now_v7();
+        let claimed = transaction
+            .execute(
+                "UPDATE revenue_stream_accrual_reconciliation_jobs
+                 SET claim_token = $3, claimed_at = now(),
+                     attempts = attempts + 1, updated_at = now()
+                 WHERE stream_key = $1 AND source_signature = $2
+                   AND completed_at IS NULL AND dead_lettered_at IS NULL
+                   AND attempts < $4::smallint
+                   AND (claim_token IS NULL
+                        OR claimed_at < now() - ($5::bigint * interval '1 second'))",
+                &[
+                    &stream_key,
+                    &source_signature,
+                    &claim_token,
+                    &MAX_REVENUE_STREAM_ACCRUAL_ATTEMPTS,
+                    &(REVENUE_STREAM_ACCRUAL_RECONCILIATION_LEASE.as_secs() as i64),
+                ],
+            )
+            .await?;
+        if claimed != 1 {
+            transaction.rollback().await?;
+            return Ok(None);
+        }
+        let split_row = transaction
+            .query_one(
+                "SELECT signature, slot::text, receipt, payer, merchant, mint,
+                        nonce::text, gross_atomic::text, tax_atomic::text,
+                        net_atomic::text, split_plan_version::text,
+                        split_plan_digest, policy_digest, evidence_digest
+                 FROM indexed_split_settlements
+                 WHERE stream_key = $1 AND signature = $2",
+                &[&stream_key, &source_signature],
+            )
+            .await?;
+        let split_settlement = parse_split_settlement_row(split_row)?;
+        if split_settlement.evidence_digest != evidence_digest {
+            return Err(StorageError::InvalidRevenueStreamAccrualJob(
+                "job evidence digest does not match indexed split evidence".into(),
+            ));
+        }
+        let receipt_row = transaction
+            .query_one(
+                "SELECT signature, slot::text, gross_atomic::text,
+                        tax_atomic::text, net_atomic::text, evidence_digest,
+                        receipt, payer, merchant, mint, nonce::text, policy_digest
+                 FROM indexed_receipts
+                 WHERE stream_key = $1 AND signature = $2",
+                &[&stream_key, &source_signature],
+            )
+            .await?;
+        let receipt = parse_receipt_row(receipt_row)?;
+        transaction.commit().await?;
+        Ok(Some(RevenueStreamAccrualReconciliationJob {
+            stream_key: stream_key.to_string(),
+            source_signature,
+            evidence_digest,
+            observed_finalized_slot,
+            claim_token,
+            split_settlement,
+            receipt,
+        }))
+    }
+
+    /// Completes exactly one claimed job after all accrual writes have
+    /// succeeded. A stale worker cannot clear a newer lease.
+    pub async fn complete_revenue_stream_accrual_job(
+        &self,
+        job: &RevenueStreamAccrualReconciliationJob,
+        result_code: &str,
+    ) -> Result<(), StorageError> {
+        validate_revenue_stream_job_identity(job, result_code)?;
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::ReadCommitted)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let updated = transaction
+            .execute(
+                "UPDATE revenue_stream_accrual_reconciliation_jobs
+                 SET completed_at = now(), claim_token = NULL, claimed_at = NULL,
+                     last_error_code = $4, updated_at = now()
+                 WHERE stream_key = $1 AND source_signature = $2
+                   AND claim_token = $3 AND completed_at IS NULL
+                   AND dead_lettered_at IS NULL",
+                &[
+                    &job.stream_key,
+                    &job.source_signature,
+                    &job.claim_token,
+                    &result_code,
+                ],
+            )
+            .await?;
+        if updated != 1 {
+            transaction.rollback().await?;
+            return Err(StorageError::RevenueStreamAccrualJobLeaseLost);
+        }
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    /// Releases a failed job for bounded retry, or records explicit
+    /// dead-letter evidence after the configured attempt limit.
+    pub async fn fail_revenue_stream_accrual_job(
+        &self,
+        job: &RevenueStreamAccrualReconciliationJob,
+        error_code: &str,
+    ) -> Result<bool, StorageError> {
+        validate_revenue_stream_job_identity(job, error_code)?;
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::ReadCommitted)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let updated = transaction
+            .execute(
+                "UPDATE revenue_stream_accrual_reconciliation_jobs
+                 SET claim_token = NULL, claimed_at = NULL, last_error_code = $4,
+                     dead_lettered_at = CASE
+                         WHEN attempts >= $5::smallint THEN now()
+                         ELSE NULL
+                     END,
+                     updated_at = now()
+                 WHERE stream_key = $1 AND source_signature = $2
+                   AND claim_token = $3 AND completed_at IS NULL
+                   AND dead_lettered_at IS NULL",
+                &[
+                    &job.stream_key,
+                    &job.source_signature,
+                    &job.claim_token,
+                    &error_code,
+                    &MAX_REVENUE_STREAM_ACCRUAL_ATTEMPTS,
+                ],
+            )
+            .await?;
+        if updated != 1 {
+            transaction.rollback().await?;
+            return Err(StorageError::RevenueStreamAccrualJobLeaseLost);
+        }
+        transaction.commit().await?;
+        Ok(true)
+    }
+
+    /// Records only finalized settlement evidence. The plan row is locked so
+    /// the accrued balance and its cap are updated atomically with the
+    /// immutable evidence and outbox publication.
+    pub async fn record_revenue_stream_accrual(
+        &self,
+        command: RecordRevenueStreamAccrualCommand,
+    ) -> Result<RevenueStreamAccrualOutcome, StorageError> {
+        validate_revenue_stream_actor(
+            command.merchant_id,
+            command.plan_id,
+            &command.actor_subject,
+        )?;
+        validate_revenue_stream_accrual(&command.accrual)?;
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let plan =
+            load_revenue_stream_plan_for_update(&transaction, command.plan_id, command.merchant_id)
+                .await?;
+        if plan.status != "active" {
+            return Err(StorageError::InvalidRevenueStreamPlanTransition);
+        }
+        validate_revenue_stream_accrual_binding(&plan, &command.accrual)?;
+        let existing = transaction
+            .query_opt(
+                "SELECT source_signature, finalized_slot::text, receipt_digest,
+                        plan_digest, policy_digest, asset, recipient,
+                        gross_atomic::text, tax_atomic::text, net_atomic::text,
+                        recipient_atomic::text
+                 FROM revenue_stream_accruals
+                 WHERE stream_plan_id = $1 AND merchant_id = $2 AND source_signature = $3
+                 FOR UPDATE",
+                &[
+                    &command.plan_id.0,
+                    &command.merchant_id,
+                    &command.accrual.source_signature.0,
+                ],
+            )
+            .await?;
+        if let Some(row) = existing {
+            let stored = parse_revenue_stream_accrual_row(row)?;
+            if stored == command.accrual {
+                transaction.commit().await?;
+                return Ok(RevenueStreamAccrualOutcome::Duplicate);
+            }
+            return Err(StorageError::RevenueStreamEvidenceConflict);
+        }
+        let next_accrued = plan
+            .accrued_total_atomic
+            .checked_add(command.accrual.recipient_atomic)
+            .ok_or(StorageError::InvalidRevenueStream(
+                "accrued total exceeds u64".into(),
+            ))?;
+        if next_accrued > plan.spec.max_total_atomic {
+            return Err(StorageError::RevenueStreamInsufficientAvailable);
+        }
+        transaction
+            .execute(
+                "INSERT INTO revenue_stream_accruals
+                    (stream_plan_id, merchant_id, source_signature,
+                     finalized_slot, receipt_digest, plan_digest, policy_digest,
+                     asset, recipient, gross_atomic, tax_atomic, net_atomic,
+                     recipient_atomic)
+                 VALUES ($1, $2, $3, $4::text::numeric, $5, $6, $7, $8, $9,
+                         $10::text::numeric, $11::text::numeric, $12::text::numeric,
+                         $13::text::numeric)",
+                &[
+                    &command.plan_id.0,
+                    &command.merchant_id,
+                    &command.accrual.source_signature.0,
+                    &command.accrual.finalized_slot.to_string(),
+                    &&command.accrual.receipt_digest.0[..],
+                    &&command.accrual.plan_digest.0[..],
+                    &&command.accrual.policy_digest.0[..],
+                    &&command.accrual.asset.0[..],
+                    &&command.accrual.recipient.0[..],
+                    &command.accrual.gross_atomic.to_string(),
+                    &command.accrual.tax_atomic.to_string(),
+                    &command.accrual.net_atomic.to_string(),
+                    &command.accrual.recipient_atomic.to_string(),
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "UPDATE revenue_stream_plans
+                 SET accrued_total_atomic = $3::text::numeric, updated_at = now()
+                 WHERE id = $1 AND merchant_id = $2 AND accrued_total_atomic = $4::text::numeric",
+                &[
+                    &command.plan_id.0,
+                    &command.merchant_id,
+                    &next_accrued.to_string(),
+                    &plan.accrued_total_atomic.to_string(),
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "INSERT INTO outbox_events
+                    (aggregate_type, aggregate_id, event_type, payload)
+                 VALUES ($1, $2, $3, $4)",
+                &[
+                    &"revenue_stream_plan",
+                    &command.plan_id.0,
+                    &"tax.revenue_stream.accrued",
+                    &serde_json::json!({
+                        "schema_version": OUTBOX_PAYLOAD_SCHEMA_VERSION,
+                        "merchant_id": command.merchant_id,
+                        "plan_id": command.plan_id.0,
+                        "source_signature": command.accrual.source_signature,
+                        "recipient_atomic": command.accrual.recipient_atomic,
+                        "accrued_total_atomic": next_accrued,
+                    }),
+                ],
+            )
+            .await?;
+        transaction.commit().await?;
+        Ok(RevenueStreamAccrualOutcome::Recorded)
+    }
+
+    /// Applies a finalized correction while reserving all pending and already
+    /// released claims. A decrease can only consume currently available
+    /// balance; an increase remains bounded by the immutable plan cap.
+    pub async fn record_revenue_stream_correction(
+        &self,
+        command: RecordRevenueStreamCorrectionCommand,
+    ) -> Result<(), StorageError> {
+        validate_revenue_stream_actor(
+            command.merchant_id,
+            command.plan_id,
+            &command.actor_subject,
+        )?;
+        validate_revenue_stream_correction(&command.correction)?;
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let plan =
+            load_revenue_stream_plan_for_update(&transaction, command.plan_id, command.merchant_id)
+                .await?;
+        if !matches!(plan.status.as_str(), "active" | "paused") {
+            return Err(StorageError::InvalidRevenueStreamPlanTransition);
+        }
+        if command.correction.plan_digest != plan.spec.plan_digest {
+            return Err(StorageError::InvalidRevenueStream(
+                "correction plan digest does not match the stream plan".into(),
+            ));
+        }
+        let source_exists = transaction
+            .query_opt(
+                "SELECT 1 FROM revenue_stream_accruals
+                 WHERE stream_plan_id = $1 AND merchant_id = $2 AND source_signature = $3",
+                &[
+                    &command.plan_id.0,
+                    &command.merchant_id,
+                    &command.correction.source_signature.0,
+                ],
+            )
+            .await?
+            .is_some();
+        if !source_exists {
+            return Err(StorageError::RevenueStreamEvidenceConflict);
+        }
+        let existing = transaction
+            .query_opt(
+                "SELECT correction_signature, source_signature, finalized_slot::text,
+                        plan_digest, decrease, amount_atomic::text
+                 FROM revenue_stream_corrections
+                 WHERE stream_plan_id = $1 AND merchant_id = $2 AND correction_signature = $3
+                 FOR UPDATE",
+                &[
+                    &command.plan_id.0,
+                    &command.merchant_id,
+                    &command.correction.correction_signature.0,
+                ],
+            )
+            .await?;
+        if let Some(row) = existing {
+            if parse_revenue_stream_correction_row(row)? == command.correction {
+                transaction.commit().await?;
+                return Ok(());
+            }
+            return Err(StorageError::RevenueStreamEvidenceConflict);
+        }
+        let pending_atomic = parse_u64(
+            transaction
+                .query_one(
+                    "SELECT COALESCE(SUM(amount_atomic), 0)::text
+                     FROM revenue_stream_claims
+                     WHERE stream_plan_id = $1 AND merchant_id = $2 AND status = 'pending'",
+                    &[&command.plan_id.0, &command.merchant_id],
+                )
+                .await?
+                .get(0),
+            "revenue stream pending claims",
+        )?;
+        let available = plan
+            .accrued_total_atomic
+            .checked_sub(plan.released_total_atomic)
+            .and_then(|value| value.checked_sub(pending_atomic))
+            .ok_or(StorageError::InvalidRevenueStream(
+                "revenue stream balance is inconsistent".into(),
+            ))?;
+        let next_accrued = if command.correction.decrease {
+            if command.correction.amount_atomic > available {
+                return Err(StorageError::RevenueStreamInsufficientAvailable);
+            }
+            plan.accrued_total_atomic
+                .checked_sub(command.correction.amount_atomic)
+                .ok_or(StorageError::RevenueStreamInsufficientAvailable)?
+        } else {
+            plan.accrued_total_atomic
+                .checked_add(command.correction.amount_atomic)
+                .ok_or(StorageError::InvalidRevenueStream(
+                    "corrected accrued total exceeds u64".into(),
+                ))?
+        };
+        if next_accrued > plan.spec.max_total_atomic {
+            return Err(StorageError::RevenueStreamInsufficientAvailable);
+        }
+        transaction
+            .execute(
+                "INSERT INTO revenue_stream_corrections
+                    (stream_plan_id, merchant_id, correction_signature,
+                     source_signature, finalized_slot, plan_digest, decrease,
+                     amount_atomic)
+                 VALUES ($1, $2, $3, $4, $5::text::numeric, $6, $7, $8::text::numeric)",
+                &[
+                    &command.plan_id.0,
+                    &command.merchant_id,
+                    &command.correction.correction_signature.0,
+                    &command.correction.source_signature.0,
+                    &command.correction.finalized_slot.to_string(),
+                    &&command.correction.plan_digest.0[..],
+                    &command.correction.decrease,
+                    &command.correction.amount_atomic.to_string(),
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "UPDATE revenue_stream_plans
+                 SET accrued_total_atomic = $3::text::numeric, updated_at = now()
+                 WHERE id = $1 AND merchant_id = $2 AND accrued_total_atomic = $4::text::numeric",
+                &[
+                    &command.plan_id.0,
+                    &command.merchant_id,
+                    &next_accrued.to_string(),
+                    &plan.accrued_total_atomic.to_string(),
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "INSERT INTO outbox_events
+                    (aggregate_type, aggregate_id, event_type, payload)
+                 VALUES ($1, $2, $3, $4)",
+                &[
+                    &"revenue_stream_plan",
+                    &command.plan_id.0,
+                    &"tax.revenue_stream.corrected",
+                    &serde_json::json!({
+                        "schema_version": OUTBOX_PAYLOAD_SCHEMA_VERSION,
+                        "merchant_id": command.merchant_id,
+                        "plan_id": command.plan_id.0,
+                        "correction_signature": command.correction.correction_signature,
+                        "decrease": command.correction.decrease,
+                        "amount_atomic": command.correction.amount_atomic,
+                        "accrued_total_atomic": next_accrued,
+                    }),
+                ],
+            )
+            .await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    /// Reserves an available amount by allocating a monotonically increasing
+    /// plan-local nonce. The returned digest is the exact binding used by the
+    /// Solana release claim and is never accepted from a browser.
+    pub async fn prepare_revenue_stream_claim(
+        &self,
+        command: PrepareRevenueStreamClaimCommand,
+    ) -> Result<RevenueStreamClaimRecord, StorageError> {
+        validate_revenue_stream_actor(
+            command.merchant_id,
+            command.plan_id,
+            &command.actor_subject,
+        )?;
+        if command.claim_id.get_version_num() != 7
+            || command.amount_atomic == 0
+            || command.idempotency_key.trim().is_empty()
+            || command.idempotency_key.len() > 200
+            || command
+                .idempotency_key
+                .bytes()
+                .any(|byte| byte.is_ascii_control())
+        {
+            return Err(StorageError::InvalidRevenueStream(
+                "claim identity, idempotency, or amount is invalid".into(),
+            ));
+        }
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let plan =
+            load_revenue_stream_plan_for_update(&transaction, command.plan_id, command.merchant_id)
+                .await?;
+        if plan.status != "active" || command.amount_atomic > plan.spec.max_claim_atomic {
+            return Err(StorageError::InvalidRevenueStreamPlanTransition);
+        }
+        let existing_by_idempotency = transaction
+            .query_opt(
+                "SELECT id, stream_plan_id, merchant_id, idempotency_key,
+                        amount_atomic::text, nonce::text, accrual_total_atomic::text,
+                        plan_digest, asset, recipient, claim_digest, status,
+                        release_signature, finalized_slot::text
+                 FROM revenue_stream_claims
+                 WHERE merchant_id = $1 AND stream_plan_id = $2 AND idempotency_key = $3
+                 FOR UPDATE",
+                &[
+                    &command.merchant_id,
+                    &command.plan_id.0,
+                    &command.idempotency_key,
+                ],
+            )
+            .await?;
+        if let Some(row) = existing_by_idempotency {
+            let existing = parse_revenue_stream_claim_row(row)?;
+            if existing.amount_atomic == command.amount_atomic {
+                transaction.commit().await?;
+                return Ok(existing);
+            }
+            return Err(StorageError::RevenueStreamEvidenceConflict);
+        }
+        let duplicate_id = transaction
+            .query_opt(
+                "SELECT 1 FROM revenue_stream_claims WHERE id = $1",
+                &[&command.claim_id],
+            )
+            .await?
+            .is_some();
+        if duplicate_id {
+            return Err(StorageError::RevenueStreamEvidenceConflict);
+        }
+        let pending_atomic = parse_u64(
+            transaction
+                .query_one(
+                    "SELECT COALESCE(SUM(amount_atomic), 0)::text
+                     FROM revenue_stream_claims
+                     WHERE stream_plan_id = $1 AND merchant_id = $2 AND status = 'pending'",
+                    &[&command.plan_id.0, &command.merchant_id],
+                )
+                .await?
+                .get(0),
+            "revenue stream pending claims",
+        )?;
+        let available = plan
+            .accrued_total_atomic
+            .checked_sub(plan.released_total_atomic)
+            .and_then(|value| value.checked_sub(pending_atomic))
+            .ok_or(StorageError::InvalidRevenueStream(
+                "revenue stream balance is inconsistent".into(),
+            ))?;
+        if command.amount_atomic > available {
+            return Err(StorageError::RevenueStreamInsufficientAvailable);
+        }
+        let nonce = plan.next_nonce;
+        let next_nonce = nonce
+            .checked_add(1)
+            .ok_or(StorageError::InvalidRevenueStream(
+                "revenue stream nonce exceeds u64".into(),
+            ))?;
+        let claim_digest = revenue_streaming::claim_digest(
+            command.claim_id,
+            command.plan_id,
+            command.amount_atomic,
+            nonce,
+            plan.spec.plan_digest,
+            plan.spec.asset,
+            plan.spec.recipient,
+        );
+        transaction
+            .execute(
+                "INSERT INTO revenue_stream_claims
+                    (id, stream_plan_id, merchant_id, idempotency_key, amount_atomic, nonce,
+                     accrual_total_atomic, plan_digest, asset, recipient, claim_digest)
+                 VALUES ($1, $2, $3, $4, $5::text::numeric, $6::text::numeric,
+                         $7::text::numeric, $8, $9, $10, $11)",
+                &[
+                    &command.claim_id,
+                    &command.plan_id.0,
+                    &command.merchant_id,
+                    &command.idempotency_key,
+                    &command.amount_atomic.to_string(),
+                    &nonce.to_string(),
+                    &plan.accrued_total_atomic.to_string(),
+                    &&plan.spec.plan_digest.0[..],
+                    &&plan.spec.asset.0[..],
+                    &&plan.spec.recipient.0[..],
+                    &&claim_digest.0[..],
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "UPDATE revenue_stream_plans
+                 SET next_nonce = $3::text::numeric, updated_at = now()
+                 WHERE id = $1 AND merchant_id = $2 AND next_nonce = $4::text::numeric",
+                &[
+                    &command.plan_id.0,
+                    &command.merchant_id,
+                    &next_nonce.to_string(),
+                    &nonce.to_string(),
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "INSERT INTO revenue_stream_claim_events
+                    (claim_id, stream_plan_id, merchant_id, actor_subject, action, evidence)
+                 VALUES ($1, $2, $3, $4, 'prepared', $5)",
+                &[
+                    &command.claim_id,
+                    &command.plan_id.0,
+                    &command.merchant_id,
+                    &command.actor_subject,
+                    &serde_json::json!({
+                        "claim_digest": claim_digest,
+                        "amount_atomic": command.amount_atomic,
+                        "nonce": nonce,
+                    }),
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "INSERT INTO outbox_events
+                    (aggregate_type, aggregate_id, event_type, payload)
+                 VALUES ($1, $2, $3, $4)",
+                &[
+                    &"revenue_stream_claim",
+                    &command.claim_id,
+                    &"tax.revenue_stream.claim_prepared",
+                    &serde_json::json!({
+                        "schema_version": OUTBOX_PAYLOAD_SCHEMA_VERSION,
+                        "merchant_id": command.merchant_id,
+                        "plan_id": command.plan_id.0,
+                        "claim_id": command.claim_id,
+                        "claim_digest": claim_digest,
+                    }),
+                ],
+            )
+            .await?;
+        transaction.commit().await?;
+        Ok(RevenueStreamClaimRecord {
+            id: command.claim_id,
+            plan_id: command.plan_id,
+            merchant_id: command.merchant_id,
+            idempotency_key: command.idempotency_key,
+            amount_atomic: command.amount_atomic,
+            nonce,
+            accrual_total_atomic: plan.accrued_total_atomic,
+            plan_digest: plan.spec.plan_digest.0,
+            asset: plan.spec.asset.0,
+            recipient: plan.spec.recipient.0,
+            claim_digest: claim_digest.0,
+            status: "pending".to_string(),
+            release_signature: None,
+            finalized_slot: None,
+        })
+    }
+
+    /// Commits finalized release evidence and increments the plan's released
+    /// total in the same serializable transaction. Database state only records
+    /// evidence; finalized Solana state remains the movement authority.
+    pub async fn finalize_revenue_stream_claim(
+        &self,
+        command: FinalizeRevenueStreamClaimCommand,
+    ) -> Result<RevenueStreamClaimOutcome, StorageError> {
+        validate_revenue_stream_actor_subject(command.merchant_id, &command.actor_subject)?;
+        validate_revenue_stream_release(&command.release)?;
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let claim_row = transaction
+            .query_opt(
+                "SELECT stream_plan_id, amount_atomic::text, nonce::text,
+                        accrual_total_atomic::text, plan_digest, asset, recipient,
+                        claim_digest, status, release_signature, finalized_slot::text
+                 FROM revenue_stream_claims
+                 WHERE id = $1 AND merchant_id = $2
+                 FOR UPDATE",
+                &[&command.release.claim_id, &command.merchant_id],
+            )
+            .await?
+            .ok_or(StorageError::RevenueStreamClaimNotFound)?;
+        let plan_id = StreamPlanId(claim_row.get(0));
+        let amount_atomic = parse_u64(claim_row.get(1), "revenue stream claim amount")?;
+        let nonce = parse_u64(claim_row.get(2), "revenue stream claim nonce")?;
+        let accrual_total_atomic = parse_u64(claim_row.get(3), "revenue stream claim accrual")?;
+        let plan_digest = parse_revenue_stream_fixed_digest(claim_row.get(4), "claim plan digest")?;
+        let asset = parse_revenue_stream_fixed_digest(claim_row.get(5), "claim asset")?;
+        let recipient = parse_revenue_stream_fixed_digest(claim_row.get(6), "claim recipient")?;
+        let claim_digest = parse_revenue_stream_fixed_digest(claim_row.get(7), "claim digest")?;
+        let status: String = claim_row.get(8);
+        if status == "finalized" {
+            let stored_signature = claim_row
+                .get::<_, Option<Vec<u8>>>(9)
+                .ok_or(StorageError::RevenueStreamEvidenceConflict)?;
+            let stored_slot = claim_row
+                .get::<_, Option<String>>(10)
+                .as_deref()
+                .map(|value| parse_u64(value, "stored release slot"))
+                .transpose()?
+                .ok_or(StorageError::RevenueStreamEvidenceConflict)?;
+            if stored_signature == command.release.release_signature.0
+                && stored_slot == command.release.finalized_slot
+            {
+                transaction.commit().await?;
+                return Ok(RevenueStreamClaimOutcome::Duplicate);
+            }
+            return Err(StorageError::RevenueStreamEvidenceConflict);
+        }
+        if status != "pending"
+            || command.release.plan_digest.0 != plan_digest
+            || command.release.asset.0 != asset
+            || command.release.recipient.0 != recipient
+            || command.release.claim_digest.0 != claim_digest
+            || command.release.amount_atomic != amount_atomic
+        {
+            return Err(StorageError::RevenueStreamEvidenceConflict);
+        }
+        let plan =
+            load_revenue_stream_plan_for_update(&transaction, plan_id, command.merchant_id).await?;
+        if command.release.finalized_slot < plan.spec.start_slot
+            || plan
+                .spec
+                .end_slot
+                .is_some_and(|end| command.release.finalized_slot > end)
+        {
+            return Err(StorageError::InvalidRevenueStream(
+                "release is outside the stream window".into(),
+            ));
+        }
+        let next_released = plan
+            .released_total_atomic
+            .checked_add(amount_atomic)
+            .ok_or(StorageError::InvalidRevenueStream(
+                "released total exceeds u64".into(),
+            ))?;
+        if next_released > plan.accrued_total_atomic {
+            return Err(StorageError::RevenueStreamInsufficientAvailable);
+        }
+        transaction
+            .execute(
+                "UPDATE revenue_stream_claims
+                 SET status = 'finalized', release_signature = $3,
+                     finalized_slot = $4::text::numeric, updated_at = now()
+                 WHERE id = $1 AND merchant_id = $2 AND status = 'pending'",
+                &[
+                    &command.release.claim_id,
+                    &command.merchant_id,
+                    &command.release.release_signature.0,
+                    &command.release.finalized_slot.to_string(),
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "UPDATE revenue_stream_plans
+                 SET released_total_atomic = $3::text::numeric, updated_at = now()
+                 WHERE id = $1 AND merchant_id = $2 AND released_total_atomic = $4::text::numeric",
+                &[
+                    &plan_id.0,
+                    &command.merchant_id,
+                    &next_released.to_string(),
+                    &plan.released_total_atomic.to_string(),
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "INSERT INTO revenue_stream_claim_events
+                    (claim_id, stream_plan_id, merchant_id, actor_subject, action, evidence)
+                 VALUES ($1, $2, $3, $4, 'finalized', $5)",
+                &[
+                    &command.release.claim_id,
+                    &plan_id.0,
+                    &command.merchant_id,
+                    &command.actor_subject,
+                    &serde_json::json!({
+                        "release_signature": command.release.release_signature,
+                        "finalized_slot": command.release.finalized_slot,
+                        "amount_atomic": amount_atomic,
+                    }),
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "INSERT INTO outbox_events
+                    (aggregate_type, aggregate_id, event_type, payload)
+                 VALUES ($1, $2, $3, $4)",
+                &[
+                    &"revenue_stream_claim",
+                    &command.release.claim_id,
+                    &"tax.revenue_stream.claim_finalized",
+                    &serde_json::json!({
+                        "schema_version": OUTBOX_PAYLOAD_SCHEMA_VERSION,
+                        "merchant_id": command.merchant_id,
+                        "plan_id": plan_id.0,
+                        "claim_id": command.release.claim_id,
+                        "release_signature": command.release.release_signature,
+                        "finalized_slot": command.release.finalized_slot,
+                    }),
+                ],
+            )
+            .await?;
+        transaction.commit().await?;
+        let _ = nonce;
+        let _ = accrual_total_atomic;
+        Ok(RevenueStreamClaimOutcome::Recorded)
     }
 
     /// Creates one tenant-owned draft, its append-only creation evidence, and
@@ -11101,6 +12632,296 @@ impl PgStore {
         }
     }
 
+    /// Resolves exactly one active verified route for a tenant and asset.
+    /// Revenue-stream plans use this server-owned lookup because the browser
+    /// supplies the asset identity but must not select merchant-side accounts.
+    pub async fn load_active_settlement_route_for_mint(
+        &self,
+        merchant_id: Uuid,
+        mint: &str,
+    ) -> Result<SettlementRoute, StorageError> {
+        if merchant_id.get_version_num() != 7 || mint.len() < 32 || mint.len() > 44 {
+            return Err(StorageError::SettlementRouteUnavailable);
+        }
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let rows = client
+            .query(
+                "SELECT id, route_key, version, merchant_account, mint,
+                        tax_vault, net_destination, token_program, mint_decimals
+                 FROM settlement_routes
+                 WHERE merchant_id = $1
+                   AND status = 'active'
+                   AND effective_from <= now()
+                   AND (effective_until IS NULL OR now() < effective_until)
+                   AND mint = $2
+                 ORDER BY version DESC, id
+                 LIMIT 2",
+                &[&merchant_id, &mint],
+            )
+            .await?;
+        match rows.len() {
+            0 => Err(StorageError::SettlementRouteNotFound),
+            1 => match rows.into_iter().next() {
+                Some(row) => Ok(SettlementRoute {
+                    id: row.get(0),
+                    route_key: row.get(1),
+                    version: row.get(2),
+                    merchant_account: row.get(3),
+                    mint: row.get(4),
+                    mint_decimals: row.get::<_, i16>(8).try_into().map_err(|_| {
+                        StorageError::SettlementRouteIntegrity(
+                            "active route mint decimals are outside the supported range"
+                                .to_string(),
+                        )
+                    })?,
+                    tax_vault: row.get(5),
+                    net_destination: row.get(6),
+                    token_program: row.get(7),
+                }),
+                None => Err(StorageError::SettlementRouteUnavailable),
+            },
+            _ => Err(StorageError::SettlementRouteUnavailable),
+        }
+    }
+
+    /// Returns a bounded batch of server-owned revenue payout destinations
+    /// that require a separate finalized chain verification pass.
+    pub async fn list_revenue_stream_destination_routes_for_verification(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<RevenueStreamDestinationRouteVerificationCandidate>, StorageError> {
+        if limit == 0 || limit > 64 {
+            return Err(StorageError::InvalidConfiguration(
+                "revenue destination verification batch must be between 1 and 64".to_string(),
+            ));
+        }
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let rows = client
+            .query(
+                "SELECT id, merchant_id, route_key, version, recipient_owner,
+                        mint, destination_token_account, token_program
+                 FROM revenue_stream_destination_routes
+                 WHERE status IN ('pending_verification', 'suspended')
+                 ORDER BY updated_at, id
+                 LIMIT $1",
+                &[&(limit as i64)],
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| RevenueStreamDestinationRouteVerificationCandidate {
+                id: row.get(0),
+                merchant_id: row.get(1),
+                route_key: row.get(2),
+                version: row.get(3),
+                recipient_owner: row.get(4),
+                mint: row.get(5),
+                destination_token_account: row.get(6),
+                token_program: row.get(7),
+            })
+            .collect())
+    }
+
+    /// Atomically records finalized destination-account evidence and promotes
+    /// a pending/suspended payout route. The route remains inactive when its
+    /// chain configuration or evidence identity does not match.
+    pub async fn activate_revenue_stream_destination_route(
+        &self,
+        merchant_id: Uuid,
+        route_id: Uuid,
+        verification: &indexer::RevenueStreamDestinationRouteVerification,
+    ) -> Result<bool, StorageError> {
+        if verification.route_id != route_id
+            || verification.route_version <= 0
+            || verification.verification_digest == [0; 32]
+            || verification.accounts.len() != 2
+            || verification.mint_decimals > 9
+            || !matches!(
+                verification.verification_commitment,
+                "finalized" | "local_synthetic"
+            )
+        {
+            return Err(
+                StorageError::RevenueStreamDestinationRouteVerificationInvalid(
+                    "verification identity, commitment, account count, or digest is invalid"
+                        .to_string(),
+                ),
+            );
+        }
+        let evidence = serde_json::to_value(verification)?;
+        let evidence_bytes = serde_json::to_vec(&evidence)?;
+        if evidence_bytes.is_empty() || evidence_bytes.len() > 32 * 1024 {
+            return Err(
+                StorageError::RevenueStreamDestinationRouteVerificationInvalid(
+                    "verification evidence exceeds the bounded persistence limit".to_string(),
+                ),
+            );
+        }
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let row = transaction
+            .query_opt(
+                "SELECT version, status, verification_digest,
+                        recipient_owner, mint, destination_token_account, token_program
+                 FROM revenue_stream_destination_routes
+                 WHERE id = $1 AND merchant_id = $2
+                 FOR UPDATE",
+                &[&route_id, &merchant_id],
+            )
+            .await?
+            .ok_or(StorageError::RevenueStreamDestinationRouteNotFound)?;
+        let version: i32 = row.get(0);
+        let status: String = row.get(1);
+        let existing_digest: Option<Vec<u8>> = row.get(2);
+        if version != verification.route_version {
+            return Err(
+                StorageError::RevenueStreamDestinationRouteVerificationInvalid(
+                    "verification was produced for a different route version".to_string(),
+                ),
+            );
+        }
+        let route_matches = row.get::<_, String>(3) == verification.recipient_owner
+            && row.get::<_, String>(4) == verification.mint
+            && row.get::<_, String>(5) == verification.destination_token_account
+            && row.get::<_, String>(6) == verification.token_program;
+        if !route_matches {
+            return Err(
+                StorageError::RevenueStreamDestinationRouteVerificationInvalid(
+                    "verification was produced for a different destination configuration"
+                        .to_string(),
+                ),
+            );
+        }
+        if status == "active"
+            && existing_digest.as_deref() == Some(&verification.verification_digest[..])
+        {
+            transaction.commit().await?;
+            return Ok(false);
+        }
+        if !matches!(status.as_str(), "pending_verification" | "suspended") {
+            return Err(StorageError::RevenueStreamDestinationRouteActivationConflict);
+        }
+        transaction
+            .execute(
+                "INSERT INTO revenue_stream_destination_route_verifications
+                    (route_id, merchant_id, route_version, verification_digest,
+                     verification_slot, verification_commitment, evidence, verifier_version)
+                 VALUES ($1, $2, $3, $4, $5::text::numeric, $6, $7, $8)
+                 ON CONFLICT (route_id, verification_digest) DO NOTHING",
+                &[
+                    &route_id,
+                    &merchant_id,
+                    &verification.route_version,
+                    &&verification.verification_digest[..],
+                    &verification.verification_slot.to_string(),
+                    &verification.verification_commitment,
+                    &evidence,
+                    &"indexer-route-verifier-v1",
+                ],
+            )
+            .await?;
+        let updated = transaction
+            .execute(
+                "UPDATE revenue_stream_destination_routes
+                 SET status = 'active', verification_digest = $2,
+                     verification_slot = $3::text::numeric,
+                     verification_commitment = $4, verification_evidence = $5,
+                     verifier_version = $6, verified_at = now(), updated_at = now()
+                 WHERE id = $1 AND merchant_id = $7
+                   AND status IN ('pending_verification', 'suspended')",
+                &[
+                    &route_id,
+                    &&verification.verification_digest[..],
+                    &verification.verification_slot.to_string(),
+                    &verification.verification_commitment,
+                    &evidence,
+                    &"indexer-route-verifier-v1",
+                    &merchant_id,
+                ],
+            )
+            .await?;
+        if updated != 1 {
+            return Err(StorageError::RevenueStreamDestinationRouteActivationConflict);
+        }
+        transaction.commit().await?;
+        Ok(true)
+    }
+
+    /// Resolves exactly one active, effective, finalized-verified destination
+    /// for a tenant, recipient owner, and mint. This lookup is outside the
+    /// wallet signing path and never derives or creates an ATA.
+    pub async fn load_active_revenue_stream_destination_route(
+        &self,
+        merchant_id: Uuid,
+        recipient_owner: &str,
+        mint: &str,
+    ) -> Result<RevenueStreamDestinationRoute, StorageError> {
+        if merchant_id.get_version_num() != 7
+            || recipient_owner.len() < 32
+            || recipient_owner.len() > 44
+            || mint.len() < 32
+            || mint.len() > 44
+        {
+            return Err(StorageError::RevenueStreamDestinationRouteUnavailable);
+        }
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let rows = client
+            .query(
+                "SELECT id, merchant_id, route_key, version, recipient_owner,
+                        mint, destination_token_account, token_program,
+                        verification_digest, verification_slot::text,
+                        verification_commitment, verification_evidence
+                 FROM revenue_stream_destination_routes
+                 WHERE merchant_id = $1
+                   AND recipient_owner = $2
+                   AND mint = $3
+                   AND status = 'active'
+                   AND verification_commitment = 'finalized'
+                   AND effective_from <= now()
+                   AND (effective_until IS NULL OR now() < effective_until)
+                 ORDER BY version DESC, id
+                 LIMIT 2",
+                &[&merchant_id, &recipient_owner, &mint],
+            )
+            .await?;
+        match rows.len() {
+            0 => Err(StorageError::RevenueStreamDestinationRouteNotFound),
+            1 => rows
+                .into_iter()
+                .next()
+                .ok_or(StorageError::RevenueStreamDestinationRouteUnavailable)
+                .and_then(parse_revenue_stream_destination_route_row),
+            _ => Err(StorageError::RevenueStreamDestinationRouteUnavailable),
+        }
+    }
+
     /// Lists only currently active routes for the authenticated merchant.
     /// This is a bounded read for UI selection and does not expose inactive
     /// configuration as a possible checkout option.
@@ -11205,6 +13026,74 @@ impl PgStore {
         )
     }
 
+    /// Loads an active split plan only when its canonical digest, merchant
+    /// tenant, and mint bytes exactly match a server-owned revenue plan.
+    pub async fn load_active_settlement_split_plan_by_digest(
+        &self,
+        merchant_id: Uuid,
+        mint: [u8; 32],
+        plan_digest: [u8; 32],
+    ) -> Result<SettlementSplitPlan, StorageError> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let rows = client
+            .query(
+                "SELECT id, plan_key, version, status, merchant_account, mint,
+                        plan_digest, recipients,
+                        effective_from <= now()
+                            AND (effective_until IS NULL OR now() < effective_until)
+                 FROM settlement_split_plans
+                 WHERE merchant_id = $1
+                   AND mint = $2
+                   AND plan_digest = $3
+                 ORDER BY version DESC, id
+                 LIMIT 2",
+                &[&merchant_id, &&mint[..], &&plan_digest[..]],
+            )
+            .await?;
+        let row = match rows.as_slice() {
+            [] => return Err(StorageError::SettlementSplitPlanNotFound),
+            [row] => row,
+            _ => {
+                return Err(StorageError::SettlementSplitPlanIntegrity(
+                    "multiple active split plans share the revenue plan digest".to_string(),
+                ));
+            }
+        };
+        let status: String = row.get(3);
+        let effective: bool = row.get(8);
+        if status != "active" || !effective {
+            return Err(StorageError::SettlementSplitPlanUnavailable);
+        }
+        let version: i32 = row.get(2);
+        if version <= 0 {
+            return Err(StorageError::SettlementSplitPlanIntegrity(
+                "plan version must be positive".to_string(),
+            ));
+        }
+        let plan_digest_bytes: Vec<u8> = row.get(6);
+        let stored_digest: Digest32 = plan_digest_bytes.try_into().map_err(|bytes: Vec<u8>| {
+            StorageError::SettlementSplitPlanIntegrity(format!(
+                "plan digest must contain 32 bytes, got {}",
+                bytes.len()
+            ))
+        })?;
+        let recipients: Vec<split_plan::SplitRecipient> =
+            serde_json::from_value(row.get::<_, Value>(7))?;
+        validate_persisted_split_plan(
+            row.get(0),
+            row.get(4),
+            row.get(5),
+            version,
+            stored_digest,
+            recipients,
+            row.get(1),
+        )
+    }
+
     /// Lists only active, currently effective Split Plans for the authenticated
     /// merchant. Every row is canonicalized and digest-validated before it can
     /// reach a checkout review surface.
@@ -11255,6 +13144,30 @@ impl PgStore {
             })
             .collect()
     }
+}
+
+async fn persist_revenue_stream_accrual_jobs(
+    transaction: &deadpool_postgres::tokio_postgres::Transaction<'_>,
+    stream_key: &str,
+    page: &FinalizedPage,
+) -> Result<(), StorageError> {
+    for split in &page.split_settlements {
+        transaction
+            .execute(
+                "INSERT INTO revenue_stream_accrual_reconciliation_jobs
+                    (stream_key, source_signature, evidence_digest, observed_finalized_slot)
+                 VALUES ($1, $2, $3, $4::text::numeric)
+                 ON CONFLICT (stream_key, source_signature) DO NOTHING",
+                &[
+                    &stream_key,
+                    &split.signature,
+                    &&split.evidence_digest[..],
+                    &page.observed_finalized_slot.to_string(),
+                ],
+            )
+            .await?;
+    }
+    Ok(())
 }
 
 fn validate_persisted_split_plan(
@@ -13174,6 +15087,583 @@ fn parse_vault_reconciliation_target_view_row(
     })
 }
 
+fn validate_revenue_stream_actor(
+    merchant_id: Uuid,
+    plan_id: StreamPlanId,
+    actor_subject: &str,
+) -> Result<(), StorageError> {
+    if plan_id.0.get_version_num() != 7 {
+        return Err(StorageError::InvalidRevenueStream(
+            "stream plan ID must be UUIDv7".into(),
+        ));
+    }
+    validate_revenue_stream_actor_subject(merchant_id, actor_subject)
+}
+
+fn validate_revenue_stream_actor_subject(
+    merchant_id: Uuid,
+    actor_subject: &str,
+) -> Result<(), StorageError> {
+    if merchant_id.get_version_num() != 7
+        || actor_subject.trim().is_empty()
+        || actor_subject.len() > 256
+        || actor_subject.bytes().any(|byte| byte.is_ascii_control())
+    {
+        return Err(StorageError::InvalidRevenueStream(
+            "merchant identity or authenticated actor is invalid".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_revenue_stream_job_identity(
+    job: &RevenueStreamAccrualReconciliationJob,
+    result_code: &str,
+) -> Result<(), StorageError> {
+    validate_indexer_stream_key(&job.stream_key)?;
+    if job.claim_token.get_version_num() != 7
+        || job.source_signature.trim().is_empty()
+        || job.source_signature.len() > 128
+        || result_code.trim().is_empty()
+        || result_code.len() > MAX_REVENUE_STREAM_RECONCILIATION_ERROR_BYTES
+        || result_code.bytes().any(|byte| byte.is_ascii_control())
+    {
+        return Err(StorageError::InvalidRevenueStreamAccrualJob(
+            "job lease or result identity is invalid".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_revenue_stream_accrual(accrual: &FinalizedAccrual) -> Result<(), StorageError> {
+    if accrual.source_signature.0.len() != 64
+        || accrual.source_signature.0.iter().all(|byte| *byte == 0)
+        || accrual.finalized_slot == 0
+        || accrual.gross_atomic == 0
+        || accrual.recipient_atomic == 0
+        || accrual.receipt_digest.0.iter().all(|byte| *byte == 0)
+        || accrual.plan_digest.0.iter().all(|byte| *byte == 0)
+        || accrual.policy_digest.0.iter().all(|byte| *byte == 0)
+        || accrual.asset.0.iter().all(|byte| *byte == 0)
+        || accrual.recipient.0.iter().all(|byte| *byte == 0)
+    {
+        return Err(StorageError::InvalidRevenueStream(
+            "finalized accrual identity or amount is invalid".into(),
+        ));
+    }
+    let expected_gross = accrual.tax_atomic.checked_add(accrual.net_atomic).ok_or(
+        StorageError::InvalidRevenueStream("accrual amount exceeds u64".into()),
+    )?;
+    if expected_gross != accrual.gross_atomic || accrual.recipient_atomic > accrual.net_atomic {
+        return Err(StorageError::InvalidRevenueStream(
+            "accrual amounts do not conserve".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_revenue_stream_accrual_binding(
+    plan: &RevenueStreamPlanRecord,
+    accrual: &FinalizedAccrual,
+) -> Result<(), StorageError> {
+    if !plan
+        .spec
+        .end_slot
+        .is_none_or(|end| accrual.finalized_slot <= end)
+        || accrual.finalized_slot < plan.spec.start_slot
+        || accrual.plan_digest != plan.spec.plan_digest
+        || accrual.policy_digest != plan.spec.policy_digest
+        || accrual.asset != plan.spec.asset
+        || accrual.recipient != plan.spec.recipient
+    {
+        return Err(StorageError::InvalidRevenueStream(
+            "finalized accrual is outside the stream binding or window".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_revenue_stream_correction(
+    correction: &FinalizedCorrection,
+) -> Result<(), StorageError> {
+    if correction.correction_signature.0.len() != 64
+        || correction
+            .correction_signature
+            .0
+            .iter()
+            .all(|byte| *byte == 0)
+        || correction.source_signature.0.len() != 64
+        || correction.source_signature.0.iter().all(|byte| *byte == 0)
+        || correction.finalized_slot == 0
+        || correction.plan_digest.0.iter().all(|byte| *byte == 0)
+        || correction.amount_atomic == 0
+    {
+        return Err(StorageError::InvalidRevenueStream(
+            "finalized correction identity or amount is invalid".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_revenue_stream_release(release: &FinalizedRelease) -> Result<(), StorageError> {
+    if release.claim_id.get_version_num() != 7
+        || release.release_signature.0.len() != 64
+        || release.release_signature.0.iter().all(|byte| *byte == 0)
+        || release.finalized_slot == 0
+        || release.claim_digest.0.iter().all(|byte| *byte == 0)
+        || release.plan_digest.0.iter().all(|byte| *byte == 0)
+        || release.asset.0.iter().all(|byte| *byte == 0)
+        || release.recipient.0.iter().all(|byte| *byte == 0)
+        || release.amount_atomic == 0
+    {
+        return Err(StorageError::InvalidRevenueStream(
+            "finalized release identity or amount is invalid".into(),
+        ));
+    }
+    Ok(())
+}
+
+async fn load_revenue_stream_plan_for_update(
+    transaction: &deadpool_postgres::Transaction<'_>,
+    plan_id: StreamPlanId,
+    merchant_id: Uuid,
+) -> Result<RevenueStreamPlanRecord, StorageError> {
+    let row = transaction
+        .query_opt(
+            "SELECT id, merchant_id, idempotency_key, request_digest,
+                    settlement_route_id, destination_route_id, asset, recipient, plan_digest, policy_digest,
+                    start_slot::text, end_slot::text,
+                    max_total_atomic::text, max_claim_atomic::text,
+                    status, proposer_subject, approver_subject, operator_subject,
+                    accrued_total_atomic::text, released_total_atomic::text,
+                    next_nonce::text
+             FROM revenue_stream_plans
+             WHERE id = $1 AND merchant_id = $2
+             FOR UPDATE",
+            &[&plan_id.0, &merchant_id],
+        )
+        .await?
+        .ok_or(StorageError::RevenueStreamPlanNotFound)?;
+    parse_revenue_stream_plan_row(row)
+}
+
+fn parse_revenue_stream_accrual_row(
+    row: deadpool_postgres::tokio_postgres::Row,
+) -> Result<FinalizedAccrual, StorageError> {
+    let source_signature = row.get::<_, Vec<u8>>(0);
+    if source_signature.len() != 64 || source_signature.iter().all(|byte| *byte == 0) {
+        return Err(StorageError::InvalidRevenueStream(
+            "stored source signature is invalid".into(),
+        ));
+    }
+    Ok(FinalizedAccrual {
+        source_signature: RevenueStreamSignature(source_signature),
+        finalized_slot: parse_u64(row.get(1), "stored accrual slot")?,
+        receipt_digest: RevenueStreamDigest(parse_revenue_stream_fixed_digest(
+            row.get(2),
+            "stored receipt digest",
+        )?),
+        plan_digest: RevenueStreamDigest(parse_revenue_stream_fixed_digest(
+            row.get(3),
+            "stored accrual plan digest",
+        )?),
+        policy_digest: RevenueStreamDigest(parse_revenue_stream_fixed_digest(
+            row.get(4),
+            "stored accrual policy digest",
+        )?),
+        asset: AssetId(parse_revenue_stream_fixed_digest(
+            row.get(5),
+            "stored accrual asset",
+        )?),
+        recipient: RecipientId(parse_revenue_stream_fixed_digest(
+            row.get(6),
+            "stored accrual recipient",
+        )?),
+        gross_atomic: parse_u64(row.get(7), "stored accrual gross")?,
+        tax_atomic: parse_u64(row.get(8), "stored accrual tax")?,
+        net_atomic: parse_u64(row.get(9), "stored accrual net")?,
+        recipient_atomic: parse_u64(row.get(10), "stored accrual recipient amount")?,
+    })
+}
+
+fn parse_revenue_stream_correction_row(
+    row: deadpool_postgres::tokio_postgres::Row,
+) -> Result<FinalizedCorrection, StorageError> {
+    let parse_signature =
+        |index: usize, field: &str| -> Result<RevenueStreamSignature, StorageError> {
+            let value: Vec<u8> = row.get(index);
+            if value.len() != 64 || value.iter().all(|byte| *byte == 0) {
+                return Err(StorageError::InvalidRevenueStream(format!(
+                    "stored {field} is invalid"
+                )));
+            }
+            Ok(RevenueStreamSignature(value))
+        };
+    Ok(FinalizedCorrection {
+        correction_signature: parse_signature(0, "correction signature")?,
+        source_signature: parse_signature(1, "correction source signature")?,
+        finalized_slot: parse_u64(row.get(2), "stored correction slot")?,
+        plan_digest: RevenueStreamDigest(parse_revenue_stream_fixed_digest(
+            row.get(3),
+            "stored correction plan digest",
+        )?),
+        decrease: row.get(4),
+        amount_atomic: parse_u64(row.get(5), "stored correction amount")?,
+    })
+}
+
+fn parse_revenue_stream_claim_row(
+    row: deadpool_postgres::tokio_postgres::Row,
+) -> Result<RevenueStreamClaimRecord, StorageError> {
+    let plan_id = StreamPlanId(row.get(1));
+    if plan_id.0.get_version_num() != 7 {
+        return Err(StorageError::InvalidRevenueStream(
+            "stored claim plan ID must be UUIDv7".into(),
+        ));
+    }
+    let id: Uuid = row.get(0);
+    if id.get_version_num() != 7 {
+        return Err(StorageError::InvalidRevenueStream(
+            "stored claim ID must be UUIDv7".into(),
+        ));
+    }
+    let status: String = row.get(11);
+    if !matches!(status.as_str(), "pending" | "finalized" | "cancelled") {
+        return Err(StorageError::InvalidRevenueStream(
+            "stored claim status is invalid".into(),
+        ));
+    }
+    let release_signature = row.get::<_, Option<Vec<u8>>>(12);
+    if release_signature
+        .as_ref()
+        .is_some_and(|value| value.len() != 64 || value.iter().all(|byte| *byte == 0))
+    {
+        return Err(StorageError::InvalidRevenueStream(
+            "stored release signature is invalid".into(),
+        ));
+    }
+    let finalized_slot = row
+        .get::<_, Option<String>>(13)
+        .as_deref()
+        .map(|value| parse_u64(value, "stored claim finalized slot"))
+        .transpose()?;
+    if (status == "finalized") != (release_signature.is_some() && finalized_slot.is_some()) {
+        return Err(StorageError::InvalidRevenueStream(
+            "stored claim finality state is invalid".into(),
+        ));
+    }
+    Ok(RevenueStreamClaimRecord {
+        id,
+        plan_id,
+        merchant_id: row.get(2),
+        idempotency_key: row.get(3),
+        amount_atomic: parse_u64(row.get(4), "stored claim amount")?,
+        nonce: parse_u64(row.get(5), "stored claim nonce")?,
+        accrual_total_atomic: parse_u64(row.get(6), "stored claim accrual total")?,
+        plan_digest: parse_revenue_stream_fixed_digest(row.get(7), "stored claim plan digest")?,
+        asset: parse_revenue_stream_fixed_digest(row.get(8), "stored claim asset")?,
+        recipient: parse_revenue_stream_fixed_digest(row.get(9), "stored claim recipient")?,
+        claim_digest: parse_revenue_stream_fixed_digest(row.get(10), "stored claim digest")?,
+        status,
+        release_signature,
+        finalized_slot,
+    })
+}
+
+fn parse_revenue_stream_plan_row(
+    row: deadpool_postgres::tokio_postgres::Row,
+) -> Result<RevenueStreamPlanRecord, StorageError> {
+    let id: Uuid = row.get(0);
+    let merchant_id: Uuid = row.get(1);
+    if id.get_version_num() != 7 || merchant_id.get_version_num() != 7 {
+        return Err(StorageError::InvalidRevenueStream(
+            "stored stream plan identities must be UUIDv7".into(),
+        ));
+    }
+    let destination_route_id: Option<Uuid> = row.get(5);
+    if destination_route_id.is_some_and(|value| value.get_version_num() != 7) {
+        return Err(StorageError::InvalidRevenueStream(
+            "stored revenue destination route ID must be UUIDv7".into(),
+        ));
+    }
+    let spec = StreamPlanSpec {
+        id: StreamPlanId(id),
+        merchant_id,
+        settlement_route_id: row.get(4),
+        operator_subject: row.get(17),
+        asset: AssetId(parse_revenue_stream_fixed_digest(row.get(6), "asset")?),
+        recipient: RecipientId(parse_revenue_stream_fixed_digest(row.get(7), "recipient")?),
+        plan_digest: RevenueStreamDigest(parse_revenue_stream_fixed_digest(
+            row.get(8),
+            "plan digest",
+        )?),
+        policy_digest: RevenueStreamDigest(parse_revenue_stream_fixed_digest(
+            row.get(9),
+            "policy digest",
+        )?),
+        start_slot: parse_u64(row.get(10), "revenue stream start slot")?,
+        end_slot: row
+            .get::<_, Option<String>>(11)
+            .as_deref()
+            .map(|value| parse_u64(value, "revenue stream end slot"))
+            .transpose()?,
+        max_total_atomic: parse_u64(row.get(12), "revenue stream total cap")?,
+        max_claim_atomic: parse_u64(row.get(13), "revenue stream claim cap")?,
+    };
+    StreamPlan::new(spec.clone()).map_err(|error| {
+        StorageError::InvalidRevenueStream(format!(
+            "stored stream plan specification is invalid: {error}"
+        ))
+    })?;
+    let status: String = row.get(14);
+    if !matches!(
+        status.as_str(),
+        "proposed" | "approved" | "active" | "paused" | "cancelled" | "completed"
+    ) {
+        return Err(StorageError::InvalidRevenueStream(
+            "stored stream plan status is invalid".into(),
+        ));
+    }
+    let proposer_subject: String = row.get(15);
+    let approver_subject: Option<String> = row.get(16);
+    let operator_subject: Option<String> = row.get(17);
+    if proposer_subject.trim().is_empty()
+        || proposer_subject.len() > 256
+        || proposer_subject.bytes().any(|byte| byte.is_ascii_control())
+        || matches!(
+            status.as_str(),
+            "approved" | "active" | "paused" | "cancelled" | "completed"
+        ) && approver_subject.is_none()
+    {
+        return Err(StorageError::InvalidRevenueStream(
+            "stored stream plan authority state is invalid".into(),
+        ));
+    }
+    if let Some(approver) = approver_subject.as_deref()
+        && (approver.trim().is_empty()
+            || approver.len() > 256
+            || approver.bytes().any(|byte| byte.is_ascii_control())
+            || approver == proposer_subject)
+    {
+        return Err(StorageError::InvalidRevenueStream(
+            "stored stream plan approver is invalid".into(),
+        ));
+    }
+    if let Some(operator) = operator_subject.as_deref()
+        && (operator.trim().is_empty()
+            || operator.len() > 256
+            || operator.bytes().any(|byte| byte.is_ascii_control())
+            || operator == proposer_subject)
+    {
+        return Err(StorageError::InvalidRevenueStream(
+            "stored stream plan operator is invalid".into(),
+        ));
+    }
+    let accrued_total_atomic = parse_u64(row.get(18), "revenue stream accrued total")?;
+    let released_total_atomic = parse_u64(row.get(19), "revenue stream released total")?;
+    let next_nonce = parse_u64(row.get(20), "revenue stream next nonce")?;
+    if accrued_total_atomic > spec.max_total_atomic
+        || released_total_atomic > accrued_total_atomic
+        || next_nonce == 0
+    {
+        return Err(StorageError::InvalidRevenueStream(
+            "stored stream plan totals or nonce are invalid".into(),
+        ));
+    }
+    Ok(RevenueStreamPlanRecord {
+        id: spec.id,
+        merchant_id,
+        idempotency_key: row.get(2),
+        request_digest: parse_revenue_stream_fixed_digest(row.get(3), "request digest")?,
+        destination_route_id,
+        spec,
+        status,
+        proposer_subject,
+        approver_subject,
+        accrued_total_atomic,
+        released_total_atomic,
+        next_nonce,
+    })
+}
+
+fn parse_revenue_stream_destination_route_row(
+    row: deadpool_postgres::tokio_postgres::Row,
+) -> Result<RevenueStreamDestinationRoute, StorageError> {
+    let id: Uuid = row.get(0);
+    let merchant_id: Uuid = row.get(1);
+    if id.get_version_num() != 7 || merchant_id.get_version_num() != 7 {
+        return Err(StorageError::InvalidRevenueStream(
+            "stored revenue destination route identities must be UUIDv7".into(),
+        ));
+    }
+    let verification_digest = row
+        .get::<_, Option<Vec<u8>>>(8)
+        .ok_or_else(|| {
+            StorageError::RevenueStreamDestinationRouteVerificationInvalid(
+                "active route has no verification digest".into(),
+            )
+        })?
+        .try_into()
+        .map_err(|_| {
+            StorageError::RevenueStreamDestinationRouteVerificationInvalid(
+                "active route verification digest must contain 32 bytes".into(),
+            )
+        })?;
+    let verification_commitment: String = row.get(10);
+    if verification_commitment != "finalized" {
+        return Err(StorageError::RevenueStreamDestinationRouteUnavailable);
+    }
+    let verification_evidence: Value = row.get(11);
+    if !verification_evidence.is_object() {
+        return Err(
+            StorageError::RevenueStreamDestinationRouteVerificationInvalid(
+                "active route verification evidence must be an object".into(),
+            ),
+        );
+    }
+    Ok(RevenueStreamDestinationRoute {
+        id,
+        merchant_id,
+        route_key: row.get(2),
+        version: row.get(3),
+        recipient_owner: row.get(4),
+        mint: row.get(5),
+        destination_token_account: row.get(6),
+        token_program: row.get(7),
+        verification_digest: RevenueStreamDigest(verification_digest),
+        verification_slot: parse_u64(row.get(9), "revenue destination verification slot")?,
+        verification_commitment,
+        verification_evidence,
+    })
+}
+
+fn parse_revenue_stream_fixed_digest(
+    value: Vec<u8>,
+    field: &str,
+) -> Result<[u8; 32], StorageError> {
+    let digest: [u8; 32] = value.try_into().map_err(|_| {
+        StorageError::InvalidRevenueStream(format!("stored {field} must contain 32 bytes"))
+    })?;
+    if digest.iter().all(|byte| *byte == 0) {
+        return Err(StorageError::InvalidRevenueStream(format!(
+            "stored {field} must not be zero"
+        )));
+    }
+    Ok(digest)
+}
+
+fn validate_revenue_stream_plan_transition(
+    command: &RevenueStreamPlanTransition,
+) -> Result<(), StorageError> {
+    if command.merchant_id.get_version_num() != 7
+        || command.plan_id.0.get_version_num() != 7
+        || command.actor_subject.trim().is_empty()
+        || command.actor_subject.len() > 256
+        || command
+            .actor_subject
+            .bytes()
+            .any(|byte| byte.is_ascii_control())
+        || !matches!(
+            command.to_status.as_str(),
+            "approved" | "active" | "paused" | "cancelled" | "completed"
+        )
+        || !command.evidence.is_object()
+    {
+        return Err(StorageError::InvalidRevenueStream(
+            "transition identity, actor, status, or evidence is invalid".into(),
+        ));
+    }
+    if serde_json::to_vec(&command.evidence)?.len() > MAX_REVENUE_STREAM_EVIDENCE_BYTES {
+        return Err(StorageError::InvalidRevenueStream(
+            "transition evidence exceeds the bounded size".into(),
+        ));
+    }
+    if command.to_status == "completed" && command.observed_slot.is_none() {
+        return Err(StorageError::InvalidRevenueStream(
+            "completion requires an observed finalized slot".into(),
+        ));
+    }
+    if command.to_status != "completed" && command.observed_slot.is_some() {
+        return Err(StorageError::InvalidRevenueStream(
+            "observed finalized slot is only valid for completion".into(),
+        ));
+    }
+    if command.observed_slot == Some(0) {
+        return Err(StorageError::InvalidRevenueStream(
+            "observed finalized slot must be positive".into(),
+        ));
+    }
+    Ok(())
+}
+
+struct RevenueStreamTransitionState<'a> {
+    proposer_subject: &'a str,
+    current_approver: Option<&'a str>,
+    actor_subject: &'a str,
+    accrued_total_atomic: u64,
+    released_total_atomic: u64,
+    end_slot: Option<u64>,
+    observed_slot: Option<u64>,
+}
+
+fn validate_revenue_stream_plan_transition_state(
+    from_status: &str,
+    to_status: &str,
+    state: RevenueStreamTransitionState<'_>,
+) -> Result<Option<String>, StorageError> {
+    let allowed = matches!(
+        (from_status, to_status),
+        ("proposed", "approved")
+            | ("approved", "active")
+            | ("approved", "cancelled")
+            | ("active", "paused")
+            | ("active", "cancelled")
+            | ("active", "completed")
+            | ("paused", "active")
+            | ("paused", "cancelled")
+            | ("paused", "completed")
+    );
+    if !allowed {
+        return Err(StorageError::InvalidRevenueStreamPlanTransition);
+    }
+    if to_status == "approved" {
+        if state.actor_subject == state.proposer_subject {
+            return Err(StorageError::RevenueStreamPlanActorConflict);
+        }
+        return Ok(Some(state.actor_subject.to_string()));
+    }
+    let approver = state
+        .current_approver
+        .ok_or(StorageError::InvalidRevenueStreamPlanTransition)?;
+    if state.actor_subject != approver {
+        return Err(StorageError::RevenueStreamPlanActorConflict);
+    }
+    if to_status == "completed"
+        && (state.released_total_atomic != state.accrued_total_atomic
+            || state
+                .end_slot
+                .is_none_or(|end_slot| state.observed_slot.unwrap_or_default() < end_slot))
+    {
+        return Err(StorageError::RevenueStreamInsufficientAvailable);
+    }
+    Ok(Some(approver.to_string()))
+}
+
+fn revenue_stream_plan_action(
+    from_status: &str,
+    to_status: &str,
+) -> Result<&'static str, StorageError> {
+    match (from_status, to_status) {
+        ("proposed", "approved") => Ok("approve"),
+        ("approved", "active") => Ok("activate"),
+        ("active", "paused") => Ok("pause"),
+        ("paused", "active") => Ok("resume"),
+        (_, "cancelled") => Ok("cancel"),
+        ("active" | "paused", "completed") => Ok("complete"),
+        _ => Err(StorageError::InvalidRevenueStreamPlanTransition),
+    }
+}
+
 fn parse_vault_release_claim_row(
     row: deadpool_postgres::tokio_postgres::Row,
 ) -> Result<VaultReleaseClaim, StorageError> {
@@ -13876,7 +16366,14 @@ fn parse_u64(value: &str, field: &str) -> Result<u64, StorageError> {
 fn valid_adjustment_authority_role(role: &str) -> bool {
     matches!(
         role,
-        "proposer" | "approver" | "refund_funder" | "governance"
+        "proposer"
+            | "approver"
+            | "refund_funder"
+            | "governance"
+            | "revenue_stream_proposer"
+            | "revenue_stream_approver"
+            | "revenue_stream_operator"
+            | "revenue_stream_governance"
     )
 }
 
@@ -14722,6 +17219,182 @@ mod tests {
             }],
             fx_evidence: None,
         }
+    }
+
+    fn revenue_stream_plan_command() -> CreateRevenueStreamPlanCommand {
+        let merchant_id = Uuid::now_v7();
+        CreateRevenueStreamPlanCommand {
+            merchant_id,
+            destination_route_id: Uuid::now_v7(),
+            actor_subject: "stream-proposer".to_string(),
+            idempotency_key: "stream-plan-1".to_string(),
+            spec: StreamPlanSpec {
+                id: StreamPlanId(Uuid::now_v7()),
+                merchant_id,
+                settlement_route_id: Uuid::now_v7(),
+                asset: revenue_streaming::AssetId([3; 32]),
+                recipient: revenue_streaming::RecipientId([4; 32]),
+                plan_digest: revenue_streaming::Digest([5; 32]),
+                policy_digest: revenue_streaming::Digest([6; 32]),
+                operator_subject: Some("stream-operator".to_string()),
+                start_slot: 100,
+                end_slot: Some(1_000),
+                max_total_atomic: 1_000,
+                max_claim_atomic: 500,
+            },
+        }
+    }
+
+    #[test]
+    fn revenue_stream_plan_validation_binds_tenant_and_exact_v7_identity() {
+        let command = revenue_stream_plan_command();
+        assert!(validate_create_revenue_stream_plan_command(&command).is_ok());
+        let digest = revenue_stream_plan_request_digest(&command).expect("stream digest");
+        let mut actor_variant = command.clone();
+        actor_variant.actor_subject = "different-authorized-subject".to_string();
+        assert_eq!(
+            revenue_stream_plan_request_digest(&actor_variant).expect("same request digest"),
+            digest
+        );
+
+        let mut invalid = command;
+        invalid.spec.merchant_id = Uuid::now_v7();
+        assert!(matches!(
+            validate_create_revenue_stream_plan_command(&invalid),
+            Err(StorageError::InvalidRevenueStream(_))
+        ));
+
+        let mut same_operator = revenue_stream_plan_command();
+        same_operator.spec.operator_subject = Some(same_operator.actor_subject.clone());
+        assert!(matches!(
+            validate_create_revenue_stream_plan_command(&same_operator),
+            Err(StorageError::InvalidRevenueStream(_))
+        ));
+
+        let mut missing_operator = revenue_stream_plan_command();
+        missing_operator.spec.operator_subject = None;
+        assert!(matches!(
+            validate_create_revenue_stream_plan_command(&missing_operator),
+            Err(StorageError::InvalidRevenueStream(_))
+        ));
+    }
+
+    #[test]
+    fn revenue_stream_plan_transition_requires_four_eyes_and_finalized_completion() {
+        let approved = validate_revenue_stream_plan_transition_state(
+            "proposed",
+            "approved",
+            RevenueStreamTransitionState {
+                proposer_subject: "proposer",
+                current_approver: None,
+                actor_subject: "approver",
+                accrued_total_atomic: 100,
+                released_total_atomic: 100,
+                end_slot: Some(500),
+                observed_slot: None,
+            },
+        )
+        .expect("distinct approver");
+        assert_eq!(approved.as_deref(), Some("approver"));
+
+        assert!(matches!(
+            validate_revenue_stream_plan_transition_state(
+                "proposed",
+                "approved",
+                RevenueStreamTransitionState {
+                    proposer_subject: "proposer",
+                    current_approver: None,
+                    actor_subject: "proposer",
+                    accrued_total_atomic: 0,
+                    released_total_atomic: 0,
+                    end_slot: None,
+                    observed_slot: None,
+                },
+            ),
+            Err(StorageError::RevenueStreamPlanActorConflict)
+        ));
+
+        assert!(matches!(
+            validate_revenue_stream_plan_transition_state(
+                "active",
+                "completed",
+                RevenueStreamTransitionState {
+                    proposer_subject: "proposer",
+                    current_approver: Some("approver"),
+                    actor_subject: "approver",
+                    accrued_total_atomic: 100,
+                    released_total_atomic: 100,
+                    end_slot: Some(500),
+                    observed_slot: Some(499),
+                },
+            ),
+            Err(StorageError::RevenueStreamInsufficientAvailable)
+        ));
+
+        assert_eq!(
+            validate_revenue_stream_plan_transition_state(
+                "active",
+                "completed",
+                RevenueStreamTransitionState {
+                    proposer_subject: "proposer",
+                    current_approver: Some("approver"),
+                    actor_subject: "approver",
+                    accrued_total_atomic: 100,
+                    released_total_atomic: 100,
+                    end_slot: Some(500),
+                    observed_slot: Some(500),
+                },
+            )
+            .expect("complete after finalized release"),
+            Some("approver".to_string())
+        );
+    }
+
+    #[test]
+    fn revenue_stream_evidence_validates_conservation_and_window_binding() {
+        let command = revenue_stream_plan_command();
+        let plan = RevenueStreamPlanRecord {
+            id: command.spec.id,
+            merchant_id: command.merchant_id,
+            idempotency_key: command.idempotency_key.clone(),
+            request_digest: revenue_stream_plan_request_digest(&command).expect("digest"),
+            destination_route_id: Some(command.destination_route_id),
+            spec: command.spec.clone(),
+            status: "active".to_string(),
+            proposer_subject: command.actor_subject,
+            approver_subject: Some("approver".to_string()),
+            accrued_total_atomic: 0,
+            released_total_atomic: 0,
+            next_nonce: 1,
+        };
+        let accrual = FinalizedAccrual {
+            source_signature: RevenueStreamSignature(vec![7; 64]),
+            finalized_slot: 200,
+            receipt_digest: RevenueStreamDigest([8; 32]),
+            plan_digest: command.spec.plan_digest,
+            policy_digest: command.spec.policy_digest,
+            asset: command.spec.asset,
+            recipient: command.spec.recipient,
+            gross_atomic: 100,
+            tax_atomic: 20,
+            net_atomic: 80,
+            recipient_atomic: 75,
+        };
+        validate_revenue_stream_accrual(&accrual).expect("conserving accrual");
+        validate_revenue_stream_accrual_binding(&plan, &accrual).expect("matching active stream");
+
+        let mut invalid = accrual.clone();
+        invalid.recipient_atomic = 81;
+        assert!(matches!(
+            validate_revenue_stream_accrual(&invalid),
+            Err(StorageError::InvalidRevenueStream(_))
+        ));
+        let mut outside_window = accrual;
+        outside_window.finalized_slot = 1_001;
+        assert!(matches!(
+            validate_revenue_stream_accrual_binding(&plan, &outside_window),
+            Err(StorageError::InvalidRevenueStream(_))
+        ));
     }
 
     fn vault_release_command() -> CreateVaultReleaseClaimCommand {

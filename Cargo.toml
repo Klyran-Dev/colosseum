@@ -25,6 +25,7 @@ members = [
     "crates/tax-engine",
     "crates/tax-engine-service",
     "crates/worker",
+    "crates/revenue-streaming",
     "programs/settlement",
 ]
 resolver = "3"

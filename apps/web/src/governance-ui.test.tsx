@@ -10,6 +10,18 @@ afterEach(() => {
 });
 
 describe("governance workbench submission boundary", () => {
+  it("presents rule authoring as a guided tax task", () => {
+    render(<GovernancePanel apiBase="/api" serviceOnline accessToken="author-token" />);
+
+    expect(screen.getByRole("heading", { name: "How the tax is calculated" })).toBeTruthy();
+    expect(screen.getByText("Checked before publishing")).toBeTruthy();
+    expect(screen.getByLabelText("How the rate changes")).toBeTruthy();
+    expect(screen.getByLabelText("When rounding happens")).toBeTruthy();
+    expect(screen.queryByText("Structured Tier-1 authoring")).toBeNull();
+    expect(screen.queryByText("Rule components and semantics")).toBeNull();
+    expect(screen.queryByText(/canonical rule document from explicit controls/i)).toBeNull();
+  });
+
   it("submits the structured canonical rule document through the authenticated API", async () => {
     const draftResponse = {
       rule_set_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d15",
@@ -128,6 +140,6 @@ describe("governance workbench submission boundary", () => {
     expect(JSON.parse(fetchMock.mock.calls[2][1].body as string)).toEqual({
       facts: { gross_atomic: "1100", net_atomic: "1000", currency: "USD", jurisdiction: "US-CA" },
     });
-    expect(screen.getByText(/unattested server result/i)).toBeTruthy();
+    expect(screen.getByText(/controlled scenario result/i)).toBeTruthy();
   });
 });

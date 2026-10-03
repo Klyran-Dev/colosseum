@@ -42,6 +42,7 @@ use refund_workflow::{
     cancellation_request_digest, claim_request_digest, execute_request_digest,
     refund_instruction_digest,
 };
+use revenue_streaming::{AssetId, RecipientId, StreamPlanId, StreamPlanSpec};
 use serde::{Deserialize, Serialize};
 use settlement_adjustments::{AdjustmentDelta, AdjustmentKind};
 use settlement_client::{
@@ -68,14 +69,16 @@ use storage::{
     CreateDocumentPaymentIntentCommand, CreateJurisdictionPolicyCommand,
     CreateRefundCancellationIntentCommand, CreateRefundClaimIntentCommand,
     CreateRefundExecuteIntentCommand, CreateRefundFundingConfigurationCommand,
-    CreateSettlementAdjustmentChainIntent, CreateSettlementAdjustmentCommand,
-    CreateSettlementAdjustmentEvidenceIntent, CreateVaultReleaseClaimCommand, DatabasePoolStats,
-    DocumentQuoteCommand, DocumentQuoteOutcome, EvidenceAccessAuditCommand,
-    JurisdictionPolicyGovernanceTransition, PersistedFxEvidence, PgStore, QuoteCommand,
-    QuoteOutcome, RefundCancellationFinalization, RefundCancellationIntentTransition,
+    CreateRevenueStreamPlanCommand, CreateSettlementAdjustmentChainIntent,
+    CreateSettlementAdjustmentCommand, CreateSettlementAdjustmentEvidenceIntent,
+    CreateVaultReleaseClaimCommand, DatabasePoolStats, DocumentQuoteCommand, DocumentQuoteOutcome,
+    EvidenceAccessAuditCommand, JurisdictionPolicyGovernanceTransition, PersistedFxEvidence,
+    PgStore, PrepareRevenueStreamClaimCommand, QuoteCommand, QuoteOutcome,
+    RefundCancellationFinalization, RefundCancellationIntentTransition,
     RefundClaimCancellationEvidenceExpectation, RefundClaimIntentTransition,
-    RefundExecuteIntentTransition, RefundFundingConfigurationTransition, RuleCacheStats,
-    RuleGovernanceTransition, SettlementAdjustmentChainIntent, SettlementAdjustmentChainTransition,
+    RefundExecuteIntentTransition, RefundFundingConfigurationTransition,
+    RevenueStreamPlanTransition, RuleCacheStats, RuleGovernanceTransition,
+    SettlementAdjustmentChainIntent, SettlementAdjustmentChainTransition,
     SettlementAdjustmentEvidenceIntent, SettlementAdjustmentRecord, SettlementAdjustmentTransition,
     SettlementTransition, StorageError, VaultReleaseClaimTransition,
 };
@@ -175,6 +178,35 @@ const CAPABILITY_POLICIES: &[CapabilityPolicy] = &[
         id: "vault.release",
         required_scopes: &["tax:vault:propose"],
         required_roles: &["vault_release_proposer"],
+        required_attributes: &[],
+    },
+    CapabilityPolicy {
+        id: "revenue_stream.read",
+        required_scopes: &["tax:stream:read"],
+        required_roles: &[
+            "revenue_stream_proposer",
+            "revenue_stream_approver",
+            "revenue_stream_operator",
+            "revenue_stream_auditor",
+        ],
+        required_attributes: &[],
+    },
+    CapabilityPolicy {
+        id: "revenue_stream.propose",
+        required_scopes: &["tax:stream:propose"],
+        required_roles: &["revenue_stream_proposer"],
+        required_attributes: &[],
+    },
+    CapabilityPolicy {
+        id: "revenue_stream.govern",
+        required_scopes: &["tax:stream:govern"],
+        required_roles: &["revenue_stream_approver", "revenue_stream_governance"],
+        required_attributes: &[],
+    },
+    CapabilityPolicy {
+        id: "revenue_stream.claim.prepare",
+        required_scopes: &["tax:stream:claim:prepare"],
+        required_roles: &["revenue_stream_operator"],
         required_attributes: &[],
     },
     CapabilityPolicy {
@@ -353,6 +385,61 @@ pub struct VaultReleaseClaimTransitionRequest {
     pub transaction_signature: Option<String>,
     pub slot: Option<u64>,
     pub last_error_code: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RevenueStreamPlanCreateRequest {
+    pub idempotency_key: String,
+    pub operator_subject: String,
+    #[serde(deserialize_with = "deserialize_digest")]
+    pub asset: [u8; 32],
+    #[serde(deserialize_with = "deserialize_digest")]
+    pub recipient: [u8; 32],
+    #[serde(deserialize_with = "deserialize_digest")]
+    pub plan_digest: [u8; 32],
+    #[serde(deserialize_with = "deserialize_digest")]
+    pub policy_digest: [u8; 32],
+    #[serde(with = "policy::serde_u64_string")]
+    pub start_slot: u64,
+    #[serde(default, with = "policy::serde_optional_u64_string")]
+    pub end_slot: Option<u64>,
+    #[serde(with = "policy::serde_u64_string")]
+    pub max_total_atomic: u64,
+    #[serde(with = "policy::serde_u64_string")]
+    pub max_claim_atomic: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RevenueStreamPlanTransitionRequest {
+    pub to_status: String,
+    #[serde(default, with = "policy::serde_optional_u64_string")]
+    pub observed_slot: Option<u64>,
+    pub evidence: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RevenueStreamPlanListQuery {
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RevenueStreamClaimPrepareRequest {
+    pub idempotency_key: String,
+    #[serde(with = "policy::serde_u64_string")]
+    pub amount_atomic: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RevenueStreamPlanTransitionResponse {
+    pub status: &'static str,
+    pub plan_id: StreamPlanId,
+    pub from_status: String,
+    pub to_status: String,
+    pub approver_subject: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1334,6 +1421,29 @@ impl From<StorageError> for ApiError {
                 "the settlement route cannot be activated in its current lifecycle state"
                     .to_string(),
             ),
+            StorageError::RevenueStreamDestinationRouteNotFound => (
+                StatusCode::CONFLICT,
+                "REVENUE_STREAM_DESTINATION_UNAVAILABLE",
+                "a finalized-verified payout destination is required for this recipient and asset"
+                    .to_string(),
+            ),
+            StorageError::RevenueStreamDestinationRouteUnavailable => (
+                StatusCode::CONFLICT,
+                "REVENUE_STREAM_DESTINATION_UNAVAILABLE",
+                "the payout destination is not active or is outside its effective window"
+                    .to_string(),
+            ),
+            StorageError::RevenueStreamDestinationRouteVerificationInvalid(message) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "REVENUE_STREAM_DESTINATION_VERIFICATION_INVALID",
+                message,
+            ),
+            StorageError::RevenueStreamDestinationRouteActivationConflict => (
+                StatusCode::CONFLICT,
+                "REVENUE_STREAM_DESTINATION_ACTIVATION_CONFLICT",
+                "the payout destination cannot be activated in its current lifecycle state"
+                    .to_string(),
+            ),
             StorageError::RefundFundingConfigurationNotFound => (
                 StatusCode::NOT_FOUND,
                 "REFUND_FUNDING_CONFIGURATION_NOT_FOUND",
@@ -1739,6 +1849,44 @@ impl From<StorageError> for ApiError {
                 "VAULT_RELEASE_CLAIM_IDEMPOTENCY_CONFLICT",
                 "the vault release idempotency key was reused for different input".to_string(),
             ),
+            StorageError::RevenueStreamPlanNotFound | StorageError::RevenueStreamClaimNotFound => (
+                StatusCode::NOT_FOUND,
+                "REVENUE_STREAM_RESOURCE_NOT_FOUND",
+                "the revenue stream resource was not found for this merchant".to_string(),
+            ),
+            StorageError::RevenueStreamPlanIdempotencyConflict
+            | StorageError::RevenueStreamEvidenceConflict => (
+                StatusCode::CONFLICT,
+                "REVENUE_STREAM_IDEMPOTENCY_OR_EVIDENCE_CONFLICT",
+                "the revenue stream request conflicts with immutable evidence".to_string(),
+            ),
+            StorageError::InvalidRevenueStreamPlanTransition
+            | StorageError::RevenueStreamPlanActorConflict => (
+                StatusCode::CONFLICT,
+                "REVENUE_STREAM_STATE_CONFLICT",
+                "the revenue stream cannot advance through this lifecycle transition".to_string(),
+            ),
+            StorageError::InvalidRevenueStream(message) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_REVENUE_STREAM_INPUT",
+                message,
+            ),
+            StorageError::RevenueStreamAccrualJobLeaseLost => (
+                StatusCode::CONFLICT,
+                "REVENUE_STREAM_RECONCILIATION_LEASE_LOST",
+                "the revenue reconciliation job lease is no longer owned by this worker"
+                    .to_string(),
+            ),
+            StorageError::InvalidRevenueStreamAccrualJob(message) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "REVENUE_STREAM_RECONCILIATION_CORRUPT",
+                message,
+            ),
+            StorageError::RevenueStreamInsufficientAvailable => (
+                StatusCode::CONFLICT,
+                "REVENUE_STREAM_BALANCE_UNAVAILABLE",
+                "the requested amount is not available after released and pending claims".to_string(),
+            ),
             StorageError::SettlementAdjustmentNotFound => (
                 StatusCode::NOT_FOUND,
                 "SETTLEMENT_ADJUSTMENT_NOT_FOUND",
@@ -1934,6 +2082,16 @@ impl From<SettlementCompileError> for ApiError {
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "INVALID_SETTLEMENT_REFUND_CANCELLATION",
             ),
+            SettlementCompileError::RevenueStreamAuthorityConflict
+            | SettlementCompileError::InvalidRevenueStreamInput
+            | SettlementCompileError::EmptyRevenueStreamDigest
+            | SettlementCompileError::InvalidRevenueStreamNonce
+            | SettlementCompileError::InvalidRevenueStreamWindow
+            | SettlementCompileError::InvalidRevenueStreamAmount
+            | SettlementCompileError::AliasedRevenueStreamAccounts => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_REVENUE_STREAM_INPUT",
+            ),
         };
         Self {
             status,
@@ -2025,6 +2183,22 @@ pub fn router() -> Router<AppState> {
             post(transition_vault_release_claim),
         )
         .route(
+            "/v1/revenue-streaming/plans",
+            get(list_revenue_stream_plans).post(create_revenue_stream_plan),
+        )
+        .route(
+            "/v1/revenue-streaming/plans/{plan_id}",
+            get(load_revenue_stream_plan),
+        )
+        .route(
+            "/v1/revenue-streaming/plans/{plan_id}/transition",
+            post(transition_revenue_stream_plan),
+        )
+        .route(
+            "/v1/revenue-streaming/plans/{plan_id}/claims",
+            post(prepare_revenue_stream_claim),
+        )
+        .route(
             "/v1/settlement/adjustments",
             post(create_settlement_adjustment),
         )
@@ -2042,6 +2216,14 @@ pub fn router() -> Router<AppState> {
         )
         .route(
             "/v1/settlement/adjustment-authority/bindings",
+            post(bind_adjustment_authority),
+        )
+        .route(
+            "/v1/revenue-streaming/authority/challenges",
+            post(create_adjustment_authority_challenge),
+        )
+        .route(
+            "/v1/revenue-streaming/authority/bindings",
             post(bind_adjustment_authority),
         )
         .route(
@@ -4081,10 +4263,16 @@ fn adjustment_authority_requirements(role: &str) -> Result<(&'static str, &'stat
             "tax:adjustment:authority:bind",
             "settlement_adjustment_governance",
         )),
+        "revenue_stream_proposer" => Ok(("tax:stream:authority:bind", "revenue_stream_proposer")),
+        "revenue_stream_approver" => Ok(("tax:stream:authority:bind", "revenue_stream_approver")),
+        "revenue_stream_operator" => Ok(("tax:stream:authority:bind", "revenue_stream_operator")),
+        "revenue_stream_governance" => {
+            Ok(("tax:stream:authority:bind", "revenue_stream_governance"))
+        }
         _ => Err(ApiError {
             status: StatusCode::BAD_REQUEST,
             code: "INVALID_ADJUSTMENT_AUTHORITY_ROLE",
-            message: "role must be proposer, approver, refund_funder, or governance".to_string(),
+            message: "role is not supported for this wallet authority workflow".to_string(),
         }),
     }
 }
@@ -4300,6 +4488,306 @@ async fn load_vault_release_claim_inner(
                 tracing::error!(error = ?error, "vault release claim read failed");
                 ApiError::from(error)
             })?,
+    ))
+}
+
+async fn create_revenue_stream_plan(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    payload: Result<Json<RevenueStreamPlanCreateRequest>, JsonRejection>,
+) -> Result<Json<storage::RevenueStreamPlanRecord>, ApiError> {
+    let metrics = Arc::clone(&state.metrics);
+    let started = Instant::now();
+    let result = create_revenue_stream_plan_inner(state, headers, payload).await;
+    metrics.observe_or_log(
+        "revenue_stream_plan_create",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+async fn create_revenue_stream_plan_inner(
+    state: AppState,
+    headers: HeaderMap,
+    payload: Result<Json<RevenueStreamPlanCreateRequest>, JsonRejection>,
+) -> Result<Json<storage::RevenueStreamPlanRecord>, ApiError> {
+    let principal = authenticate_scope_role(
+        &state,
+        &headers,
+        "tax:stream:propose",
+        "revenue_stream_proposer",
+    )?;
+    let Json(request) = payload.map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "INVALID_JSON",
+        message: "request body is invalid".to_string(),
+    })?;
+    let store = state.storage.as_ref().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "REVENUE_STREAM_STORAGE_UNAVAILABLE",
+        message: "revenue streaming storage is not configured".to_string(),
+    })?;
+    let asset = Pubkey::new_from_array(request.asset).to_string();
+    let route = store
+        .load_active_settlement_route_for_mint(principal.merchant_id, &asset)
+        .await
+        .map_err(|error| {
+            tracing::warn!(error = ?error, "no active settlement route for revenue stream asset");
+            ApiError {
+                status: StatusCode::CONFLICT,
+                code: "REVENUE_STREAM_ROUTE_UNAVAILABLE",
+                message: "an active verified settlement route is required for this payment asset"
+                    .into(),
+            }
+        })?;
+    let recipient_owner = Pubkey::new_from_array(request.recipient).to_string();
+    let destination_route = store
+        .load_active_revenue_stream_destination_route(
+            principal.merchant_id,
+            &recipient_owner,
+            &asset,
+        )
+        .await
+        .map_err(|error| {
+            tracing::warn!(error = ?error, "no active verified revenue payout destination");
+            ApiError {
+                status: StatusCode::CONFLICT,
+                code: "REVENUE_STREAM_DESTINATION_UNAVAILABLE",
+                message: "an active verified payout destination is required for this recipient"
+                    .into(),
+            }
+        })?;
+    let outcome = store
+        .create_revenue_stream_plan(CreateRevenueStreamPlanCommand {
+            merchant_id: principal.merchant_id,
+            destination_route_id: destination_route.id,
+            actor_subject: principal.subject,
+            idempotency_key: request.idempotency_key,
+            spec: StreamPlanSpec {
+                id: StreamPlanId(Uuid::now_v7()),
+                merchant_id: principal.merchant_id,
+                settlement_route_id: route.id,
+                operator_subject: Some(request.operator_subject),
+                asset: AssetId(request.asset),
+                recipient: RecipientId(request.recipient),
+                plan_digest: revenue_streaming::Digest(request.plan_digest),
+                policy_digest: revenue_streaming::Digest(request.policy_digest),
+                start_slot: request.start_slot,
+                end_slot: request.end_slot,
+                max_total_atomic: request.max_total_atomic,
+                max_claim_atomic: request.max_claim_atomic,
+            },
+        })
+        .await
+        .map_err(ApiError::from)?;
+    let record = match outcome {
+        storage::RevenueStreamPlanOutcome::Created(record)
+        | storage::RevenueStreamPlanOutcome::Replay(record) => record,
+    };
+    Ok(Json(record))
+}
+
+async fn list_revenue_stream_plans(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<RevenueStreamPlanListQuery>,
+) -> Result<Json<Vec<storage::RevenueStreamPlanRecord>>, ApiError> {
+    let metrics = Arc::clone(&state.metrics);
+    let started = Instant::now();
+    let result = list_revenue_stream_plans_inner(state, headers, query).await;
+    metrics.observe_or_log(
+        "revenue_stream_plan_list",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+async fn list_revenue_stream_plans_inner(
+    state: AppState,
+    headers: HeaderMap,
+    query: RevenueStreamPlanListQuery,
+) -> Result<Json<Vec<storage::RevenueStreamPlanRecord>>, ApiError> {
+    let principal = authenticate_scope_any_role(
+        &state,
+        &headers,
+        "tax:stream:read",
+        &[
+            "revenue_stream_proposer",
+            "revenue_stream_approver",
+            "revenue_stream_operator",
+            "revenue_stream_auditor",
+        ],
+    )?;
+    let store = state.storage.as_ref().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "REVENUE_STREAM_STORAGE_UNAVAILABLE",
+        message: "revenue streaming storage is not configured".to_string(),
+    })?;
+    Ok(Json(
+        store
+            .list_revenue_stream_plans(principal.merchant_id, query.limit.unwrap_or(50))
+            .await
+            .map_err(ApiError::from)?,
+    ))
+}
+
+async fn load_revenue_stream_plan(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(plan_id): Path<Uuid>,
+) -> Result<Json<storage::RevenueStreamPlanRecord>, ApiError> {
+    let metrics = Arc::clone(&state.metrics);
+    let started = Instant::now();
+    let result = load_revenue_stream_plan_inner(state, headers, plan_id).await;
+    metrics.observe_or_log(
+        "revenue_stream_plan_read",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+async fn load_revenue_stream_plan_inner(
+    state: AppState,
+    headers: HeaderMap,
+    plan_id: Uuid,
+) -> Result<Json<storage::RevenueStreamPlanRecord>, ApiError> {
+    let principal = authenticate_scope_any_role(
+        &state,
+        &headers,
+        "tax:stream:read",
+        &[
+            "revenue_stream_proposer",
+            "revenue_stream_approver",
+            "revenue_stream_operator",
+            "revenue_stream_auditor",
+        ],
+    )?;
+    let store = state.storage.as_ref().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "REVENUE_STREAM_STORAGE_UNAVAILABLE",
+        message: "revenue streaming storage is not configured".to_string(),
+    })?;
+    Ok(Json(
+        store
+            .load_revenue_stream_plan(StreamPlanId(plan_id), principal.merchant_id)
+            .await
+            .map_err(ApiError::from)?,
+    ))
+}
+
+async fn transition_revenue_stream_plan(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(plan_id): Path<Uuid>,
+    payload: Result<Json<RevenueStreamPlanTransitionRequest>, JsonRejection>,
+) -> Result<Json<RevenueStreamPlanTransitionResponse>, ApiError> {
+    let metrics = Arc::clone(&state.metrics);
+    let started = Instant::now();
+    let result = transition_revenue_stream_plan_inner(state, headers, plan_id, payload).await;
+    metrics.observe_or_log(
+        "revenue_stream_plan_transition",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+async fn transition_revenue_stream_plan_inner(
+    state: AppState,
+    headers: HeaderMap,
+    plan_id: Uuid,
+    payload: Result<Json<RevenueStreamPlanTransitionRequest>, JsonRejection>,
+) -> Result<Json<RevenueStreamPlanTransitionResponse>, ApiError> {
+    let principal = authenticate_scope_any_role(
+        &state,
+        &headers,
+        "tax:stream:govern",
+        &["revenue_stream_approver", "revenue_stream_governance"],
+    )?;
+    let Json(request) = payload.map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "INVALID_JSON",
+        message: "request body is invalid".to_string(),
+    })?;
+    let store = state.storage.as_ref().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "REVENUE_STREAM_STORAGE_UNAVAILABLE",
+        message: "revenue streaming storage is not configured".to_string(),
+    })?;
+    let outcome = store
+        .transition_revenue_stream_plan(RevenueStreamPlanTransition {
+            merchant_id: principal.merchant_id,
+            plan_id: StreamPlanId(plan_id),
+            actor_subject: principal.subject,
+            to_status: request.to_status,
+            observed_slot: request.observed_slot,
+            evidence: request.evidence,
+        })
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(RevenueStreamPlanTransitionResponse {
+        status: "accepted",
+        plan_id: outcome.plan_id,
+        from_status: outcome.from_status,
+        to_status: outcome.to_status,
+        approver_subject: outcome.approver_subject,
+    }))
+}
+
+async fn prepare_revenue_stream_claim(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(plan_id): Path<Uuid>,
+    payload: Result<Json<RevenueStreamClaimPrepareRequest>, JsonRejection>,
+) -> Result<Json<storage::RevenueStreamClaimRecord>, ApiError> {
+    let metrics = Arc::clone(&state.metrics);
+    let started = Instant::now();
+    let result = prepare_revenue_stream_claim_inner(state, headers, plan_id, payload).await;
+    metrics.observe_or_log(
+        "revenue_stream_claim_prepare",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+async fn prepare_revenue_stream_claim_inner(
+    state: AppState,
+    headers: HeaderMap,
+    plan_id: Uuid,
+    payload: Result<Json<RevenueStreamClaimPrepareRequest>, JsonRejection>,
+) -> Result<Json<storage::RevenueStreamClaimRecord>, ApiError> {
+    let principal = authenticate_scope_role(
+        &state,
+        &headers,
+        "tax:stream:claim:prepare",
+        "revenue_stream_operator",
+    )?;
+    let Json(request) = payload.map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "INVALID_JSON",
+        message: "request body is invalid".to_string(),
+    })?;
+    let store = state.storage.as_ref().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "REVENUE_STREAM_STORAGE_UNAVAILABLE",
+        message: "revenue streaming storage is not configured".to_string(),
+    })?;
+    Ok(Json(
+        store
+            .prepare_revenue_stream_claim(PrepareRevenueStreamClaimCommand {
+                merchant_id: principal.merchant_id,
+                actor_subject: principal.subject,
+                plan_id: StreamPlanId(plan_id),
+                idempotency_key: request.idempotency_key,
+                claim_id: Uuid::now_v7(),
+                amount_atomic: request.amount_atomic,
+            })
+            .await
+            .map_err(ApiError::from)?,
     ))
 }
 
@@ -4953,6 +5441,7 @@ fn targeted_recovery_error_code(error: &IndexerServiceError) -> &'static str {
         IndexerServiceError::RefundClaimCancellationDomain(_) => {
             "refund_claim_cancellation_domain_invalid"
         }
+        IndexerServiceError::RevenueReconciliation(_) => "revenue_reconciliation_invalid",
         _ => "targeted_recovery_failed",
     }
 }
@@ -4995,6 +5484,11 @@ fn targeted_recovery_api_error(error: IndexerServiceError) -> ApiError {
         IndexerServiceError::RefundClaimCancellationDomain(message) => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "INVALID_REFUND_CLAIM_CANCELLATION_RECONCILIATION",
+            message,
+        },
+        IndexerServiceError::RevenueReconciliation(message) => ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "INVALID_REVENUE_RECONCILIATION",
             message,
         },
         IndexerServiceError::GapRecordFailed { primary, gap } => ApiError {
@@ -8907,6 +9401,10 @@ mod tests {
                 "refund.claim.cancel",
                 "refund.claim.create",
                 "refund.payment.release",
+                "revenue_stream.claim.prepare",
+                "revenue_stream.govern",
+                "revenue_stream.propose",
+                "revenue_stream.read",
                 "settlement.adjustment",
                 "settlement.document.wallet",
                 "settlement.wallet",

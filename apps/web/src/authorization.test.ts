@@ -65,9 +65,9 @@ describe("browser authorization affordance contract", () => {
     expect(policiesForGroup("Rules & access").map((policy) => policy.id)).toEqual(["tax.rule.govern", "access.control"]);
   });
 
-  it("describes every production workspace with one bounded capability", () => {
-    expect(WORKSPACE_POLICIES).toHaveLength(14);
-    expect(new Set(WORKSPACE_POLICIES.map((policy) => policy.workspace)).size).toBe(14);
+  it("describes every production workspace and its bounded action capabilities", () => {
+    expect(WORKSPACE_POLICIES).toHaveLength(18);
+    expect(new Set(WORKSPACE_POLICIES.map((policy) => policy.workspace)).size).toBe(15);
     expect(WORKSPACE_POLICIES.map((policy) => policy.id)).toEqual(expect.arrayContaining([
       "tax.document.quote.create",
       "settlement.document.wallet",

@@ -5,7 +5,10 @@
 
 use axum::{Router, extract::State, http::StatusCode, routing::get};
 use observability::ServiceMetrics;
-use route_verifier::{RouteVerifierConfig, build_store, verify_once, verify_refund_funding_once};
+use route_verifier::{
+    RouteVerifierConfig, build_store, verify_once, verify_refund_funding_once,
+    verify_revenue_stream_destinations_once,
+};
 use std::{
     net::SocketAddr,
     sync::{
@@ -74,7 +77,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         ready: Arc::new(AtomicBool::new(true)),
         metrics: Arc::new(ServiceMetrics::new(
             "route_verifier",
-            &["verify", "verify_refund_funding"],
+            &[
+                "verify",
+                "verify_refund_funding",
+                "verify_revenue_destinations",
+            ],
         )?),
         refund_funding_pending: Arc::new(AtomicU64::new(0)),
         refund_funding_leases_active: Arc::new(AtomicU64::new(0)),
@@ -131,6 +138,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     Err(error) => {
                         warn!(%error, "refund funding verification pass failed; configurations remain inactive");
                         health_state.metrics.observe_or_log("verify_refund_funding", started.elapsed(), true);
+                    }
+                }
+                let started = Instant::now();
+                match verify_revenue_stream_destinations_once(&store, &transports, config.batch_size, config.rpc_timeout).await {
+                    Ok(summary) => {
+                        info!(examined = summary.examined, activated = summary.activated, failed = summary.failed, "revenue destination verification pass completed");
+                        health_state.metrics.observe_or_log("verify_revenue_destinations", started.elapsed(), summary.failed > 0);
+                    }
+                    Err(error) => {
+                        warn!(%error, "revenue destination verification pass failed; destinations remain inactive");
+                        health_state.metrics.observe_or_log("verify_revenue_destinations", started.elapsed(), true);
                     }
                 }
                 match store.load_refund_funding_verification_metrics().await {

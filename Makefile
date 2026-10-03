@@ -48,7 +48,11 @@ web-check: web-install
 
 web-browser-check:
 	mkdir -p test-results/web-e2e
-	docker compose --profile browser run --build --rm web-e2e
+	set -eu; \
+	project="solana-tax-protocol-web-e2e"; \
+	cleanup() { docker compose -p "$$project" -f compose.yaml -f compose.browser.yaml down -v --remove-orphans >/dev/null 2>&1 || true; }; \
+	trap cleanup EXIT INT TERM; \
+	docker compose -p "$$project" -f compose.yaml -f compose.browser.yaml --profile browser run --build --rm web-e2e
 
 web-csp-contract:
 	./scripts/verify_web_csp_contract.sh

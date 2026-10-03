@@ -23,7 +23,8 @@ instruction allowlist for every current token-moving entry point:
 - `settle_document`;
 - `settle_split`;
 - `execute_adjustment_refund`; and
-- `execute_vault_release`.
+- `execute_vault_release`; and
+- `execute_revenue_stream_claim`.
 
 The contract extracts each function body and requires the ordinary movement
 instructions to call `validate_protocol_not_paused`. The vault-release path

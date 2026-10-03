@@ -13,8 +13,8 @@ use axum::{
 use indexer_service::{
     IndexerConfig, IndexerServiceError, MAX_TARGETED_RECOVERY_PAGES, ReplayMetrics, ReplayOutcome,
     prove_one_refund_balance_once, provider_health, reconcile_one_refund_claim_cancellation_once,
-    reconcile_one_refund_claim_once, reconcile_vaults_once, refresh_replay_metrics, replay_once,
-    run_once,
+    reconcile_one_refund_claim_once, reconcile_one_revenue_stream_accrual_once,
+    reconcile_vaults_once, refresh_replay_metrics, replay_once, run_once,
 };
 use observability::ServiceMetrics;
 use std::{
@@ -149,6 +149,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 }
             }
             _ = vault_ticks.tick() => {
+                let revenue_started = Instant::now();
+                let revenue_result = reconcile_one_revenue_stream_accrual_once(
+                    &store,
+                    &config.stream_key,
+                )
+                .await;
+                health_state.metrics.observe_or_log(
+                    "revenue_stream_accrual_reconcile",
+                    revenue_started.elapsed(),
+                    revenue_result.is_err(),
+                );
+                match revenue_result {
+                    Ok(true) => info!("one finalized revenue accrual reconciled"),
+                    Ok(false) => {}
+                    Err(error) => warn!(%error, "revenue accrual reconciliation cycle failed; retaining the leased job for bounded retry"),
+                }
                 if let Err(error) = reconcile_vaults_once(
                     &store,
                     &vault_source,

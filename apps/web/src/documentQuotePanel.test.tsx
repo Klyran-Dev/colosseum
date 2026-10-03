@@ -29,8 +29,8 @@ function fillRequiredInvoiceFields() {
   fireEvent.change(screen.getByLabelText("Document ID"), { target: { value: "invoice-1" } });
   fireEvent.change(screen.getByLabelText("Currency"), { target: { value: "usd" } });
   fireEvent.change(screen.getByLabelText("Jurisdiction"), { target: { value: "US-CA" } });
-  fireEvent.change(screen.getByLabelText("Tax regime"), { target: { value: "sales-tax" } });
-  fireEvent.change(screen.getByLabelText("Published rule set ID"), { target: { value: "rule-1" } });
+  fireEvent.change(screen.getByLabelText("Tax category"), { target: { value: "sales-tax" } });
+  fireEvent.change(screen.getByLabelText("Approved tax rule"), { target: { value: "rule-1" } });
   fireEvent.change(screen.getByLabelText("Rule version"), { target: { value: "1" } });
   fireEvent.change(screen.getByLabelText("Line ID"), { target: { value: "line-1" } });
   fireEvent.change(screen.getByLabelText("Amount before tax"), { target: { value: "3000" } });
@@ -61,7 +61,7 @@ describe("authenticated document quote workspace", () => {
     expect(screen.queryByDisplayValue("signed-token")).toBeNull();
 
     fillRequiredInvoiceFields();
-    fireEvent.change(screen.getByRole("textbox", { name: /Location evidence/ }), {
+    fireEvent.change(screen.getByRole("textbox", { name: /Provider-signed location record \(advanced\)/ }), {
       target: { value: '[{"fixture":"provider-signed-evidence"}]' },
     });
     fireEvent.click(screen.getByRole("button", { name: "Calculate invoice tax" }));
@@ -94,7 +94,7 @@ describe("authenticated document quote workspace", () => {
     );
 
     fillRequiredInvoiceFields();
-    fireEvent.change(screen.getByRole("textbox", { name: /Location evidence/ }), {
+    fireEvent.change(screen.getByRole("textbox", { name: /Provider-signed location record \(advanced\)/ }), {
       target: { value: "[]" },
     });
     fireEvent.submit(screen.getByRole("button", { name: "Calculate invoice tax" }).closest("form")!);
@@ -117,20 +117,37 @@ describe("authenticated document quote workspace", () => {
     );
 
     fillRequiredInvoiceFields();
-    fireEvent.change(screen.getByRole("textbox", { name: /Location evidence/ }), { target: { value: '[{"fixture":"provider-signed-evidence"}]' } });
+    fireEvent.change(screen.getByRole("textbox", { name: /Provider-signed location record \(advanced\)/ }), { target: { value: '[{"fixture":"provider-signed-evidence"}]' } });
     const submit = () => fireEvent.click(screen.getByRole("button", { name: "Calculate invoice tax" }));
+    const requestBody = (index: number): { idempotency_key: string } => {
+      const call = fetchMock.mock.calls[index] as unknown as [RequestInfo | URL, RequestInit | undefined] | undefined;
+      if (!call || !call[1] || typeof call[1].body !== "string") throw new Error(`Missing request body at call ${index}`);
+      return JSON.parse(call[1].body) as { idempotency_key: string };
+    };
     submit();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     submit();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    const firstKey = JSON.parse(fetchMock.mock.calls[0][1].body as string).idempotency_key;
-    const retryKey = JSON.parse(fetchMock.mock.calls[1][1].body as string).idempotency_key;
+    const firstKey = requestBody(0).idempotency_key;
+    const retryKey = requestBody(1).idempotency_key;
     expect(retryKey).toBe(firstKey);
 
     fireEvent.change(screen.getByLabelText("Currency"), { target: { value: "eur" } });
     submit();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-    const changedFactsKey = JSON.parse(fetchMock.mock.calls[2][1].body as string).idempotency_key;
+    const changedFactsKey = requestBody(2).idempotency_key;
     expect(changedFactsKey).not.toBe(firstKey);
+  });
+
+  it("keeps implementation vocabulary out of the primary invoice form", () => {
+    render(<DocumentQuotePanel apiBase="/api" serviceOnline accessToken="session" formatAtomic={(value, currency) => `${value} ${currency}`} onOpenCheckout={() => undefined} />);
+
+    expect(screen.getByLabelText("Tax category")).toBeTruthy();
+    expect(screen.getByLabelText("Approved tax rule")).toBeTruthy();
+    expect(screen.getByText("Location verification")).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: /Provider-signed location record \(advanced\)/ })).toBeTruthy();
+    expect(screen.queryByLabelText("Tax regime")).toBeNull();
+    expect(screen.queryByLabelText("Published rule set ID")).toBeNull();
+    expect(screen.queryByRole("textbox", { name: /Location evidence/ })).toBeNull();
   });
 });
