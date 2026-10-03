@@ -1185,9 +1185,9 @@ release gates.
 
 - [x] Add the bounded Docker benchmark with warm-up, exact response checks,
   bounded request timeout, scoped cleanup, and p50/p95/p99 calculation.
-- [x] Execute the default workload on 2026-10-02: 256/256 HTTP 200 responses
+- [x] Execute the default workload on 2026-10-03: 256/256 HTTP 200 responses
   at concurrency 32 on the pinned local arm64 image, with p50/p95/p99 of
-  1.205/2.788/5.791 ms.
+  1.214/2.717/3.826 ms.
 - [ ] Retain Linux/amd64 CI evidence, resource-profile samples, regional
   measurements, mTLS/client-identity evidence, and production SLO approval.
 
@@ -2297,6 +2297,211 @@ Deliverables:
 - post-launch review against latency, correctness, tax coverage, UX, and operational evidence.
 
 Exit criteria: controlled production meets the Tier-1 product standard for the published scope; general availability is a separate approval, not an automatic consequence of deployment.
+
+## ADR-0262 UI and authorization delivery status
+
+- [x] Replace the single tab strip with a responsive SaaS control-plane shell
+  grouped by operation, governance, money movement, and observation.
+- [x] Add a typed capability catalog with explicit action risk, required
+  scopes, roles, and workspace ownership.
+- [x] Add a dedicated RBAC/PBAC/ABAC access-control workspace with
+  fail-closed, server-authority copy and a reviewable permission matrix.
+- [x] Preserve real lazy domain panels, focus management, error containment,
+  locale/time-zone/RTL handling, and WCAG axe coverage.
+- [x] Implement `GET /v1/authorization/capabilities` as a server-owned,
+  tenant-scoped, expiring capability snapshot and contract-test it against API
+  authorization constants. The browser remains indeterminate until this
+  contract is available and staging authorization evidence is retained; it
+  never personalizes protected controls from decoded JWT claims.
+- [ ] Add real-browser visual/responsive, screen-reader, CSP, and multi-tenant
+  authorization evidence before any production UI authorization claim.
+
+## ADR-0276 multi-tenant capability session reset evidence
+
+- [x] Add a real-browser two-tenant capability-response journey that proves the
+  account reference and capability snapshot are replaced when the opaque
+  session changes, with no stale tenant reference rendered afterward.
+- [ ] Retain staging identity-provider, real multi-tenant API, screen-reader,
+  and production authorization evidence.
+
+## ADR-0277 complete workspace capability catalog
+
+- [x] Add the complete server-owned capability catalog for every production
+  workspace, including document payments, reconciliation, adjustments, and
+  refund lifecycle actions.
+- [x] Surface each server decision in navigation without turning the browser
+  into an authorization authority; retain exact handler re-authorization.
+- [x] Validate the complete catalog in Rust, React, Docker benchmark, and
+  real-browser accessibility journeys.
+- [ ] Retain staging identity-provider, real multi-tenant, screen-reader,
+  regional latency, and production authorization evidence.
+
+## ADR-0278 addressable workspace navigation
+
+- [x] Add an allow-listed typed pathname mapping for every workspace and safe
+  root/unknown-path canonicalization.
+- [x] Preserve push/back/forward behavior without encoding credentials,
+  financial facts, tenant identity, or authorization state in the URL.
+- [x] Verify direct deep links and browser history in the Docker browser gate,
+  alongside focus and accessibility checks.
+- [ ] Retain staging support-link, localization, screen-reader, and release
+  manifest evidence.
+
+The UI shell is reviewable and production-shaped, but this slice does not
+claim that a browser token is proof of authorization or that the product is
+ready for a live tenant without the backend capability contract and release
+gates above.
+
+## ADR-0263 task-oriented product language and navigation
+
+- [x] Organize the primary journey around Daily work, Rules & access, Money
+  movement, and Records & issues.
+- [x] Use outcome-oriented labels for navigation, page titles, statuses,
+  buttons, empty states, and failure copy.
+- [x] Keep RBAC/PBAC/ABAC names, scopes, digests, and raw evidence behind
+  progressive disclosure for administrators and auditors.
+- [x] Preserve explicit boundaries: the service decides access, the wallet
+  owner signs, finalized chain evidence proves settlement, and tax withholding
+  is not filing or legal advice.
+- [x] Add focused UI tests for task language, technical disclosure, keyboard
+  navigation, RTL layout, and fail-closed access presentation.
+- [x] Apply the copy contract to the first high-consequence money-movement
+  slice: refund requests, refund releases, and treasury release requests. The
+  UI keeps exact financial/address/evidence values reviewable, but presents
+  their meaning in operator language and labels recovery/evidence inputs as
+  advanced.
+- [x] Apply the copy contract to adjustment review and refund cancellation;
+  primary labels now describe the operator decision and next step while
+  preserving exact evidence and recovery data for controlled review.
+- [x] Add ADR-0271's executable UI language contract to the repository quality
+  gate so primary navigation and high-consequence workspace labels cannot
+  regress into protocol terminology.
+- [x] Add ADR-0272's payment-review progressive disclosure. The primary
+  payment path now explains the wallet authorization, amount, tax, route, and
+  recipient decision in operator language while keeping exact account,
+  compute, policy, and intent evidence in explicit accessible disclosures.
+- [x] Add ADR-0273's explicit financial-input boundary. Quote, invoice,
+  document-payment, and persisted-rule simulation workspaces no longer open
+  with example amounts, line facts, tax rules, jurisdictions, or categories;
+  only a generated non-secret retry reference is prefilled.
+- [x] Add ADR-0274's explicit currency boundary. Aggregate quotes and
+  scenarios no longer silently submit USD; currency is entered and normalized
+  at the browser boundary while server-returned currency controls display.
+- [ ] Review every domain workspace with finance/tax operators and complete
+  real-browser, screen-reader, localization, and legal-copy evidence before
+  making production UX claims.
+
+## ADR-0264 server-owned capability snapshot
+
+- [x] Add the versioned `GET /v1/authorization/capabilities` contract with
+  UUIDv7 snapshot identity, bounded expiry, exact scope/role decisions, and
+  fail-closed indeterminate results for missing resource context.
+- [x] Consume the snapshot in the React shell without decoding JWT claims or
+  making client-side authorization decisions.
+- [x] Preserve API re-authorization on every protected operation; the shell
+  snapshot is an affordance and explanation contract only.
+
+## ADR-0275 capability snapshot latency evidence
+
+- [x] Add a bounded two-replica Docker HTTP benchmark for the capability
+  snapshot. It verifies authenticated semantic responses, bounded concurrent
+  load, and p50/p95/p99 output; regional staging SLO, identity-provider, and
+  production evidence remain separate gates.
+- [x] Execute the default local workload on 2026-10-03: 256/256 HTTP 200
+  responses at concurrency 32 on the pinned local arm64 image, with p50/p95/p99
+  of 1.052/1.915/3.114 ms with the complete fourteen-capability catalog.
+- [ ] Retain Linux/amd64 CI evidence, resource-profile samples, regional
+  measurements, identity-provider integration, and production SLO approval.
+
+## ADR-0265 responsive navigation delivery status
+
+- [x] Replace the narrow-screen icon-only strip with an explicit, labeled
+  navigation disclosure.
+- [x] Preserve native navigation semantics, accessible expanded state, close on
+  workspace selection, and existing workspace focus management.
+- [ ] Retain real-browser responsive layout and assistive-technology evidence
+  for the complete production tenant surface.
+
+## ADR-0266 quote-to-payment handoff delivery status
+
+- [x] Preserve the server response across the aggregate quote/payment review
+  handoff so expiry and authorization states remain visible.
+- [x] Clear aggregate quote state when leaving the bounded handoff cluster and
+  keep document quote/payment state isolated.
+- [x] Prove the expired-quote handoff and disabled compilation in the pinned
+  real-browser journey.
+
+## ADR-0267 honest runtime and account context delivery status
+
+- [x] Remove fixed tenant, operator, environment, and network labels from the
+  product shell.
+- [x] Derive account context only from the verified server capability snapshot
+  and show a bounded opaque reference.
+- [x] Parse explicit build-time deployment and Solana-cluster context with
+  visible `Not configured` failure states and no plausible defaults.
+- [x] Pass explicit local context from the Docker edge build and preserve the
+  values as release configuration inputs.
+- [ ] Retain staging/production release-manifest evidence proving the displayed
+  context matches the approved deployment and cluster.
+
+## ADR-0268 browser OIDC PKCE session delivery status
+
+- [x] Add strict public-client configuration parsing for issuer, client ID,
+  redirect URI, scopes, and local-only authentication mode.
+- [x] Implement bounded PKCE transaction creation, provider discovery, callback
+  validation, and one-time authorization-code exchange.
+- [x] Keep access tokens in memory only and make all protected workspaces use
+  one session boundary.
+- [x] Hide synthetic credential entry from every staging/production build and
+  fail closed when OIDC configuration is absent or invalid.
+- [ ] Retain staging identity-provider evidence for redirect registration,
+  issuer/audience mapping, key rotation, revocation, logout, and outage.
+
+## ADR-0269 OIDC origin and CSP delivery status
+
+- [x] Bind the configured issuer origin into the immutable NGINX CSP without
+  permitting wildcard HTTPS browser egress.
+- [x] Reject discovery metadata whose authorization or token endpoint is not
+  on the configured issuer origin.
+- [x] Prove local same-origin CSP, configured-provider CSP, and generated NGINX
+  configuration with Docker checks.
+- [ ] Retain staging evidence for provider-origin configuration, CORS, and
+  provider endpoint rotation.
+
+## ADR-0270 browser OIDC ID-token validation delivery status
+
+- [x] Add bounded provider JWKS discovery and strict ID-token validation before
+  establishing a browser session.
+- [x] Require the returned ID token to bind issuer, client audience, nonce,
+  subject, and bounded time claims; reject unsupported algorithms and key types.
+- [x] Add key-rotation retry, malformed-JWKS, oversized-response, and invalid
+  ID-token session tests.
+- [x] Load the validator only during callback completion so JOSE verification
+  does not inflate the initial product bundle or settlement-facing workspaces.
+- [ ] Retain staging evidence for provider JWKS rotation and algorithm policy.
+
+## ADR-0280 browser credential presentation delivery status
+
+- [x] Remove bearer-token rendering from domain workspaces while preserving
+  authenticated API requests through the in-memory session; the shared shell
+  authentication control is the sole credential-entry surface.
+- [x] Replace example-oriented governance copy with an explicit controlled
+  simulation action that cannot be mistaken for a live quote or settlement.
+- [x] Add component, accessibility, typecheck, and UI-language evidence for the
+  session-status presentation boundary.
+- [ ] Retain staging identity-provider, logout, expiry, revocation, and support-
+  artifact redaction evidence.
+
+## ADR-0281 automatic quote retry-reference delivery status
+
+- [x] Remove editable idempotency UUID fields from aggregate and document quote
+  workspaces.
+- [x] Keep the server API contract unchanged while generating a fresh in-memory
+  CSPRNG reference whenever semantic quote inputs change.
+- [x] Preserve the same reference across retries when the input set is
+  unchanged, with plain-language UI explaining the protection.
+- [ ] Retain staging retry/timeout evidence and support-runbook confirmation
+  that operators do not copy implementation identifiers into quote forms.
 
 ## Version and dependency governance
 

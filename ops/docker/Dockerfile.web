@@ -6,11 +6,30 @@ COPY apps/web/package.json apps/web/pnpm-lock.yaml apps/web/pnpm-workspace.yaml 
 RUN pnpm --dir apps/web install --frozen-lockfile
 COPY test-vectors ./test-vectors
 COPY apps/web ./apps/web
+COPY ops/nginx/nginx.conf ./ops/nginx/nginx.conf
+COPY scripts/render_web_nginx_config.mjs ./scripts/render_web_nginx_config.mjs
+ARG VITE_DEPLOYMENT_ENVIRONMENT
+ARG VITE_SOLANA_NETWORK
+ARG VITE_LOCAL_UI_MODE
+ARG VITE_OIDC_ISSUER
+ARG VITE_OIDC_CLIENT_ID
+ARG VITE_OIDC_REDIRECT_URI
+ARG VITE_OIDC_SCOPE
+ARG VITE_OIDC_AUDIENCE
+ENV VITE_DEPLOYMENT_ENVIRONMENT=${VITE_DEPLOYMENT_ENVIRONMENT}
+ENV VITE_SOLANA_NETWORK=${VITE_SOLANA_NETWORK}
+ENV VITE_LOCAL_UI_MODE=${VITE_LOCAL_UI_MODE}
+ENV VITE_OIDC_ISSUER=${VITE_OIDC_ISSUER}
+ENV VITE_OIDC_CLIENT_ID=${VITE_OIDC_CLIENT_ID}
+ENV VITE_OIDC_REDIRECT_URI=${VITE_OIDC_REDIRECT_URI}
+ENV VITE_OIDC_SCOPE=${VITE_OIDC_SCOPE}
+ENV VITE_OIDC_AUDIENCE=${VITE_OIDC_AUDIENCE}
 RUN pnpm --dir apps/web build
+RUN node scripts/render_web_nginx_config.mjs ops/nginx/nginx.conf /workspace/generated-nginx.conf
 
 FROM nginx:1.30.5-alpine@sha256:bf3201ab56f23e5954646379c775d511fc466e9f11376d9725361064ad07ed35 AS runtime
 COPY ops/nginx/nginx-main.conf /etc/nginx/nginx.conf
-COPY ops/nginx/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder /workspace/generated-nginx.conf /etc/nginx/conf.d/default.conf
 # The upstream name is supplied by Compose DNS at runtime and is not
 # resolvable during an image build. Validate the complete configuration with
 # a loopback-only test upstream while preserving the production files.

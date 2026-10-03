@@ -63,3 +63,11 @@ restore authorization, archive monitoring, and measured RPO/RTO.
 - CI and the release-candidate workflow retain the public-safe command output.
 - ADR-0114's exact-LSN PITR drill remains the separate physical-recovery
   contract.
+
+## Current local verification
+
+On 2026-10-03, `make encrypted-backup-restore-drill` passed against the
+pinned PostgreSQL 18 image: the encrypted logical artifact restored after
+integrity verification and tampered ciphertext was rejected. The local key
+and artifact remained scoped to the disposable drill; production KMS/HSM
+envelope encryption, off-site retention, key recovery, and RPO/RTO remain open.

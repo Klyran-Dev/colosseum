@@ -77,3 +77,13 @@ plan exists.
   the same locked workspace/image inputs.
 - The result must state local/synthetic scope and retain production regional,
   mTLS, resource-profile, and consumer-authorization gates as open.
+
+## Current local measurement
+
+On 2026-10-03, `make benchmark-tax-engine-service` completed against the
+rebuilt pinned image on the native arm64 Docker runtime. The bounded workload
+returned 256/256 HTTP 200 responses at concurrency 32 with a 10-second request
+timeout and cache capacity 64. The measured p50/p95/p99 latencies were
+1.214/2.717/3.826 ms. Image identity and timestamp were emitted by the script;
+these values are local synthetic evidence and are not a regional production
+SLO or a Linux/amd64 resource-profile result.

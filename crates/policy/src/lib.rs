@@ -71,6 +71,33 @@ pub mod serde_u64_string {
     }
 }
 
+/// Strict browser/API wire encoding for protocol counters. Unlike the
+/// compatibility module above, this boundary rejects JSON numbers so a
+/// JavaScript safe-integer conversion can never become part of an authority
+/// or request digest.
+pub mod serde_strict_u64_string {
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
+
+    pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        let parsed = value.parse::<u64>().map_err(D::Error::custom)?;
+        if value != parsed.to_string() {
+            return Err(D::Error::custom("u64 string is not canonical"));
+        }
+        Ok(parsed)
+    }
+}
+
 pub mod serde_optional_u64_string {
     use serde::{Deserialize, Deserializer, Serializer, de::Error};
 

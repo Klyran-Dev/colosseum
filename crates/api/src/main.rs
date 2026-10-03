@@ -275,6 +275,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         metrics: std::sync::Arc::new(ServiceMetrics::new(
             "api",
             &[
+                "authorization_capabilities",
                 "tax_calculate",
                 "tax_document_calculate",
                 "tax_quote",

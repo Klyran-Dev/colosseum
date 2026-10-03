@@ -1,5 +1,66 @@
 # Changelog
 
+## 2026-10-03
+
+- Added ADR-0278 for addressable static-SPA workspace navigation, including
+  safe deep links and browser back/forward behavior without putting credentials
+  or financial facts in URLs.
+- Added ADR-0277 and implemented the complete server-owned capability catalog
+  for every production workspace, including document payments, reconciliation,
+  adjustments, and refund lifecycle actions. The updated local benchmark
+  validated all fourteen decisions at p50/p95/p99 of 1.052/1.915/3.114 ms.
+- Added ADR-0276 and a real-browser two-tenant capability-session journey. It
+  proves that replacing an opaque session removes the previous account
+  reference, subject, and capability decisions before the next tenant is
+  rendered; identity-provider and live multi-tenant API evidence remain open.
+- Added ADR-0275 and `make benchmark-authorization-capabilities`, a bounded
+  two-replica authenticated HTTP workload for the server-owned capability
+  snapshot. The default local run validated 256/256 semantic responses at
+  concurrency 32 with p50/p95/p99 of 0.992/1.624/3.094 ms; regional staging
+  and production SLO evidence remain separate gates.
+- Added ADR-0270 and a bounded browser OIDC ID-token validation boundary. The
+  SPA now verifies signed ID tokens against same-origin provider JWKS, issuer,
+  client audience, nonce, subject, and time claims before establishing a
+  session; access-token authorization remains API-owned.
+- Extended ADR-0263's product-language contract to adjustment review and
+  refund cancellation. The operator sees the decision and next step first;
+  exact request references, authorization evidence, and recovery data remain
+  available for controlled review.
+- Extended the same operator-first language to invoice tax, rule review,
+  payment review, balance checks, and exception recovery. Technical values
+  remain available for controlled review without defining the primary journey.
+- Added ADR-0271 and an executable UI language contract to the repository
+  quality gate. Primary labels are checked for task language while exact
+  protocol evidence remains available through progressive disclosure.
+- Added ADR-0272 and refined payment review into a production operator flow:
+  amount, tax, route, recipient distribution, expiry, and wallet approval are
+  primary; exact account, policy, compute, and intent evidence is available in
+  explicit accessible disclosures.
+- Added ADR-0273 and removed example financial values from quote, invoice,
+  document-payment, and persisted-rule simulation workspaces. Operators now
+  enter amounts, line facts, rules, jurisdictions, and categories explicitly;
+  only the generated retry reference is prefilled.
+- Added ADR-0274 and removed the hidden USD assumption from aggregate quotes
+  and scenarios. Currency is now explicit and normalized before the server
+  validates supported tax and settlement semantics.
+- Applied ADR-0263's plain-language money-movement contract to refund requests,
+  refund releases, and treasury release requests. Exact amounts, addresses, and
+  evidence remain reviewable, while primary labels and actions describe the
+  operator's decision instead of protocol internals.
+- Added ADR-0267 and removed fixed account, operator, environment, and network
+  labels from the product shell. The shell now uses the verified account
+  snapshot and explicit immutable build context, and visibly reports missing
+  deployment configuration instead of presenting a plausible false context.
+- Added ADR-0268 to replace production bearer-credential entry with an OIDC
+  Authorization Code + PKCE session boundary. Implementation and identity-
+  provider evidence remain tracked release work.
+- Added ADR-0269 to bind the configured identity-provider origin into the
+  immutable NGINX CSP and reject cross-origin OIDC discovery endpoints.
+- Added ADR-0265 and a responsive, labeled navigation disclosure so narrow-screen
+  users can discover the complete task catalog without relying on icon memory.
+- Added ADR-0266 and preserved the bounded Tax quotes → Payment review handoff
+  so expiry and signing safeguards remain visible instead of losing context.
+
 ## 2026-10-02
 
 - Added ADR-0261's vendor-neutral FX issuer process bootstrap. Local
@@ -711,3 +772,18 @@ All notable changes to this project will be documented here. The project follows
 
 - Architecture and implementation foundation phase; the simulation API and first settlement contract are not production deployment claims.
 - No production deployment, audit completion, legal/tax certification, or mainnet support is claimed.
+## Unreleased
+
+- Refined the SaaS navigation and visible product language around operator
+  tasks, approvals, money movement, and evidence. Engineering terminology is
+  now progressive disclosure rather than the primary journey; security and
+  settlement boundaries remain explicit.
+- Add ADR-0262 and a production-shaped React SaaS control-plane shell with
+  grouped navigation, tenant/environment context, explicit risk affordances,
+  and a dedicated RBAC/PBAC/ABAC access-control workspace. The browser never
+  decodes JWT claims or treats an in-memory token as authorization; the API
+  capability snapshot remains a required production gate.
+- Added the server-owned `GET /v1/authorization/capabilities` contract with
+  bounded UUIDv7 snapshots, exact scope/role decisions, fail-closed resource
+  context handling, and React integration tests. The snapshot is advisory UI
+  state; protected API and settlement operations still re-authorize.

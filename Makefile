@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 
-.PHONY: fmt lint test bench-tax-engine benchmark-tax-engine-service benchmark-quote-service benchmark-document-quote-service benchmark-rule-simulation postgres-pool-drill postgres-index-plan-drill postgres-pitr-drill vault-reconciliation-drill migration-integrity-drill migration-rollback-rehearsal adjustment-authority-drill refund-funding-verifier-drill refund-proof-lease-drill refund-execute-api-contention-drill refund-proof-integration-drill refund-cancellation-reconciliation-drill indexer-replay-drill indexer-replay-dead-letter-drill alert-delivery-drill otel-trace-drill web-install web-check web-browser-check security-scan observability-config public-docs-check environment-contract deployment-config-contract migration-bootstrap-contract refund-claim-cancellation-reconciliation-contract rust-panic-safety-contract container-pinning-contract solana-conformance-workflow-contract program-pause-coverage-contract bootstrap-contract release-bundle-integrity-contract service-lifecycle-contract tax-engine-service-contract tax-engine-runtime-contract tax-engine-mtls-runtime-contract api-auth-jwks-reload-contract api-jurisdiction-provider-reload-contract check compose-config migrate backup-restore-drill encrypted-backup-restore-drill projection-rebuild-drill postgres-contention-drill integration-check solana-build solana-conformance solana-up solana-down indexer-up indexer-down route-verifier-up route-verifier-down observability-up observability-down bootstrap up down logs
+.PHONY: fmt lint test bench-tax-engine benchmark-tax-engine-service benchmark-quote-service benchmark-document-quote-service benchmark-rule-simulation benchmark-authorization-capabilities postgres-pool-drill postgres-index-plan-drill postgres-pitr-drill vault-reconciliation-drill migration-integrity-drill migration-rollback-rehearsal adjustment-authority-drill refund-funding-verifier-drill refund-proof-lease-drill refund-execute-api-contention-drill refund-proof-integration-drill refund-cancellation-reconciliation-drill indexer-replay-drill indexer-replay-dead-letter-drill alert-delivery-drill otel-trace-drill web-install web-check web-browser-check web-csp-contract ui-language-contract security-scan observability-config public-docs-check environment-contract deployment-config-contract migration-bootstrap-contract refund-claim-cancellation-reconciliation-contract rust-panic-safety-contract container-pinning-contract solana-conformance-workflow-contract program-pause-coverage-contract bootstrap-contract release-bundle-integrity-contract service-lifecycle-contract tax-engine-service-contract tax-engine-runtime-contract tax-engine-mtls-runtime-contract api-auth-jwks-reload-contract api-jurisdiction-provider-reload-contract check compose-config migrate backup-restore-drill encrypted-backup-restore-drill projection-rebuild-drill postgres-contention-drill integration-check solana-build solana-conformance solana-up solana-down indexer-up indexer-down route-verifier-up route-verifier-down observability-up observability-down bootstrap up down logs
 
 fmt:
 	cargo fmt --all
@@ -26,6 +26,9 @@ benchmark-document-quote-service:
 benchmark-rule-simulation:
 	./scripts/benchmark_rule_simulation.sh
 
+benchmark-authorization-capabilities:
+	./scripts/benchmark_authorization_capabilities.sh
+
 postgres-pool-drill:
 	./scripts/postgres_pool_drill.sh
 
@@ -46,6 +49,12 @@ web-check: web-install
 web-browser-check:
 	mkdir -p test-results/web-e2e
 	docker compose --profile browser run --build --rm web-e2e
+
+web-csp-contract:
+	./scripts/verify_web_csp_contract.sh
+
+ui-language-contract:
+	./scripts/verify_ui_language_contract.sh
 
 security-scan:
 	./scripts/security_scan.sh
@@ -198,7 +207,7 @@ observability-up:
 observability-down:
 	docker compose --profile observability stop grafana prometheus alertmanager alert-receiver otel-collector redis
 
-check: lint test web-check security-scan compose-config observability-config public-docs-check environment-contract deployment-config-contract migration-bootstrap-contract refund-claim-cancellation-reconciliation-contract rust-panic-safety-contract container-pinning-contract solana-conformance-workflow-contract program-pause-coverage-contract bootstrap-contract service-lifecycle-contract tax-engine-service-contract tax-engine-runtime-contract tax-engine-mtls-runtime-contract api-auth-jwks-reload-contract api-jurisdiction-provider-reload-contract
+check: lint test web-check web-csp-contract ui-language-contract security-scan compose-config observability-config public-docs-check environment-contract deployment-config-contract migration-bootstrap-contract refund-claim-cancellation-reconciliation-contract rust-panic-safety-contract container-pinning-contract solana-conformance-workflow-contract program-pause-coverage-contract bootstrap-contract service-lifecycle-contract tax-engine-service-contract tax-engine-runtime-contract tax-engine-mtls-runtime-contract api-auth-jwks-reload-contract api-jurisdiction-provider-reload-contract
 
 bootstrap:
 	./scripts/bootstrap_local.sh

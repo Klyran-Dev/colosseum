@@ -79,3 +79,11 @@ live database is prohibited.
 - The drill is a local recovery-mechanics gate; production adoption still
   requires encrypted KMS/HSM backups, immutable off-site retention, measured
   RPO/RTO, staging approval, and an incident-authorized recovery runbook.
+
+## Current local verification
+
+On 2026-10-03, `make migration-rollback-rehearsal` passed with 60 baseline
+migrations, one synthetic expand migration, pre-deploy restore, old-schema
+read compatibility, forward recovery, and an idempotent repeat. The
+pre-deploy sentinel was preserved. Production rollback authority and recovery
+runbook approval remain open.

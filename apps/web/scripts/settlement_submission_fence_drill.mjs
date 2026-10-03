@@ -6,7 +6,6 @@ const rpcUrl = required("RPC_FIXTURE_URL");
 const authorization = required("AUTHORIZATION");
 const calculationId = required("CALCULATION_ID");
 const routeId = required("ROUTE_ID");
-const policyDigest = JSON.parse(required("POLICY_DIGEST_JSON"));
 const scenario = process.env.DRILL_SCENARIO ?? "concurrent";
 const nonce = Number(process.env.NONCE ?? "12");
 
@@ -17,7 +16,7 @@ if (scenario !== "concurrent" && scenario !== "ambiguous-reconcile") {
   throw new Error(`unsupported DRILL_SCENARIO: ${scenario}`);
 }
 
-const { artifact, submitBody } = await compileAndSign({ apiBase, rpcUrl, authorization, calculationId, routeId, policyDigest, nonce });
+const { artifact, submitBody } = await compileAndSign({ apiBase, rpcUrl, authorization, calculationId, routeId, nonce });
 
 if (scenario === "concurrent") {
   const [first, second] = await Promise.all([

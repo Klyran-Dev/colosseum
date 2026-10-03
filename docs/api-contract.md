@@ -303,6 +303,55 @@ case-sensitive OAuth-style tokens in the JWT `scope` claim; an authenticated
 principal without `tax:quote` receives `403 INSUFFICIENT_SCOPE`. Authorization
 is enforced in the API even when an edge gateway also applies policy.
 
+## Server-owned capability snapshot
+
+`GET /v1/authorization/capabilities` requires a valid bearer token but no
+workspace-specific scope. The API verifies the token, derives the tenant from
+the authenticated principal, and returns the bounded policy catalog for the
+product shell. The endpoint performs no database, RPC, broker, filesystem, or
+identity-provider call.
+
+The response schema is `authorization-capabilities/v1`:
+
+```json
+{
+  "schema": "authorization-capabilities/v1",
+  "snapshot_id": "019...",
+  "subject": "operator-123",
+  "tenant_id": "019...",
+  "expires_at_unix": 1800000060,
+  "capabilities": {
+    "tax.quote.create": {
+      "decision": "allow",
+      "reason_code": "scope_and_role_satisfied"
+    },
+    "tax.rule.govern": {
+      "decision": "indeterminate",
+      "reason_code": "resource_context_required"
+    }
+  }
+}
+```
+
+The snapshot lifetime is at most 60 seconds and never exceeds the verified
+token expiry. `decision` is one of `allow`, `deny`, or `indeterminate`.
+Missing scopes or roles produce `deny`; resource attributes that cannot be
+known without a selected record produce `indeterminate`. The browser may use
+the response for navigation and explanation only. Every protected API and
+settlement operation repeats its exact scope, role, tenant, resource, and
+chain-evidence checks. A missing, expired, malformed, or failed snapshot never
+enables an action.
+
+The capability catalog has one bounded primary entry for each production
+workspace: `access.control`, `evidence.replay`, `refund.claim.cancel`,
+`refund.claim.create`, `refund.payment.release`, `settlement.adjustment`,
+`settlement.document.wallet`, `settlement.wallet`,
+`tax.document.quote.create`, `tax.preview.run`, `tax.quote.create`,
+`tax.rule.govern`, `vault.reconciliation`, and `vault.release`. These entries
+describe the workspace affordance; they do not replace the handler-level
+authorization checks for read, approval, submission, reconciliation, or
+finalized chain evidence.
+
 For deployment-owned key rotation, `API_AUTH_JWKS_FILE` may replace the
 inline key representations. The API loads and fully validates the bounded
 file at startup; inline and file representations are mutually exclusive. On
@@ -624,9 +673,9 @@ API. Replays must contain the exact same signed document; a different document
 conflicts.
 
 The successful status is `attested_unsettled`; it does not sign, submit, or
-finalize a Solana transaction. In non-simulation deployments, both single and
-Split Plan quote-bound settlement compilers require this persisted attestation
-and compare its payload digest to the requested policy digest. The generic
+finalize a Solana transaction. Quote-bound settlement compilers require this
+persisted attestation and derive the policy digest and sequence from its
+server-owned signed evidence. Caller-supplied policy fields are rejected. The generic
 `POST /v1/tax/attestation/verify` route remains an isolated verification
 utility and is not a persistence or settlement authorization boundary. See
 ADR-0100.
@@ -635,9 +684,10 @@ ADR-0100.
 
 `POST /v1/settlement/compile-from-quote` requires an EdDSA JWT with the exact
 `tax:settlement:compile` scope. It accepts the persisted `calculation_id`, an
-authenticated tenant-scoped `route_id`, the payer wallet public key, a 32-byte
-policy digest represented as a JSON byte array, and a positive payer
-nonce/policy sequence. `GET /v1/settlement/routes` exposes only active routes
+authenticated tenant-scoped `route_id`, the payer wallet public key, and a
+positive payer nonce encoded as a canonical decimal JSON string. The API loads the authenticated tenant's persisted,
+issuer-signed calculation attestation and derives the policy digest and
+sequence from that evidence. `GET /v1/settlement/routes` exposes only active routes
 for the authenticated tenant. Each route includes the server-owned
 `mint_decimals` value (`0..=9`) obtained from finalized route-verification
 evidence; clients must not infer a two-decimal default. The API loads the quote and route, verifies
@@ -673,8 +723,8 @@ unsupported.
 `POST /v1/settlement/document/compile-from-quote` is the document authority
 boundary from ADR-0206. It requires `tax:settlement:compile` and accepts a
 document `calculation_id`, active tenant-scoped `route_id`, explicit
-`idempotency_key`, payer wallet, positive nonce/policy sequence, policy digest,
-and one of these scopes:
+`idempotency_key`, payer wallet, and a positive canonical decimal-string
+nonce, plus one of these scopes:
 
 ```json
 { "kind": "full_document" }
@@ -688,7 +738,8 @@ or:
 
 The server loads and verifies the persisted document quote and signed
 `DocumentCalculationAttestation`, binds it to the authenticated merchant and
-active route mint, and derives gross/tax/net from the selected complete lines.
+active route mint, derives the policy sequence and policy digest from that
+attestation, and derives gross/tax/net from the selected complete lines.
 Line IDs are canonicalized, bounded, unique, and committed into a payment
 scope digest. Full-line subsets must use `full_document`; quantity, partial
 line, arbitrary proration, and client-supplied amounts are rejected because
@@ -710,7 +761,9 @@ filing, reporting, or legal compliance certification.
 `POST /v1/settlement/split/compile-from-quote` is the additive Split Plan
 contract from ADR-0092. It requires the same exact
 `tax:settlement:compile` scope and accepts `calculation_id`, `route_id`,
-`split_plan_id`, payer, nonce, policy sequence, and policy digest. It never
+`split_plan_id`, payer, and a positive canonical decimal-string nonce. Policy
+sequence and policy digest are derived from the authenticated tenant's
+persisted signed attestation and are not caller-owned fields. It never
 accepts recipient accounts, basis points, gross, tax, or net amounts from the
 caller. The API concurrently loads the authenticated tenant's quote, active
 route, and active/effective persisted Split Plan, verifies the plan's canonical

@@ -35,10 +35,10 @@ function claim(status: string, overrides: Record<string, unknown> = {}): Record<
 }
 
 function fillClaimProposalForm(): void {
-  fireEvent.change(screen.getByLabelText("Mint public key"), { target: { value: publicKey } });
-  fireEvent.change(screen.getByLabelText("Token program public key"), { target: { value: publicKey } });
-  fireEvent.change(screen.getByLabelText("Tax vault public key"), { target: { value: publicKey } });
-  fireEvent.change(screen.getByLabelText("Destination public key"), { target: { value: publicKey } });
+  fireEvent.change(screen.getByLabelText("Asset mint address"), { target: { value: publicKey } });
+  fireEvent.change(screen.getByLabelText("Asset program address"), { target: { value: publicKey } });
+  fireEvent.change(screen.getByLabelText("Tax holding account"), { target: { value: publicKey } });
+  fireEvent.change(screen.getByLabelText("Recipient account"), { target: { value: publicKey } });
 }
 
 afterEach(() => {
@@ -53,7 +53,7 @@ describe("vault-release response and authority boundary", () => {
     render(<VaultReleasePanel apiBase="/api" serviceOnline accessToken="proposer-token" />);
 
     fillClaimProposalForm();
-    fireEvent.click(screen.getByRole("button", { name: "Persist release proposal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create release request" }));
 
     await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/amount/));
     expect(screen.queryByText(/250,000 atomic units/)).toBeNull();
@@ -75,11 +75,11 @@ describe("vault-release response and authority boundary", () => {
     render(<VaultReleasePanel apiBase="/api" serviceOnline accessToken="approver-token" />);
 
     fillClaimProposalForm();
-    fireEvent.click(screen.getByRole("button", { name: "Persist release proposal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create release request" }));
     await waitFor(() => expect(screen.getAllByText("proposed").length).toBeGreaterThan(0));
-    fireEvent.click(screen.getByRole("button", { name: "Record governed transition" }));
+    fireEvent.click(screen.getByRole("button", { name: "Record next step" }));
 
-    await waitFor(() => expect(screen.getByText(/displayed claim was refreshed/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/page was refreshed from the service/)).toBeTruthy());
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(fetchMock.mock.calls[1][0]).toBe(`/api/v1/vault/release-claims/${claimId}/transition`);
     expect(fetchMock.mock.calls[2][0]).toBe(`/api/v1/vault/release-claims/${claimId}`);

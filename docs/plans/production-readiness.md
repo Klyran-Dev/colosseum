@@ -58,6 +58,16 @@ cross-tenant replay/attestation/compilation attempts returned 404 with the
 expected denial audit evidence. This closes the local Docker evidence gate;
 staging identity-provider and production authorization evidence remain open.
 
+On 2026-10-03, a fresh `make integration-check` passed on the current worktree
+after the production UI/navigation changes. The run rebuilt the pinned API,
+worker, migration, RPC-fixture, and NGINX images, applied migrations on a new
+PostgreSQL 18 volume, and exercised concurrent submission fencing (`200` and
+`409` with one fixture send), ambiguous-provider reconciliation, process-crash
+recovery, immutable rule rollback, and the finalized adjustment evidence path.
+This confirms the end-to-end local Docker path remains green; it does not
+replace Linux validator, staging identity, live provider, or production SLO
+evidence.
+
 ADR-0210 adds `make bootstrap`, the explicit Docker full-topology entry point.
 Its dry-run contract is covered by `make check`; a successful runtime bootstrap
 still requires Linux/amd64 validator capability evidence and is intentionally
@@ -382,9 +392,9 @@ close the separate successful Linux validator evidence gate.
   telemetry remain open.
 - [x] ADR-0232 adds a real-image warm Tax Engine concurrency contract: 256
   authenticated aggregate requests at concurrency 32, exact response checks,
-  bounded timeouts, and p50/p95/p99 metadata. The 2026-10-02 local arm64 run
+  bounded timeouts, and p50/p95/p99 metadata. The 2026-10-03 local arm64 run
   returned 256/256 HTTP 200 responses at concurrency 32 with p50/p95/p99 of
-  1.205/2.788/5.791 ms. This is local synthetic service evidence;
+  1.214/2.717/3.826 ms. This is local synthetic service evidence;
   Linux/amd64 retention,
   resource profiles, regional SLOs, mTLS, and production identity issuance
   remain open.
@@ -500,12 +510,16 @@ close the separate successful Linux validator evidence gate.
   one-connection pool handled 256 normal requests at concurrency 64 plus 256
   same-key retries with 0% errors, peak `waiting=3`, and exactly one
   contention idempotency/calculation/outbox result (ADR-0112). This is local
-  capacity evidence only.
+  capacity evidence only. A fresh 2026-10-03 rerun observed peak `waiting=2`
+  after the sampler was hardened to cover both replicas and a bounded,
+  explicit local table-lock hold.
 - [x] A Docker-isolated PostgreSQL 18 index-plan drill seeds 25,000 rows in
   each append-only evidence family, 25,000 tenant intents, and 10,000 intent
   lifecycle events. Normal planning selected all six declared scoped indexes
   for the production query shapes (`make postgres-index-plan-drill`,
-  ADR-0113). This is local plan evidence only.
+  ADR-0113). This is local plan evidence only. The 2026-10-03 run first
+  applied migrations and passed against the current finalized-receipt identity
+  constraints.
 - [ ] Connection-pool saturation, account-lock contention at representative
   tenant volume, partition/retention policies, and index plans are load-tested
   against production-like data. Production-volume sizing, partition/retention,
@@ -563,13 +577,19 @@ close the separate successful Linux validator evidence gate.
   contention run crossed both replicas and converged to one idempotency record,
   calculation, and outbox event. This is local Docker evidence, not a
   production SLO claim. The same bounded workload is now a dedicated CI job;
-  regional, resource-profile, and chain-finality measurements remain open.
+  regional, resource-profile, and chain-finality measurements remain open. A
+  fresh 2026-10-03 local arm64 run returned p50/p95/p99 of
+  4.940/24.936/38.346 ms with 200/200 successful responses and the same-key
+  persistence invariants; this supersedes the older local timing observation,
+  not the open production gates.
 - [x] ADR-0209 adds a separate two-line document-quote workload with
   document-specific persistence/outbox invariants. The 2026-09-30 local
   Docker run completed 200 requests at concurrency 16 across two API replicas
   with 0% errors, 32/32 same-key contention success, and exact durable counts;
-  p50/p95/p99 was 5.308/24.216/34.742 ms. A successful retained CI artifact
-  and production-like regional/resource-profile measurements remain open.
+  p50/p95/p99 was 5.308/24.216/34.742 ms. A fresh 2026-10-03 rerun returned
+  200/200 responses with p50/p95/p99 of 4.632/41.573/52.453 ms and preserved
+  the same durable invariants. A successful retained CI artifact and
+  production-like regional/resource-profile measurements remain open.
 - [x] Persisted-rule simulation has a separate facts-only two-replica latency
   workload with server-owned response-binding checks and bounded read
   contention (ADR-0145). Its local p95 diagnostic budget is evidence for the

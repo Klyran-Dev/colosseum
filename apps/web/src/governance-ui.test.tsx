@@ -44,8 +44,7 @@ describe("governance workbench submission boundary", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(governanceResponse), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<GovernancePanel apiBase="/api" serviceOnline />);
-    fireEvent.change(screen.getAllByLabelText("OIDC access token (memory-only)")[0], { target: { value: "author-token" } });
+    render(<GovernancePanel apiBase="/api" serviceOnline accessToken="author-token" />);
     fireEvent.click(screen.getByRole("button", { name: "Create governed draft" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
@@ -116,11 +115,13 @@ describe("governance workbench submission boundary", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(simulationResponse), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<GovernancePanel apiBase="/api" serviceOnline />);
-    fireEvent.change(screen.getAllByLabelText("OIDC access token (memory-only)")[0], { target: { value: "author-token" } });
+    render(<GovernancePanel apiBase="/api" serviceOnline accessToken="author-token" />);
     fireEvent.click(screen.getByRole("button", { name: "Create governed draft" }));
-    await waitFor(() => expect((screen.getByRole("button", { name: "Simulate persisted rule" }) as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(screen.getByRole("button", { name: "Simulate persisted rule" }));
+    await waitFor(() => expect((screen.getByRole("button", { name: "Run controlled simulation" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.change(screen.getAllByLabelText("Amount before tax")[0], { target: { value: "1100" } });
+    fireEvent.change(screen.getAllByLabelText("Amount subject to tax")[0], { target: { value: "1000" } });
+    fireEvent.change(screen.getAllByLabelText("Currency")[0], { target: { value: "USD" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run controlled simulation" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(fetchMock.mock.calls[2][0]).toBe(`/api/v1/tax/rules/${draftResponse.rule_set_id}/simulate`);

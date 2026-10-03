@@ -13,6 +13,7 @@ import {
 type VaultReconciliationPanelProps = {
   apiBase: string;
   serviceOnline: boolean;
+  accessToken: string;
   locale?: string;
   timeZone?: string;
 };
@@ -29,9 +30,8 @@ function statusClass(run: VaultReconciliationRun | null): string {
   return run.status === "matched" ? "status-pill status-pill-success" : "status-pill status-pill-danger";
 }
 
-export default function VaultReconciliationPanel({ apiBase, serviceOnline, locale = DEFAULT_LOCALE, timeZone = DEFAULT_TIME_ZONE }: VaultReconciliationPanelProps) {
+export default function VaultReconciliationPanel({ apiBase, serviceOnline, accessToken, locale = DEFAULT_LOCALE, timeZone = DEFAULT_TIME_ZONE }: VaultReconciliationPanelProps) {
   const formatBalance = (value: string) => formatInteger(value, locale);
-  const [accessToken, setAccessToken] = useState("");
   const [targets, setTargets] = useState<VaultReconciliationTargetView[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const [runs, setRuns] = useState<VaultReconciliationRun[]>([]);
@@ -61,7 +61,7 @@ export default function VaultReconciliationPanel({ apiBase, serviceOnline, local
       setRuns([]);
       setSelectedTargetId(loaded[0]?.target.id ?? null);
       setHasLoaded(true);
-      setNotice(loaded.length === 0 ? "No active reconciliation targets are provisioned for this merchant. This is not a matched state." : `Loaded ${loaded.length} server-owned reconciliation target${loaded.length === 1 ? "" : "s"}.`);
+      setNotice(loaded.length === 0 ? "No active balance sources are configured for this account. This is not a matched state." : `Loaded ${loaded.length} verified balance source${loaded.length === 1 ? "" : "s"}.`);
     } catch (cause) {
       setTargets([]);
       setRuns([]);
@@ -100,12 +100,11 @@ export default function VaultReconciliationPanel({ apiBase, serviceOnline, local
     <section className="vault-layout" aria-label="Vault reconciliation workspace">
       <article className="panel vault-control-panel">
         <div className="panel-heading">
-          <div><p className="eyebrow">Solana evidence / read-only control</p><h2>Vault reconciliation</h2></div>
-          <span className="status-pill">No browser mutation</span>
+          <div><p className="eyebrow">Balance checks / view only</p><h2>Check tax balances</h2></div>
+          <span className="status-pill">View only</span>
         </div>
-        <p className="panel-copy">Inspect server-owned opening-balance evidence, finalized observations, and the exact receipt/release explanation. This workspace cannot create targets, edit balances, execute releases, or clear an alert.</p>
+        <p className="panel-copy">Compare recorded tax balances with the latest verified chain observation. This workspace cannot change balances, release funds, or clear an alert.</p>
         <form onSubmit={loadTargets} className="form-grid">
-          <label className="full-field"><span>OIDC access token (memory-only)</span><textarea value={accessToken} onChange={(event) => setAccessToken(event.target.value)} placeholder="Token with tax:vault:read and a governed vault role" autoComplete="off" spellCheck={false} rows={3} /></label>
           <button type="submit" disabled={isLoading || !serviceOnline || !accessToken.trim()}>{isLoading ? "Loading evidence…" : "Load reconciliation targets"}</button>
         </form>
         {!serviceOnline && <p className="inline-warning" role="alert">The API is unavailable. No cached or client-derived reconciliation state is shown.</p>}
@@ -114,8 +113,8 @@ export default function VaultReconciliationPanel({ apiBase, serviceOnline, local
       </article>
 
       <article className="panel vault-targets-panel" aria-live="polite">
-        <div className="panel-heading"><div><p className="eyebrow">Server-owned target registry</p><h2>Active tax vaults</h2></div>{hasLoaded && <span className="status-pill">{targets.length} target{targets.length === 1 ? "" : "s"}</span>}</div>
-        {!hasLoaded ? <div className="empty-state"><span className="empty-icon">◎</span><strong>Evidence not loaded</strong><p>Authenticate to inspect active target registrations and their latest finalized observations.</p></div> : targets.length === 0 ? <div className="empty-state"><span className="empty-icon">—</span><strong>No targets provisioned</strong><p>Opening-balance provisioning is a separately governed ceremony. An empty registry is not evidence that funds reconcile.</p></div> : <div className="vault-target-list">{targets.map((view) => <button type="button" className={`vault-target-card ${view.target.id === selectedTargetId ? "vault-target-selected" : ""}`} key={view.target.id} onClick={() => loadRuns(view.target.id)} disabled={isLoadingRuns} aria-pressed={view.target.id === selectedTargetId}><span className="vault-target-topline"><strong>{view.target.tax_vault}</strong><span className={statusClass(view.latest_run)}>{statusLabel(view.latest_run)}</span></span><small>Stream {view.target.stream_key} · observation slot {view.latest_run?.observed_slot ?? "not observed"}</small><small>Expected {view.latest_run?.expected_balance_atomic === null || view.latest_run?.expected_balance_atomic === undefined ? "—" : formatBalance(view.latest_run.expected_balance_atomic)} · observed {view.latest_run?.observed_balance_atomic === null || view.latest_run?.observed_balance_atomic === undefined ? "—" : formatBalance(view.latest_run.observed_balance_atomic)}</small></button>)}</div>}
+        <div className="panel-heading"><div><p className="eyebrow">Verified balance sources</p><h2>Active tax accounts</h2></div>{hasLoaded && <span className="status-pill">{targets.length} account{targets.length === 1 ? "" : "s"}</span>}</div>
+        {!hasLoaded ? <div className="empty-state"><span className="empty-icon">◎</span><strong>Balance evidence not loaded</strong><p>Sign in to inspect active tax accounts and their latest finalized observations.</p></div> : targets.length === 0 ? <div className="empty-state"><span className="empty-icon">—</span><strong>No balance sources configured</strong><p>Opening balances require a separate approval process. An empty list is not evidence that funds reconcile.</p></div> : <div className="vault-target-list">{targets.map((view) => <button type="button" className={`vault-target-card ${view.target.id === selectedTargetId ? "vault-target-selected" : ""}`} key={view.target.id} onClick={() => loadRuns(view.target.id)} disabled={isLoadingRuns} aria-pressed={view.target.id === selectedTargetId}><span className="vault-target-topline"><strong>{view.target.tax_vault}</strong><span className={statusClass(view.latest_run)}>{statusLabel(view.latest_run)}</span></span><small>Account {view.target.stream_key} · observation slot {view.latest_run?.observed_slot ?? "not observed"}</small><small>Expected {view.latest_run?.expected_balance_atomic === null || view.latest_run?.expected_balance_atomic === undefined ? "—" : formatBalance(view.latest_run.expected_balance_atomic)} · observed {view.latest_run?.observed_balance_atomic === null || view.latest_run?.observed_balance_atomic === undefined ? "—" : formatBalance(view.latest_run.observed_balance_atomic)}</small></button>)}</div>}
       </article>
 
       {selected && <article className="panel vault-detail-panel">

@@ -88,3 +88,11 @@ decisions explicit.
 - Production encryption, off-site immutability, archive monitoring, measured
   RPO/RTO, restore authorization, partition/retention policy, and migration
   rollback rehearsal remain release gates.
+
+## Current local verification
+
+On 2026-10-03, `make postgres-pitr-drill` passed with target LSN `0/5000000`,
+seven archived WAL files, replay through `0/5000060`, and one second of local
+recovery time. The target marker was present and the post-target marker was
+absent. This updates local recovery-mechanics evidence only; production RPO,
+RTO, archive retention, and restore authorization remain open.

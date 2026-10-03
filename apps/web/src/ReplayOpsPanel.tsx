@@ -22,6 +22,7 @@ import {
 type ReplayOpsPanelProps = {
   apiBase: string;
   serviceOnline: boolean;
+  accessToken: string;
   locale?: string;
   timeZone?: string;
 };
@@ -34,11 +35,10 @@ function actionLabel(action: ReplayGapAction): string {
   return action === "acknowledge" ? "Acknowledge review" : "Requeue repair";
 }
 
-export default function ReplayOpsPanel({ apiBase, serviceOnline, locale = DEFAULT_LOCALE, timeZone = DEFAULT_TIME_ZONE }: ReplayOpsPanelProps) {
+export default function ReplayOpsPanel({ apiBase, serviceOnline, accessToken, locale = DEFAULT_LOCALE, timeZone = DEFAULT_TIME_ZONE }: ReplayOpsPanelProps) {
   const [streamKey, setStreamKey] = useState("mainnet/settlement");
   const [status, setStatus] = useState<ReplayGapStatus>("dead_lettered");
   const [limit, setLimit] = useState("50");
-  const [accessToken, setAccessToken] = useState("");
   const [gaps, setGaps] = useState<ReplayGap[]>([]);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -72,7 +72,7 @@ export default function ReplayOpsPanel({ apiBase, serviceOnline, locale = DEFAUL
       const loaded = await fetchGaps();
       setGaps(loaded);
       setHasLoaded(true);
-      setNotice(`Loaded ${loaded.length} server-owned replay gap${loaded.length === 1 ? "" : "s"}.`);
+      setNotice(`Loaded ${loaded.length} recovery item${loaded.length === 1 ? "" : "s"}.`);
     } catch (cause) {
       setGaps([]);
       setHasLoaded(false);
@@ -170,21 +170,20 @@ export default function ReplayOpsPanel({ apiBase, serviceOnline, locale = DEFAUL
           <div><p className="eyebrow">Chain data / recovery control</p><h2>Review replay gaps</h2></div>
           <span className="status-pill">Operator role required</span>
         </div>
-        <p className="panel-copy">Inspect durable projection-repair work and record an incident-backed review before requeueing. This workspace never treats a replay action as finalized settlement.</p>
+        <p className="panel-copy">Review records that need recovery and document the incident before asking the service to try again. Recovery never confirms that a payment moved.</p>
         <form onSubmit={loadGaps} className="form-grid">
-          <label className="full-field"><span>OIDC access token (memory-only)</span><textarea value={accessToken} onChange={(event) => setAccessToken(event.target.value)} placeholder="Token with tax:indexer:read and indexer_operator" autoComplete="off" spellCheck={false} rows={3} required /></label>
           <label className="full-field"><span>Replay stream</span><input value={streamKey} onChange={(event) => setStreamKey(event.target.value)} placeholder="mainnet/settlement" autoComplete="off" required /></label>
           <label><span>Status filter</span><select value={status} onChange={(event) => setStatus(event.target.value as ReplayGapStatus)}>{REPLAY_STATUSES.map((value) => <option value={value} key={value}>{displayStatus(value)}</option>)}</select></label>
           <label><span>Maximum rows (1–{MAX_REPLAY_LIST_LIMIT})</span><input inputMode="numeric" min="1" max={MAX_REPLAY_LIST_LIMIT} value={limit} onChange={(event) => setLimit(event.target.value)} required /></label>
-          <button type="submit" disabled={!serviceOnline || isLoading || !accessToken.trim() || !streamKey.trim()}>{isLoading ? "Loading server projection…" : "Load replay gaps"}</button>
+          <button type="submit" disabled={!serviceOnline || isLoading || !accessToken.trim() || !streamKey.trim()}>{isLoading ? "Loading recovery items…" : "Load recovery items"}</button>
         </form>
         {!serviceOnline && <p className="inline-warning" role="alert">The service is unavailable. No cached or fabricated replay state is shown.</p>}
         {error && <p className="inline-error" role="alert">{error}</p>}
         {notice && <p className="inline-success" role="status">{notice}</p>}
-        <div className="replay-authority-note"><strong>Authority boundary</strong><span>JWT scope and role are checked by the API. Acknowledgement is review evidence; requeue only schedules bounded projection repair.</span></div>
+        <div className="replay-authority-note"><strong>What this action does</strong><span>Access is checked by the service. Acknowledging records the review; retrying schedules a bounded recovery attempt.</span></div>
         <div className="replay-targeted-recovery">
-          <div><p className="eyebrow">Finalized evidence repair</p><h3>Recover one transaction signature</h3></div>
-          <p className="panel-copy">The API discovers the signature at finalized commitment, verifies the exact transaction, and rebuilds projection evidence. It never submits funds or advances the forward checkpoint.</p>
+          <div><p className="eyebrow">Verified chain record</p><h3>Recover one transaction</h3></div>
+          <p className="panel-copy">The service finds and verifies the finalized chain record, then rebuilds the saved evidence. It never submits funds or changes the payment itself.</p>
           <form onSubmit={recoverTargetedSignature} className="form-grid">
             <label><span>Target address</span><input value={recoveryAddress} onChange={(event) => setRecoveryAddress(event.target.value)} placeholder="Base58 address" autoComplete="off" required /></label>
             <label><span>Transaction signature</span><input value={recoverySignature} onChange={(event) => setRecoverySignature(event.target.value)} placeholder="Base58 signature" autoComplete="off" required /></label>
@@ -196,8 +195,8 @@ export default function ReplayOpsPanel({ apiBase, serviceOnline, locale = DEFAUL
       </article>
 
       <article className="panel replay-evidence-panel" aria-live="polite">
-        <div className="panel-heading"><div><p className="eyebrow">Durable server projection</p><h2>Replay-gap queue</h2></div>{hasLoaded && <span className="status-pill status-pill-warning">{gaps.length} returned</span>}</div>
-        {!hasLoaded ? <div className="empty-state"><span className="empty-icon">↻</span><strong>No replay projection loaded</strong><p>Authenticate as an indexer operator and load a bounded server projection before taking any action.</p></div> : gaps.length === 0 ? <div className="empty-state"><span className="empty-icon">✓</span><strong>No gaps match this filter</strong><p>This is a server response, not an inference that the chain or every projection is healthy.</p></div> : <div className="replay-gap-list">{gaps.map((gap) => {
+        <div className="panel-heading"><div><p className="eyebrow">Saved recovery records</p><h2>Recovery queue</h2></div>{hasLoaded && <span className="status-pill status-pill-warning">{gaps.length} returned</span>}</div>
+        {!hasLoaded ? <div className="empty-state"><span className="empty-icon">↻</span><strong>No recovery items loaded</strong><p>Sign in with a recovery role and load the current service records before taking any action.</p></div> : gaps.length === 0 ? <div className="empty-state"><span className="empty-icon">✓</span><strong>No items match this filter</strong><p>This is a service response, not a claim that every chain record is healthy.</p></div> : <div className="replay-gap-list">{gaps.map((gap) => {
           const acknowledged = gap.operator_acknowledged_at !== null;
           const acknowledgeBusy = busyKey === `${gap.id}:acknowledge`;
           const requeueBusy = busyKey === `${gap.id}:requeue`;

@@ -617,7 +617,7 @@ fi
 
 settlement_payer="cGfHiC6Kgg3FpFZvgwGcswsCRtp4aBP2fzuXRQPizuN"
 
-pre_attestation_compile_request="{\"calculation_id\":\"$calculation_id\",\"route_id\":\"$route_id\",\"payer\":\"$settlement_payer\",\"nonce\":9,\"policy_sequence\":3,\"policy_digest\":[7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7]}"
+pre_attestation_compile_request="{\"calculation_id\":\"$calculation_id\",\"route_id\":\"$route_id\",\"payer\":\"$settlement_payer\",\"nonce\":\"9\"}"
 pre_attestation_compile_response_file="$integration_dir/pre-attestation-compile-response.json"
 pre_attestation_compile_status=$(printf '%s' "$pre_attestation_compile_request" | curl --silent --show-error \
     --output "$pre_attestation_compile_response_file" --write-out '%{http_code}' \
@@ -808,12 +808,7 @@ if [ "$cross_tenant_document_attestation_status" != "404" ]; then
     exit 1
 fi
 
-document_policy_digest=$(printf '%s' "$document_attestation_response" | sed -n 's/.*"payload_digest":\[\([^]]*\)\].*/\1/p')
-if [ -z "$document_policy_digest" ]; then
-    echo "document attestation response did not return a payload digest" >&2
-    exit 1
-fi
-document_compile_request="{\"calculation_id\":\"$document_calculation_id\",\"route_id\":\"$route_id\",\"idempotency_key\":\"integration-document-payment-full-01\",\"payer\":\"$settlement_payer\",\"nonce\":11,\"policy_sequence\":3,\"policy_digest\":[$document_policy_digest],\"scope\":{\"kind\":\"full_document\"}}"
+document_compile_request="{\"calculation_id\":\"$document_calculation_id\",\"route_id\":\"$route_id\",\"idempotency_key\":\"integration-document-payment-full-01\",\"payer\":\"$settlement_payer\",\"nonce\":\"11\",\"scope\":{\"kind\":\"full_document\"}}"
 document_compile_response_file="$integration_dir/document-compile-response.json"
 document_compile_http_status=$(printf '%s' "$document_compile_request" | curl --silent --show-error \
     --output "$document_compile_response_file" --write-out '%{http_code}' \
@@ -845,7 +840,7 @@ if [ "$document_compile_response" != "$document_compile_replay" ]; then
     echo "full-document settlement compilation did not replay the exact artifact" >&2
     exit 1
 fi
-document_compile_conflict_request="{\"calculation_id\":\"$document_calculation_id\",\"route_id\":\"$route_id\",\"idempotency_key\":\"integration-document-payment-full-01\",\"payer\":\"$settlement_payer\",\"nonce\":14,\"policy_sequence\":3,\"policy_digest\":[$document_policy_digest],\"scope\":{\"kind\":\"full_document\"}}"
+document_compile_conflict_request="{\"calculation_id\":\"$document_calculation_id\",\"route_id\":\"$route_id\",\"idempotency_key\":\"integration-document-payment-full-01\",\"payer\":\"$settlement_payer\",\"nonce\":\"14\",\"scope\":{\"kind\":\"full_document\"}}"
 document_compile_conflict_status=$(printf '%s' "$document_compile_conflict_request" | curl --silent --show-error \
     --output /dev/null --write-out '%{http_code}' \
     --header 'content-type: application/json' --header "authorization: $authorization" \
@@ -863,7 +858,7 @@ if [ "$cross_tenant_document_compile_status" != "404" ]; then
     echo "expected cross-tenant document payment compilation to return HTTP 404, received $cross_tenant_document_compile_status" >&2
     exit 1
 fi
-document_subset_request="{\"calculation_id\":\"$document_calculation_id\",\"route_id\":\"$route_id\",\"idempotency_key\":\"integration-document-payment-subset-01\",\"payer\":\"$settlement_payer\",\"nonce\":12,\"policy_sequence\":3,\"policy_digest\":[$document_policy_digest],\"scope\":{\"kind\":\"line_subset\",\"line_ids\":[\"line-a\"]}}"
+document_subset_request="{\"calculation_id\":\"$document_calculation_id\",\"route_id\":\"$route_id\",\"idempotency_key\":\"integration-document-payment-subset-01\",\"payer\":\"$settlement_payer\",\"nonce\":\"12\",\"scope\":{\"kind\":\"line_subset\",\"line_ids\":[\"line-a\"]}}"
 document_subset_response=$(printf '%s' "$document_subset_request" | curl --fail --silent --show-error \
     --header 'content-type: application/json' \
     --header "authorization: $authorization" \
@@ -874,7 +869,7 @@ if ! printf '%s' "$document_subset_response" | grep -q '"gross_atomic":"1000"' |
     echo "whole-line document payment did not derive the server-owned line amounts" >&2
     exit 1
 fi
-document_full_subset_request="{\"calculation_id\":\"$document_calculation_id\",\"route_id\":\"$route_id\",\"idempotency_key\":\"integration-document-payment-full-subset-01\",\"payer\":\"$settlement_payer\",\"nonce\":13,\"policy_sequence\":3,\"policy_digest\":[$document_policy_digest],\"scope\":{\"kind\":\"line_subset\",\"line_ids\":[\"line-a\",\"line-b\"]}}"
+document_full_subset_request="{\"calculation_id\":\"$document_calculation_id\",\"route_id\":\"$route_id\",\"idempotency_key\":\"integration-document-payment-full-subset-01\",\"payer\":\"$settlement_payer\",\"nonce\":\"13\",\"scope\":{\"kind\":\"line_subset\",\"line_ids\":[\"line-a\",\"line-b\"]}}"
 document_full_subset_status=$(printf '%s' "$document_full_subset_request" | \
     curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
     --header 'content-type: application/json' --header "authorization: $authorization" \
@@ -896,7 +891,7 @@ if [ "$aggregate_document_scope_status" != "409" ]; then
     echo "expected aggregate attestation route to reject document calculation scope, received HTTP $aggregate_document_scope_status" >&2
     exit 1
 fi
-aggregate_document_compile_status=$(printf '%s' "{\"calculation_id\":\"$document_calculation_id\",\"route_id\":\"$route_id\",\"payer\":\"$settlement_payer\",\"nonce\":15,\"policy_sequence\":3,\"policy_digest\":[$document_policy_digest]}" | curl --silent --show-error \
+aggregate_document_compile_status=$(printf '%s' "{\"calculation_id\":\"$document_calculation_id\",\"route_id\":\"$route_id\",\"payer\":\"$settlement_payer\",\"nonce\":\"15\"}" | curl --silent --show-error \
     --output /dev/null --write-out '%{http_code}' \
     --header 'content-type: application/json' --header "authorization: $authorization" \
     --data-binary @- "$base_url/v1/settlement/compile-from-quote")
@@ -905,12 +900,7 @@ if [ "$aggregate_document_compile_status" != "409" ]; then
     exit 1
 fi
 
-policy_digest=$(printf '%s' "$attestation_request" | sed -n 's/.*"payload_digest":\[\([^]]*\)\].*/\1/p')
-if [ -z "$policy_digest" ]; then
-    echo "external issuer fixture did not return a payload digest" >&2
-    exit 1
-fi
-compile_request="{\"calculation_id\":\"$calculation_id\",\"route_id\":\"$route_id\",\"payer\":\"$settlement_payer\",\"nonce\":9,\"policy_sequence\":3,\"policy_digest\":[$policy_digest]}"
+compile_request="{\"calculation_id\":\"$calculation_id\",\"route_id\":\"$route_id\",\"payer\":\"$settlement_payer\",\"nonce\":\"9\"}"
 compile_response_file="$integration_dir/compile-response.json"
 compile_http_status=$(printf '%s' "$compile_request" | curl --silent --show-error \
     --output "$compile_response_file" --write-out '%{http_code}' \
@@ -944,7 +934,7 @@ if [ "$cross_tenant_intent_status" != "404" ]; then
 fi
 
 split_plan_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d13"
-split_compile_request="{\"calculation_id\":\"$calculation_id\",\"route_id\":\"$route_id\",\"split_plan_id\":\"$split_plan_id\",\"payer\":\"$settlement_payer\",\"nonce\":10,\"policy_sequence\":3,\"policy_digest\":[$policy_digest]}"
+split_compile_request="{\"calculation_id\":\"$calculation_id\",\"route_id\":\"$route_id\",\"split_plan_id\":\"$split_plan_id\",\"payer\":\"$settlement_payer\",\"nonce\":\"10\"}"
 split_compile_response_file="$integration_dir/split-compile-response.json"
 split_compile_http_status=$(printf '%s' "$split_compile_request" | curl --silent --show-error \
     --output "$split_compile_response_file" --write-out '%{http_code}' \
@@ -975,7 +965,6 @@ submission_drill_output=$(API_BASE="$base_url" \
     AUTHORIZATION="$authorization" \
     CALCULATION_ID="$calculation_id" \
     ROUTE_ID="$route_id" \
-    POLICY_DIGEST_JSON="[$policy_digest]" \
     pnpm --dir apps/web exec node scripts/settlement_submission_fence_drill.mjs)
 printf '%s\n' "$submission_drill_output"
 if ! printf '%s' "$submission_drill_output" | grep -q '"send_transaction_calls":1'; then
@@ -1002,7 +991,6 @@ ambiguous_reconciliation_output=$(API_BASE="$base_url" \
     AUTHORIZATION="$authorization" \
     CALCULATION_ID="$calculation_id" \
     ROUTE_ID="$route_id" \
-    POLICY_DIGEST_JSON="[$policy_digest]" \
     DRILL_SCENARIO="ambiguous-reconcile" \
     NONCE="13" \
     pnpm --dir apps/web exec node scripts/settlement_submission_fence_drill.mjs)
@@ -1025,7 +1013,6 @@ process_crash_output=$(API_BASE="$base_url" \
     AUTHORIZATION="$authorization" \
     CALCULATION_ID="$calculation_id" \
     ROUTE_ID="$route_id" \
-    POLICY_DIGEST_JSON="[$policy_digest]" \
     COMPOSE_PROJECT="$project_name" \
     NONCE="14" \
     pnpm --dir apps/web exec node scripts/settlement_process_crash_drill.mjs)
@@ -1072,7 +1059,7 @@ if [ -z "$expired_calculation_id" ]; then
 fi
 expired_compile_request=$(printf '%s' "$compile_request" \
     | sed "s/\"calculation_id\":\"$calculation_id\"/\"calculation_id\":\"$expired_calculation_id\"/" \
-    | sed 's/"nonce":9/"nonce":11/')
+    | sed 's/"nonce":"9"/"nonce":"11"/')
 expired_compile_status=$(printf '%s' "$expired_compile_request" | curl --silent --show-error \
     --output /dev/null --write-out '%{http_code}' \
     --header 'content-type: application/json' \

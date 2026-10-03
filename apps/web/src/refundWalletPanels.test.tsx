@@ -26,9 +26,9 @@ describe("refund wallet workspaces", () => {
     const calls = installWalletAndFetchMock(proposer, refundFunder, claimResponse(proposer, refundFunder), "claim");
 
     render(<RefundClaimPanel apiBase="/api" serviceOnline accessToken="test-token" locale="en-US" />);
-    fireEvent.change(screen.getByLabelText("Approved adjustment ID"), { target: { value: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d12" } });
-    fireEvent.click(screen.getByRole("button", { name: "Prepare server-owned claim" }));
-    await screen.findByText(/The server prepared an immutable claim artifact\./);
+    fireEvent.change(screen.getByLabelText("Approved correction reference"), { target: { value: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d12" } });
+    fireEvent.click(screen.getByRole("button", { name: "Prepare refund request" }));
+    await screen.findByText(/Your refund request is ready for review\./);
 
     fireEvent.click(screen.getByRole("button", { name: "Connect wallet" }));
     const claimWalletButton = await screen.findByRole("button", { name: "Reconnect wallet" });
@@ -40,7 +40,7 @@ describe("refund wallet workspaces", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sign as refund funder" }));
     await screen.findByText(/Both wallet signatures are present in the local transaction artifact\./);
 
-    fireEvent.click(screen.getByRole("button", { name: "Submit unchanged signed bytes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send approved refund" }));
     await screen.findByText(/The provider accepted the unchanged transaction bytes\./);
     expect(screen.getByText(/transport evidence only/)).toBeTruthy();
     expect(calls.some(({ url }) => url === "/api/v1/settlement/refund-claims/submit")).toBe(true);
@@ -53,9 +53,9 @@ describe("refund wallet workspaces", () => {
     const calls = installWalletAndFetchMock(approver, refundFunder, executeResponse(approver, refundFunder), "execute");
 
     render(<RefundExecutePanel apiBase="/api" serviceOnline accessToken="test-token" locale="en-US" />);
-    fireEvent.change(screen.getByLabelText("Finalized claim intent ID"), { target: { value: claimIntentId } });
-    fireEvent.click(screen.getByRole("button", { name: "Prepare server-owned execution" }));
-    await screen.findByText(/The server prepared an immutable execute artifact/);
+    fireEvent.change(screen.getByLabelText("Finalized refund request reference"), { target: { value: claimIntentId } });
+    fireEvent.click(screen.getByRole("button", { name: "Prepare refund release" }));
+    await screen.findByText(/The refund release is ready for review/);
 
     fireEvent.click(screen.getByRole("button", { name: "Connect wallet" }));
     const executeWalletButton = await screen.findByRole("button", { name: "Reconnect wallet" });
@@ -67,7 +67,7 @@ describe("refund wallet workspaces", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sign as refund funder" }));
     await screen.findByText(/Both execute wallet signatures are present in local memory\./);
 
-    fireEvent.click(screen.getByRole("button", { name: "Submit unchanged signed bytes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send approved refund" }));
     await screen.findByText(/The provider accepted the unchanged execute transaction\./);
     expect(screen.getByText(/Proof pending: provider acknowledgement is not a completed refund/)).toBeTruthy();
     expect(calls.some(({ url }) => url === "/api/v1/settlement/refund-executions/submit")).toBe(true);
@@ -80,14 +80,14 @@ describe("refund wallet workspaces", () => {
     installWalletAndFetchMock(proposer, refundFunder, finalizedClaimResponse(proposer, refundFunder), "claim");
 
     render(<RefundClaimPanel apiBase="/api" serviceOnline accessToken="test-token" locale="en-US" />);
-    fireEvent.change(screen.getByLabelText("Approved adjustment ID"), { target: { value: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d12" } });
-    fireEvent.click(screen.getByRole("button", { name: "Prepare server-owned claim" }));
+    fireEvent.change(screen.getByLabelText("Approved correction reference"), { target: { value: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d12" } });
+    fireEvent.click(screen.getByRole("button", { name: "Prepare refund request" }));
 
     await screen.findByText(/Finalized claim event evidence matched/);
     expect(screen.getByText("AdjustmentRefundClaimCreated · v1")).toBeTruthy();
     expect(screen.getByText("77")).toBeTruthy();
     expect(screen.getByText("Event index").parentElement?.textContent).toContain("2");
-    expect(screen.getByText("100 atomic units")).toBeTruthy();
+    expect(screen.getAllByText("100").length).toBeGreaterThan(0);
     expect(screen.getByText("Evidence digest").parentElement?.textContent).toContain("0101010101010101");
   });
 });

@@ -89,6 +89,10 @@ export function defaultDocumentLines(): TaxDocumentLineDraft[] {
   ];
 }
 
+export function emptyDocumentLines(): TaxDocumentLineDraft[] {
+  return [{ id: "", grossAtomic: "", netAtomic: "", exemptionCodes: "" }];
+}
+
 export function validateTaxDocumentLines(lines: TaxDocumentLineDraft[]): string[] {
   const errors: string[] = [];
   if (lines.length < 1 || lines.length > MAX_LINES) errors.push(`A document must contain between 1 and ${MAX_LINES} lines.`);

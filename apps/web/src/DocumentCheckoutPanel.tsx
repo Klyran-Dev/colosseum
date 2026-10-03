@@ -1,14 +1,13 @@
 import { FormEvent, useEffect, useState } from "react";
 import { PublicKey } from "@solana/web3.js";
 import { fetchWithTimeout, REQUEST_TIMEOUT_MS, responseError } from "./api";
-import { createClientUuid } from "./clientIdentity";
+import { createClientNonce, createClientUuid } from "./clientIdentity";
 import { DEFAULT_LOCALE, DEFAULT_TIME_ZONE, formatEpoch } from "./formatters";
 import {
   CompiledDocumentSettlementResponse,
   SettlementRoute,
   SettlementSubmitResponse,
   parseCompiledSettlementArtifact,
-  parsePolicyDigest,
   parseSettlementRoutes,
   parseSettlementStatusResponse,
   signAndEncodeSettlement,
@@ -34,10 +33,10 @@ type Props = {
 
 type Flow = "idle" | "verifying" | "compiling" | "ready" | "signing" | "submitting" | "complete";
 
-function positiveSafeInteger(value: string, field: string): number {
+function positiveCanonicalU64(value: string, field: string): string {
   const parsed = BigInt(value);
-  if (parsed <= 0n || parsed > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error(`${field} must be a positive safe integer.`);
-  return Number(parsed);
+  if (parsed <= 0n || parsed > 18_446_744_073_709_551_615n) throw new Error(`${field} must be a positive unsigned 64-bit integer.`);
+  return parsed.toString();
 }
 
 function shortDigest(value: number[]): string {
@@ -59,12 +58,10 @@ export default function DocumentCheckoutPanel({
   const [routeError, setRouteError] = useState<string | null>(null);
   const [calculationId, setCalculationId] = useState("");
   const [attestationJson, setAttestationJson] = useState("");
-  const [policyDigest, setPolicyDigest] = useState("");
   const [scopeKind, setScopeKind] = useState<"full_document" | "line_subset">("full_document");
   const [lineIds, setLineIds] = useState("");
-  const [idempotencyKey, setIdempotencyKey] = useState(() => createClientUuid());
-  const [nonce, setNonce] = useState("");
-  const [policySequence, setPolicySequence] = useState("");
+  const [idempotencyKey] = useState(() => createClientUuid());
+  const [nonce, setNonce] = useState(() => createClientNonce());
   const [attestation, setAttestation] = useState<DocumentAttestationVerification | null>(null);
   const [artifact, setArtifact] = useState<CompiledDocumentSettlementResponse | null>(null);
   const [settlement, setSettlement] = useState<SettlementSubmitResponse | null>(null);
@@ -79,6 +76,7 @@ export default function DocumentCheckoutPanel({
 
   useEffect(() => {
     if (initialCalculationId) setCalculationId(initialCalculationId);
+    setNonce(createClientNonce());
   }, [initialCalculationId]);
 
   useEffect(() => {
@@ -148,15 +146,12 @@ export default function DocumentCheckoutPanel({
   async function compile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
-    if (!attestation) return setError("Verify the server-owned document attestation before compilation.");
+    if (!attestation) return setError("Verify the invoice evidence before preparing payment.");
     if (!walletAddress || !routeId) return setError("Connect the payer wallet and select an active route.");
     if (settlementQuoteExpired(attestation.expires_at_unix, nowUnix)) return setError("The document attestation has expired; verify a new signed attestation.");
-    let policyBytes: number[];
     let scope: { kind: "full_document" } | { kind: "line_subset"; line_ids: string[] };
     try {
-      policyBytes = parsePolicyDigest(policyDigest);
-      positiveSafeInteger(nonce, "Client nonce");
-      positiveSafeInteger(policySequence, "Policy sequence");
+      positiveCanonicalU64(nonce, "Payment reference number");
       scope = scopeKind === "full_document" ? { kind: "full_document" } : { kind: "line_subset", line_ids: parseDocumentScopeLineIds(lineIds) };
       if (!idempotencyKey.trim()) throw new Error("An idempotency key is required for durable document compilation.");
     } catch (cause) {
@@ -172,9 +167,7 @@ export default function DocumentCheckoutPanel({
           calculation_id: attestation.calculation_id,
           route_id: routeId,
           payer: walletAddress.toBase58(),
-          nonce: positiveSafeInteger(nonce, "Client nonce"),
-          policy_sequence: positiveSafeInteger(policySequence, "Policy sequence"),
-          policy_digest: policyBytes,
+          nonce: positiveCanonicalU64(nonce, "Payment reference number"),
           scope,
         }),
       }, REQUEST_TIMEOUT_MS.default);
@@ -275,7 +268,7 @@ export default function DocumentCheckoutPanel({
       <p className="panel-copy">This workspace keeps document evidence separate from aggregate checkout. The API owns document totals, line scope, route accounts, and the immutable settlement intent; the browser only presents and signs the returned artifact.</p>
       <div className="checkout-step"><span className="step-number">1</span><div><strong>Payer wallet</strong><p>{walletAddress ? walletAddress.toBase58() : "No wallet connected"}</p></div><WalletPicker disabled={isBusy} connectedAddress={walletAddress?.toBase58()} onConnected={setWalletAddress} /></div>
       <form className="form-grid checkout-form" onSubmit={verifyAttestation}>
-        <label className="full-field"><span>Document calculation ID (UUIDv7)</span><input value={calculationId} onChange={(event) => { setCalculationId(event.target.value); setAttestation(null); resetPreparedState(); }} autoComplete="off" required /></label>
+        <label className="full-field"><span>Invoice calculation reference</span><input value={calculationId} onChange={(event) => { setCalculationId(event.target.value); setAttestation(null); resetPreparedState(); }} autoComplete="off" required /></label>
         <label className="full-field"><span>Active settlement route</span><select value={routeId} onChange={(event) => { setRouteId(event.target.value); setAttestation(null); resetPreparedState(); }} disabled={routeState !== "ready" || isBusy} required><option value="">{routeState === "loading" ? "Loading active routes…" : routeState === "error" ? "Routes unavailable" : routes.length ? "Select a route" : "No active routes"}</option>{routes.map((route) => <option value={route.id} key={route.id}>{route.route_key} · v{route.version} · {route.mint}</option>)}</select></label>
         {routeError && <p className="inline-error full-field" role="alert">{routeError}</p>}
         {selectedRoute && <div className="route-evidence full-field" aria-live="polite"><strong>Server-owned route selected</strong><small>Mint {selectedRoute.mint} · token program {selectedRoute.token_program}</small><small>Merchant-side accounts are not accepted from this form.</small></div>}
@@ -290,14 +283,11 @@ export default function DocumentCheckoutPanel({
       <form className="form-grid checkout-form" onSubmit={compile}>
         <label><span>Payment scope</span><select value={scopeKind} onChange={(event) => { setScopeKind(event.target.value as typeof scopeKind); resetPreparedState(); }} disabled={isBusy}><option value="full_document">Full document</option><option value="line_subset">Complete line subset</option></select></label>
         {scopeKind === "line_subset" && <label className="full-field"><span>Complete line IDs (comma-separated)</span><input value={lineIds} onChange={(event) => { setLineIds(event.target.value); resetPreparedState(); }} placeholder="line-a,line-c" disabled={isBusy} required /><small className="field-help">Partial quantities and arbitrary proration are rejected. Request a new quote for a partial line.</small></label>}
-        <label><span>Client nonce</span><input inputMode="numeric" value={nonce} onChange={(event) => { setNonce(event.target.value); resetPreparedState(); }} placeholder="Positive integer" disabled={isBusy} required /></label>
-        <label><span>Policy sequence</span><input inputMode="numeric" value={policySequence} onChange={(event) => { setPolicySequence(event.target.value); resetPreparedState(); }} placeholder="Positive integer" disabled={isBusy} required /></label>
-        <label className="full-field"><span>Policy digest (hex)</span><input value={policyDigest} onChange={(event) => { setPolicyDigest(event.target.value); resetPreparedState(); }} placeholder="64 hexadecimal characters" autoComplete="off" spellCheck={false} disabled={isBusy} required /></label>
-        <label className="full-field"><span>Idempotency key (memory-only)</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} autoComplete="off" disabled={isBusy} required /></label>
+        <div className="route-evidence full-field"><strong>Payment safeguards selected automatically</strong><small>The verified invoice evidence supplies the policy. A secure payment reference is assigned for safe retry; no protocol values need to be entered.</small></div>
         <button type="submit" disabled={isBusy || !attestation || expired || !walletAddress || !serviceOnline}>{flow === "compiling" ? "Compiling durable document intent…" : "Compile document payment for review"}</button>
       </form>
-      {artifact && <div className="settlement-status" aria-live="polite"><strong>Server-derived payment authority</strong><dl className="summary-list"><div><dt>Gross</dt><dd>{artifact.authorization.gross_atomic} atomic units</dd></div><div><dt>Tax withheld</dt><dd>{artifact.authorization.tax_atomic} atomic units</dd></div><div><dt>Net destination</dt><dd>{artifact.authorization.net_atomic} atomic units</dd></div><div><dt>Asset mint</dt><dd><code>{selectedRoute?.mint ?? "Server-bound by route"}</code></dd></div><div><dt>Payment scope digest</dt><dd><code>{shortDigest(artifact.payment_scope_digest)}</code></dd></div></dl><small>Document attestation <code>{shortDigest(artifact.document_attestation_digest)}</code> · intent {artifact.intent_id}</small><button type="button" onClick={signAndSubmit} disabled={isBusy || flow !== "ready" || expired}>{flow === "signing" ? "Waiting for wallet…" : flow === "submitting" ? "Submitting unchanged bytes…" : "Sign and submit"}</button>{settlement && <div className="settlement-status"><strong>Durable status: {settlement.status}</strong><small>{settlement.signature ? `Signature ${settlement.signature}` : "No chain signature is recorded yet."}</small><div className="status-actions"><button type="button" onClick={refreshStatus} disabled={isBusy}>Refresh status</button><button type="button" onClick={reconcile} disabled={isBusy || !settlement.signature}>Reconcile evidence</button></div></div>}</div>}
-      {!artifact && <div className="empty-state"><strong>Verified document evidence required</strong><p>Verify the issuer attestation first. Compilation remains unavailable until the server returns a durable, scope-bound document intent.</p></div>}
+      {artifact && <div className="settlement-status" aria-live="polite"><strong>Payment ready for review</strong><p className="inline-success">Payment safeguards selected from the verified invoice evidence.</p><dl className="summary-list"><div><dt>Amount before tax</dt><dd>{artifact.authorization.gross_atomic}</dd></div><div><dt>Tax withheld</dt><dd>{artifact.authorization.tax_atomic}</dd></div><div><dt>Amount sent to recipient</dt><dd>{artifact.authorization.net_atomic}</dd></div><div><dt>Payment asset</dt><dd><code>{selectedRoute?.mint ?? "Selected by payment route"}</code></dd></div><div><dt>Payment details</dt><dd><code>{shortDigest(artifact.payment_scope_digest)}</code></dd></div></dl><small>Verified invoice evidence <code>{shortDigest(artifact.document_attestation_digest)}</code> · payment reference {artifact.intent_id}</small><button type="button" onClick={signAndSubmit} disabled={isBusy || flow !== "ready" || expired}>{flow === "signing" ? "Waiting for wallet…" : flow === "submitting" ? "Sending payment…" : "Sign and send payment"}</button>{settlement && <div className="settlement-status"><strong>Payment status: {settlement.status}</strong><small>{settlement.signature ? `Transaction reference ${settlement.signature}` : "No chain transaction is recorded yet."}</small><div className="status-actions"><button type="button" onClick={refreshStatus} disabled={isBusy}>Refresh status</button><button type="button" onClick={reconcile} disabled={isBusy || !settlement.signature}>Check payment record</button></div></div>}</div>}
+      {!artifact && <div className="empty-state"><strong>Verified invoice evidence required</strong><p>Verify the invoice evidence first. Payment preparation remains unavailable until the service returns a reviewed payment record.</p></div>}
       {error && <p className="inline-error" role="alert">{error}</p>}
       <p className="inline-warning">A successful signature is not settlement confirmation. Finalized Solana evidence decides whether funds moved. This workflow is withholding authorization only, not filing, reporting, legal compliance, or tax advice.</p>
     </article>

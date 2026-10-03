@@ -382,6 +382,15 @@ services:
     build:
       context: .
       dockerfile: ops/docker/Dockerfile.web
+      args:
+        VITE_DEPLOYMENT_ENVIRONMENT: ${VITE_DEPLOYMENT_ENVIRONMENT:-local}
+        VITE_SOLANA_NETWORK: ${VITE_SOLANA_NETWORK:-localnet}
+        VITE_LOCAL_UI_MODE: ${VITE_LOCAL_UI_MODE:-credential}
+        VITE_OIDC_ISSUER: ${VITE_OIDC_ISSUER:-}
+        VITE_OIDC_CLIENT_ID: ${VITE_OIDC_CLIENT_ID:-}
+        VITE_OIDC_REDIRECT_URI: ${VITE_OIDC_REDIRECT_URI:-}
+        VITE_OIDC_SCOPE: ${VITE_OIDC_SCOPE:-}
+        VITE_OIDC_AUDIENCE: ${VITE_OIDC_AUDIENCE:-}
     ports:
       - "${EDGE_PORT:-8088}:8080"
     depends_on:

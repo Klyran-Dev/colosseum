@@ -72,3 +72,14 @@ performance. The test consumes local Docker resources and is intentionally
 separate from ordinary unit checks; the public CI workflow invokes it on a
 dedicated runner with a bounded 15-minute job budget. Regional production SLO
 acceptance remains a separate gate.
+
+## Current local measurement
+
+On 2026-10-03, `make benchmark-quote-service` completed against two local API
+replicas and the pinned PostgreSQL 18/NATS stack on the native arm64 Docker
+runtime. The default workload returned 200/200 responses for 200 requests at
+concurrency 16, with p50/p95/p99 latencies of 4.940/24.936/38.346 ms. The
+32-request identical-key contention probe returned 32 successful responses but
+converged to one idempotency record, one calculation, and one outbox event.
+No resource-profile sample was enabled in this run; Linux/amd64, regional,
+representative-volume, and production error-budget evidence remain open.

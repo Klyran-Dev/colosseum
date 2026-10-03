@@ -35,7 +35,7 @@ describe("settlement adjustment operator workspace", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<SettlementAdjustmentPanel apiBase="/api" serviceOnline accessToken="proposer-token" />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Propose adjustment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create adjustment request" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Record<string, unknown>;
     expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/settlement/adjustments");
@@ -55,10 +55,10 @@ describe("settlement adjustment operator workspace", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<SettlementAdjustmentPanel apiBase="/api" serviceOnline accessToken="approver-token" />);
 
-    fireEvent.change(screen.getByLabelText("Adjustment UUIDv7"), { target: { value: record.id } });
+    fireEvent.change(screen.getByLabelText("Adjustment reference"), { target: { value: record.id } });
     fireEvent.click(screen.getByRole("button", { name: "Load adjustment" }));
     await waitFor(() => expect(screen.getByText("proposed")).toBeTruthy());
-    fireEvent.click(screen.getByRole("button", { name: "Record approved evidence" }));
+    fireEvent.click(screen.getByRole("button", { name: "Record approved decision" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(fetchMock.mock.calls[1][0]).toBe(`/api/v1/settlement/adjustments/${record.id}/transition`);
@@ -72,7 +72,7 @@ describe("settlement adjustment operator workspace", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<SettlementAdjustmentPanel apiBase="/api" serviceOnline accessToken="proposer-token" />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Propose adjustment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create adjustment request" }));
     await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/adjustment rejected/));
     expect(screen.getByRole("alert").textContent).toContain(requestId);
     expect(screen.queryByText(/payment succeeded/i)).toBeNull();
@@ -98,10 +98,10 @@ describe("settlement adjustment operator workspace", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<SettlementAdjustmentPanel apiBase="/api" serviceOnline accessToken="approver-token" />);
 
-    fireEvent.change(screen.getByLabelText("Adjustment UUIDv7"), { target: { value: record.id } });
+    fireEvent.change(screen.getByLabelText("Adjustment reference"), { target: { value: record.id } });
     fireEvent.click(screen.getByRole("button", { name: "Load adjustment" }));
     await waitFor(() => expect(screen.getByText("approved")).toBeTruthy());
-    fireEvent.click(screen.getByRole("button", { name: "Prepare wallet record" }));
+    fireEvent.click(screen.getByRole("button", { name: "Prepare ledger record" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls[1][0]).toBe(`/api/v1/settlement/adjustments/${record.id}/compile`);

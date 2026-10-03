@@ -22,3 +22,16 @@ export function createClientUuid(): string {
     bytes.slice(10, 16),
   ].map((part) => Array.from(part, (byte) => HEX[byte]).join("")).join("-");
 }
+
+/**
+ * Creates a positive canonical Solana u64 nonce for a wallet-bound request.
+ * It is an opaque replay identity, not a user-entered financial value.
+ */
+export function createClientNonce(): string {
+  const cryptoApi = globalThis.crypto;
+  if (typeof cryptoApi?.getRandomValues !== "function") throw new Error("A cryptographically secure random source is required.");
+  const words = new Uint32Array(2);
+  cryptoApi.getRandomValues(words);
+  const value = (BigInt(words[0]) << 32n) | BigInt(words[1]);
+  return (value === 0n ? 1n : value).toString();
+}

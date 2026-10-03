@@ -90,3 +90,13 @@ A follow-up profile-enabled run on the same host passed the declared workload
 with p50/p95/p99 of 4.166/26.137/35.064 ms and retained four timestamped
 Docker JSON-stat per-container records from one sampling epoch beside the
 summary. This remains local diagnostic evidence only.
+
+## Current local measurement (2026-10-03)
+
+The same bounded document workload was rerun after the current UI and route
+changes. It returned 200/200 responses at concurrency 16 across two API
+replicas, with p50/p95/p99 of 4.632/41.573/52.453 ms. The 32-request
+same-key contention phase converged to one idempotency record, one document
+calculation, and one outbox event. Resource profiling was disabled for this
+run; Linux/amd64, regional, representative-volume, and production SLO
+evidence remain open.

@@ -22,6 +22,12 @@
 
 ## Information architecture
 
+Every workspace has a stable, non-sensitive URL under the static SPA. Operators
+can bookmark or refresh a review surface, and browser back/forward returns to
+the prior workspace without placing credentials, financial facts, tenant IDs,
+or authorization decisions in the URL. Unknown paths canonicalize to the quote
+workspace; the NGINX edge serves the SPA fallback for direct links.
+
 ```text
 Checkout
   - Quote summary
@@ -147,6 +153,20 @@ API correlation reference where available. No browser state advances a
 checkpoint or claims chain finality.
 
 Every state provides the next safe action and preserves the calculation/settlement correlation ID.
+
+## Session and credential presentation
+
+Protected workspaces use the authenticated shell session but do not render the
+bearer credential. They show only bounded session state such as “Signed-in
+session ready” or “Sign-in required”; request headers remain an in-memory
+implementation detail. Local credential entry is available only through the
+explicit local-development authentication control. See
+[ADR-0280](../adr/0280-browser-never-renders-bearer-credentials.md).
+
+Quote workspaces also keep idempotency references out of editable form fields.
+They assign a secure in-memory retry reference automatically, keep it stable
+for an unchanged request, and replace it when financial or rule facts change.
+See [ADR-0281](../adr/0281-automatic-quote-retry-reference.md).
 
 ## Frontend architecture
 

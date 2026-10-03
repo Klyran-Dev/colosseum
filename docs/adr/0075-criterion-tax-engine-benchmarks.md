@@ -53,3 +53,23 @@ The repository now has a repeatable microbenchmark boundary for optimization
 work and can compare compiled versus uncached calculation cost. Results must
 not be used as a production latency claim until the documented service load,
 contention, database, RPC, and regional workload evidence exists.
+
+## Current local measurement
+
+On 2026-10-03, `make bench-tax-engine` completed on native arm64 macOS
+27.0.1 (`Mac16,6`, 14 logical CPUs) with Rust 1.98.1, 3 seconds of warm-up,
+and 100 samples per benchmark. The observed medians were approximately:
+
+| Workload | Median | 95% confidence interval |
+| --- | ---: | ---: |
+| `tax_engine_compile` | 730.77 ns | 728.87–732.88 ns |
+| `tax_engine_uncached_calculate` | 1.4475 µs | 1.4433–1.4526 µs |
+| `tax_engine_compiled_calculate` | 688.89 ns | 686.97–690.98 ns |
+| `tax_engine_document_invoice_64x16` | 254.39 µs | 253.68–255.18 µs |
+
+Criterion reported positive change against the existing local comparison
+baseline for three calculation workloads. Because that baseline has no
+retained CPU, OS, commit, or toolchain provenance, this run is recorded as
+measurement evidence rather than an attributable code regression. A matched
+Linux/amd64 performance job must establish the release baseline and block or
+approve any regression under the documented service budgets.

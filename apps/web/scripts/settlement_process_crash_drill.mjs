@@ -7,7 +7,6 @@ const authorization = required("AUTHORIZATION");
 const calculationId = required("CALCULATION_ID");
 const routeId = required("ROUTE_ID");
 const composeProject = required("COMPOSE_PROJECT");
-const policyDigest = JSON.parse(required("POLICY_DIGEST_JSON"));
 const nonce = Number(process.env.NONCE ?? "14");
 
 const { artifact, submitBody } = await compileAndSign({
@@ -16,7 +15,6 @@ const { artifact, submitBody } = await compileAndSign({
   authorization,
   calculationId,
   routeId,
-  policyDigest,
   nonce,
 });
 

@@ -81,7 +81,7 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
 
   function requireToken(): string {
     const token = accessToken.trim();
-    if (!token) throw new Error("An OIDC access token with the required adjustment scope and role is required. It is held in memory only.");
+    if (!token) throw new Error("Sign in with an account allowed to manage adjustments. The credential is held in memory only.");
     return token;
   }
 
@@ -171,7 +171,7 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
     try {
       const token = requireToken();
       if (!record) throw new Error("Load or propose an adjustment before changing its lifecycle.");
-      if (!availableTransitions.includes(transitionStatus)) throw new Error("The selected lifecycle transition is not valid for the server-owned status.");
+      if (!availableTransitions.includes(transitionStatus)) throw new Error("That next step is not available for the current request status.");
       const evidence = parseEvidence(transitionEvidence);
       const response = await fetchWithTimeout(`${buildSettlementAdjustmentUrl(apiBase, record.id)}/transition`, {
         method: "POST",
@@ -233,7 +233,7 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
     setNotice(null);
     try {
       const token = requireToken();
-      if (!chainArtifact) throw new Error("Prepare the server-owned record instruction before loading its chain intent.");
+      if (!chainArtifact) throw new Error("Prepare the ledger record before loading its saved status.");
       const response = await fetchWithTimeout(`${apiBase}/v1/settlement/adjustment-chain-intents/${chainArtifact.chain_intent_id}`, {
         headers: { authorization: `Bearer ${token}` },
       });
@@ -256,7 +256,7 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
     let submissionAttempted = false;
     try {
       const token = requireToken();
-      if (!chainArtifact) throw new Error("Prepare the server-owned record instruction before signing.");
+      if (!chainArtifact) throw new Error("Prepare the ledger record before signing.");
       const connected = (await ensureConnectedWallet()).publicKey;
       setWalletAddress(connected);
       const signedTransactionBase64 = await signAndEncodeSettlementAdjustment(
@@ -303,7 +303,7 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
     setNotice(null);
     try {
       const token = requireToken();
-      if (!chainArtifact) throw new Error("Prepare the server-owned record instruction before reconciliation.");
+      if (!chainArtifact) throw new Error("Prepare the ledger record before reconciliation.");
       if (!chainStatus?.signature) throw new Error("A server-bound chain signature is required before reconciliation.");
       const response = await fetchWithTimeout(`${apiBase}/v1/settlement/adjustment-chain-intents/${chainArtifact.chain_intent_id}/reconcile`, {
         method: "POST",
@@ -326,68 +326,69 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
   return (
     <section className="adjustment-layout" aria-label="Settlement adjustments workspace">
       <article className="panel">
-        <div className="panel-heading"><div><p className="eyebrow">Financial operations / evidence first</p><h2>Propose an adjustment</h2></div><span className="status-pill">No token movement</span></div>
-        <p className="panel-copy">Record a bounded refund, reversal, correction, chargeback, or remittance adjustment against an immutable settlement. The API owns merchant scope, authority, and final validation.</p>
+        <div className="panel-heading"><div><p className="eyebrow">Payment corrections / review first</p><h2>Create an adjustment request</h2></div><span className="status-pill">No money moved</span></div>
+        <p className="panel-copy">Create a refund, reversal, correction, chargeback, or remittance request against an existing payment. The service checks the account, approval rights, and exact amounts before saving it.</p>
         <form className="form-grid" onSubmit={propose}>
-          <label className="full-field"><span>OIDC access token (memory-only)</span><textarea value={accessToken ? "••••••••••••••••" : ""} readOnly placeholder="Provide the token in the application header" aria-describedby="adjustment-token-help" /></label>
-          <small id="adjustment-token-help" className="field-help full-field">The token is held by the application in memory and is never persisted. Use a proposer role with <code>tax:adjustment:propose</code>.</small>
-          <label className="full-field"><span>Idempotency key</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} required /></label>
-          <label><span>Adjustment kind</span><select value={kind} onChange={(event) => setKind(event.target.value as AdjustmentKind)}>{KINDS.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
-          <label><span>Reason code</span><input value={reasonCode} onChange={(event) => setReasonCode(event.target.value)} maxLength={256} required /></label>
-          <label className="full-field"><span>Original settlement UUIDv7</span><input value={originalSettlementId} onChange={(event) => setOriginalSettlementId(event.target.value)} required /></label>
-          <label><span>Gross delta (atomic units)</span><input inputMode="numeric" value={grossAtomic} onChange={(event) => setGrossAtomic(event.target.value)} required /></label>
-          <label><span>Tax delta (atomic units)</span><input inputMode="numeric" value={taxAtomic} onChange={(event) => setTaxAtomic(event.target.value)} required /></label>
-          <label><span>Net delta (atomic units)</span><input inputMode="numeric" value={netAtomic} onChange={(event) => setNetAtomic(event.target.value)} required /></label>
-          <label className="full-field"><span>Asset ID (32-byte JSON array)</span><textarea value={assetId} onChange={(event) => setAssetId(event.target.value)} rows={2} required /></label>
-          <label className="full-field"><span>Evidence digest (32-byte JSON array)</span><textarea value={evidenceDigest} onChange={(event) => setEvidenceDigest(event.target.value)} rows={2} required /></label>
-          <label><span>Source calculation UUIDv7</span><input value={sourceCalculationId} onChange={(event) => setSourceCalculationId(event.target.value)} required /></label>
-          <label><span>Replacement calculation UUIDv7 (optional)</span><input value={replacementCalculationId} onChange={(event) => setReplacementCalculationId(event.target.value)} /></label>
-          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>{busy ? "Submitting…" : "Propose adjustment"}</button>
+          <label className="full-field"><span>Sign-in status</span><textarea value={accessToken ? "Account ready" : ""} readOnly placeholder="Sign in to create a request" aria-describedby="adjustment-token-help" /></label>
+          <small id="adjustment-token-help" className="field-help full-field">Your account must be allowed to create payment corrections. Sign-in data is never saved by this page.</small>
+          <label className="full-field"><span>Request reference</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} aria-describedby="adjustment-reference-help" required /><small id="adjustment-reference-help">A unique reference prevents duplicate requests when you retry.</small></label>
+          <label><span>Correction type</span><select value={kind} onChange={(event) => setKind(event.target.value as AdjustmentKind)}>{KINDS.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
+          <label><span>Reason</span><input value={reasonCode} onChange={(event) => setReasonCode(event.target.value)} maxLength={256} required /></label>
+          <label className="full-field"><span>Original payment reference</span><input value={originalSettlementId} onChange={(event) => setOriginalSettlementId(event.target.value)} required /></label>
+          <label><span>Gross change</span><input inputMode="numeric" value={grossAtomic} onChange={(event) => setGrossAtomic(event.target.value)} aria-describedby="adjustment-amount-help" required /></label>
+          <label><span>Tax change</span><input inputMode="numeric" value={taxAtomic} onChange={(event) => setTaxAtomic(event.target.value)} aria-describedby="adjustment-amount-help" required /></label>
+          <label><span>Net change</span><input inputMode="numeric" value={netAtomic} onChange={(event) => setNetAtomic(event.target.value)} aria-describedby="adjustment-amount-help" required /></label>
+          <small id="adjustment-amount-help" className="field-help full-field">Enter exact asset amounts. The service checks precision and conservation before saving.</small>
+          <label className="full-field"><span>Asset address</span><textarea value={assetId} onChange={(event) => setAssetId(event.target.value)} rows={2} required /></label>
+          <label className="full-field"><span>Supporting evidence</span><textarea value={evidenceDigest} onChange={(event) => setEvidenceDigest(event.target.value)} aria-describedby="adjustment-evidence-help" rows={2} required /><small id="adjustment-evidence-help">Advanced evidence supplied by the approved workflow. Do not edit it manually.</small></label>
+          <label><span>Source calculation reference</span><input value={sourceCalculationId} onChange={(event) => setSourceCalculationId(event.target.value)} required /></label>
+          <label><span>Replacement calculation reference (optional)</span><input value={replacementCalculationId} onChange={(event) => setReplacementCalculationId(event.target.value)} /></label>
+          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>{busy ? "Saving…" : "Create adjustment request"}</button>
         </form>
       </article>
 
       <article className="panel">
-        <div className="panel-heading"><div><p className="eyebrow">Tenant-scoped read and review</p><h2>Inspect lifecycle evidence</h2></div><span className="status-pill status-pill-warning">Not payment</span></div>
-        <p className="panel-copy">Load a server-owned adjustment and review exact deltas, digests, subjects, and status before requesting a governed transition.</p>
+        <div className="panel-heading"><div><p className="eyebrow">Payment correction / review and approval</p><h2>Review an adjustment</h2></div><span className="status-pill status-pill-warning">No money moved</span></div>
+        <p className="panel-copy">Load a saved request to review the exact changes, reason, evidence, and approvals before choosing its next step.</p>
         <form className="form-grid" onSubmit={load}>
-          <label className="full-field"><span>Adjustment UUIDv7</span><input value={lookupId} onChange={(event) => setLookupId(event.target.value)} placeholder="Paste the server-owned adjustment ID" required /></label>
+          <label className="full-field"><span>Adjustment reference</span><input value={lookupId} onChange={(event) => setLookupId(event.target.value)} placeholder="Paste a saved adjustment reference" required /></label>
           <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>Load adjustment</button>
         </form>
         {record ? <>
           <div className="adjustment-record-card" aria-live="polite">
             <div className="adjustment-status-line"><strong>{statusLabel(record.status)}</strong><span className="status-pill">{record.kind}</span></div>
             <dl className="summary-list">
-              <div><dt>Gross delta</dt><dd>{record.delta.gross_atomic}</dd></div>
-              <div><dt>Tax delta</dt><dd>{record.delta.tax_atomic}</dd></div>
-              <div><dt>Net delta</dt><dd>{record.delta.net_atomic}</dd></div>
+              <div><dt>Gross change</dt><dd>{record.delta.gross_atomic}</dd></div>
+              <div><dt>Tax change</dt><dd>{record.delta.tax_atomic}</dd></div>
+              <div><dt>Net change</dt><dd>{record.delta.net_atomic}</dd></div>
               <div><dt>Reason</dt><dd>{record.reason_code}</dd></div>
               <div><dt>Proposer</dt><dd>{record.proposer_subject}</dd></div>
               <div><dt>Approver</dt><dd>{record.approver_subject ?? "Not approved"}</dd></div>
-              <div><dt>Adjustment digest</dt><dd><code>{digestPreview(record.adjustment_digest)}</code></dd></div>
-              <div><dt>Evidence digest</dt><dd><code>{digestPreview(record.evidence_digest)}</code></dd></div>
+              <div><dt>Request evidence</dt><dd><code>{digestPreview(record.adjustment_digest)}</code></dd></div>
+              <div><dt>Supporting evidence</dt><dd><code>{digestPreview(record.evidence_digest)}</code></dd></div>
             </dl>
           </div>
           <form className="adjustment-transition-form" onSubmit={transition}>
-            <h3>Governed transition</h3>
+            <h3>Choose the next step</h3>
             {availableTransitions.length ? <>
-              <label><span>Target status</span><select value={transitionStatus} onChange={(event) => setTransitionStatus(event.target.value as "approved" | "rejected" | "voided")}>{availableTransitions.map((option) => <option key={option} value={option}>{statusLabel(option)}</option>)}</select></label>
-              <label><span>Evidence object</span><textarea value={transitionEvidence} onChange={(event) => setTransitionEvidence(event.target.value)} rows={4} required /></label>
-              <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>Record {statusLabel(transitionStatus)} evidence</button>
+              <label><span>Next step</span><select value={transitionStatus} onChange={(event) => setTransitionStatus(event.target.value as "approved" | "rejected" | "voided")}>{availableTransitions.map((option) => <option key={option} value={option}>{statusLabel(option)}</option>)}</select></label>
+              <label><span>Decision evidence</span><textarea value={transitionEvidence} onChange={(event) => setTransitionEvidence(event.target.value)} aria-describedby="adjustment-transition-help" rows={4} required /><small id="adjustment-transition-help">Advanced evidence for the audit record.</small></label>
+              <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>Record {statusLabel(transitionStatus)} decision</button>
             </> : <p className="inline-warning">This status has no available browser transition. A posted state is intentionally not represented here.</p>}
           </form>
           {record.status === "approved" && <div className="adjustment-chain-card" aria-label="Wallet-bound adjustment evidence">
-            <h3>Record finalized adjustment evidence</h3>
-            <p className="panel-copy">This bounded Solana instruction records the approved adjustment and emits auditable evidence. It does not transfer tokens, issue a refund, file taxes, or establish legal compliance.</p>
+            <h3>Record the approved correction</h3>
+            <p className="panel-copy">This ledger record confirms the approved correction and creates an audit trail. It does not transfer tokens, issue a refund, file taxes, or establish legal compliance.</p>
             <WalletPicker disabled={busy} connectEnabled={Boolean(chainArtifact)} connectedAddress={walletAddress?.toBase58()} onConnected={setWalletAddress} />
-            {!chainArtifact ? <button type="button" onClick={compileChainEvidence} disabled={busy || !serviceOnline || !accessToken.trim()}>Prepare wallet record</button> : <>
-              <dl className="summary-list"><div><dt>Chain intent</dt><dd><code>{chainArtifact.chain_intent_id}</code></dd></div><div><dt>Registry</dt><dd><code>{chainArtifact.registry}</code></dd></div><div><dt>Registry proof</dt><dd>Finalized slot {chainArtifact.registry_slot} · {chainArtifact.instruction.accounts.length} exact account metas</dd></div><div><dt>Wallet</dt><dd>{walletAddress?.toBase58() ?? "Not connected"}</dd></div></dl>
+            {!chainArtifact ? <button type="button" onClick={compileChainEvidence} disabled={busy || !serviceOnline || !accessToken.trim()}>Prepare ledger record</button> : <>
+              <dl className="summary-list"><div><dt>Ledger record reference</dt><dd><code>{chainArtifact.chain_intent_id}</code></dd></div><div><dt>Ledger registry</dt><dd><code>{chainArtifact.registry}</code></dd></div><div><dt>Registry proof</dt><dd>Confirmed ledger position {chainArtifact.registry_slot} · {chainArtifact.instruction.accounts.length} exact account records</dd></div><div><dt>Wallet</dt><dd>{walletAddress?.toBase58() ?? "Not connected"}</dd></div></dl>
               <p className="inline-warning">The connected wallet must equal the compiled approver signer. The API repeats this check against the complete signed message.</p>
-              <button type="button" onClick={signAndSubmitChainEvidence} disabled={busy || !serviceOnline || !accessToken.trim()}>{busy ? "Waiting for wallet or server…" : "Sign and submit evidence"}</button>
+              <button type="button" onClick={signAndSubmitChainEvidence} disabled={busy || !serviceOnline || !accessToken.trim()}>{busy ? "Waiting for wallet or service…" : "Sign and submit ledger record"}</button>
               {chainStatus && <div className="settlement-status" aria-live="polite"><strong>Durable evidence status: {statusLabel(chainStatus.status)}</strong><small>{chainStatus.signature ? `Signature ${chainStatus.signature}` : "No server-bound chain signature yet."}</small>{chainStatus.status === "unknown" && <small role="status">Provider outcome is ambiguous. Do not authorize another transaction; reconcile this intent.</small>}{chainStatus.status !== "finalized" && chainStatus.signature && <div className="status-actions"><button type="button" onClick={refreshChainStatus} disabled={busy}>Refresh status</button><button type="button" onClick={reconcileChainEvidence} disabled={busy}>Reconcile finalized evidence</button></div>}{chainStatus.status === "finalized" && chainStatus.finalized_evidence && <><small role="status">Finalized typed event evidence matched. This is not a payment or compliance claim.</small><details><summary>Finalized event proof</summary><dl className="summary-list"><div><dt>Event</dt><dd>{chainStatus.finalized_evidence.event_type} · {chainStatus.finalized_evidence.event_version}</dd></div><div><dt>Finalized slot</dt><dd>{chainStatus.finalized_evidence.slot}</dd></div><div><dt>Event index</dt><dd>{chainStatus.finalized_evidence.event_index}</dd></div><div><dt>Event evidence digest</dt><dd><code>{digestPreview(chainStatus.finalized_evidence.event_evidence_digest)}</code></dd></div></dl></details></>}</div>}
             </>}
           </div>}
-        </> : <div className="empty-state"><span className="empty-icon">◎</span><strong>No adjustment loaded</strong><p>Propose or load a server-owned record to inspect exact evidence and governed lifecycle options.</p></div>}
-        <div className="adjustment-authority-note"><strong>Authority boundary:</strong> approval is not payment, tax advice, filing, or legal compliance. Token movement requires a separate wallet-signed Solana workflow and finalized chain evidence.</div>
+        </> : <div className="empty-state"><span className="empty-icon">◎</span><strong>No adjustment loaded</strong><p>Create or load a request to review the exact changes and available approval steps.</p></div>}
+        <div className="adjustment-authority-note"><strong>What this page can do:</strong> record a correction request and its approvals. Approval is not payment, tax advice, filing, or legal compliance. Token movement requires a separate wallet-approved ledger workflow and confirmed chain evidence.</div>
       </article>
       {error && <p className="inline-error full-field" role="alert">{error}<button type="button" className="inline-retry" onClick={() => setError(null)}>Dismiss</button></p>}
       {notice && <p className="inline-success full-field" role="status">{notice}</p>}

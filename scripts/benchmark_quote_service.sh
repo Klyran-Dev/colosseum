@@ -12,6 +12,7 @@ load_concurrency="${LOAD_CONCURRENCY:-16}"
 load_timeout_seconds="${LOAD_TIMEOUT_SECONDS:-10}"
 contention_requests="${CONTENTION_REQUESTS:-32}"
 database_pool_size="${API_DATABASE_POOL_SIZE:-16}"
+pool_hold_table_lock_milliseconds="${POOL_HOLD_TABLE_LOCK_MILLISECONDS:-0}"
 api_port="${API_PORT:-28080}"
 replica_api_port="${API_REPLICA_PORT:-28081}"
 postgres_port="${POSTGRES_PORT:-25432}"
@@ -25,6 +26,7 @@ resource_profile_pid=""
 resource_profile_containers=""
 resource_profile_sample_count=0
 resource_profile_epoch_count=0
+pool_hold_pid=""
 run_status=1
 failure_reason="not_completed"
 
@@ -61,6 +63,12 @@ fi
 case "$load_requests:$load_concurrency:$load_timeout_seconds:$contention_requests:$database_pool_size:$api_port:$replica_api_port" in
     *[!0-9:]*|0:*|*:[!0-9:]*|*:*:0|*:*:*:0)
         echo "workload, pool, and API port settings must be positive integers" >&2
+        exit 2
+        ;;
+esac
+case "$pool_hold_table_lock_milliseconds" in
+    *[!0-9]*)
+        echo "POOL_HOLD_TABLE_LOCK_MILLISECONDS must be a non-negative integer" >&2
         exit 2
         ;;
 esac
@@ -126,6 +134,10 @@ start_resource_profile() {
 
 cleanup() {
     stop_resource_profile
+    if [ -n "$pool_hold_pid" ]; then
+        kill "$pool_hold_pid" >/dev/null 2>&1 || true
+        wait "$pool_hold_pid" >/dev/null 2>&1 || true
+    fi
     if [ -n "$replica_container_id" ]; then
         docker rm --force "$replica_container_id" >/dev/null 2>&1 || true
     fi
@@ -238,6 +250,37 @@ export load_response_dir="$response_dir"
 export contention_response_dir
 export contention_idempotency_key="${idempotency_prefix}-same-key"
 
+start_pool_hold() {
+    if [ "$pool_hold_table_lock_milliseconds" -eq 0 ]; then
+        return
+    fi
+    # This is an evidence-harness-only fault injection. It holds the exact
+    # idempotency table touched by the quote transaction so a one-connection
+    # pool must expose queueing; production services never enable it.
+    (
+        docker compose -p "$project_name" exec -T postgres psql \
+            -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol <<SQL
+BEGIN;
+LOCK TABLE idempotency_records IN ACCESS EXCLUSIVE MODE;
+SELECT pg_sleep($pool_hold_table_lock_milliseconds / 1000.0);
+COMMIT;
+SQL
+    ) >/dev/null 2>&1 &
+    pool_hold_pid="$!"
+    for _attempt in $(seq 1 200); do
+        lock_state="$(docker compose -p "$project_name" exec -T postgres psql \
+            -U tax_protocol -d tax_protocol -Atc \
+            "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation WHERE c.relname = 'idempotency_records' AND l.mode = 'AccessExclusiveLock' AND l.granted" \
+            2>/dev/null || true)"
+        if [ "$lock_state" = "1" ]; then
+            return
+        fi
+        sleep 0.01
+    done
+    echo "pool drill table-lock holder did not become ready" >&2
+    exit 1
+}
+
 jurisdiction_request_fixture="$integration_dir/jurisdiction-request.json"
 printf '%s' "$evidence_facts_payload" > "$jurisdiction_request_fixture"
 issuer_image="$project_name-attestation-fixture"
@@ -270,6 +313,7 @@ curl --fail --silent --show-error --max-time "$load_timeout_seconds" \
 }
 
 start_resource_profile
+start_pool_hold
 
 seq 1 "$load_requests" | xargs -P "$load_concurrency" -n 1 sh -c '
     ordinal="$1"
@@ -340,15 +384,23 @@ seq 1 "$contention_requests" | xargs -P "$load_concurrency" -n 1 sh -c '
 contention_pid=$!
 pool_peak_waiting=0
 while kill -0 "$contention_pid" >/dev/null 2>&1; do
-    current_waiting="$(curl --silent --max-time 1 "$base_url/metrics" \
-        | awk -F' ' '/^stp_database_pool_waiting\{service="api"\}/ { print $2; exit }')"
-    case "$current_waiting" in
-        ''|*[!0-9]*) ;;
-        *) [ "$current_waiting" -gt "$pool_peak_waiting" ] && pool_peak_waiting="$current_waiting" ;;
-    esac
-    sleep 0.005
+    for metrics_url in "$base_url/metrics" "$replica_base_url/metrics"; do
+        current_waiting="$(curl --silent --max-time 1 "$metrics_url" \
+            | awk -F' ' '/^stp_database_pool_waiting\{service="api"\}/ { print $2; exit }')"
+        case "$current_waiting" in
+            ''|*[!0-9]*) ;;
+            *) [ "$current_waiting" -gt "$pool_peak_waiting" ] && pool_peak_waiting="$current_waiting" ;;
+        esac
+    done
+    # Keep the pool-saturation observer below the declared request burst
+    # timescale; a 5ms poll can miss a legitimate queue on a warm local image.
+    sleep 0.001
 done
 wait "$contention_pid"
+if [ -n "$pool_hold_pid" ]; then
+    wait "$pool_hold_pid"
+    pool_hold_pid=""
+fi
 stop_resource_profile
 
 contention_sample_count="$(wc -l < "$integration_dir/contention-results" | tr -d ' ')"

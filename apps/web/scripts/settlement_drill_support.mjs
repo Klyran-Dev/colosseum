@@ -1,9 +1,6 @@
 import { ComputeBudgetProgram, Connection, Keypair, PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
 
-export async function compileAndSign({ apiBase, rpcUrl, authorization, calculationId, routeId, policyDigest, nonce }) {
-  if (!Array.isArray(policyDigest) || policyDigest.length !== 32 || policyDigest.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) {
-    throw new Error("POLICY_DIGEST_JSON must contain exactly 32 byte values");
-  }
+export async function compileAndSign({ apiBase, rpcUrl, authorization, calculationId, routeId, nonce }) {
   if (!Number.isSafeInteger(nonce) || nonce <= 0) {
     throw new Error("NONCE must be a positive safe integer");
   }
@@ -16,9 +13,7 @@ export async function compileAndSign({ apiBase, rpcUrl, authorization, calculati
       calculation_id: calculationId,
       route_id: routeId,
       payer: payer.publicKey.toBase58(),
-      nonce,
-      policy_sequence: 3,
-      policy_digest: policyDigest,
+      nonce: String(nonce),
     }),
   });
   const artifact = compileResponse.payload;

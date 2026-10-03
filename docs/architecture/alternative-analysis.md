@@ -17,6 +17,54 @@ This document records the comparison baseline required before implementation. It
 
 ## Decisions
 
+### Responsive product navigation
+
+| Alternative | Strengths | Risks/trade-offs | Decision |
+| --- | --- | --- | --- |
+| Icon-only mobile strip | Compact and familiar to expert console users | Hides task meaning and weakens keyboard/screen-reader discovery | Rejected |
+| Fixed bottom navigation | Familiar mobile placement | Cannot represent the full operational task catalog and blurs high-risk actions | Rejected |
+| Full-screen route menu | Maximum room for copy | Disruptive and removes current-work context | Rejected |
+| **Labeled disclosure in the existing shell** | Complete task discovery, native semantics, preserved context, one navigation model | Adds responsive disclosure state | **Selected in ADR-0265** |
+
+### Quote-to-payment workspace handoff
+
+| Alternative | Strengths | Risks/trade-offs | Decision |
+| --- | --- | --- | --- |
+| Clear all state on navigation | Simple lifecycle | Breaks the primary quote-to-payment journey | Rejected |
+| Retain all workspace results | Smooth switching | Allows stale cross-context data and unbounded browser state | Rejected |
+| Put the quote in the URL | Reloadable | Exposes financial context and adds a second transport contract | Rejected |
+| **Retain only the bounded quote/payment cluster** | Preserves context while keeping authority and state scope explicit | Requires transition tests | **Selected in ADR-0266** |
+
+### Product-shell account and deployment context
+
+| Alternative | Strengths | Risks/trade-offs | Decision |
+| --- | --- | --- | --- |
+| Fixed tenant/operator/environment/network labels | Simple and visually complete | Can falsely describe the account, deployment, or Solana cluster | Rejected |
+| Browser storage, URL, or caller-supplied context | Easy to customize | Untrusted display data can be mistaken for authority and can leak between accounts | Rejected |
+| Infer deployment from RPC URL or hostname | No extra build setting | Proxies, failover, and local fixtures make inference unreliable | Rejected |
+| Runtime context endpoint | Server-owned and changeable | Adds a request and availability dependency to the static shell | Deferred until a signed deployment-manifest contract exists |
+| **Explicit immutable build context plus server-owned account snapshot** | Fast, deterministic, honest on configuration failure, and compatible with NGINX | Release builds must pass and record context values | **Selected; ADR-0267** |
+
+### Browser authentication and session handling
+
+| Alternative | Strengths | Risks/trade-offs | Decision |
+| --- | --- | --- | --- |
+| Paste a bearer token into each workspace | Compatible with synthetic fixtures | Unsafe product ergonomics, duplicated credentials, and no real sign-in flow | Rejected for non-local builds |
+| OIDC implicit flow | Minimal redirect implementation | Front-channel tokens and weaker replay protection | Rejected |
+| **OIDC Authorization Code + PKCE public client** | Standards-based, no client secret, memory-only access token, static-SPA compatible | Requires provider redirect/CORS configuration | **Selected; ADR-0268** |
+| Server-side BFF cookie session | HttpOnly session and central revocation | Adds a stateful callback service and operational surface | Deferred |
+| Wallet signature as workforce identity | Native wallet support | Does not establish tenant, role, employment, or revocation authority | Rejected |
+
+### OIDC edge connectivity and CSP
+
+| Alternative | Strengths | Risks/trade-offs | Decision |
+| --- | --- | --- | --- |
+| Global `connect-src https:` | Works with any identity provider | Allows arbitrary HTTPS browser egress | Rejected |
+| Keep `connect-src 'self'` | Strong static policy | Blocks a configured external identity provider | Rejected |
+| Runtime browser-controlled CSP | Avoids image rebuilds | Configuration is untrusted and can drift from release evidence | Rejected |
+| Same-origin BFF | Same-origin browser policy and HttpOnly session | Adds a stateful callback/session service | Deferred |
+| **Build-time exact issuer-origin allow-list with same-origin metadata endpoints** | Strict, reproducible, compatible with static NGINX, and fail-closed | Provider changes require a release | **Selected; ADR-0269** |
+
 ### Production Rust panic safety
 
 | Alternative | Strengths | Risks/trade-offs | Decision |
@@ -2030,3 +2078,202 @@ failure or timeout.
 | Trust returned signature bytes | Lower latency | Payload/key/signature substitution risk | Rejected |
 | Broker-backed signing | Durable retry | Ambiguous issuance/idempotency and excessive quote latency | Rejected |
 | **Async signer port with deadline and local envelope verification** | Non-blocking, vendor-neutral, bounded, and auditable | Requires explicit custody adapter and rotation ceremonies | **Selected in ADR-0253** |
+
+### Production SaaS authorization-aware UI
+
+**Criteria:** preserve server authority, make RBAC/PBAC/ABAC explainable,
+support keyboard and responsive operation, avoid misleading state, keep the
+settlement hot path unchanged, and prevent policy drift across workspaces.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Long workspace tab strip | Small change and familiar implementation | Poor information architecture, weak risk context, difficult to scale | Rejected |
+| Decode JWT claims in React | Immediate local affordances | Untrusted claims, tenant/resource substitution, stale policy, false authorization | Rejected |
+| Frontend BFF policy gateway | Centralized browser API | Adds a second authority, latency hop, and failure domain to protected flows | Rejected |
+| Micro-frontends | Independent team releases | Runtime/policy/accessibility drift and more operational complexity | Rejected |
+| **Single React SPA product shell plus server-evaluated capability contract** | Consistent SaaS UX, explicit risk context, low navigation latency, one policy catalog, server remains authoritative | Requires capability endpoint and contract tests before personalized production rollout | **Selected in ADR-0262** |
+
+### Browser OIDC ID-token validation
+
+**Criteria:** bind the provider response to the one-time browser transaction;
+verify issuer, client, signature, nonce, and time claims; preserve the static
+NGINX deployment; bound provider work and key-rotation behavior; and keep API
+authorization authoritative.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Ignore the ID token and rely only on the access token | Smallest browser implementation | Leaves the requested OIDC nonce and `openid` response unverified | Rejected |
+| Decode ID-token claims without signature verification | Very low latency | Claims are attacker-controlled | Rejected |
+| Add a stateful BFF for token validation | Centralized validation and HttpOnly custody | New service, latency hop, failure domain, and deployment model | Deferred |
+| **Bounded Web Crypto validation in the SPA with a pinned JOSE library** | Preserves static delivery, validates before session creation, and keeps key work off financial hot paths | Requires strict JWKS parsing, rotation evidence, and dependency governance | **Selected in ADR-0270** |
+
+### Task-oriented product language and navigation
+
+**Criteria:** make finance and tax workflows understandable on first use;
+preserve exact evidence, security, and chain context; support mixed operator,
+administrator, and engineering audiences; and avoid changing the underlying
+authorization or settlement authority.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Keep engineering terms in the primary journey | Precise for developers | Forces operators to translate implementation concepts and makes the product feel like an internal console | Rejected |
+| Remove technical language entirely | Friendly first impression | Hides important authorization, evidence, and chain boundaries | Rejected |
+| Separate operator and developer applications | Each surface can optimize for one audience | Duplicates workflows and increases policy, accessibility, and support drift | Deferred |
+| **Use task-oriented labels with progressive technical disclosure** | Clear outcomes for operators while retaining exact audit and support detail | Requires content governance and terminology review for every workspace | **Selected in ADR-0263** |
+
+### Server-owned capability snapshot
+
+**Criteria:** keep tenant and authorization authority on the server; make the
+shell explainable; avoid database, RPC, broker, or identity-provider work on
+navigation; bound latency and response size; and fail closed for missing
+resource context.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Decode JWT claims in React | No extra request | Untrusted/stale claims and no resource policy evaluation | Rejected |
+| Put capabilities in login tokens | One response at login | Policy staleness, large tokens, difficult revocation | Rejected |
+| Query PostgreSQL for every shell load | Rich context | Adds storage latency and a failure domain to navigation | Rejected |
+| Policy BFF in front of the API | Central policy surface | Second authority and an extra hop on protected operations | Rejected |
+| **Bounded server snapshot from the verified principal and policy catalog** | Low latency, explainable, no persistence dependency, server remains authoritative | Resource-specific conditions remain indeterminate until workflow context exists | **Selected in ADR-0264** |
+
+### Executable UI language contract
+
+**Criteria:** keep primary journeys understandable to finance and tax
+operators, preserve exact protocol evidence for specialist review, prevent
+copy regressions in lazy workspaces, and avoid adding a policy or latency
+authority to the settlement path.
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Manual design review only | No tooling or maintenance | Regressions are easy to merge and inconsistent across workspaces | Rejected |
+| Ban technical terms from all frontend source | Simple search rule | Prevents accurate evidence, tests, and advanced review details | Rejected |
+| Separate operator and engineering applications | Optimized language per audience | Duplicated workflows and policy/accessibility drift | Deferred |
+| **Executable primary-copy contract with progressive disclosure** | Blocks primary-surface regressions while preserving exact evidence | Requires a maintained catalog and periodic human language review | **Selected in ADR-0271** |
+
+### Payment review progressive disclosure
+
+**Criteria:** let a finance or operations user understand the amount and
+authorization decision without protocol knowledge; preserve exact route,
+account, policy, compute, and intent evidence for controlled review; keep
+wallet and server authority boundaries unchanged; and avoid adding work to the
+settlement hot path.
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Show protocol fields in the primary payment form | Familiar to blockchain engineers | High cognitive load and unsafe copy/paste pressure for operators | Rejected |
+| Hide protocol evidence | Simplest payment screen | Removes audit and incident-response evidence | Rejected |
+| Tooltips only | Small visual footprint | Poor keyboard, touch, screen-reader, and support workflows | Rejected |
+| **Plain-language primary review with native accessible disclosures** | Clear authorization decision with inspectable evidence and no runtime authority change | Requires copy governance and disclosure tests | **Selected in ADR-0272** |
+
+### Explicit financial inputs in financial workspaces
+
+**Criteria:** prevent accidental submission of invented or stale financial
+facts; preserve a fast real-user workflow; keep retry identity stable; and
+avoid creating a demo mode inside the production application.
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Open with realistic sample amounts and rule values | Fast first interaction | Misleading account context and accidental financial submission | Rejected |
+| Add a separate demo mode | Easy exploration | Duplicated behavior and unclear production boundary | Rejected |
+| **Start financial fields empty and require explicit entry** | Honest, auditable, and still supports the real quote, invoice, document-payment, and rule-simulation flows | Adds a small amount of initial operator input | **Selected in ADR-0273** |
+
+### Explicit currency in aggregate tax workspaces
+
+**Criteria:** keep the global tax contract honest; never infer financial
+meaning from locale or a hidden default; preserve server authority for asset
+support and precision; and avoid adding a client-side settlement authority.
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Hidden `USD` default | Fastest form | Silently constrains global behavior and can misstate tax facts | Rejected |
+| Infer from browser locale | No extra field | Locale is a display preference, not a financial fact | Rejected |
+| Read from client-side route state | Avoids duplicate entry | Client state cannot authorize supported currency or settlement compatibility | Rejected |
+| **Require explicit currency and validate it on the server** | Honest global input and one authoritative compatibility boundary | Adds one required field | **Selected in ADR-0274** |
+
+### Capability snapshot latency evidence
+
+**Criteria:** measure the real authenticated API boundary, preserve semantic
+authorization correctness under load, exercise replica behavior, keep local
+evidence reproducible, and avoid turning a benchmark into a production
+authority.
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| In-process Rust microbenchmark only | Fast and stable | Omits HTTP, JWT verification, serialization, and replica behavior | Rejected |
+| External unbounded load platform | Broad load generation | Adds environment and supply-chain variance to a local gate | Rejected |
+| Browser timing assertion only | Exercises the visible shell | Browser scheduling and network noise obscure service latency | Rejected |
+| **Bounded Docker HTTP benchmark across two API replicas with semantic checks** | Reproducible, authenticated, concurrency-aware, and correctness-preserving | Local synthetic results do not prove regional production SLOs | **Selected in ADR-0275** |
+
+### Multi-tenant capability session reset
+
+**Criteria:** prove stale tenant context is removed in the real SPA, preserve
+the server-owned authorization boundary, exercise the credential replacement
+transition, and avoid confusing UI evidence with identity-provider or API
+authorization evidence.
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Parser unit test only | Fast and deterministic | Does not exercise React state or rendered context | Rejected |
+| Single-tenant browser journey | Proves initial capability rendering | Misses cross-tenant replacement and stale-state leakage | Rejected |
+| Browser JWT claim decoding | Convenient fixture setup | Violates server-owned authorization and tenant derivation | Rejected |
+| **Two-tenant real-browser capability-response journey** | Proves request replacement, reset state, and stale-context removal | Synthetic responses do not replace staging identity-provider evidence | **Selected in ADR-0276** |
+
+### Complete workspace capability catalog
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Keep seven broad capability IDs | Small response | Leaves document payment, adjustment, refund, and reconciliation navigation without an explicit server decision | Rejected |
+| Emit every protected API endpoint | Precise | Couples product navigation to transport details and expands the policy surface without bound | Rejected |
+| Hide denied workspaces in the browser | Cleaner sidebar | Makes the browser an authorization authority and hides actionable explanations | Rejected |
+| **Bounded primary capability per workspace with handler-level re-authorization** | Complete UX affordance coverage, stable product vocabulary, and predictable latency | A workspace status is not a substitute for endpoint authorization | **Selected; see ADR-0277** |
+
+### Addressable workspace navigation
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Keep workspace state only in React memory | Minimal code | Refresh, bookmarks, support links, and browser history do not work | Rejected |
+| Hash fragments | No server fallback required | Less useful canonical URLs and weaker support-link ergonomics | Rejected |
+| Full client router | Rich nested route features | Additional dependency/lifecycle surface and unnecessary authority boundary | Rejected |
+| Server-rendered routing | Mature route/data integration | Violates the static React/Vite/NGINX boundary | Rejected |
+| **Typed History API adapter with an NGINX SPA fallback** | Stable paths, no new runtime, bounded state, and compatibility with lazy workspaces | Requires an explicit allow-list and direct-link test | **Selected; see ADR-0278** |
+
+### Server-owned checkout policy binding
+
+**Criteria:** prevent operators from typing authority identifiers into a
+payment flow; bind policy data to the authenticated tenant's persisted signed
+evidence; preserve exact review evidence; avoid an extra hot-path round trip;
+and fail closed for stale or substituted policy inputs.
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Keep policy fields in the primary form | No API change | Copy/paste errors, technical UX, and a caller-controlled authority proposal | Rejected |
+| Hide the same caller fields in an advanced section | Smaller primary surface | Still permits stale or substituted policy inputs | Rejected |
+| Browser derives policy from attestation JSON | Removes manual typing | Browser becomes part of the authority boundary | Rejected |
+| Separate policy lookup before compilation | Explicit lookup | Extra round trip and a lookup/compile race | Rejected |
+| **Derive policy values inside each authenticated compile boundary from persisted attestation evidence** | One source of truth, fewer round trips, simpler UI, and fail-closed replay semantics | Requires a versioned request-schema change | **Selected in ADR-0279** |
+
+### Browser credential presentation
+
+**Criteria:** preserve the memory-only session boundary, prevent bearer-token
+disclosure through the DOM or support artifacts, keep authenticated request
+clients typed, and retain an honest local-development path.
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Render the token in a read-only field | Makes the request dependency visible | Credential disclosure without an authorization benefit | Rejected |
+| Mask the token in a password field | Reduces casual shoulder-surfing | Still exposes a credential to the DOM and copy/paste flows | Rejected |
+| Pass only a boolean session flag to every workspace | Strongest presentation boundary | Requires a broad request-client contract refactor | Deferred |
+| **Pass the token in memory and render only bounded session status** | Removes disclosure while preserving the current typed request boundary | Requires a repository-wide presentation contract | **Selected in ADR-0280** |
+
+### Quote retry-reference presentation
+
+**Criteria:** preserve exact idempotent retries, rotate request identity when
+semantic facts change, avoid exposing protocol identifiers in the primary tax
+workflow, and keep the key out of persistent browser storage.
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Keep an editable UUID field | Explicit and inspectable | Technical copy/paste errors and accidental reuse after edits | Rejected |
+| Generate a new key for every submit | Minimal state | Retries can create duplicate durable calculations | Rejected |
+| Persist the key in browser storage | Survives reloads | Retains replay identity and complicates session isolation | Rejected |
+| **In-memory CSPRNG key regenerated on semantic input change** | Stable retries, safe input mutation, no persistence, and plain-language UX | Reload starts a new request identity | **Selected in ADR-0281** |

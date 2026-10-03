@@ -41,6 +41,7 @@ const DEFAULT_RULE_DOCUMENT = `{
 type GovernancePanelProps = {
   apiBase: string;
   serviceOnline: boolean;
+  accessToken: string;
   locale?: string;
   timeZone?: string;
 };
@@ -56,9 +57,8 @@ function roleCopy(status: GovernanceState["status"]): string {
   }
 }
 
-export default function GovernancePanel({ apiBase, serviceOnline, locale = DEFAULT_LOCALE, timeZone = DEFAULT_TIME_ZONE }: GovernancePanelProps) {
+export default function GovernancePanel({ apiBase, serviceOnline, accessToken, locale = DEFAULT_LOCALE, timeZone = DEFAULT_TIME_ZONE }: GovernancePanelProps) {
   const [ruleSetId, setRuleSetId] = useState("");
-  const [accessToken, setAccessToken] = useState("");
   const [state, setState] = useState<GovernanceState | null>(null);
   const [targetStatus, setTargetStatus] = useState<GovernanceState["status"] | "">("");
   const [evidence, setEvidence] = useState('{\n  "source": "operator-console"\n}');
@@ -82,9 +82,9 @@ export default function GovernancePanel({ apiBase, serviceOnline, locale = DEFAU
   const [draftIdempotencyKey, setDraftIdempotencyKey] = useState<string | null>(null);
   const [draftIdempotencyPayload, setDraftIdempotencyPayload] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
-  const [simulationGross, setSimulationGross] = useState("1100");
-  const [simulationNet, setSimulationNet] = useState("1000");
-  const [simulationCurrency, setSimulationCurrency] = useState("USD");
+  const [simulationGross, setSimulationGross] = useState("");
+  const [simulationNet, setSimulationNet] = useState("");
+  const [simulationCurrency, setSimulationCurrency] = useState("");
   const [simulation, setSimulation] = useState<TaxSimulation | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
   const documentRuleSet = useMemo(() => {
@@ -114,7 +114,7 @@ export default function GovernancePanel({ apiBase, serviceOnline, locale = DEFAU
       setState(loaded);
       setSimulation(null);
       setTargetStatus(nextGovernanceStatuses(loaded.status)[0] ?? "");
-      if (announce) setNotice("Loaded a server-owned governance snapshot. Review the event trail before acting.");
+      if (announce) setNotice("Rule details loaded. Review the decision history before acting.");
       return true;
     } catch (cause) {
       setState(null);
@@ -252,7 +252,7 @@ export default function GovernancePanel({ apiBase, serviceOnline, locale = DEFAU
   async function simulatePersistedRule(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!state || !serviceOnline || !accessToken.trim()) {
-      setError("Load a server-owned rule snapshot and provide an authenticated governance token before simulating.");
+      setError("Load the rule details and sign in before running a simulation.");
       return;
     }
     if (!/^[0-9]+$/.test(simulationGross) || !/^[0-9]+$/.test(simulationNet) || !simulationCurrency.trim()) {
@@ -296,13 +296,13 @@ export default function GovernancePanel({ apiBase, serviceOnline, locale = DEFAU
     <section className="governance-layout" aria-label="Tax rule governance workspace">
       <article className="panel governance-control-panel">
         <div className="panel-heading">
-          <div><p className="eyebrow">Control plane / evidence first</p><h2>Review and promote a rule</h2></div>
-          <span className="status-pill">Server-authorized</span>
+          <div><p className="eyebrow">Tax rules / review</p><h2>Review and publish a rule</h2></div>
+          <span className="status-pill">Access checked</span>
         </div>
-        <p className="panel-copy">Load the current rule state before acting. The API, not this browser, decides role membership, duty separation, lifecycle validity, and revision conflicts.</p>
+        <p className="panel-copy">Load the current rule before acting. The service confirms your responsibilities, required approvals, effective dates, and whether the record has changed.</p>
         <details className="authoring-section" open>
           <summary>Create a governed draft</summary>
-          <p className="evidence-note">The server validates and canonicalizes the complete Tier-1 rule graph. Creation records the author, provenance, digest, and outbox event; it does not publish or certify tax treatment.</p>
+          <p className="evidence-note">The service checks the complete rule, records who created it and where it came from, and keeps it in draft until the required review and approval steps are complete.</p>
           <form onSubmit={createRuleDraft} className="form-grid">
             <label><span>External rule ID</span><input value={draftExternalId} onChange={(event) => { const value = event.target.value; setDraftExternalId(value); setStructuredRuleDraft((current) => ({ ...current, id: value })); }} autoComplete="off" required /></label>
             <label><span>Version</span><input inputMode="numeric" min="1" value={draftVersion} onChange={(event) => { const value = event.target.value; setDraftVersion(value); setStructuredRuleDraft((current) => ({ ...current, version: value })); }} required /></label>
@@ -310,16 +310,16 @@ export default function GovernancePanel({ apiBase, serviceOnline, locale = DEFAU
             <label><span>Tax regime</span><input value={draftRegime} onChange={(event) => setDraftRegime(event.target.value)} required /></label>
             <label className="full-field"><span>Effective from (browser local time, sent as UTC)</span><input type="datetime-local" value={draftEffectiveFrom} onChange={(event) => setDraftEffectiveFrom(event.target.value)} required /></label>
             <div className="full-field rule-editor-mode">
-              <label><span>Rule document authoring mode</span><select value={ruleEditorMode} onChange={(event) => {
+              <label><span>Rule editing mode</span><select value={ruleEditorMode} onChange={(event) => {
                 const nextMode = event.target.value as "structured" | "json";
                 if (nextMode === "json") {
                   try { setDraftRuleDocument(JSON.stringify(buildRuleSet(structuredRuleDraft), null, 2)); } catch { /* structured validation is shown inline */ }
                 }
                 setRuleEditorMode(nextMode);
-              }}><option value="structured">Structured Tier-1 workbench</option><option value="json">Advanced canonical JSON</option></select></label>
+                }}><option value="structured">Guided rule builder</option><option value="json">Advanced JSON</option></select></label>
               {ruleEditorMode === "structured" ? <RuleWorkbench draft={structuredRuleDraft} onChange={setStructuredRuleDraft} /> : <>
-                <label className="full-field"><span>Canonical RuleSet JSON (id/version must match above)</span><textarea value={draftRuleDocument} onChange={(event) => setDraftRuleDocument(event.target.value)} rows={12} spellCheck={false} required /></label>
-                <p className="field-help">Advanced mode is for exact DSL interchange. The server still validates, canonicalizes, and governs every document; this browser does not calculate or publish it.</p>
+                <label className="full-field"><span>Rule document JSON (ID and version must match above)</span><textarea value={draftRuleDocument} onChange={(event) => setDraftRuleDocument(event.target.value)} rows={12} spellCheck={false} required /></label>
+                <p className="field-help">Advanced mode is for exact rule exchange. The service still validates and governs every document; this browser does not calculate or publish it.</p>
               </>}
             </div>
             <label className="full-field"><span>Provenance JSON object (max 16 KiB)</span><textarea value={draftProvenance} onChange={(event) => setDraftProvenance(event.target.value)} rows={4} spellCheck={false} required /></label>
@@ -327,15 +327,14 @@ export default function GovernancePanel({ apiBase, serviceOnline, locale = DEFAU
           </form>
         </details>
         <form onSubmit={loadGovernance} className="form-grid">
-          <label className="full-field"><span>Rule-set UUIDv7</span><input value={ruleSetId} onChange={(event) => setRuleSetId(event.target.value)} placeholder="0192…" autoComplete="off" spellCheck={false} required /></label>
-          <label className="full-field"><span>OIDC access token (memory-only)</span><textarea value={accessToken} onChange={(event) => setAccessToken(event.target.value)} placeholder="Token with tax:rule:read and a governance role" autoComplete="off" spellCheck={false} rows={3} required /></label>
-          <button type="submit" disabled={!serviceOnline || isLoading || !ruleSetId.trim() || !accessToken.trim()}>{isLoading ? "Loading snapshot…" : "Load governance snapshot"}</button>
+          <label className="full-field"><span>Rule reference</span><input value={ruleSetId} onChange={(event) => setRuleSetId(event.target.value)} placeholder="Paste the saved rule reference" autoComplete="off" spellCheck={false} required /></label>
+          <button type="submit" disabled={!serviceOnline || isLoading || !ruleSetId.trim() || !accessToken.trim()}>{isLoading ? "Loading rule details…" : "Load rule details"}</button>
         </form>
         {!serviceOnline && <p className="inline-warning" role="alert">The service is unavailable. Governance actions are disabled and no local state is substituted.</p>}
         {error && <p className="inline-error" role="alert">{error}</p>}
         {notice && <p className="inline-success" role="status">{notice}</p>}
         {state && <form onSubmit={submitTransition} className="governance-action-form">
-          <div className="governance-current-state"><span>Current server state</span><strong>{state.status}</strong><small>{roleCopy(state.status)} · revision {state.governance_revision}</small></div>
+          <div className="governance-current-state"><span>Current status</span><strong>{state.status}</strong><small>{roleCopy(state.status)} · revision {state.governance_revision}</small></div>
           {nextStatuses.length > 0 ? <>
             <label><span>Next governed action</span><select value={targetStatus} onChange={(event) => setTargetStatus(event.target.value as GovernanceState["status"])}>{nextStatuses.map((status) => <option key={status} value={status}>{transitionLabel(state.status, status)}</option>)}</select></label>
             <label><span>Decision evidence (JSON object, max 16 KiB)</span><textarea value={evidence} onChange={(event) => setEvidence(event.target.value)} rows={6} spellCheck={false} /></label>
@@ -347,14 +346,14 @@ export default function GovernancePanel({ apiBase, serviceOnline, locale = DEFAU
       <article className="panel governance-evidence-panel" aria-live="polite">
         <div className="panel-heading"><div><p className="eyebrow">Immutable read model</p><h2>Governance evidence</h2></div>{state && <span className="status-pill status-pill-warning">{state.status}</span>}</div>
         <details className="authoring-section simulation-section" open>
-          <summary>Server-owned draft simulation</summary>
-          <p className="evidence-note">Simulation reads the persisted rule by tenant-scoped UUID, rechecks its identity and digest, and runs the warm Rust engine. It creates no quote, attestation, publication, or settlement authority.</p>
+          <summary>Try the saved rule</summary>
+          <p className="evidence-note">This uses the saved rule and the service tax engine to show a what-if result. It does not create a quote, publish the rule, or authorize a payment.</p>
           <form onSubmit={simulatePersistedRule} className="form-grid">
-            <label><span>Gross atomic units</span><input inputMode="numeric" min="0" value={simulationGross} onChange={(event) => setSimulationGross(event.target.value)} required /></label>
-            <label><span>Net atomic units</span><input inputMode="numeric" min="0" value={simulationNet} onChange={(event) => setSimulationNet(event.target.value)} required /></label>
+            <label><span>Amount before tax</span><input inputMode="numeric" min="0" value={simulationGross} onChange={(event) => setSimulationGross(event.target.value)} required /></label>
+            <label><span>Amount subject to tax</span><input inputMode="numeric" min="0" value={simulationNet} onChange={(event) => setSimulationNet(event.target.value)} required /></label>
             <label><span>Currency</span><input value={simulationCurrency} onChange={(event) => setSimulationCurrency(event.target.value.toUpperCase())} maxLength={12} required /></label>
             <p className="field-help full-field">Jurisdiction is bound to the loaded rule ({state?.jurisdiction ?? "load a rule first"}); client-supplied jurisdiction evidence is rejected.</p>
-            <button type="submit" disabled={!state || !serviceOnline || isSimulating || !accessToken.trim()}>{isSimulating ? "Simulating persisted rule…" : "Simulate persisted rule"}</button>
+            <button type="submit" disabled={!state || !serviceOnline || isSimulating || !accessToken.trim()}>{isSimulating ? "Running controlled simulation…" : "Run controlled simulation"}</button>
           </form>
         {simulation && <div className="simulation-result" role="status">
             <div className="governance-current-state"><span>Unattested server result</span><strong>{formatAtomicValue(simulation.result.total_tax_atomic, simulation.result.currency, locale)} tax</strong><small>Calculation reference {simulation.calculation_id} · rule {simulation.result.rule_set_id} v{simulation.result.rule_version}</small></div>
@@ -362,7 +361,7 @@ export default function GovernancePanel({ apiBase, serviceOnline, locale = DEFAU
             <div className="trace-list">{simulation.result.components.map((component) => <div className="trace-row" key={component.id}><div><strong>{component.label}</strong><small>{component.explanation}</small></div><strong>{formatAtomicValue(component.tax_atomic, simulation.result.currency, locale)}</strong></div>)}</div>
           </div>}
         </details>
-        {!state ? <div className="empty-state"><span className="empty-icon">◎</span><strong>No rule snapshot loaded</strong><p>Enter an authenticated rule-set UUID to inspect duties, effective dates, digest, and the append-only decision trail.</p></div> : <div className="governance-evidence-content">
+        {!state ? <div className="empty-state"><span className="empty-icon">◎</span><strong>No rule loaded</strong><p>Enter a saved rule reference to inspect its status, effective dates, review history, and supporting details.</p></div> : <div className="governance-evidence-content">
           <dl className="summary-list"><div><dt>Rule identity</dt><dd>{state.external_id} v{state.version}</dd></div><div><dt>Jurisdiction / regime</dt><dd>{state.jurisdiction} / {state.regime}</dd></div><div><dt>Rule digest</dt><dd><code>{state.rule_digest_hex.slice(0, 16)}…</code></dd></div><div><dt>Effective from</dt><dd>{formatTimestampValue(state.effective_from, locale, timeZone)}</dd></div><div><dt>Author</dt><dd>{state.author_subject ?? "Not assigned"}</dd></div><div><dt>Reviewer</dt><dd>{state.reviewer_subject ?? "Not assigned"}</dd></div><div><dt>Approver</dt><dd>{state.approver_subject ?? "Not assigned"}</dd></div></dl>
           <div><h3 className="subheading">Decision trail <span>{state.events.length}</span></h3>{state.events.length === 0 ? <p className="evidence-note">No transition evidence has been recorded for this draft.</p> : <ol className="governance-timeline">{state.events.map((event) => <li key={event.id}><div className="timeline-marker" /><div><strong>{event.from_status} → {event.to_status}</strong><small>{event.action} by {event.actor_subject} · {formatTimestampValue(event.occurred_at, locale, timeZone)}</small><details><summary>Evidence</summary><pre>{JSON.stringify(event.evidence, null, 2)}</pre></details></div></li>)}</ol>}</div>
           </div>}

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createClientUuid } from "./clientIdentity";
+import { createClientNonce, createClientUuid } from "./clientIdentity";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -19,5 +19,22 @@ describe("client idempotency identity", () => {
   it("fails closed when no cryptographically secure random source exists", () => {
     vi.stubGlobal("crypto", undefined);
     expect(() => createClientUuid()).toThrow("cryptographically secure random source");
+  });
+
+  it("creates a positive canonical decimal u64 nonce from secure random words", () => {
+    vi.stubGlobal("crypto", {
+      getRandomValues(target: Uint32Array) {
+        target[0] = 1;
+        target[1] = 1;
+        return target;
+      },
+    });
+
+    expect(createClientNonce()).toBe("4294967297");
+  });
+
+  it("fails closed when a secure nonce source is unavailable", () => {
+    vi.stubGlobal("crypto", undefined);
+    expect(() => createClientNonce()).toThrow("cryptographically secure random source");
   });
 });

@@ -58,3 +58,12 @@ is evidence of the mechanism, not production disaster-recovery certification.
 The command must fail on dump, restore, readiness, schema, UUIDv7, or integrity
 query errors and must print a success marker only after the restored target has
 passed all checks.
+
+## Current local verification
+
+On 2026-10-03, `make backup-restore-drill` passed against a fresh Docker
+PostgreSQL 18 volume and the complete migration/fixture set. The logical dump
+restored successfully and the post-restore schema, UUIDv7, and durable-evidence
+integrity checks passed. This remains mechanism evidence; encrypted off-site
+retention, key recovery, measured RPO/RTO, and production authorization remain
+open.

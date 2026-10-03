@@ -85,3 +85,11 @@ requests at concurrency 64, 256 same-key contention requests, zero errors,
 and a peak observed waiter count of 3. It converged to one contention
 idempotency record, calculation, and outbox event. This is a bounded local
 capacity result, not a production capacity claim.
+
+On 2026-10-03, the pool drill was hardened after a 5 ms sampler missed a
+legitimate short-lived queue. The harness now samples both API replicas at
+1 ms and can hold the idempotency table for a bounded 50 ms fault-injection
+window only when explicitly enabled by the drill. The rerun preserved 0%
+errors, exact same-key persistence, and observed peak `waiting=2` with a
+one-connection pool. The lock hold is test-harness-only and is never enabled
+by production configuration.

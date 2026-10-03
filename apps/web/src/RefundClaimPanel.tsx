@@ -23,8 +23,8 @@ function statusLabel(status: string): string {
   return status.replaceAll("_", " ");
 }
 
-function atomicAmount(value: string | null, locale: string): string {
-  return value === null ? "Not present" : `${formatInteger(value, locale)} atomic units`;
+function amountValue(value: string | null, locale: string): string {
+  return value === null ? "Not present" : formatInteger(value, locale);
 }
 
 function digestPreview(bytes: number[]): string {
@@ -45,7 +45,7 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
 
   function requireToken(): string {
     const token = accessToken.trim();
-    if (!token) throw new Error("An OIDC access token with the refund-claim scope and role is required. It is held in memory only.");
+    if (!token) throw new Error("Sign in with an account allowed to prepare refund requests. The credential is held in memory only.");
     return token;
   }
 
@@ -60,7 +60,7 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
     clearMessages();
     try {
       const token = requireToken();
-      if (!adjustmentId.trim()) throw new Error("An approved adjustment ID is required; financial values are loaded by the API.");
+      if (!adjustmentId.trim()) throw new Error("An approved correction reference is required; financial values are loaded by the service.");
       const response = await fetchWithTimeout(`${apiBase.replace(/\/$/, "")}/v1/settlement/refund-claims`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
@@ -73,7 +73,7 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
       setSignedBytes(null);
       setRecoveryBytes("");
       setLookupId(parsed.intent_id);
-      setNotice("The server prepared an immutable claim artifact. Review the exact amounts, accounts, authorities, and expiry before collecting wallet signatures. No funds moved.");
+      setNotice("Your refund request is ready for review. Check the amounts, recipient, approval roles, and expiry before signing. No funds moved.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Refund claim preparation failed.");
     } finally {
@@ -87,14 +87,14 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
     clearMessages();
     try {
       const token = requireToken();
-      if (!lookupId.trim()) throw new Error("A refund claim intent ID is required.");
+      if (!lookupId.trim()) throw new Error("A refund request reference is required.");
       const response = await fetchWithTimeout(`${apiBase.replace(/\/$/, "")}/v1/settlement/refund-claims/${lookupId.trim()}`, { headers: { authorization: `Bearer ${token}` } });
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok) throw new Error(responseError(response, payload, `Refund claim recovery failed (${response.status})`));
       setClaim(parseRefundClaimResponse(payload));
       setSignedBytes(null);
       setRecoveryBytes("");
-      setNotice("The durable claim state was loaded. Previously signed bytes are not returned by the API; paste the exact wallet artifact to resume a signed submission.");
+      setNotice("The saved refund request was loaded. For safety, the service does not return signed wallet data; paste the unchanged wallet file to continue.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Refund claim recovery failed.");
     } finally {
@@ -106,7 +106,7 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
     setBusy(true);
     clearMessages();
     try {
-      if (!claim) throw new Error("Prepare or recover a refund claim before signing.");
+      if (!claim) throw new Error("Prepare or recover a refund request before signing.");
       if (claim.status !== "prepared_unsubmitted" && claim.status !== "signed") throw new Error("This claim is not in a wallet-signable state. Reconcile the durable state before taking another action.");
       const serialized = signedBytes ?? (recoveryBytes.trim() || null);
       if (role === "refund_funder" && !serialized) throw new Error("The proposer signature is required before the refund-funder wallet can sign.");
@@ -131,7 +131,7 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
     clearMessages();
     try {
       const token = requireToken();
-      if (!claim) throw new Error("Prepare or recover a refund claim before submission.");
+      if (!claim) throw new Error("Prepare or recover a refund request before submission.");
       const bytes = signedBytes ?? recoveryBytes.trim();
       if (!bytes || !refundClaimHasAllSignatures(bytes)) throw new Error("Both required wallet signatures must be present before submission.");
       const response = await fetchWithTimeout(`${apiBase.replace(/\/$/, "")}/v1/settlement/refund-claims/submit`, {
@@ -158,7 +158,7 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
     clearMessages();
     try {
       const token = requireToken();
-      if (!claim) throw new Error("Prepare or recover a refund claim before reconciliation.");
+      if (!claim) throw new Error("Prepare or recover a refund request before reconciliation.");
       const response = await fetchWithTimeout(`${apiBase.replace(/\/$/, "")}/v1/settlement/refund-claims/${claim.intent_id}/reconcile`, {
         method: "POST",
         headers: { authorization: `Bearer ${token}` },
@@ -177,16 +177,16 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
   return (
     <section className="adjustment-layout" aria-label="Refund claim wallet workspace">
       <article className="panel">
-        <div className="panel-heading"><div><p className="eyebrow">Refund movement / two-signer wallet boundary</p><h2>Prepare a refund claim</h2></div><span className="status-pill">No custody</span></div>
-        <p className="panel-copy">The API derives the receipt, amounts, token accounts, claim nonce, and expiry from approved evidence. The browser cannot edit financial or account fields.</p>
+        <div className="panel-heading"><div><p className="eyebrow">Refund request / two-person approval</p><h2>Prepare a refund request</h2></div><span className="status-pill">You keep custody</span></div>
+        <p className="panel-copy">The service loads the approved payment details and prepares the refund for review. You can review the result, but cannot change its financial or recipient details in the browser.</p>
         <form className="form-grid" onSubmit={prepare}>
-          <label className="full-field"><span>Approved adjustment ID</span><input value={adjustmentId} onChange={(event) => setAdjustmentId(event.target.value)} placeholder="UUIDv7 from the approved adjustment" required /></label>
-          <label className="full-field"><span>Idempotency key</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} required /></label>
-          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>{busy ? "Working…" : "Prepare server-owned claim"}</button>
+          <label className="full-field"><span>Approved correction reference</span><input value={adjustmentId} onChange={(event) => setAdjustmentId(event.target.value)} placeholder="Paste the approved correction reference" required /></label>
+          <label className="full-field"><span>Request reference</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} aria-describedby="refund-request-reference-help" required /><small id="refund-request-reference-help">A unique reference prevents duplicate requests when you retry.</small></label>
+          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>{busy ? "Preparing…" : "Prepare refund request"}</button>
         </form>
         <form className="form-grid" onSubmit={load}>
-          <label className="full-field"><span>Recover intent ID</span><input value={lookupId} onChange={(event) => setLookupId(event.target.value)} placeholder="UUIDv7 claim intent" /></label>
-          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>Load durable state</button>
+          <label className="full-field"><span>Refund request reference</span><input value={lookupId} onChange={(event) => setLookupId(event.target.value)} placeholder="Paste a saved request reference" /></label>
+          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>Load saved request</button>
         </form>
         {!serviceOnline && <p className="inline-warning" role="alert">The service is unavailable. No client-side fallback or local settlement state is used.</p>}
         {error && <p className="inline-error" role="alert">{error}</p>}
@@ -201,17 +201,17 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
           connectedAddress={walletAddress?.toBase58()}
           onConnected={setWalletAddress}
         />
-        {!claim ? <div className="empty-state"><span className="empty-icon">↔</span><strong>No claim artifact loaded</strong><p>Prepare or recover a claim to inspect its exact server-owned evidence.</p></div> : <>
+        {!claim ? <div className="empty-state"><span className="empty-icon">↔</span><strong>No refund request loaded</strong><p>Prepare or recover a request to review its payment details and approval status.</p></div> : <>
           <dl className="summary-list">
-            <div><dt>Gross refund</dt><dd>{atomicAmount(claim.artifact.gross_atomic, locale)}</dd></div>
-            <div><dt>Tax component</dt><dd>{atomicAmount(claim.artifact.tax_atomic, locale)}</dd></div>
-            <div><dt>Net refund</dt><dd>{atomicAmount(claim.artifact.net_atomic, locale)}</dd></div>
-            <div><dt>Asset mint</dt><dd><code>{claim.artifact.mint}</code></dd></div>
+            <div><dt>Gross refund</dt><dd>{amountValue(claim.artifact.gross_atomic, locale)}</dd></div>
+            <div><dt>Tax included</dt><dd>{amountValue(claim.artifact.tax_atomic, locale)}</dd></div>
+            <div><dt>Refund after tax</dt><dd>{amountValue(claim.artifact.net_atomic, locale)}</dd></div>
+            <div><dt>Asset</dt><dd><code>{claim.artifact.mint}</code></dd></div>
             <div><dt>Destination</dt><dd><code>{claim.artifact.refund_destination}</code></dd></div>
-            <div><dt>Claim PDA</dt><dd><code>{claim.claim}</code></dd></div>
-            <div><dt>Refund funder</dt><dd><code>{claim.artifact.refund_funder}</code></dd></div>
+            <div><dt>On-chain refund record</dt><dd><code>{claim.claim}</code></dd></div>
+            <div><dt>Refund account</dt><dd><code>{claim.artifact.refund_funder}</code></dd></div>
             <div><dt>Expiry</dt><dd>{claim.artifact.expires_at_unix ? new Date(claim.artifact.expires_at_unix * 1000).toISOString() : "Not present"}</dd></div>
-            <div><dt>Transport signature</dt><dd>{claim.signature ? <code>{claim.signature}</code> : "None recorded"}</dd></div>
+            <div><dt>Submission reference</dt><dd>{claim.signature ? <code>{claim.signature}</code> : "None recorded"}</dd></div>
           </dl>
           {claim.status === "finalized" && claim.finalized_evidence && <div className="settlement-status" aria-live="polite">
             <strong role="status">Finalized claim event evidence matched the durable artifact.</strong>
@@ -223,16 +223,16 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
                 <div><dt>Finalized slot</dt><dd>{claim.finalized_evidence.slot}</dd></div>
                 <div><dt>Event index</dt><dd>{claim.finalized_evidence.event_index}</dd></div>
                 <div><dt>Event signature</dt><dd><code>{claim.finalized_evidence.signature}</code></dd></div>
-                <div><dt>Gross / tax / net</dt><dd>{claim.finalized_evidence.gross_magnitude} / {claim.finalized_evidence.tax_magnitude} / {claim.finalized_evidence.net_magnitude} atomic units</dd></div>
+                <div><dt>Gross / tax / refund</dt><dd>{claim.finalized_evidence.gross_magnitude} / {claim.finalized_evidence.tax_magnitude} / {claim.finalized_evidence.net_magnitude}</dd></div>
                 <div><dt>Evidence digest</dt><dd><code>{digestPreview(claim.finalized_evidence.evidence_digest)}</code></dd></div>
               </dl>
             </details>
           </div>}
           {(claim.status === "prepared_unsubmitted" || claim.status === "signed") && <div className="evidence-actions">
-            <p className="evidence-note">Two distinct signer roles are required: proposer first, then the configured refund funder. The server verifies the exact bytes and signer topology.</p>
+            <p className="evidence-note">Two different people must approve this refund: the request owner first, then the configured refund account owner. The service checks that the approved payment details were not changed.</p>
             <div className="button-row"><button type="button" onClick={() => sign("proposer")} disabled={busy}>Sign as proposer</button><button type="button" onClick={() => sign("refund_funder")} disabled={busy || (!signedBytes && !recoveryBytes.trim())}>Sign as refund funder</button></div>
-            <label className="full-field"><span>Exact signed bytes for recovery (base64, memory-only)</span><textarea value={recoveryBytes} onChange={(event) => setRecoveryBytes(event.target.value)} placeholder="Paste the unchanged wallet artifact when recovering a signed intent after reload." rows={3} autoComplete="off" spellCheck={false} /></label>
-            <button type="button" onClick={submit} disabled={busy || (!signedBytes && !recoveryBytes.trim())}>{busy ? "Submitting…" : "Submit unchanged signed bytes"}</button>
+            <label className="full-field"><span>Recovery data (advanced)</span><textarea value={recoveryBytes} onChange={(event) => setRecoveryBytes(event.target.value)} placeholder="Paste the unchanged wallet file after a browser reload." aria-describedby="refund-recovery-help" rows={3} autoComplete="off" spellCheck={false} /><small id="refund-recovery-help">This temporary data stays in memory and is sent unchanged for verification.</small></label>
+            <button type="button" onClick={submit} disabled={busy || (!signedBytes && !recoveryBytes.trim())}>{busy ? "Sending…" : "Send approved refund"}</button>
           </div>}
           {(claim.status === "unknown" || claim.status === "submitted" || claim.status === "processed" || claim.status === "confirmed") && <div className="evidence-actions"><p className="inline-warning">This state requires durable chain reconciliation. A provider response or wallet signature is not proof of a completed refund.</p><button type="button" onClick={reconcile} disabled={busy || !serviceOnline || !accessToken.trim()}>Reconcile finalized claim evidence</button></div>}
           {claim.last_error_code && <p className="inline-error" role="alert">Last durable error: {claim.last_error_code}</p>}

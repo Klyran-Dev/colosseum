@@ -40,10 +40,55 @@ async function expectNoBrowserAxeViolations(
   expect(violations, `${surface} has real-browser axe violations`).toEqual([]);
 }
 
+const CAPABILITY_IDS = [
+  "access.control",
+  "evidence.replay",
+  "refund.claim.cancel",
+  "refund.claim.create",
+  "refund.payment.release",
+  "settlement.adjustment",
+  "settlement.document.wallet",
+  "settlement.wallet",
+  "tax.document.quote.create",
+  "tax.preview.run",
+  "tax.quote.create",
+  "tax.rule.govern",
+  "vault.reconciliation",
+  "vault.release",
+] as const;
+
+function completeCapabilityCatalog(overrides: Record<string, { decision: "allow" | "deny" | "indeterminate"; reason_code: string }>) {
+  return Object.fromEntries(CAPABILITY_IDS.map((id) => [
+    id,
+    overrides[id] ?? { decision: "deny", reason_code: "scope_missing" },
+  ]));
+}
+
 test.describe("real-browser SPA journeys", () => {
+  test("supports direct workspace links and browser history", async ({ page }) => {
+    await page.goto("/money/refund-payments");
+    await expect(page).toHaveURL(/\/money\/refund-payments$/);
+    await expect(page.getByRole("heading", { name: "Prepare refund release", exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Balance checks", exact: true }).click();
+    await expect(page).toHaveURL(/\/money\/balance-checks$/);
+    await expect(page.getByRole("heading", { name: "Check tax balances", exact: true })).toBeVisible();
+
+    await page.goBack();
+    await expect(page).toHaveURL(/\/money\/refund-payments$/);
+    await expect(page.getByRole("heading", { name: "Prepare refund release", exact: true })).toBeVisible();
+    await page.goForward();
+    await expect(page).toHaveURL(/\/money\/balance-checks$/);
+    await expectNoBrowserAxeViolations(page, "addressable workspace navigation");
+  });
+
   test("supports keyboard context and real lazy workspace loading", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText("Calculation service online")).toBeVisible();
+    await expect(page.getByText("All systems operational")).toBeVisible();
+    await expect(page.getByText("Local development", { exact: true })).toBeVisible();
+    await expect(page.getByText("Local Solana ledger", { exact: true })).toBeVisible();
+    await expect(page.getByText("Acme Treasury", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Test network", { exact: true })).toHaveCount(0);
 
     await page.keyboard.press("Tab");
     const skipLink = page.getByRole("link", { name: "Skip to workspace content" });
@@ -52,16 +97,16 @@ test.describe("real-browser SPA journeys", () => {
     await expect(page.locator("#workspace-content")).toBeFocused();
 
     const workspaces = [
-      ["Rule governance", "Review and promote a rule"],
-      ["Replay operations", "Review replay gaps"],
-      ["Vault releases", "Propose a vault release claim"],
-      ["Vault reconciliation", "Vault reconciliation"],
-      ["Settlement adjustments", "Propose an adjustment"],
-      ["Refund claims", "Prepare a refund claim"],
-      ["Refund executions", "Prepare execution"],
-      ["Checkout authorization", "Review and authorize settlement"],
-      ["Document quote", "Create persisted document evidence"],
-      ["Document checkout", "Authorize a documented payment"],
+      ["Tax rules", "Review and publish a rule"],
+      ["Exceptions & recovery", "Recovery queue"],
+      ["Treasury", "Create a release request"],
+      ["Balance checks", "Check tax balances"],
+      ["Adjustments", "Create an adjustment request"],
+      ["Refund requests", "Prepare a refund request"],
+      ["Refund payments", "Prepare refund release"],
+      ["Payment review", "Review payment before signing"],
+      ["Invoice tax", "Calculate tax for an invoice"],
+      ["Document payment", "Authorize a documented payment"],
     ] as const;
 
     for (const [buttonName, headingName] of workspaces) {
@@ -71,22 +116,78 @@ test.describe("real-browser SPA journeys", () => {
     }
   });
 
+  test("replaces the verified tenant context when the opaque session changes", async ({ page }) => {
+    const tenantA = {
+      token: "tenant-a-session",
+      subject: "operator-a",
+      tenantId: "01900000-0000-4000-8000-000000000001",
+      snapshotId: "01900000-0000-7000-8000-000000000001",
+      capabilities: completeCapabilityCatalog({
+        "access.control": { decision: "allow", reason_code: "scope_and_role_satisfied" },
+        "tax.preview.run": { decision: "allow", reason_code: "scope_and_role_satisfied" },
+      }),
+    };
+    const tenantB = {
+      token: "tenant-b-session",
+      subject: "operator-b",
+      tenantId: "02900000-0000-4000-8000-000000000002",
+      snapshotId: "02900000-0000-7000-8000-000000000002",
+      capabilities: completeCapabilityCatalog({
+        "access.control": { decision: "allow", reason_code: "scope_and_role_satisfied" },
+        "tax.preview.run": { decision: "deny", reason_code: "scope_missing" },
+      }),
+    };
+    await page.route("**/api/v1/authorization/capabilities", async (route) => {
+      const authorization = route.request().headers().authorization ?? "";
+      const selected = authorization.includes(tenantB.token) ? tenantB : tenantA;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          schema: "authorization-capabilities/v1",
+          snapshot_id: selected.snapshotId,
+          subject: selected.subject,
+          tenant_id: selected.tenantId,
+          expires_at_unix: Math.floor(Date.now() / 1000) + 30,
+          capabilities: selected.capabilities,
+        }),
+      });
+    });
+
+    await page.goto("/");
+    await expect(page.getByText("All systems operational")).toBeVisible();
+    const credential = page.getByLabel("Sign-in credential (held in memory)");
+    await credential.fill(tenantA.token);
+    await expect(page.getByText("Account 01900000", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Access & approvals", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Who can do what", exact: true })).toBeVisible();
+    await expect(page.getByText("operator-a", { exact: true })).toBeVisible();
+    await expect(page.getByText("Available", { exact: true }).first()).toBeVisible();
+
+    await credential.fill(tenantB.token);
+    await expect(page.getByText("Account 02900000", { exact: true })).toBeVisible();
+    await expect(page.getByText("Account 01900000", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("operator-b", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Tax simulator", exact: true })).toHaveAttribute("title", /Not available/);
+    await expectNoBrowserAxeViolations(page, "multi-tenant capability session reset");
+  });
+
   test("has no rendered WCAG A/AA violations across the real SPA workspaces", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText("Calculation service online")).toBeVisible();
+    await expect(page.getByText("All systems operational")).toBeVisible();
     await expectNoBrowserAxeViolations(page, "production quote");
 
     const workspaces = [
-      ["Rule governance", "Review and promote a rule"],
-      ["Replay operations", "Review replay gaps"],
-      ["Vault releases", "Propose a vault release claim"],
-      ["Vault reconciliation", "Vault reconciliation"],
-      ["Settlement adjustments", "Propose an adjustment"],
-      ["Refund claims", "Prepare a refund claim"],
-      ["Refund executions", "Prepare execution"],
-      ["Checkout authorization", "Review and authorize settlement"],
-      ["Document quote", "Create persisted document evidence"],
-      ["Document checkout", "Authorize a documented payment"],
+      ["Tax rules", "Review and publish a rule"],
+      ["Exceptions & recovery", "Recovery queue"],
+      ["Treasury", "Create a release request"],
+      ["Balance checks", "Check tax balances"],
+      ["Adjustments", "Create an adjustment request"],
+      ["Refund requests", "Prepare a refund request"],
+      ["Refund payments", "Prepare refund release"],
+      ["Payment review", "Review payment before signing"],
+      ["Invoice tax", "Calculate tax for an invoice"],
+      ["Document payment", "Authorize a documented payment"],
     ] as const;
 
     for (const [buttonName, headingName] of workspaces) {
@@ -102,12 +203,17 @@ test.describe("real-browser SPA journeys", () => {
 
     await page.getByText("Display settings", { exact: true }).click();
     await page.getByRole("combobox", { name: "Language" }).selectOption("ar-EG");
+    await page.getByRole("button", { name: "Open navigation", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Tax rules", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Balance checks", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Open navigation", exact: true })).toHaveAttribute("aria-expanded", "false");
+    await page.getByRole("button", { name: "Open navigation", exact: true }).click();
 
     await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
     await expect(page.locator(".app-shell")).toHaveAttribute("dir", "rtl");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
-    const transitionDuration = await page.getByRole("button", { name: "Production quote" }).evaluate(
+    const transitionDuration = await page.getByRole("button", { name: "Tax quotes" }).evaluate(
       (element) => getComputedStyle(element).transitionDuration,
     );
     expect(transitionDuration).toBe("0s");
@@ -116,11 +222,11 @@ test.describe("real-browser SPA journeys", () => {
   test("contains a real dynamic-import failure without exposing exception data", async ({ page }) => {
     await page.route("**/assets/GovernancePanel-*.js", (route) => route.abort("failed"));
     await page.goto("/");
-    await page.getByRole("button", { name: "Rule governance", exact: true }).click();
+    await page.getByRole("button", { name: "Tax rules", exact: true }).click();
 
     await expect(page.getByRole("heading", { name: "This workspace could not be loaded" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Reload application" })).toBeVisible();
-    await expect(page.getByText(/secret|exception|stack|token/i)).toHaveCount(0);
+    await expect(page.locator(".workspace-error").getByText(/secret|exception|stack|token/i)).toHaveCount(0);
   });
 
   test("fails closed when the API health boundary is unavailable", async ({ page }) => {
@@ -133,8 +239,8 @@ test.describe("real-browser SPA journeys", () => {
 
     const outageAlert = page.getByRole("alert");
     await expect(outageAlert).toHaveText("The service is unavailable. No client-side fallback is used.");
-    await expect(page.getByText("No calculation yet", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Create quote", exact: true })).toBeDisabled();
+    await expect(page.getByText("Your result will appear here", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Prepare quote", exact: true })).toBeDisabled();
     await expectNoBrowserAxeViolations(page, "API unavailable state");
   });
 
@@ -196,16 +302,23 @@ test.describe("real-browser SPA journeys", () => {
     }));
 
     await page.goto("/");
-    await expect(page.getByText("Calculation service online")).toBeVisible();
-    await page.getByLabel("OIDC access token (memory-only)").fill("synthetic-browser-token");
-    await page.getByLabel("Provider-signed jurisdiction evidence (JSON array)").fill("[{}]");
-    await page.getByRole("button", { name: "Create quote", exact: true }).click();
-    await expect(page.getByText("Calculation ID 01992f1b-4a70-7e30-8ea2-b6e37a9d9d21", { exact: true })).toBeVisible();
+    await expect(page.getByText("All systems operational")).toBeVisible();
+    await page.getByLabel("Sign-in credential (held in memory)").fill("synthetic-browser-token");
+    await page.getByLabel("Location evidence").fill("[{}]");
+    await page.getByLabel("Total before tax").fill("1100");
+    await page.getByLabel("Amount subject to tax").fill("1000");
+    await page.getByLabel("Currency").fill("USD");
+    await page.getByLabel("Approved tax rule").fill("operator-simulator-flat-rate");
+    await page.getByLabel("Rule version").fill("1");
+    await page.getByLabel("Jurisdiction").fill("US-CA");
+    await page.getByLabel("Tax category").fill("sales-tax");
+    await page.getByRole("button", { name: "Prepare quote", exact: true }).click();
+    await expect(page.getByText("Reference 01992f1b-4a70-7e30-8ea2-b6e37a9d9d21", { exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Checkout authorization", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Review and authorize settlement", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Payment review", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Review payment before signing", exact: true })).toBeVisible();
     await expect(page.getByText(/expired; create a new quote/)).toBeVisible();
-    await expect(page.getByRole("button", { name: "Compile for review", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Prepare payment for review", exact: true })).toBeDisabled();
     await expectNoBrowserAxeViolations(page, "expired quote checkout state");
   });
 
@@ -220,8 +333,8 @@ test.describe("real-browser SPA journeys", () => {
     });
 
     await page.goto("/");
-    await expect(page.getByText("Calculation service online")).toBeVisible();
-    await page.getByRole("button", { name: "Checkout authorization", exact: true }).click();
+    await expect(page.getByText("All systems operational")).toBeVisible();
+    await page.getByRole("button", { name: "Payment review", exact: true }).click();
     await page.getByRole("button", { name: "Connect wallet", exact: true }).click();
     await expect(page.getByRole("alert")).toContainText("User rejected wallet connection");
     await expect(page.getByText("No wallet connected", { exact: true })).toBeVisible();
@@ -284,8 +397,8 @@ test.describe("real-browser SPA journeys", () => {
     });
 
     await page.goto("/");
-    await expect(page.getByText("Calculation service online")).toBeVisible();
-    await page.getByRole("button", { name: "Checkout authorization", exact: true }).click();
+    await expect(page.getByText("All systems operational")).toBeVisible();
+    await page.getByRole("button", { name: "Payment review", exact: true }).click();
     await page.getByRole("button", { name: "Connect wallet", exact: true }).click();
 
     const accountPicker = page.getByRole("combobox", { name: "Wallet account" });
@@ -298,8 +411,8 @@ test.describe("real-browser SPA journeys", () => {
     await expectNoBrowserAxeViolations(page, "Wallet Standard account selection");
 
     await page.reload();
-    await expect(page.getByText("Calculation service online")).toBeVisible();
-    await page.getByRole("button", { name: "Checkout authorization", exact: true }).click();
+    await expect(page.getByText("All systems operational")).toBeVisible();
+    await page.getByRole("button", { name: "Payment review", exact: true }).click();
     await page.getByRole("button", { name: "Connect wallet", exact: true }).click();
     await expect(page.getByRole("combobox", { name: "Wallet account" })).toHaveValue("");
     await expectNoBrowserAxeViolations(page, "Wallet Standard account selection after reload");
@@ -316,24 +429,24 @@ test.describe("real-browser SPA journeys", () => {
     });
 
     await page.goto("/");
-    await expect(page.getByText("Calculation service online")).toBeVisible();
-    await page.getByLabel("OIDC access token (memory-only)").fill("synthetic-browser-token");
-    await page.getByRole("button", { name: "Refund claims", exact: true }).click();
-    await page.getByLabel("Approved adjustment ID").fill("01992f1b-4a70-7e30-8ea2-b6e37a9d9d12");
-    await page.getByRole("button", { name: "Prepare server-owned claim", exact: true }).click();
+    await expect(page.getByText("All systems operational")).toBeVisible();
+    await page.getByLabel("Sign-in credential (held in memory)").fill("synthetic-browser-token");
+    await page.getByRole("button", { name: "Refund requests", exact: true }).click();
+    await page.getByLabel("Approved correction reference").fill("01992f1b-4a70-7e30-8ea2-b6e37a9d9d12");
+    await page.getByRole("button", { name: "Prepare refund request", exact: true }).click();
 
     await expect(page.getByText("Finalized claim event evidence matched the durable artifact.", { exact: true })).toBeVisible();
     await page.getByText("Finalized event proof", { exact: true }).click();
     await expect(page.getByText("AdjustmentRefundClaimCreated · v1", { exact: true })).toBeVisible();
-    await expect(page.getByText("100 / 25 / 75 atomic units", { exact: true })).toBeVisible();
+    await expect(page.getByText("Gross / tax / refund", { exact: true }).locator("..").getByText("100 / 25 / 75", { exact: true })).toBeVisible();
     await expectNoBrowserAxeViolations(page, "finalized refund proof");
 
     await page.reload();
-    await expect(page.getByText("Calculation service online")).toBeVisible();
-    await page.getByLabel("OIDC access token (memory-only)").fill("synthetic-browser-token");
-    await page.getByRole("button", { name: "Refund claims", exact: true }).click();
-    await page.getByLabel("Recover intent ID").fill("01992f1b-4a70-7e30-8ea2-b6e37a9d9d14");
-    await page.getByRole("button", { name: "Load durable state", exact: true }).click();
+    await expect(page.getByText("All systems operational")).toBeVisible();
+    await page.getByLabel("Sign-in credential (held in memory)").fill("synthetic-browser-token");
+    await page.getByRole("button", { name: "Refund requests", exact: true }).click();
+    await page.getByLabel("Refund request reference").fill("01992f1b-4a70-7e30-8ea2-b6e37a9d9d14");
+    await page.getByRole("button", { name: "Load saved request", exact: true }).click();
     await expect(page.getByText("Finalized claim event evidence matched the durable artifact.", { exact: true })).toBeVisible();
     await page.getByText("Finalized event proof", { exact: true }).click();
     await expect(page.getByText("77", { exact: true })).toBeVisible();
@@ -349,15 +462,23 @@ test.describe("real-browser SPA journeys", () => {
     }));
 
     await page.goto("/");
-    await expect(page.getByText("Calculation service online")).toBeVisible();
-    await page.getByLabel("OIDC access token (memory-only)").fill("synthetic-browser-token");
-    await page.getByRole("button", { name: "Document quote", exact: true }).click();
+    await expect(page.getByText("All systems operational")).toBeVisible();
+    await page.getByLabel("Sign-in credential (held in memory)").fill("synthetic-browser-token");
+    await page.getByRole("button", { name: "Invoice tax", exact: true }).click();
+    await page.getByLabel("Document ID").fill("invoice-1");
+    await page.getByLabel("Currency").fill("USD");
+    await page.getByLabel("Jurisdiction").fill("US-CA");
+    await page.getByLabel("Tax regime").fill("sales-tax");
     await page.getByLabel("Published rule set ID").fill("operator-document-flat-rate");
-    await page.getByLabel("Provider-signed jurisdiction evidence (JSON array)").fill("[{}]");
-    await page.getByRole("button", { name: "Create document quote", exact: true }).click();
+    await page.getByLabel("Rule version").fill("1");
+    await page.getByLabel("Line ID").fill("line-a");
+    await page.getByLabel("Amount before tax").fill("3000");
+    await page.getByLabel("Amount after tax").fill("3000");
+    await page.getByLabel("Location evidence").fill("[{}]");
+    await page.getByRole("button", { name: "Calculate invoice tax", exact: true }).click();
 
     await expect(page.getByRole("alert")).toContainText("document quote service is unavailable");
-    await expect(page.getByText("No persisted document quote yet", { exact: true })).toBeVisible();
+    await expect(page.getByText("No invoice calculation yet", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Open document checkout", exact: true })).toHaveCount(0);
     await expectNoBrowserAxeViolations(page, "document quote API unavailable state");
   });
@@ -371,9 +492,9 @@ test.describe("real-browser SPA journeys", () => {
     }));
 
     await page.goto("/");
-    await expect(page.getByText("Calculation service online")).toBeVisible();
-    await page.getByLabel("OIDC access token (memory-only)").fill("synthetic-browser-token");
-    await page.getByRole("button", { name: "Document checkout", exact: true }).click();
+    await expect(page.getByText("All systems operational")).toBeVisible();
+    await page.getByLabel("Sign-in credential (held in memory)").fill("synthetic-browser-token");
+    await page.getByRole("button", { name: "Document payment", exact: true }).click();
 
     await expect(page.getByRole("alert")).toContainText("active settlement routes are unavailable");
     await expect(page.getByRole("combobox", { name: "Active settlement route" })).toHaveValue("");
@@ -545,12 +666,20 @@ test.describe("real-browser SPA journeys", () => {
     }));
 
     await page.goto("/");
-    await expect(page.getByText("Calculation service online")).toBeVisible();
-    await page.getByLabel("OIDC access token (memory-only)").fill("synthetic-browser-token");
-    await page.getByRole("button", { name: "Document quote", exact: true }).click();
+    await expect(page.getByText("All systems operational")).toBeVisible();
+    await page.getByLabel("Sign-in credential (held in memory)").fill("synthetic-browser-token");
+    await page.getByRole("button", { name: "Invoice tax", exact: true }).click();
+    await page.getByLabel("Document ID").fill("invoice-1");
+    await page.getByLabel("Currency").fill("USD");
+    await page.getByLabel("Jurisdiction").fill("US-CA");
+    await page.getByLabel("Tax regime").fill("sales-tax");
     await page.getByLabel("Published rule set ID").fill("operator-document-flat-rate");
-    await page.getByLabel("Provider-signed jurisdiction evidence (JSON array)").fill("[{}]");
-    await page.getByRole("button", { name: "Create document quote", exact: true }).click();
+    await page.getByLabel("Rule version").fill("1");
+    await page.getByLabel("Line ID").fill("line-a");
+    await page.getByLabel("Amount before tax").fill("3000");
+    await page.getByLabel("Amount after tax").fill("3000");
+    await page.getByLabel("Location evidence").fill("[{}]");
+    await page.getByRole("button", { name: "Calculate invoice tax", exact: true }).click();
     await expect(page.getByText(`Calculation ID ${calculationId}`, { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Open document checkout", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Authorize a documented payment", exact: true })).toBeVisible();
@@ -561,14 +690,11 @@ test.describe("real-browser SPA journeys", () => {
     await expect(page.getByRole("button", { name: "Compile document payment for review", exact: true })).toBeDisabled();
 
     await page.getByRole("button", { name: "Connect wallet", exact: true }).click();
-    await page.getByLabel("Client nonce").fill("9");
-    await page.getByLabel("Policy sequence").fill("3");
-    await page.getByLabel("Policy digest (hex)").fill("00".repeat(32));
     await page.getByRole("button", { name: "Compile document payment for review", exact: true }).click();
-    await expect(page.getByText("Server-derived payment authority", { exact: true })).toBeVisible();
-    await expect(page.getByText("3000 atomic units", { exact: true })).toBeVisible();
-    await expect(page.getByText("247 atomic units", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Sign and submit", exact: true })).toBeEnabled();
+    await expect(page.getByText("Payment ready for review", { exact: true })).toBeVisible();
+    await expect(page.getByText("3000", { exact: true })).toBeVisible();
+    await expect(page.getByText("247", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Sign and send payment", exact: true })).toBeEnabled();
     await expectNoBrowserAxeViolations(page, "document evidence handoff and reviewed artifact");
   });
 
@@ -610,8 +736,8 @@ test.describe("real-browser SPA journeys", () => {
     });
 
     await page.goto("/");
-    await page.getByRole("button", { name: "Vault reconciliation", exact: true }).click();
-    await page.getByLabel("OIDC access token (memory-only)").fill("synthetic-browser-token");
+    await page.getByRole("button", { name: "Balance checks", exact: true }).click();
+    await page.getByLabel("Sign-in credential (held in memory)").fill("synthetic-browser-token");
     await page.getByRole("button", { name: "Load reconciliation targets", exact: true }).click();
 
     await expect(page.getByText("Mismatch — stop and investigate", { exact: true }).first()).toBeVisible();
@@ -659,8 +785,8 @@ test.describe("real-browser SPA journeys", () => {
     }));
 
     await page.goto("/");
-    await page.getByRole("button", { name: "Vault reconciliation", exact: true }).click();
-    await page.getByLabel("OIDC access token (memory-only)").fill("synthetic-browser-token");
+    await page.getByRole("button", { name: "Balance checks", exact: true }).click();
+    await page.getByLabel("Sign-in credential (held in memory)").fill("synthetic-browser-token");
     await page.getByRole("button", { name: "Load reconciliation targets", exact: true }).click();
 
     await expect(page.getByText("Stale — stop and investigate", { exact: true }).first()).toBeVisible();
@@ -678,12 +804,12 @@ test.describe("real-browser SPA journeys", () => {
     }));
 
     await page.goto("/");
-    await page.getByRole("button", { name: "Vault reconciliation", exact: true }).click();
-    await page.getByLabel("OIDC access token (memory-only)").fill("synthetic-browser-token");
+    await page.getByRole("button", { name: "Balance checks", exact: true }).click();
+    await page.getByLabel("Sign-in credential (held in memory)").fill("synthetic-browser-token");
     await page.getByRole("button", { name: "Load reconciliation targets", exact: true }).click();
 
     await expect(page.getByRole("alert")).toContainText("vault reconciliation access is not authorized");
-    await expect(page.getByText("Evidence not loaded", { exact: true })).toBeVisible();
+    await expect(page.getByText("Balance evidence not loaded", { exact: true })).toBeVisible();
     await expectNoBrowserAxeViolations(page, "vault reconciliation unauthorized state");
   });
 });

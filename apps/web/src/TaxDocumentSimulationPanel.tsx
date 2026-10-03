@@ -3,7 +3,7 @@ import { fetchWithTimeout, REQUEST_TIMEOUT_MS, responseError } from "./api";
 import { DEFAULT_LOCALE, formatAtomic as formatAtomicValue } from "./formatters";
 import {
   buildTaxDocumentFacts,
-  defaultDocumentLines,
+  emptyDocumentLines,
   parseTaxDocumentSimulation,
   TaxDocumentLineDraft,
   TaxDocumentSimulation,
@@ -19,9 +19,9 @@ type Props = {
 };
 
 export default function TaxDocumentSimulationPanel({ apiBase, serviceOnline, ruleSet, jurisdiction, locale = DEFAULT_LOCALE }: Props) {
-  const [documentId, setDocumentId] = useState("invoice-simulation-1");
-  const [currency, setCurrency] = useState("USD");
-  const [lines, setLines] = useState<TaxDocumentLineDraft[]>(() => defaultDocumentLines());
+  const [documentId, setDocumentId] = useState("");
+  const [currency, setCurrency] = useState("");
+  const [lines, setLines] = useState<TaxDocumentLineDraft[]>(() => emptyDocumentLines());
   const [simulation, setSimulation] = useState<TaxDocumentSimulation | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -34,7 +34,7 @@ export default function TaxDocumentSimulationPanel({ apiBase, serviceOnline, rul
 
   function addLine() {
     if (lines.length >= 256) return;
-    setLines((current) => [...current, { id: `line-${current.length + 1}`, grossAtomic: "1000", netAtomic: "1000", exemptionCodes: "" }]);
+    setLines((current) => [...current, { id: "", grossAtomic: "", netAtomic: "", exemptionCodes: "" }]);
   }
 
   function removeLine(index: number) {
@@ -88,15 +88,15 @@ export default function TaxDocumentSimulationPanel({ apiBase, serviceOnline, rul
         <div className="form-grid">
           <label><span>Document ID</span><input value={documentId} onChange={(event) => setDocumentId(event.target.value)} maxLength={64} required /></label>
           <label><span>Currency</span><input value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase())} maxLength={12} required /></label>
-          <p className="field-help full-field">Jurisdiction is bound to the active server-owned context: <strong>{jurisdiction || "not selected"}</strong>.</p>
+          <p className="field-help full-field">Jurisdiction follows the loaded rule: <strong>{jurisdiction || "not selected"}</strong>.</p>
         </div>
         <div className="document-lines" role="group" aria-labelledby="document-lines-heading">
           <div className="document-lines-heading"><div><h3 id="document-lines-heading">Tax lines</h3><p className="field-help">Canonical results are sorted by line ID. Maximum 256 lines.</p></div><button type="button" className="secondary-button" onClick={addLine} disabled={lines.length >= 256}>Add line</button></div>
           {lines.map((line, index) => <fieldset className="document-line" key={`${line.id}-${index}`}>
             <legend>Line {index + 1}</legend>
             <label><span>Line ID</span><input value={line.id} onChange={(event) => updateLine(index, { id: event.target.value })} maxLength={64} required /></label>
-            <label><span>Gross atomic units</span><input inputMode="numeric" value={line.grossAtomic} onChange={(event) => updateLine(index, { grossAtomic: event.target.value })} required /></label>
-            <label><span>Net atomic units</span><input inputMode="numeric" value={line.netAtomic} onChange={(event) => updateLine(index, { netAtomic: event.target.value })} required /></label>
+            <label><span>Amount before tax</span><input inputMode="numeric" value={line.grossAtomic} onChange={(event) => updateLine(index, { grossAtomic: event.target.value })} required /></label>
+            <label><span>Amount after tax</span><input inputMode="numeric" value={line.netAtomic} onChange={(event) => updateLine(index, { netAtomic: event.target.value })} required /></label>
             <label><span>Exemption codes</span><input value={line.exemptionCodes} onChange={(event) => updateLine(index, { exemptionCodes: event.target.value })} placeholder="One per line or comma-separated" /></label>
             <button type="button" className="secondary-button" onClick={() => removeLine(index)} disabled={lines.length <= 1}>Remove</button>
           </fieldset>)}

@@ -37,9 +37,9 @@ describe("primary product accessibility contract", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 200 })));
 
     const workspaces = [
-      <GovernancePanel key="governance" apiBase="/api" serviceOnline />,
-      <ReplayOpsPanel key="replay" apiBase="/api" serviceOnline />,
-      <VaultReconciliationPanel key="vault-reconciliation" apiBase="/api" serviceOnline />,
+      <GovernancePanel key="governance" apiBase="/api" serviceOnline accessToken="" />,
+      <ReplayOpsPanel key="replay" apiBase="/api" serviceOnline accessToken="" />,
+      <VaultReconciliationPanel key="vault-reconciliation" apiBase="/api" serviceOnline accessToken="" />,
       <VaultReleasePanel key="vault" apiBase="/api" serviceOnline accessToken="" />,
       <SettlementAdjustmentPanel key="adjustments" apiBase="/api" serviceOnline accessToken="" />,
       <RefundClaimPanel key="refund-claims" apiBase="/api" serviceOnline accessToken="" locale="en-US" />,
@@ -85,14 +85,14 @@ describe("primary product accessibility contract", () => {
 
     const skipLink = screen.getByRole("link", { name: "Skip to workspace content" });
     const workspaceContent = screen.getByRole("region", { name: "Current tax workspace" });
-    const governanceButton = screen.getByRole("button", { name: "Rule governance" });
+    const governanceButton = screen.getByRole("button", { name: "Tax rules" });
 
     expect(skipLink.getAttribute("href")).toBe("#workspace-content");
-    expect(governanceButton.getAttribute("aria-pressed")).toBe("false");
+    expect(governanceButton.getAttribute("aria-current")).toBeNull();
 
     fireEvent.click(governanceButton);
 
-    expect(governanceButton.getAttribute("aria-pressed")).toBe("true");
+    expect(governanceButton.getAttribute("aria-current")).toBe("page");
     expect(document.activeElement).toBe(workspaceContent);
   });
 

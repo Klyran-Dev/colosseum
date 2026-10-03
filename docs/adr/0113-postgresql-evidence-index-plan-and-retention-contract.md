@@ -89,3 +89,9 @@ production-volume load, partitioning, archive, and PITR rehearsals.
 - CI runs the drill on every change.
 - The drill closes only local query-plan evidence; production-like data,
   partition/retention, archive, and regional plan evidence remain open.
+
+On 2026-10-03, the drill was corrected to apply the migration runner before
+seeding its fixture and to populate the complete finalized-receipt identity
+columns required by the current schema. It then passed with the same six
+scoped indexes selected over the 25,000-row evidence families and lifecycle
+fixtures. Production-volume and retention evidence remain open.

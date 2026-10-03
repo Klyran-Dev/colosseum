@@ -56,7 +56,7 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
 
   function requireToken(): string {
     const token = accessToken.trim();
-    if (!token) throw new Error("An OIDC access token with the required vault role and scope is required. It is held in memory only.");
+    if (!token) throw new Error("Sign in with an account allowed to manage treasury releases. The credential is held in memory only.");
     return token;
   }
 
@@ -107,7 +107,7 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
       const created = parseVaultReleaseClaim(payload);
       setClaim(created);
       setClaimId(created.id);
-      setNotice(`Claim ${created.id} is durably proposed. No funds moved and no chain authority was delegated.`);
+      setNotice(`Release request ${created.id} was saved for approval. No funds moved and no spending authority was delegated.`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Claim proposal failed");
     } finally {
@@ -128,7 +128,7 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok) throw new Error(responseError(response, payload, `Claim lookup failed (${response.status})`));
       setClaim(parseVaultReleaseClaim(payload));
-      setNotice("Claim state loaded from the tenant-scoped API projection. Finalized chain evidence remains authoritative.");
+      setNotice("The saved release request was loaded. Confirmed ledger evidence remains the final source of truth.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Claim lookup failed");
     } finally {
@@ -165,10 +165,10 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
         const refreshed = await loadClaimById(transitioned.claim_id, token);
         setClaim(refreshed);
         setClaimId(refreshed.id);
-        setNotice(`Transition recorded as ${transitioned.to_status}. The displayed claim was refreshed from the tenant-scoped API.`);
+        setNotice(`The request moved to ${transitioned.to_status.replaceAll("_", " ")}. The page was refreshed from the service.`);
       } catch (refreshCause) {
         setClaim(null);
-        setNotice(`Transition recorded as ${transitioned.to_status}, but the refreshed claim could not be loaded. Reconcile before taking another lifecycle action.`);
+        setNotice(`The request moved to ${transitioned.to_status.replaceAll("_", " ")}, but the refreshed request could not be loaded. Reconcile before taking another action.`);
         throw refreshCause;
       }
     } catch (cause) {
@@ -184,45 +184,45 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
   return (
     <section className="vault-layout" aria-label="Governed vault release workspace">
       <article className="panel">
-        <div className="panel-heading"><div><p className="eyebrow">Governed treasury operation</p><h2>Propose a vault release claim</h2></div><span className="status-pill">Two-person control</span></div>
-        <p className="panel-copy">Create an immutable, tenant-scoped release intent. Proposal, approval, transaction recording, execution, cancellation, and uncertainty are separate auditable states. The browser never signs or moves funds.</p>
+        <div className="panel-heading"><div><p className="eyebrow">Treasury / two-person approval</p><h2>Create a release request</h2></div><span className="status-pill">Two-person control</span></div>
+        <p className="panel-copy">Create a release request for review. Approval, ledger recording, completion, cancellation, and uncertainty are tracked separately so every decision can be explained. The browser never signs or moves funds.</p>
         <form onSubmit={createClaim} className="form-grid">
-          <label className="full-field"><span>OIDC access token (memory-only)</span><textarea value={accessToken ? "Token loaded in memory" : ""} readOnly aria-describedby="vault-token-help" rows={2} /><small id="vault-token-help">Use a proposer token with <code>tax:vault:propose</code> and <code>vault_release_proposer</code>. The token value is owned by the parent checkout workspace and is never persisted.</small></label>
-          <label><span>Idempotency key</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} required /></label>
-          <label><span>Claim nonce (u64)</span><input inputMode="numeric" value={nonce} onChange={(event) => setNonce(event.target.value)} required /></label>
-          <label><span>Mint public key</span><input value={mint} onChange={(event) => setMint(event.target.value)} placeholder="Base58 mint" required /></label>
-          <label><span>Token program public key</span><input value={tokenProgram} onChange={(event) => setTokenProgram(event.target.value)} placeholder="Base58 program" required /></label>
-          <label><span>Tax vault public key</span><input value={taxVault} onChange={(event) => setTaxVault(event.target.value)} placeholder="Base58 vault" required /></label>
-          <label><span>Destination public key</span><input value={destination} onChange={(event) => setDestination(event.target.value)} placeholder="Base58 destination" required /></label>
-          <label><span>Amount (atomic units)</span><input inputMode="numeric" value={amountAtomic} onChange={(event) => setAmountAtomic(event.target.value)} required /></label>
-          <label><span>Execute after (Unix seconds)</span><input inputMode="numeric" value={executeAfter} onChange={(event) => setExecuteAfter(event.target.value)} required /></label>
-          <label><span>Expires at (Unix seconds)</span><input inputMode="numeric" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} required /></label>
-          <label className="full-field"><span>Reference digest (JSON array of 32 bytes)</span><textarea value={referenceDigest} onChange={(event) => setReferenceDigest(event.target.value)} rows={3} required /></label>
-          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>{busy ? "Submitting…" : "Persist release proposal"}</button>
+          <label className="full-field"><span>Sign-in status</span><textarea value={accessToken ? "Account ready" : ""} readOnly aria-describedby="vault-token-help" rows={2} /><small id="vault-token-help">Your account must be allowed to create treasury release requests. Sign-in data is never saved by this page.</small></label>
+          <label><span>Request reference</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} aria-describedby="release-reference-help" required /><small id="release-reference-help">A unique reference prevents duplicate requests when you retry.</small></label>
+          <label><span>Release reference number</span><input inputMode="numeric" value={nonce} onChange={(event) => setNonce(event.target.value)} aria-describedby="release-number-help" required /><small id="release-number-help">This binds the request to one ledger record.</small></label>
+          <label><span>Asset mint address</span><input value={mint} onChange={(event) => setMint(event.target.value)} placeholder="Paste the asset address" required /></label>
+          <label><span>Asset program address</span><input value={tokenProgram} onChange={(event) => setTokenProgram(event.target.value)} placeholder="Paste the supported asset program address" required /></label>
+          <label><span>Tax holding account</span><input value={taxVault} onChange={(event) => setTaxVault(event.target.value)} placeholder="Paste the tax holding account" required /></label>
+          <label><span>Recipient account</span><input value={destination} onChange={(event) => setDestination(event.target.value)} placeholder="Paste the recipient account" required /></label>
+          <label><span>Amount</span><input inputMode="numeric" value={amountAtomic} onChange={(event) => setAmountAtomic(event.target.value)} aria-describedby="release-amount-help" required /><small id="release-amount-help">Enter the exact amount in the asset’s smallest unit. The service checks precision before saving.</small></label>
+          <label><span>Earliest release time</span><input inputMode="numeric" value={executeAfter} onChange={(event) => setExecuteAfter(event.target.value)} aria-describedby="release-start-help" required /><small id="release-start-help">Use the UTC timestamp required by the release policy.</small></label>
+          <label><span>Release expiry</span><input inputMode="numeric" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} aria-describedby="release-expiry-help" required /><small id="release-expiry-help">The request cannot be executed after this time.</small></label>
+          <label className="full-field"><span>Evidence reference</span><textarea value={referenceDigest} onChange={(event) => setReferenceDigest(event.target.value)} aria-describedby="release-evidence-help" rows={3} required /><small id="release-evidence-help">Advanced evidence supplied by the approved workflow. Do not edit it manually.</small></label>
+          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>{busy ? "Saving…" : "Create release request"}</button>
         </form>
         {!serviceOnline && <p className="inline-warning" role="alert">The API is unavailable. No client-side fallback or optimistic claim is created.</p>}
       </article>
 
       <article className="panel">
         <div className="panel-heading"><div><p className="eyebrow">Lifecycle and evidence</p><h2>Review or transition a claim</h2></div>{claim && <span className="status-pill status-pill-warning">{claim.status.replaceAll("_", " ")}</span>}</div>
-        <p className="panel-copy">Every transition requires the exact role for that action. Chain-created and executed states require transaction evidence; an unknown state requires an explicit bounded error code.</p>
+        <p className="panel-copy">Each next step requires the right approval. Ledger-created and completed states need proof from the network; an uncertain state must include a clear reason.</p>
         <form onSubmit={loadClaim} className="form-grid">
-          <label className="full-field"><span>Claim ID (UUIDv7)</span><input value={claimId} onChange={(event) => setClaimId(event.target.value)} placeholder="Load a previously proposed claim" required /></label>
-          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>Load tenant-scoped claim</button>
+          <label className="full-field"><span>Release request reference</span><input value={claimId} onChange={(event) => setClaimId(event.target.value)} placeholder="Paste a saved release request reference" required /></label>
+          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>Load release request</button>
         </form>
-        {claim && <div className="vault-claim-card"><dl className="summary-list"><div><dt>State</dt><dd>{claim.status.replaceAll("_", " ")}</dd></div><div><dt>Amount</dt><dd>{claim.amount_atomic} atomic units</dd></div><div><dt>Nonce</dt><dd>{claim.nonce}</dd></div><div><dt>Window</dt><dd>{formatEpoch(claim.execute_after_unix, locale, timeZone)} → {formatEpoch(claim.expires_at_unix, locale, timeZone)}</dd></div><div><dt>Request digest</dt><dd><code>{digestPreview(claim.request_digest)}</code></dd></div><div><dt>Reference digest</dt><dd><code>{digestPreview(claim.reference_digest)}</code></dd></div><div><dt>Proposer</dt><dd><code>{claim.proposer_subject}</code></dd></div><div><dt>Approver</dt><dd><code>{claim.approver_subject ?? "Not approved"}</code></dd></div></dl></div>}
+        {claim && <div className="vault-claim-card"><dl className="summary-list"><div><dt>Status</dt><dd>{claim.status.replaceAll("_", " ")}</dd></div><div><dt>Amount</dt><dd>{claim.amount_atomic}</dd></div><div><dt>Release reference number</dt><dd>{claim.nonce}</dd></div><div><dt>Release window</dt><dd>{formatEpoch(claim.execute_after_unix, locale, timeZone)} → {formatEpoch(claim.expires_at_unix, locale, timeZone)}</dd></div><div><dt>Request evidence</dt><dd><code>{digestPreview(claim.request_digest)}</code></dd></div><div><dt>Supporting evidence</dt><dd><code>{digestPreview(claim.reference_digest)}</code></dd></div><div><dt>Created by</dt><dd><code>{claim.proposer_subject}</code></dd></div><div><dt>Approved by</dt><dd><code>{claim.approver_subject ?? "Not approved"}</code></dd></div></dl></div>}
         <form onSubmit={transitionClaim} className="vault-transition-form">
-          <label><span>Next lifecycle state</span><select value={transitionStatus} onChange={(event) => setTransitionStatus(event.target.value as ReleaseStatus)}><option value="approved">Approved</option><option value="onchain_created">On-chain claim created</option><option value="executed">Executed</option><option value="cancelled">Cancelled</option><option value="unknown">Unknown / reconciliation required</option></select></label>
-          {transitionNeedsChain && <label><span>Claim PDA {transitionStatus === "onchain_created" ? "(required)" : "(if available)"}</span><input value={claimPda} onChange={(event) => setClaimPda(event.target.value)} required={transitionStatus === "onchain_created"} /></label>}
-          {transitionNeedsChain && <label><span>Transaction signature (required)</span><input value={transactionSignature} onChange={(event) => setTransactionSignature(event.target.value)} required /></label>}
-          {transitionNeedsChain && <label><span>Observed slot (required)</span><input inputMode="numeric" value={slot} onChange={(event) => setSlot(event.target.value)} required /></label>}
-          {transitionNeedsError && <label><span>Last error code (required)</span><input value={lastErrorCode} onChange={(event) => setLastErrorCode(event.target.value)} required /></label>}
-          <label className="full-field"><span>Transition evidence (JSON object)</span><textarea value={evidence} onChange={(event) => setEvidence(event.target.value)} rows={3} required /></label>
-          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim() || !(claim?.id ?? claimId).trim()}>Record governed transition</button>
+          <label><span>Next step</span><select value={transitionStatus} onChange={(event) => setTransitionStatus(event.target.value as ReleaseStatus)}><option value="approved">Approved</option><option value="onchain_created">Ledger record created</option><option value="executed">Completed</option><option value="cancelled">Cancelled</option><option value="unknown">Needs investigation</option></select></label>
+          {transitionNeedsChain && <label><span>On-chain release account {transitionStatus === "onchain_created" ? "(required)" : "(if available)"}</span><input value={claimPda} onChange={(event) => setClaimPda(event.target.value)} required={transitionStatus === "onchain_created"} /></label>}
+          {transitionNeedsChain && <label><span>Ledger transaction reference (required)</span><input value={transactionSignature} onChange={(event) => setTransactionSignature(event.target.value)} required /></label>}
+          {transitionNeedsChain && <label><span>Confirmed ledger position (required)</span><input inputMode="numeric" value={slot} onChange={(event) => setSlot(event.target.value)} required /></label>}
+          {transitionNeedsError && <label><span>Why it stopped (required)</span><input value={lastErrorCode} onChange={(event) => setLastErrorCode(event.target.value)} required /></label>}
+          <label className="full-field"><span>Decision evidence</span><textarea value={evidence} onChange={(event) => setEvidence(event.target.value)} aria-describedby="release-transition-evidence-help" rows={3} required /><small id="release-transition-evidence-help">Advanced evidence for the audit record. Use the format supplied by your operations workflow.</small></label>
+          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim() || !(claim?.id ?? claimId).trim()}>Record next step</button>
         </form>
         {notice && <p className="inline-success" role="status">{notice}</p>}
         {error && <p className="inline-error" role="alert">{error}</p>}
-        <p className="vault-authority-note"><strong>Authority boundary:</strong> this workspace records commands and evidence only. A separate approved operator must compile, sign, submit, and reconcile the Solana transaction. Finalized chain state, not this database projection, decides whether funds moved.</p>
+        <p className="vault-authority-note"><strong>What this page can do:</strong> record requests and evidence. A separately approved operator must prepare, sign, submit, and reconcile the ledger transaction. Confirmed ledger state—not this page—decides whether funds moved.</p>
       </article>
     </section>
   );

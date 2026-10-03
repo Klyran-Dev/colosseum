@@ -80,6 +80,22 @@ for file in \
   docs/adr/0256-bounded-http-fx-signer-adapter.md \
   docs/adr/0257-server-owned-fx-issuance-coordinator.md \
   docs/adr/0261-fx-issuer-process-bootstrap.md \
+  docs/adr/0262-production-saas-authorization-aware-ui-shell.md \
+  docs/adr/0263-task-oriented-product-language-and-navigation.md \
+  docs/adr/0264-server-owned-capability-snapshot-contract.md \
+  docs/adr/0265-responsive-labeled-navigation-disclosure.md \
+  docs/adr/0266-quote-to-payment-workspace-handoff.md \
+  docs/adr/0267-honest-runtime-and-account-context.md \
+  docs/adr/0268-browser-oidc-pkce-session-boundary.md \
+  docs/adr/0269-oidc-origin-csp-allowlist.md \
+  docs/adr/0271-executable-ui-language-contract.md \
+  docs/adr/0272-payment-review-progressive-disclosure.md \
+  docs/adr/0273-explicit-financial-inputs.md \
+  docs/adr/0274-explicit-currency-input.md \
+  docs/adr/0275-capability-snapshot-latency-evidence.md \
+  docs/adr/0276-multi-tenant-capability-session-reset.md \
+  docs/adr/0277-complete-workspace-capability-catalog.md \
+  docs/adr/0278-addressable-workspace-navigation.md \
   docs/adr/0248-registry-bound-fx-issuance.md \
   docs/adr/0234-api-jwks-atomic-reload.md \
   docs/adr/0235-jurisdiction-provider-key-atomic-reload.md \
@@ -133,6 +149,7 @@ for file in \
   scripts/vault_reconciliation_drill.sh \
   scripts/refund_proof_integration_drill.sh \
   scripts/benchmark_rule_simulation.sh \
+  scripts/benchmark_authorization_capabilities.sh \
   scripts/benchmark_tax_engine_service.sh \
   scripts/verify_tax_engine_mtls_runtime_contract.sh \
   scripts/verify_api_auth_jwks_reload_contract.sh \
@@ -153,7 +170,10 @@ for file in \
   db/migrations/0059_refund_claim_cancellation_lease_trigger.sql \
   db/verification/uuidv7_contract.sql \
   apps/web/package.json \
-  apps/web/pnpm-lock.yaml
+  apps/web/pnpm-lock.yaml \
+  scripts/render_web_nginx_config.mjs \
+  scripts/verify_web_csp_contract.sh \
+  scripts/verify_ui_language_contract.sh
 do
   require_file "$file"
 done
@@ -216,6 +236,24 @@ require_text docs/adr/README.md '0248-registry-bound-fx-issuance.md'
 require_text docs/adr/README.md '0249-fx-provider-identity-allowlist.md'
 require_text docs/adr/README.md '0250-deterministic-fx-provider-agreement.md'
 require_text docs/adr/README.md '0261-fx-issuer-process-bootstrap.md'
+require_text docs/adr/README.md '0262-production-saas-authorization-aware-ui-shell.md'
+require_text docs/adr/README.md '0263-task-oriented-product-language-and-navigation.md'
+require_text docs/adr/README.md '0265-responsive-labeled-navigation-disclosure.md'
+require_text docs/adr/README.md '0266-quote-to-payment-workspace-handoff.md'
+require_text docs/adr/README.md '0267-honest-runtime-and-account-context.md'
+require_text docs/adr/README.md '0268-browser-oidc-pkce-session-boundary.md'
+require_text docs/adr/README.md '0269-oidc-origin-csp-allowlist.md'
+require_text docs/adr/README.md '0271-executable-ui-language-contract.md'
+require_text Makefile 'ui-language-contract'
+require_text docs/adr/0271-executable-ui-language-contract.md 'progressive disclosure'
+require_text docs/adr/0272-payment-review-progressive-disclosure.md 'Technical payment details'
+require_text docs/adr/0273-explicit-financial-inputs.md 'Start financial fields empty'
+require_text docs/adr/0274-explicit-currency-input.md 'required `Currency` field'
+require_text docs/adr/0275-capability-snapshot-latency-evidence.md 'two API replicas'
+require_text docs/adr/0276-multi-tenant-capability-session-reset.md 'tenant A'
+require_text docs/adr/0277-complete-workspace-capability-catalog.md 'refund.payment.release'
+require_text docs/adr/0278-addressable-workspace-navigation.md 'history.pushState'
+require_text CHANGELOG.md 'executable UI language contract'
 require_text CHANGELOG.md 'container and workflow pinning contract'
 require_text CHANGELOG.md 'conformance workflow contract'
 require_text CHANGELOG.md 'emergency pause cover governed vault'

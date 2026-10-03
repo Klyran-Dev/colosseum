@@ -84,3 +84,11 @@ migration, never mutation of an applied file.
 - Production adoption additionally requires encrypted backup/PITR evidence,
   migration rollback rehearsal, deployment ownership, and an approved
   staging migration-service run.
+
+## Current local verification
+
+On 2026-10-03, `make migration-integrity-drill` passed with two concurrent
+runners: one applied the 59-migration ledger while the other skipped all 59;
+the repeat run was idempotent, a failed migration rolled back, and checksum
+drift failed closed. This is Docker-local migration evidence; staging rollout,
+production ownership, and recovery authorization remain separate gates.

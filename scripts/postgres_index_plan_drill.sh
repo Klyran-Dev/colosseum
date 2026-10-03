@@ -33,15 +33,26 @@ if [ "$ready" != "true" ]; then
     exit 1
 fi
 
+# The planner assertions must run against the same migrated schema as every
+# other PostgreSQL drill; a bare server is not a valid evidence boundary.
+docker compose -p "$project_name" run --build --rm migrator >/dev/null
+
 docker compose -p "$project_name" exec -T postgres psql \
     -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol <<SQL
 INSERT INTO chain_checkpoints (stream_key, next_slot, finalized_slot, generation)
 VALUES ('$stream_key', 25001, 25000, 1);
 
 INSERT INTO indexed_receipts
-    (stream_key, signature, slot, gross_atomic, tax_atomic, net_atomic, evidence_digest)
+    (stream_key, signature, slot, gross_atomic, tax_atomic, net_atomic,
+     evidence_digest, receipt, payer, merchant, mint, nonce, policy_digest)
 SELECT '$stream_key', format('receipt-%s', ordinal), ordinal, 1100, 100, 1000,
-       decode(repeat('ab', 32), 'hex')
+       decode(repeat('ab', 32), 'hex'),
+       decode(repeat('01', 32), 'hex'),
+       decode(repeat('02', 32), 'hex'),
+       decode(repeat('03', 32), 'hex'),
+       decode(repeat('04', 32), 'hex'),
+       ordinal,
+       decode(repeat('05', 32), 'hex')
 FROM generate_series(1, 25000) AS rows(ordinal);
 
 INSERT INTO raw_chain_evidence

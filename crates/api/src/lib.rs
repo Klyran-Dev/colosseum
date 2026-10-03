@@ -59,6 +59,7 @@ use settlement_coordinator::{
     AdjustmentRegistryVerificationRequest, CoordinatorError, SettlementCoordinator,
     SettlementProviderHealthSnapshot, SettlementStatus, SignedTransaction, can_transition,
 };
+use std::collections::BTreeMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -99,6 +100,120 @@ pub struct AppState {
     pub targeted_recovery: Option<Arc<TargetedRecoveryPorts>>,
     pub metrics: Arc<ServiceMetrics>,
 }
+
+const CAPABILITY_SNAPSHOT_SCHEMA: &str = "authorization-capabilities/v1";
+const CAPABILITY_SNAPSHOT_MAX_LIFETIME_SECONDS: i64 = 60;
+
+#[derive(Debug, Serialize)]
+pub struct AuthorizationCapabilitiesResponse {
+    pub schema: &'static str,
+    pub snapshot_id: Uuid,
+    pub subject: String,
+    pub tenant_id: Uuid,
+    pub expires_at_unix: i64,
+    pub capabilities: BTreeMap<String, AuthorizationCapability>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuthorizationCapability {
+    pub decision: &'static str,
+    pub reason_code: &'static str,
+}
+
+#[derive(Clone, Copy)]
+struct CapabilityPolicy {
+    id: &'static str,
+    required_scopes: &'static [&'static str],
+    required_roles: &'static [&'static str],
+    required_attributes: &'static [&'static str],
+}
+
+const CAPABILITY_POLICIES: &[CapabilityPolicy] = &[
+    CapabilityPolicy {
+        id: "tax.quote.create",
+        required_scopes: &["tax:quote"],
+        required_roles: &[],
+        required_attributes: &["environment"],
+    },
+    CapabilityPolicy {
+        id: "tax.preview.run",
+        required_scopes: &[],
+        required_roles: &[],
+        required_attributes: &[],
+    },
+    CapabilityPolicy {
+        id: "tax.document.quote.create",
+        required_scopes: &["tax:quote"],
+        required_roles: &[],
+        required_attributes: &["environment"],
+    },
+    CapabilityPolicy {
+        id: "tax.rule.govern",
+        required_scopes: &["tax:rule:read"],
+        required_roles: &["tax_rule_author", "tax_rule_reviewer", "tax_rule_approver"],
+        required_attributes: &["environment", "jurisdiction"],
+    },
+    CapabilityPolicy {
+        id: "settlement.wallet",
+        required_scopes: &["tax:settlement:compile"],
+        required_roles: &[],
+        required_attributes: &[],
+    },
+    CapabilityPolicy {
+        id: "settlement.document.wallet",
+        required_scopes: &["tax:settlement:compile"],
+        required_roles: &[],
+        required_attributes: &[],
+    },
+    CapabilityPolicy {
+        id: "vault.reconciliation",
+        required_scopes: &["tax:vault:read"],
+        required_roles: &[],
+        required_attributes: &[],
+    },
+    CapabilityPolicy {
+        id: "vault.release",
+        required_scopes: &["tax:vault:propose"],
+        required_roles: &["vault_release_proposer"],
+        required_attributes: &[],
+    },
+    CapabilityPolicy {
+        id: "settlement.adjustment",
+        required_scopes: &["tax:adjustment:propose"],
+        required_roles: &["settlement_adjustment_proposer"],
+        required_attributes: &[],
+    },
+    CapabilityPolicy {
+        id: "refund.claim.create",
+        required_scopes: &["tax:refund:claim:prepare"],
+        required_roles: &["settlement_adjustment_proposer"],
+        required_attributes: &[],
+    },
+    CapabilityPolicy {
+        id: "refund.claim.cancel",
+        required_scopes: &["tax:refund:claim:cancel:prepare"],
+        required_roles: &["settlement_adjustment_governance"],
+        required_attributes: &[],
+    },
+    CapabilityPolicy {
+        id: "refund.payment.release",
+        required_scopes: &["tax:refund:execute:prepare"],
+        required_roles: &["settlement_adjustment_approver"],
+        required_attributes: &[],
+    },
+    CapabilityPolicy {
+        id: "evidence.replay",
+        required_scopes: &["tax:indexer:read"],
+        required_roles: &["indexer_operator"],
+        required_attributes: &[],
+    },
+    CapabilityPolicy {
+        id: "access.control",
+        required_scopes: &["audit:read"],
+        required_roles: &[],
+        required_attributes: &[],
+    },
+];
 
 pub struct TargetedRecoveryPorts {
     pub signature_source: Arc<dyn FinalizedSignaturePageSource>,
@@ -898,10 +1013,8 @@ pub struct SettlementCompileFromQuoteRequest {
     pub calculation_id: Uuid,
     pub route_id: Uuid,
     pub payer: String,
+    #[serde(with = "policy::serde_strict_u64_string")]
     pub nonce: u64,
-    pub policy_sequence: u64,
-    #[serde(deserialize_with = "deserialize_digest")]
-    pub policy_digest: [u8; 32],
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -911,10 +1024,8 @@ pub struct DocumentSettlementCompileFromQuoteRequest {
     pub route_id: Uuid,
     pub idempotency_key: String,
     pub payer: String,
+    #[serde(with = "policy::serde_strict_u64_string")]
     pub nonce: u64,
-    pub policy_sequence: u64,
-    #[serde(deserialize_with = "deserialize_digest")]
-    pub policy_digest: [u8; 32],
     pub scope: PaymentScope,
 }
 
@@ -925,10 +1036,8 @@ pub struct SplitSettlementCompileFromQuoteRequest {
     pub route_id: Uuid,
     pub split_plan_id: Uuid,
     pub payer: String,
+    #[serde(with = "policy::serde_strict_u64_string")]
     pub nonce: u64,
-    pub policy_sequence: u64,
-    #[serde(deserialize_with = "deserialize_digest")]
-    pub policy_digest: [u8; 32],
 }
 
 #[derive(Debug, Serialize)]
@@ -1873,6 +1982,10 @@ pub fn router() -> Router<AppState> {
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/metrics", get(metrics))
+        .route(
+            "/v1/authorization/capabilities",
+            get(authorization_capabilities),
+        )
         .route("/v1/tax/calculate", post(calculate_tax))
         .route("/v1/tax/calculate-document", post(calculate_document_tax))
         .route("/v1/tax/quote", post(quote_tax))
@@ -2080,6 +2193,80 @@ pub fn router() -> Router<AppState> {
 
 async fn healthz() -> StatusCode {
     StatusCode::NO_CONTENT
+}
+
+async fn authorization_capabilities(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<AuthorizationCapabilitiesResponse>, ApiError> {
+    let metrics = Arc::clone(&state.metrics);
+    let started = Instant::now();
+    let result = authorization_capabilities_inner(state, headers);
+    metrics.observe_or_log(
+        "authorization_capabilities",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+fn authorization_capabilities_inner(
+    state: AppState,
+    headers: HeaderMap,
+) -> Result<Json<AuthorizationCapabilitiesResponse>, ApiError> {
+    let principal = authenticate_principal(&state, &headers)?;
+    let now_unix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| ApiError::from(auth::AuthError::ClockUnavailable))?
+        .as_secs();
+    let now_unix = i64::try_from(now_unix).unwrap_or(i64::MAX);
+    let expires_at_unix = principal
+        .expires_at_unix
+        .min(now_unix.saturating_add(CAPABILITY_SNAPSHOT_MAX_LIFETIME_SECONDS));
+    let capabilities = CAPABILITY_POLICIES
+        .iter()
+        .map(|policy| {
+            let decision = if policy
+                .required_scopes
+                .iter()
+                .any(|scope| !principal.has_scope(scope))
+            {
+                AuthorizationCapability {
+                    decision: "deny",
+                    reason_code: "scope_missing",
+                }
+            } else if !policy.required_roles.is_empty()
+                && !policy
+                    .required_roles
+                    .iter()
+                    .any(|role| principal.has_role(role))
+            {
+                AuthorizationCapability {
+                    decision: "deny",
+                    reason_code: "role_missing",
+                }
+            } else if !policy.required_attributes.is_empty() {
+                AuthorizationCapability {
+                    decision: "indeterminate",
+                    reason_code: "resource_context_required",
+                }
+            } else {
+                AuthorizationCapability {
+                    decision: "allow",
+                    reason_code: "scope_and_role_satisfied",
+                }
+            };
+            (policy.id.to_string(), decision)
+        })
+        .collect();
+    Ok(Json(AuthorizationCapabilitiesResponse {
+        schema: CAPABILITY_SNAPSHOT_SCHEMA,
+        snapshot_id: Uuid::now_v7(),
+        subject: principal.subject,
+        tenant_id: principal.merchant_id,
+        expires_at_unix,
+        capabilities,
+    }))
 }
 
 async fn readyz(State(state): State<AppState>) -> StatusCode {
@@ -7127,15 +7314,8 @@ async fn compile_settlement_from_quote_inner(
         .load_quote_for_settlement(principal.merchant_id, request.calculation_id)
         .await
         .map_err(ApiError::from)?;
-    if !state.simulation_mode {
-        require_quote_attestation(
-            &store,
-            principal.merchant_id,
-            request.calculation_id,
-            request.policy_digest,
-        )
-        .await?;
-    }
+    let policy_binding =
+        require_quote_attestation(&store, principal.merchant_id, request.calculation_id).await?;
     let route = store
         .load_active_settlement_route(principal.merchant_id, request.route_id)
         .await
@@ -7155,11 +7335,11 @@ async fn compile_settlement_from_quote_inner(
             net_destination: route.net_destination,
             token_program: route.token_program,
             nonce: request.nonce,
-            policy_sequence: request.policy_sequence,
+            policy_sequence: policy_binding.sequence,
             gross_atomic: quote.result.gross_atomic.to_string(),
             tax_atomic: quote.result.total_tax_atomic.to_string(),
             net_atomic: quote.result.total_net_atomic.to_string(),
-            policy_digest: request.policy_digest,
+            policy_digest: policy_binding.digest,
         },
         Some(request.route_id),
     )
@@ -7240,6 +7420,7 @@ async fn compile_document_settlement_from_quote_inner(
         .attestation
         .verify_binding(&binding)
         .map_err(ApiError::from)?;
+    let policy_binding = server_owned_policy_binding(&attestation.attestation);
     let serialized_request = serde_json::to_vec(&request).map_err(|error| ApiError {
         status: StatusCode::INTERNAL_SERVER_ERROR,
         code: "SETTLEMENT_DIGEST_FAILURE",
@@ -7263,11 +7444,11 @@ async fn compile_document_settlement_from_quote_inner(
         net_destination: route.net_destination,
         token_program: route.token_program,
         nonce: request.nonce,
-        policy_sequence: request.policy_sequence,
+        policy_sequence: policy_binding.sequence,
         gross_atomic: authorization.gross_atomic.to_string(),
         tax_atomic: authorization.tax_atomic.to_string(),
         net_atomic: authorization.net_atomic.to_string(),
-        policy_digest: request.policy_digest,
+        policy_digest: policy_binding.digest,
         document_attestation_digest: authorization.source_attestation_digest,
         payment_scope_digest: authorization.payment_scope_digest,
     };
@@ -7348,15 +7529,8 @@ async fn compile_split_settlement_from_quote_inner(
         store.load_active_settlement_split_plan(principal.merchant_id, request.split_plan_id),
     )
     .map_err(ApiError::from)?;
-    if !state.simulation_mode {
-        require_quote_attestation(
-            &store,
-            principal.merchant_id,
-            request.calculation_id,
-            request.policy_digest,
-        )
-        .await?;
-    }
+    let policy_binding =
+        require_quote_attestation(&store, principal.merchant_id, request.calculation_id).await?;
     if plan.merchant_account != route.merchant_account || plan.mint != route.mint {
         return Err(ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
@@ -7380,7 +7554,7 @@ async fn compile_split_settlement_from_quote_inner(
             tax_vault: route.tax_vault,
             token_program: route.token_program,
             nonce: request.nonce,
-            policy_sequence: request.policy_sequence,
+            policy_sequence: policy_binding.sequence,
             split_plan_version: u64::try_from(plan.version).map_err(|_| ApiError {
                 status: StatusCode::INTERNAL_SERVER_ERROR,
                 code: "SETTLEMENT_SPLIT_PLAN_EVIDENCE_CORRUPT",
@@ -7390,7 +7564,7 @@ async fn compile_split_settlement_from_quote_inner(
             gross_atomic: quote.result.gross_atomic.to_string(),
             tax_atomic: quote.result.total_tax_atomic.to_string(),
             net_atomic: quote.result.total_net_atomic.to_string(),
-            policy_digest: request.policy_digest,
+            policy_digest: policy_binding.digest,
         },
     )
     .await
@@ -7448,29 +7622,60 @@ async fn compile_settlement_request(
     }))
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ServerOwnedPolicyBinding {
+    sequence: u64,
+    digest: Digest32,
+}
+
+trait ServerOwnedPolicySource {
+    fn policy_sequence(&self) -> u64;
+    fn policy_digest(&self) -> Digest32;
+}
+
+impl ServerOwnedPolicySource for CalculationAttestation {
+    fn policy_sequence(&self) -> u64 {
+        self.unsigned.sequence
+    }
+
+    fn policy_digest(&self) -> Digest32 {
+        self.payload_digest
+    }
+}
+
+impl ServerOwnedPolicySource for DocumentCalculationAttestation {
+    fn policy_sequence(&self) -> u64 {
+        self.unsigned.sequence
+    }
+
+    fn policy_digest(&self) -> Digest32 {
+        self.payload_digest
+    }
+}
+
+fn server_owned_policy_binding<T: ServerOwnedPolicySource>(
+    attestation: &T,
+) -> ServerOwnedPolicyBinding {
+    ServerOwnedPolicyBinding {
+        sequence: attestation.policy_sequence(),
+        digest: attestation.policy_digest(),
+    }
+}
+
 async fn require_quote_attestation(
     store: &PgStore,
     merchant_id: Uuid,
     calculation_id: Uuid,
-    expected_policy_digest: Digest32,
-) -> Result<(), ApiError> {
+) -> Result<ServerOwnedPolicyBinding, ApiError> {
     let stored = store
         .load_calculation_attestation(merchant_id, calculation_id)
         .await
         .map_err(ApiError::from)?;
-    if stored.payload_digest != expected_policy_digest {
-        return Err(ApiError {
-            status: StatusCode::CONFLICT,
-            code: "SETTLEMENT_ATTESTATION_DIGEST_MISMATCH",
-            message:
-                "the settlement policy digest does not match the persisted calculation attestation"
-                    .to_string(),
-        });
-    }
     stored
         .attestation
         .verify_at(server_unix_now()?)
-        .map_err(ApiError::from)
+        .map_err(ApiError::from)?;
+    Ok(server_owned_policy_binding(&stored.attestation))
 }
 
 async fn compile_split_settlement_request(
@@ -7896,6 +8101,17 @@ fn authenticate_scope(
     headers: &HeaderMap,
     required_scope: &str,
 ) -> Result<auth::AuthenticatedPrincipal, ApiError> {
+    let principal = authenticate_principal(state, headers)?;
+    principal
+        .require_scope(required_scope)
+        .map_err(ApiError::from)?;
+    Ok(principal)
+}
+
+fn authenticate_principal(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<auth::AuthenticatedPrincipal, ApiError> {
     let authenticator = state
         .authenticator
         .as_ref()
@@ -7909,9 +8125,6 @@ fn authenticate_scope(
             headers.get("authorization"),
             i64::try_from(now_unix).unwrap_or(i64::MAX),
         )
-        .map_err(ApiError::from)?;
-    principal
-        .require_scope(required_scope)
         .map_err(ApiError::from)?;
     Ok(principal)
 }
@@ -8181,6 +8394,7 @@ mod tests {
             ServiceMetrics::new(
                 "api",
                 &[
+                    "authorization_capabilities",
                     "tax_calculate",
                     "tax_document_calculate",
                     "tax_quote",
@@ -8627,6 +8841,137 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn capability_snapshot_is_server_owned_bounded_and_fail_closed() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("test clock")
+            .as_secs() as i64;
+        let (token, merchant_id) = auth::test_token_with_scope_and_roles(
+            now,
+            "tax:quote tax:rule:read tax:settlement:compile",
+            "capability-user",
+            &["tax_rule_author"],
+        );
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: true,
+                storage: None,
+                authenticator: Some(auth::test_authenticator()),
+                jurisdiction_provider_registry: None,
+                fx_issuance: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/authorization/capabilities")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 16 * 1024)
+            .await
+            .expect("response body");
+        let parsed: serde_json::Value = serde_json::from_slice(&body).expect("capability response");
+        assert_eq!(parsed["schema"], CAPABILITY_SNAPSHOT_SCHEMA);
+        assert_eq!(parsed["subject"], "capability-user");
+        assert_eq!(parsed["tenant_id"], merchant_id.to_string());
+        assert!(parsed["snapshot_id"].as_str().is_some_and(|value| {
+            Uuid::parse_str(value).is_ok_and(|snapshot_id| snapshot_id.get_version_num() == 7)
+        }));
+        assert!(
+            parsed["expires_at_unix"]
+                .as_i64()
+                .is_some_and(|value| value <= now.saturating_add(300))
+        );
+        let capability_ids = parsed["capabilities"]
+            .as_object()
+            .expect("capability object")
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            capability_ids,
+            vec![
+                "access.control",
+                "evidence.replay",
+                "refund.claim.cancel",
+                "refund.claim.create",
+                "refund.payment.release",
+                "settlement.adjustment",
+                "settlement.document.wallet",
+                "settlement.wallet",
+                "tax.document.quote.create",
+                "tax.preview.run",
+                "tax.quote.create",
+                "tax.rule.govern",
+                "vault.reconciliation",
+                "vault.release",
+            ]
+        );
+        assert_eq!(
+            parsed["capabilities"]["tax.preview.run"]["decision"],
+            "allow"
+        );
+        assert_eq!(
+            parsed["capabilities"]["settlement.wallet"]["decision"],
+            "allow"
+        );
+        assert_eq!(
+            parsed["capabilities"]["settlement.document.wallet"]["decision"],
+            "allow"
+        );
+        assert_eq!(
+            parsed["capabilities"]["tax.document.quote.create"]["reason_code"],
+            "resource_context_required"
+        );
+        assert_eq!(
+            parsed["capabilities"]["refund.claim.create"]["reason_code"],
+            "scope_missing"
+        );
+        assert_eq!(
+            parsed["capabilities"]["tax.quote.create"]["reason_code"],
+            "resource_context_required"
+        );
+        assert_eq!(
+            parsed["capabilities"]["vault.release"]["reason_code"],
+            "scope_missing"
+        );
+    }
+
+    #[tokio::test]
+    async fn capability_snapshot_requires_authenticated_principal() {
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: true,
+                storage: None,
+                authenticator: Some(auth::test_authenticator()),
+                jurisdiction_provider_registry: None,
+                fx_issuance: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/authorization/capabilities")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -10422,5 +10767,95 @@ mod tests {
             )
             .unwrap();
         assert_eq!(principal.merchant_id, merchant_id);
+    }
+
+    #[test]
+    fn quote_compile_requests_reject_caller_owned_policy_fields() {
+        let common = serde_json::json!({
+            "calculation_id": "01992f1b-4a70-7e30-8ea2-b6e37a9d9d13",
+            "route_id": "01992f1b-4a70-7e30-8ea2-b6e37a9d9d14",
+            "payer": "cGfHiC6Kgg3FpFZvgwGcswsCRtp4aBP2fzuXRQPizuN",
+            "nonce": "9",
+            "policy_sequence": 3,
+            "policy_digest": [7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]
+        });
+        assert!(
+            serde_json::from_value::<SettlementCompileFromQuoteRequest>(common.clone()).is_err()
+        );
+        assert!(
+            serde_json::from_value::<SplitSettlementCompileFromQuoteRequest>({
+                let mut value = common.clone();
+                value["split_plan_id"] = serde_json::json!("01992f1b-4a70-7e30-8ea2-b6e37a9d9d15");
+                value
+            })
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<DocumentSettlementCompileFromQuoteRequest>({
+                let mut value = common;
+                value["idempotency_key"] = serde_json::json!("document-payment-1");
+                value["scope"] = serde_json::json!({"kind": "full_document"});
+                value
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn server_owned_policy_binding_uses_signed_attestation_values() {
+        let unsigned = UnsignedAttestation {
+            schema_version: ATTESTATION_SCHEMA_VERSION,
+            merchant_id: [1; 32],
+            rule_set_id: "global-rule".to_string(),
+            rule_version: 1,
+            jurisdiction: "US-CA".to_string(),
+            currency: "USD".to_string(),
+            asset_mint: [2; 32],
+            facts_digest: [3; 32],
+            rule_digest: [4; 32],
+            gross_atomic: 1_000,
+            tax_atomic: 100,
+            net_atomic: 900,
+            issued_at_unix: 1_800_000_000,
+            expires_at_unix: 1_800_000_600,
+            sequence: 73,
+            issuer_key_id: [5; 32],
+        };
+        let attestation = CalculationAttestation::sign(unsigned, &SigningKey::from_bytes(&[9; 32]))
+            .expect("valid signed policy fixture");
+        let binding = server_owned_policy_binding(&attestation);
+        assert_eq!(binding.sequence, 73);
+        assert_eq!(binding.digest, attestation.payload_digest);
+    }
+
+    #[test]
+    fn quote_compile_nonce_uses_canonical_decimal_u64_json() {
+        let valid = serde_json::json!({
+            "calculation_id": "01992f1b-4a70-7e30-8ea2-b6e37a9d9d13",
+            "route_id": "01992f1b-4a70-7e30-8ea2-b6e37a9d9d14",
+            "payer": "cGfHiC6Kgg3FpFZvgwGcswsCRtp4aBP2fzuXRQPizuN",
+            "nonce": "18446744073709551615"
+        });
+        let parsed: SettlementCompileFromQuoteRequest =
+            serde_json::from_value(valid).expect("canonical nonce");
+        assert_eq!(parsed.nonce, u64::MAX);
+
+        let numeric = serde_json::json!({
+            "calculation_id": "01992f1b-4a70-7e30-8ea2-b6e37a9d9d13",
+            "route_id": "01992f1b-4a70-7e30-8ea2-b6e37a9d9d14",
+            "payer": "cGfHiC6Kgg3FpFZvgwGcswsCRtp4aBP2fzuXRQPizuN",
+            "nonce": 9
+        });
+        assert!(serde_json::from_value::<SettlementCompileFromQuoteRequest>(numeric).is_err());
+
+        let non_canonical = serde_json::json!({
+            "calculation_id": "01992f1b-4a70-7e30-8ea2-b6e37a9d9d13",
+            "route_id": "01992f1b-4a70-7e30-8ea2-b6e37a9d9d14",
+            "payer": "cGfHiC6Kgg3FpFZvgwGcswsCRtp4aBP2fzuXRQPizuN",
+            "nonce": "09"
+        });
+        assert!(
+            serde_json::from_value::<SettlementCompileFromQuoteRequest>(non_canonical).is_err()
+        );
     }
 }
