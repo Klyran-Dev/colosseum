@@ -5,7 +5,7 @@ INSERT INTO settlement_routes (
     merchant_account, mint, tax_vault, net_destination, token_program,
     mint_decimals,
     verification_digest, verification_slot, verification_commitment,
-    verification_evidence, verified_at
+    verification_schema, verification_evidence, verified_at
 )
 VALUES (
     '01992f1b-4a70-7e30-8ea2-b6e37a9d9d12',
@@ -22,7 +22,8 @@ VALUES (
     decode(repeat('07', 32), 'hex'),
     0,
     'local_synthetic',
-    '{"source":"synthetic-local-fixture","warning":"not chain verified","mint_decimals":2}'::jsonb,
+    'settlement-route-verification/v2',
+    '{"source":"synthetic-local-fixture","warning":"not chain verified","verification_schema":"settlement-route-verification/v2","asset_config":"AL5PDSRbT5yyhtjQrTmh11rTShZXS9x6QMo9YCMs499d","accounts":[{}, {}, {}, {}, {}],"mint_decimals":2}'::jsonb,
     now()
 )
 ON CONFLICT (id) DO NOTHING;

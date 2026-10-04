@@ -1,4 +1,5 @@
 const UUIDV7_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const MAX_RESPONSE_ERROR_MESSAGE_LENGTH = 512;
 
 export const REQUEST_TIMEOUT_MS = {
   health: 2_000,
@@ -63,8 +64,20 @@ function payloadMessage(payload: unknown): string | null {
   return null;
 }
 
+function boundedDisplayMessage(value: string): string | null {
+  const normalized = value
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return null;
+  if (normalized.length <= MAX_RESPONSE_ERROR_MESSAGE_LENGTH) return normalized;
+  return `${normalized.slice(0, MAX_RESPONSE_ERROR_MESSAGE_LENGTH - 1)}…`;
+}
+
 export function responseError(response: Response, payload: unknown, fallback: string): string {
-  const message = payloadMessage(payload) ?? fallback;
+  const message = boundedDisplayMessage(payloadMessage(payload) ?? "")
+    ?? boundedDisplayMessage(fallback)
+    ?? "The request could not be completed.";
   const requestId = response.headers.get("x-request-id")?.trim() ?? "";
   return UUIDV7_PATTERN.test(requestId)
     ? `${message} (support reference: ${requestId})`

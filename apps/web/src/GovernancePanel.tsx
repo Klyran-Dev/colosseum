@@ -78,7 +78,11 @@ export default function GovernancePanel({ apiBase, serviceOnline, accessToken, l
   const [draftRuleDocument, setDraftRuleDocument] = useState(DEFAULT_RULE_DOCUMENT);
   const [ruleEditorMode, setRuleEditorMode] = useState<"structured" | "json">("structured");
   const [structuredRuleDraft, setStructuredRuleDraft] = useState<RuleWorkbenchDraft>(() => defaultRuleWorkbenchDraft());
-  const [draftProvenance, setDraftProvenance] = useState('{\n  "source": "operator-console"\n}');
+  const [draftSourceReference, setDraftSourceReference] = useState("");
+  const [draftSourceDigest, setDraftSourceDigest] = useState("");
+  const [draftLegalTaxOwner, setDraftLegalTaxOwner] = useState("");
+  const [draftReviewedAt, setDraftReviewedAt] = useState("");
+  const [draftReviewReference, setDraftReviewReference] = useState("");
   const [draftIdempotencyKey, setDraftIdempotencyKey] = useState<string | null>(null);
   const [draftIdempotencyPayload, setDraftIdempotencyPayload] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -138,17 +142,15 @@ export default function GovernancePanel({ apiBase, serviceOnline, accessToken, l
       return;
     }
     let ruleSet: unknown;
-    let provenance: unknown;
+    let provenance: Record<string, unknown>;
     try {
       ruleSet = ruleEditorMode === "structured" ? buildRuleSet(structuredRuleDraft) : JSON.parse(draftRuleDocument);
-      provenance = JSON.parse(draftProvenance);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Rule document and provenance must both be valid JSON.");
+      setError(cause instanceof Error ? cause.message : "The rule document must be valid JSON.");
       return;
     }
-    if (typeof ruleSet !== "object" || ruleSet === null || Array.isArray(ruleSet)
-        || typeof provenance !== "object" || provenance === null || Array.isArray(provenance)) {
-      setError("Rule document and provenance must be JSON objects.");
+    if (typeof ruleSet !== "object" || ruleSet === null || Array.isArray(ruleSet)) {
+      setError("The rule document must be a JSON object.");
       return;
     }
     const version = Number(draftVersion);
@@ -162,6 +164,26 @@ export default function GovernancePanel({ apiBase, serviceOnline, accessToken, l
       setError("Version must be a positive integer and effective-from must be a valid date.");
       return;
     }
+    const sourceReference = draftSourceReference.trim();
+    const sourceDigest = draftSourceDigest.trim();
+    const legalTaxOwner = draftLegalTaxOwner.trim();
+    const reviewReference = draftReviewReference.trim();
+    const reviewedAt = Date.parse(draftReviewedAt);
+    if (!sourceReference || sourceReference.length > 512 || !/^[0-9a-f]{64}$/i.test(sourceDigest)
+        || !legalTaxOwner || legalTaxOwner.length > 256 || !reviewReference || reviewReference.length > 512
+        || !Number.isFinite(reviewedAt) || reviewedAt < 1000 || reviewedAt > 4102444800000) {
+      setError("Complete the release evidence: source record, SHA-256 digest, legal/tax owner, review date, and review record are required.");
+      return;
+    }
+    provenance = {
+      schema: "tax-rule-provenance/v1",
+      source_reference: sourceReference,
+      source_digest_hex: sourceDigest,
+      legal_tax_owner: legalTaxOwner,
+      jurisdiction_scope: draftJurisdiction.trim(),
+      reviewed_at_unix: Math.floor(reviewedAt / 1000),
+      review_reference: reviewReference,
+    };
     setError(null);
     setNotice(null);
     setIsCreating(true);
@@ -322,7 +344,17 @@ export default function GovernancePanel({ apiBase, serviceOnline, accessToken, l
                 <p className="field-help">Advanced mode is for exact rule exchange. The service still validates and governs every document; this browser does not calculate or publish it.</p>
               </>}
             </div>
-            <label className="full-field"><span>Source record</span><textarea value={draftProvenance} onChange={(event) => setDraftProvenance(event.target.value)} aria-describedby="source-record-help" rows={4} spellCheck={false} required /><small id="source-record-help" className="field-help">Record where the rule came from. Use the advanced format supplied by your tax or legal review process.</small></label>
+            <fieldset className="full-field release-evidence">
+              <legend>Release evidence</legend>
+              <p className="field-help">These records explain where the rule came from and who reviewed it. Publication remains blocked until the service validates this evidence.</p>
+              <div className="form-grid">
+                <label><span>Source record</span><input value={draftSourceReference} onChange={(event) => setDraftSourceReference(event.target.value)} autoComplete="off" placeholder="Controlled record or approved source URI" required /></label>
+                <label><span>Source SHA-256 digest</span><input value={draftSourceDigest} onChange={(event) => setDraftSourceDigest(event.target.value)} autoComplete="off" inputMode="text" pattern="[0-9a-fA-F]{64}" placeholder="64 hexadecimal characters" required /><small className="field-help">The digest binds this release to the reviewed source.</small></label>
+                <label><span>Legal/tax owner</span><input value={draftLegalTaxOwner} onChange={(event) => setDraftLegalTaxOwner(event.target.value)} autoComplete="organization" placeholder="Approved owner reference" required /></label>
+                <label><span>Reviewed on</span><input type="datetime-local" value={draftReviewedAt} onChange={(event) => setDraftReviewedAt(event.target.value)} required /></label>
+                <label className="full-field"><span>Review record</span><input value={draftReviewReference} onChange={(event) => setDraftReviewReference(event.target.value)} autoComplete="off" placeholder="Review ticket, decision record, or approval reference" required /></label>
+              </div>
+            </fieldset>
             <button type="submit" disabled={!serviceOnline || isCreating || !accessToken.trim()}>{isCreating ? "Creating immutable draft…" : "Create governed draft"}</button>
           </form>
         </details>

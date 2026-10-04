@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { run } from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -94,6 +94,25 @@ describe("primary product accessibility contract", () => {
 
     expect(governanceButton.getAttribute("aria-current")).toBe("page");
     expect(document.activeElement).toBe(workspaceContent);
+  });
+
+  it("keeps browser history navigation aligned without pushing during popstate", async () => {
+    window.history.replaceState(null, "", "/operations/tax-quotes");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 200 })));
+    const pushState = vi.spyOn(window.history, "pushState");
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Tax rules" }));
+
+    expect(window.location.pathname).toBe("/rules/tax-rules");
+    expect(pushState).toHaveBeenCalledTimes(1);
+
+    window.history.replaceState(null, "", "/money/balance-checks");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Check tax balances" })).toBeTruthy());
+    expect(window.location.pathname).toBe("/money/balance-checks");
+    expect(pushState).toHaveBeenCalledTimes(1);
   });
 
   it("exposes explicit locale, time-zone, and RTL display settings", () => {

@@ -40,6 +40,7 @@ for file in \
   docs/architecture/toolchain-compatibility.md \
   docs/plans/implementation-plan.md \
   docs/plans/production-readiness.md \
+  docs/operations/requirements-traceability.md \
   docs/product/tax-coverage-matrix.md \
   docs/public-repository-release.md \
   db/README.md \
@@ -97,6 +98,21 @@ for file in \
   docs/adr/0277-complete-workspace-capability-catalog.md \
   docs/adr/0278-addressable-workspace-navigation.md \
   docs/adr/0298-material-3-expressive-visual-system.md \
+  docs/adr/0299-release-evidence-source-revision-binding.md \
+  docs/adr/0300-semantic-color-token-migration.md \
+  docs/adr/0301-validator-backed-revenue-stream-conformance.md \
+  docs/adr/0302-versioned-local-display-preferences.md \
+  docs/adr/0303-release-candidate-browser-evidence.md \
+  docs/adr/0304-material-role-contrast-contract.md \
+  docs/adr/0305-tier-1-local-gate-orchestration.md \
+  docs/adr/0306-collapsed-advanced-evidence-disclosures.md \
+  docs/adr/0307-project-scoped-local-reset.md \
+  docs/adr/0308-release-candidate-authenticated-integration-evidence.md \
+  docs/adr/0309-contextual-status-disclosure.md \
+  docs/adr/0314-non-custodial-wallet-source-contract.md \
+  docs/adr/0315-executable-tax-responsibility-language.md \
+  docs/adr/0316-versioned-rule-release-provenance.md \
+  docs/adr/0323-material-expressive-operational-workspace-composition.md \
   docs/adr/0248-registry-bound-fx-issuance.md \
   docs/adr/0234-api-jwks-atomic-reload.md \
   docs/adr/0235-jurisdiction-provider-key-atomic-reload.md \
@@ -170,12 +186,15 @@ for file in \
   docs/plans/tier-1-product-standard.md \
   db/migrations/0058_catalog_driven_uuidv7_invariant_closure.sql \
   db/migrations/0059_refund_claim_cancellation_lease_trigger.sql \
+  db/migrations/0065_rule_release_provenance_readiness.sql \
   db/verification/uuidv7_contract.sql \
   apps/web/package.json \
   apps/web/pnpm-lock.yaml \
   scripts/render_web_nginx_config.mjs \
   scripts/verify_web_csp_contract.sh \
-  scripts/verify_ui_language_contract.sh
+  scripts/verify_ui_language_contract.sh \
+  scripts/verify_non_custodial_wallet_contract.sh \
+  scripts/verify_rule_release_provenance_contract.sh
 do
   require_file "$file"
 done
@@ -248,7 +267,47 @@ require_text docs/adr/README.md '0268-browser-oidc-pkce-session-boundary.md'
 require_text docs/adr/README.md '0269-oidc-origin-csp-allowlist.md'
 require_text docs/adr/README.md '0271-executable-ui-language-contract.md'
 require_text Makefile 'ui-language-contract'
+require_text Makefile 'non-custodial-wallet-contract'
+require_text docs/adr/0314-non-custodial-wallet-source-contract.md 'source contract'
+require_text docs/adr/0314-non-custodial-wallet-source-contract.md 'private-key material'
+require_text docs/adr/0315-executable-tax-responsibility-language.md 'language contract'
+require_text docs/adr/0315-executable-tax-responsibility-language.md 'compliance guarantee'
+require_text docs/adr/README.md '0316-versioned-rule-release-provenance.md'
+require_text docs/adr/0316-versioned-rule-release-provenance.md 'tax-rule-provenance/v1'
+require_text docs/adr/README.md '0323-material-expressive-operational-workspace-composition.md'
+require_text docs/adr/0323-material-expressive-operational-workspace-composition.md 'Native grouped disclosure'
+require_text docs/adr/0323-material-expressive-operational-workspace-composition.md 'Solana Aurora'
+require_text docs/adr/README.md '0317-material-expressive-surface-hierarchy-and-navigation-density.md'
+require_text docs/adr/0317-material-expressive-surface-hierarchy-and-navigation-density.md 'surface-container-lowest'
+require_text docs/adr/README.md '0318-workflow-handoff-url-integrity.md'
+require_text docs/adr/0318-workflow-handoff-url-integrity.md 'history.pushState'
+require_text docs/adr/0318-workflow-handoff-url-integrity.md 'wallet material, tenant identifiers'
+require_text docs/adr/README.md '0319-bounded-browser-error-disclosure.md'
+require_text docs/adr/0319-bounded-browser-error-disclosure.md '512 characters'
+require_text docs/adr/0319-bounded-browser-error-disclosure.md 'strict UUIDv7 support-reference check'
+require_text docs/adr/README.md '0320-on-chain-stablecoin-asset-admission.md'
+require_text docs/adr/0320-on-chain-stablecoin-asset-admission.md 'AssetConfig'
+require_text docs/adr/0320-on-chain-stablecoin-asset-admission.md 'No v1 token movement succeeds without an enabled stablecoin'
+require_text docs/adr/0320-on-chain-stablecoin-asset-admission.md 'Initial implementation slice'
+require_text apps/web/src/solana.localnet.test.ts 'initializeAssetConfigInstruction'
+require_text apps/web/src/solana.localnet.test.ts 'setAssetEnabledInstruction'
+require_text apps/web/src/solana.localnet.test.ts 'TransferFeeConfig'
+require_text scripts/verify_local_stack.sh 'cross-tenant aggregate settlement compilation'
+require_text scripts/verify_solana_conformance_evidence.sh 'rejects disabled or substituted asset admission'
+require_text docs/adr/README.md '0321-finalized-asset-config-route-evidence.md'
+require_text docs/adr/0321-finalized-asset-config-route-evidence.md 'five accounts'
+require_text docs/adr/0321-finalized-asset-config-route-evidence.md 'v2'
+require_text docs/adr/README.md '0322-route-evidence-version-migration.md'
+require_text docs/adr/0322-route-evidence-version-migration.md 'suspended'
+require_text docs/plans/implementation-plan.md 'thirteenth aggregate/document'
+require_text docs/plans/implementation-plan.md 'ADR-0321'
+require_text docs/plans/implementation-plan.md 'ADR-0322'
+require_text docs/operations/requirements-traceability.md 'On-chain/client/browser boundary and finalized asset-account proof are verified'
+require_text Makefile 'rule-release-provenance-contract'
+require_text scripts/verify_rule_release_provenance_contract.sh 'rule release provenance contract passed'
 require_text Makefile 'web-color-contract'
+require_text Makefile 'material-palette-contract'
+require_text Makefile 'tier1-local-check-contract'
 require_file scripts/verify_web_color_contract.sh
 require_text docs/adr/0271-executable-ui-language-contract.md 'progressive disclosure'
 require_text docs/adr/0272-payment-review-progressive-disclosure.md 'Technical payment details'
@@ -260,7 +319,44 @@ require_text docs/adr/0277-complete-workspace-capability-catalog.md 'refund.paym
 require_text docs/adr/0278-addressable-workspace-navigation.md 'history.pushState'
 require_text docs/adr/README.md '0298-material-3-expressive-visual-system.md'
 require_text docs/adr/0298-material-3-expressive-visual-system.md 'Material 3 Expressive'
+require_text docs/adr/0299-release-evidence-source-revision-binding.md 'source revision'
+require_text docs/adr/0299-release-evidence-source-revision-binding.md 'mismatch fails'
+require_text docs/adr/README.md '0300-semantic-color-token-migration.md'
+require_text docs/adr/0300-semantic-color-token-migration.md 'complete apps/web/src/styles.css'
+require_text docs/adr/0300-semantic-color-token-migration.md 'raw hex, rgb, or rgba literals'
+require_text docs/adr/README.md '0301-validator-backed-revenue-stream-conformance.md'
+require_text docs/adr/0301-validator-backed-revenue-stream-conformance.md 'revenue-stream single-use claim'
+require_text docs/adr/README.md '0302-versioned-local-display-preferences.md'
+require_text docs/adr/0302-versioned-local-display-preferences.md 'presentation-only'
+require_text docs/adr/0302-versioned-local-display-preferences.md 'credentials'
+require_text docs/adr/README.md '0303-release-candidate-browser-evidence.md'
+require_text docs/adr/0303-release-candidate-browser-evidence.md 'source-revision.txt'
+require_text docs/adr/README.md '0304-material-role-contrast-contract.md'
+require_text docs/adr/0304-material-role-contrast-contract.md '4.5:1'
+require_text docs/adr/README.md '0305-tier-1-local-gate-orchestration.md'
+require_text docs/adr/README.md '0306-collapsed-advanced-evidence-disclosures.md'
+require_text docs/adr/0306-collapsed-advanced-evidence-disclosures.md 'collapsed by default'
+require_text docs/adr/README.md '0307-project-scoped-local-reset.md'
+require_text docs/adr/0307-project-scoped-local-reset.md 'down --volumes --remove-orphans'
+require_text docs/adr/README.md '0308-release-candidate-authenticated-integration-evidence.md'
+require_text docs/adr/0308-release-candidate-authenticated-integration-evidence.md 'make integration-check'
+require_text docs/adr/0308-release-candidate-authenticated-integration-evidence.md 'source-revision.txt'
+require_text docs/adr/README.md '0309-contextual-status-disclosure.md'
+require_text docs/adr/0309-contextual-status-disclosure.md 'System status'
+require_text docs/adr/0309-contextual-status-disclosure.md 'Sign-in unavailable'
+require_text Makefile 'tier1-local-check'
+require_file scripts/verify_tier1_local_check_contract.sh
 require_text docs/plans/implementation-plan.md 'ADR-0298'
+require_text docs/plans/implementation-plan.md 'ADR-0309'
+require_text docs/plans/implementation-plan.md 'ADR-0317'
+require_text docs/plans/implementation-plan.md 'ADR-0318'
+require_text docs/plans/implementation-plan.md 'ADR-0319'
+require_text docs/plans/implementation-plan.md 'ADR-0320'
+require_text docs/operations/requirements-traceability.md 'Evidence levels'
+require_text docs/operations/requirements-traceability.md 'Linux/amd64 Agave validator conformance'
+require_text docs/product/tax-coverage-matrix.md 'Engine semantics evidence'
+require_text docs/product/tax-coverage-matrix.md 'progressive-marginal'
+require_text docs/product/tax-coverage-matrix.md 'Deliberate non-claims'
 require_text CHANGELOG.md 'executable UI language contract'
 require_text CHANGELOG.md 'container and workflow pinning contract'
 require_text CHANGELOG.md 'conformance workflow contract'
@@ -268,6 +364,7 @@ require_text CHANGELOG.md 'emergency pause cover governed vault'
 require_text CHANGELOG.md 'program pause-coverage contract'
 require_text CHANGELOG.md 'exact foreign-exchange evidence boundary'
 require_text CHANGELOG.md 'server-owned signed FX evidence bounded context'
+require_text CHANGELOG.md 'exact-release authenticated Docker integration evidence'
 require_text CHANGELOG.md 'atomic digest-keyed FX provider policy snapshot'
 require_text CHANGELOG.md 'registry-bound FX evidence issuance'
 require_text CHANGELOG.md 'policy-scoped FX provider identity authorization'

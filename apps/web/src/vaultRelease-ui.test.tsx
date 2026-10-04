@@ -7,6 +7,22 @@ import VaultReleasePanel from "./VaultReleasePanel";
 const claimId = "01992f1b-4a70-7e30-8ea2-b6e37a9d9d21";
 const merchantId = "01992f1b-4a70-7e30-8ea2-b6e37a9d9d22";
 const publicKey = "11111111111111111111111111111111";
+const routeId = "01992f1b-4a70-7e30-8ea2-b6e37a9d9d23";
+const tokenProgram = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+
+function routeResponse(): Record<string, unknown>[] {
+  return [{
+    id: routeId,
+    route_key: "treasury-usdc",
+    version: 1,
+    merchant_account: publicKey,
+    mint: publicKey,
+    mint_decimals: 6,
+    tax_vault: "Sysvar1nstructions1111111111111111111111111",
+    net_destination: "SysvarRecentB1ockHashes11111111111111111111",
+    token_program: tokenProgram,
+  }];
+}
 
 function claim(status: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -35,10 +51,11 @@ function claim(status: string, overrides: Record<string, unknown> = {}): Record<
 }
 
 function fillClaimProposalForm(): void {
-  fireEvent.change(screen.getByLabelText("Asset mint address"), { target: { value: publicKey } });
-  fireEvent.change(screen.getByLabelText("Asset program address"), { target: { value: publicKey } });
-  fireEvent.change(screen.getByLabelText("Tax holding account"), { target: { value: publicKey } });
+  fireEvent.change(screen.getByLabelText("Release reference number"), { target: { value: "42" } });
+  fireEvent.change(screen.getByLabelText("Verified payment route"), { target: { value: routeId } });
   fireEvent.change(screen.getByLabelText("Recipient account"), { target: { value: publicKey } });
+  fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "250000" } });
+  fireEvent.change(screen.getByLabelText("Evidence reference"), { target: { value: JSON.stringify(Array(32).fill(2)) } });
 }
 
 afterEach(() => {
@@ -47,11 +64,23 @@ afterEach(() => {
 });
 
 describe("vault-release response and authority boundary", () => {
+  it("does not invent a release evidence digest", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    render(<VaultReleasePanel apiBase="/api" serviceOnline accessToken="proposer-token" />);
+
+    expect((screen.getByLabelText("Evidence reference") as HTMLTextAreaElement).value).toBe("");
+    expect((screen.getByLabelText("Release reference number") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("Amount") as HTMLInputElement).value).toBe("");
+  });
+
   it("fails closed before rendering a malformed financial claim", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(claim("proposed", { amount_atomic: 250000 })), { status: 200 }));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(routeResponse()), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(claim("proposed", { amount_atomic: 250000 })), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     render(<VaultReleasePanel apiBase="/api" serviceOnline accessToken="proposer-token" />);
 
+    await waitFor(() => expect((screen.getByLabelText("Verified payment route") as HTMLSelectElement).value).toBe(routeId));
     fillClaimProposalForm();
     fireEvent.click(screen.getByRole("button", { name: "Create release request" }));
 
@@ -62,6 +91,7 @@ describe("vault-release response and authority boundary", () => {
   it("reloads the authoritative claim after a successful transition", async () => {
     const approved = claim("approved");
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(routeResponse()), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(claim("proposed")), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         status: "transitioned",
@@ -74,15 +104,35 @@ describe("vault-release response and authority boundary", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<VaultReleasePanel apiBase="/api" serviceOnline accessToken="approver-token" />);
 
+    await waitFor(() => expect((screen.getByLabelText("Verified payment route") as HTMLSelectElement).value).toBe(routeId));
     fillClaimProposalForm();
     fireEvent.click(screen.getByRole("button", { name: "Create release request" }));
     await waitFor(() => expect(screen.getAllByText("proposed").length).toBeGreaterThan(0));
     fireEvent.click(screen.getByRole("button", { name: "Record next step" }));
 
     await waitFor(() => expect(screen.getByText(/page was refreshed from the service/)).toBeTruthy());
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(fetchMock.mock.calls[1][0]).toBe(`/api/v1/vault/release-claims/${claimId}/transition`);
-    expect(fetchMock.mock.calls[2][0]).toBe(`/api/v1/vault/release-claims/${claimId}`);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls[2][0]).toBe(`/api/v1/vault/release-claims/${claimId}/transition`);
+    expect(fetchMock.mock.calls[3][0]).toBe(`/api/v1/vault/release-claims/${claimId}`);
     expect(screen.getAllByText("approved").length).toBeGreaterThan(0);
+  });
+
+  it("submits only the governed route reference for merchant-side accounts", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(routeResponse()), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(claim("proposed")), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<VaultReleasePanel apiBase="/api" serviceOnline accessToken="proposer-token" />);
+
+    await waitFor(() => expect((screen.getByLabelText("Verified payment route") as HTMLSelectElement).value).toBe(routeId));
+    fillClaimProposalForm();
+    fireEvent.click(screen.getByRole("button", { name: "Create release request" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const request = JSON.parse(fetchMock.mock.calls[1][1].body as string) as Record<string, unknown>;
+    expect(request.route_id).toBe(routeId);
+    expect(request).not.toHaveProperty("mint");
+    expect(request).not.toHaveProperty("token_program");
+    expect(request).not.toHaveProperty("tax_vault");
   });
 });

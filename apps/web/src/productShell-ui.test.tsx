@@ -27,6 +27,7 @@ describe("operator-first product shell", () => {
     expect(screen.getByRole("button", { name: "Tax rules" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Treasury" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Exceptions & recovery" })).toBeTruthy();
+    expect(screen.getByText("Automated withholding and evidence—not tax filing or legal advice.")).toBeTruthy();
     expect(screen.queryByText("Control plane")).toBeNull();
     expect(screen.queryByText("Move funds")).toBeNull();
   });
@@ -114,6 +115,56 @@ describe("operator-first product shell", () => {
     expect(screen.queryByText("Test network")).toBeNull();
   });
 
+  it("keeps system diagnostics behind one calm, accessible disclosure", () => {
+    render(<ProductShell
+      workspace="quote"
+      onNavigate={() => undefined}
+      serviceState="offline"
+      accessToken=""
+      runtimeContext={parseRuntimeContext({})}
+      locale="en-US"
+      timeZone="UTC"
+      onLocaleChange={() => undefined}
+      onTimeZoneChange={() => undefined}
+    >
+      <div>Workspace content</div>
+    </ProductShell>);
+
+    const summary = screen.getByRole("button", { name: /System status/i });
+    expect(summary.closest("details")?.hasAttribute("open")).toBe(false);
+
+    fireEvent.click(summary);
+    expect(screen.getByText("Deployment environment")).toBeTruthy();
+    expect(screen.getByText("Solana network")).toBeTruthy();
+    expect(screen.getByText("API services")).toBeTruthy();
+    expect(screen.getByText("Sign in to see account actions.")).toBeTruthy();
+  });
+
+  it("keeps protection assurances behind one compact page-context disclosure", () => {
+    render(<ProductShell
+      workspace="quote"
+      onNavigate={() => undefined}
+      serviceState="online"
+      accessToken=""
+      locale="en-US"
+      timeZone="UTC"
+      onLocaleChange={() => undefined}
+      onTimeZoneChange={() => undefined}
+    >
+      <div>Workspace content</div>
+    </ProductShell>);
+
+    expect(document.querySelector(".security-strip")).toBeNull();
+    const summary = screen.getByRole("button", { name: "Open protection details" });
+    expect(summary.closest("details")?.hasAttribute("open")).toBe(false);
+
+    fireEvent.click(summary);
+    expect(screen.getByText("Account access")).toBeTruthy();
+    expect(screen.getByText("Every decision has a record.")).toBeTruthy();
+    expect(screen.getByText("Sensitive actions need approval.")).toBeTruthy();
+    expect(screen.getByText("Wallets stay with their owners.")).toBeTruthy();
+  });
+
   it("provides a labeled narrow-screen navigation disclosure that closes after selection", () => {
     const onNavigate = () => undefined;
     render(<ProductShell
@@ -138,6 +189,26 @@ describe("operator-first product shell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Tax simulator" }));
     expect(screen.getByRole("button", { name: "Open navigation" }).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("keeps daily work open and lower-frequency navigation groups progressively disclosed", () => {
+    render(<ProductShell
+      workspace="document-checkout"
+      onNavigate={() => undefined}
+      serviceState="online"
+      accessToken=""
+      locale="en-US"
+      timeZone="UTC"
+      onLocaleChange={() => undefined}
+      onTimeZoneChange={() => undefined}
+    >
+      <div>Workspace content</div>
+    </ProductShell>);
+
+    expect(screen.getByRole("group", { name: "Daily work" }).closest("details")?.open).toBe(true);
+    expect(screen.getByRole("group", { name: "Money movement" }).closest("details")?.open).toBe(false);
+    expect(screen.getByRole("group", { name: "Rules & access" }).closest("details")?.open).toBe(false);
+    expect(screen.getByRole("button", { name: "Document payment" }).getAttribute("aria-current")).toBe("page");
   });
 
   it("shows server-owned access status beside high-consequence workspaces", () => {
@@ -169,6 +240,45 @@ describe("operator-first product shell", () => {
 
     expect(screen.getByRole("button", { name: "Tax simulator" }).getAttribute("title")).toMatch(/Available/);
     expect(screen.getByRole("button", { name: "Refund requests" }).getAttribute("title")).toMatch(/Not available/);
+  });
+
+  it("keeps navigation calm while preserving accessible access context", () => {
+    const snapshot: AuthorizationSnapshot = {
+      state: "server-allowed",
+      subject: "operator-1",
+      tenantId: "01900000-0000-4000-8000-000000000001",
+      roles: [],
+      scopes: [],
+      attributes: {},
+      capabilities: {
+        "refund.claim.create": {
+          kind: "deny",
+          reasonCode: "role_missing",
+          reason: "This action needs an approved responsibility.",
+        },
+      },
+    };
+    render(<ProductShell
+      workspace="quote"
+      onNavigate={() => undefined}
+      serviceState="online"
+      accessToken="verified-session"
+      authorizationSnapshot={snapshot}
+      locale="en-US"
+      timeZone="UTC"
+      onLocaleChange={() => undefined}
+      onTimeZoneChange={() => undefined}
+    >
+      <div>Workspace content</div>
+    </ProductShell>);
+
+    const item = screen.getByRole("button", { name: "Refund requests" });
+    const contextId = item.getAttribute("aria-describedby");
+    expect(contextId).toBeTruthy();
+    expect(item.querySelector(".nav-policy-mark")?.textContent).toBe("!");
+    const context = screen.getByText(/Access: Not available\. This action needs an approved responsibility\./);
+    expect(context.id).toBe(contextId);
+    expect(context.className.split(/\s+/)).toContain("sr-only");
   });
 
   it("turns the account control into a safe session menu", () => {

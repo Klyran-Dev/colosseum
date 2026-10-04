@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchWithTimeout, REQUEST_TIMEOUT_MS, responseError } from "./api";
+import { fetchWithTimeout, MAX_RESPONSE_ERROR_MESSAGE_LENGTH, REQUEST_TIMEOUT_MS, responseError } from "./api";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -22,6 +22,24 @@ describe("API failure boundary", () => {
       headers: { "x-request-id": "caller-controlled-value" },
     });
     expect(responseError(response, null, "Service failed")).toBe("Service failed");
+  });
+
+  it("bounds and normalizes untrusted server error text before rendering", () => {
+    const response = new Response(null, { status: 500 });
+    const message = `  provider\n${"x".repeat(MAX_RESPONSE_ERROR_MESSAGE_LENGTH + 100)}\u0000`;
+
+    const rendered = responseError(response, { error: { message } }, "Fallback");
+
+    expect(rendered).toHaveLength(MAX_RESPONSE_ERROR_MESSAGE_LENGTH);
+    expect(rendered.startsWith("provider x")).toBe(true);
+    expect(rendered.endsWith("…")).toBe(true);
+    expect(rendered).not.toMatch(/[\u0000-\u001f\u007f\n\r]/);
+  });
+
+  it("uses the bounded fallback when a server message is empty", () => {
+    const response = new Response(null, { status: 503 });
+    expect(responseError(response, { error: { message: " \n\t" } }, "Service unavailable"))
+      .toBe("Service unavailable");
   });
 
   it("aborts a hanging request at the bounded deadline", async () => {

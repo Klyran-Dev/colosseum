@@ -24,9 +24,9 @@ arbitrary gradients, neon colors, or decorative animation.
 Adopt a repository-owned Material 3 Expressive token layer for the React/Vite
 SPA. The system uses one Solana dusk seed family, with light and dark schemes
 derived into explicit Material-style roles. Components consume semantic roles;
-the final rendered shell layer must not introduce ad-hoc hex colors. Existing
-legacy declarations remain migration debt until their selector ownership is
-removed, but cannot win the final Material role cascade.
+the complete stylesheet must not introduce ad-hoc hex colors outside the token
+declaration blocks. ADR-0300 closes the legacy declaration migration and keeps
+the final Material role cascade as a defense-in-depth boundary.
 
 The initial role contract is:
 
@@ -83,6 +83,17 @@ without a network request or a second rendering runtime.
 ## Verification
 
 - Component tests verify the theme control and `data-theme` boundary.
+- The real-browser suite switches between light and dark schemes, proves their
+  rendered shell surfaces differ, and verifies the selected scheme persists
+  across every navigation workspace.
+- Navigation rows render quiet availability marks instead of repeating access
+  sentences; the description, decision, and policy reason remain bound through
+  `aria-describedby` and the row tooltip, while the page context card carries
+  the prominent access state.
+- The local-development credential is a closed progressive disclosure in the
+  top bar; opening it exposes the in-memory-only field and its environment
+  warning without allowing that local affordance to appear in staging or
+  production authentication modes.
 - The web color contract rejects raw color literals in the final Material
   precedence layer and requires semantic role consumption; this makes the
   rendered shell deterministic while legacy selector migration continues.

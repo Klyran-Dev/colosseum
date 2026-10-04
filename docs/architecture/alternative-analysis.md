@@ -45,6 +45,14 @@ This document records the comparison baseline required before implementation. It
 | Runtime context endpoint | Server-owned and changeable | Adds a request and availability dependency to the static shell | Deferred until a signed deployment-manifest contract exists |
 | **Explicit immutable build context plus server-owned account snapshot** | Fast, deterministic, honest on configuration failure, and compatible with NGINX | Release builds must pass and record context values | **Selected; ADR-0267** |
 
+### Product-shell status density
+
+| Alternative | Strengths | Risks/trade-offs | Decision |
+| --- | --- | --- | --- |
+| Keep deployment, network, service, and sign-in warnings persistent | Immediate visibility | Repetition makes the primary operator task harder to scan and visually overweights failures | Rejected |
+| Hide degraded state behind a generic error page | Minimal chrome | Conceals the exact support and recovery context | Rejected |
+| **One system-status disclosure with separate session disclosure** | Preserves every diagnostic, improves hierarchy, native accessibility, and no hot-path cost | Requires an intentional inspection action | **Selected; ADR-0309** |
+
 ### Browser authentication and session handling
 
 | Alternative | Strengths | Risks/trade-offs | Decision |
@@ -1778,6 +1786,19 @@ reported complete.
 | Detached configuration hash file | Small change | Creates a second source of truth outside the manifest | Rejected |
 | **Named manifest integrity fields plus the common checksum set** | Explicit, reproducible, machine-readable, and reviewable | Requires resolved configuration as a bundle input | **Selected in ADR-0218** |
 
+### Release evidence source-revision binding (ADR-0299)
+
+**Criteria:** prevent valid validator evidence from another commit being
+combined with the packaged binaries, fail before release artifacts are copied,
+and preserve the existing bounded evidence schema.
+
+| Alternative | Strengths | Risks / costs | Decision |
+| --- | --- | --- | --- |
+| Trust the workflow run or evidence directory name | Minimal change | Names do not bind evidence to source bytes | Rejected |
+| Bind only the SBF artifact hash | Protects one authority-sensitive binary | Does not bind API, migrations, UI, or configuration | Rejected |
+| Manual revision comparison | Easy to understand | Human omission can produce a false release package | Rejected |
+| **Compare evidence metadata with the packaged Git revision** | Deterministic, bounded, auditable, compatible with current evidence | Requires one metadata field and negative test | **Selected; see ADR-0299** |
+
 ### API JWKS rotation
 
 **Criteria:** preserve zero network and filesystem work on the JWT request
@@ -2238,6 +2259,34 @@ authorization evidence.
 | Server-rendered routing | Mature route/data integration | Violates the static React/Vite/NGINX boundary | Rejected |
 | **Typed History API adapter with an NGINX SPA fallback** | Stable paths, no new runtime, bounded state, and compatibility with lazy workspaces | Requires an explicit allow-list and direct-link test | **Selected; see ADR-0278** |
 
+### Workflow handoff URL integrity (ADR-0318)
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Change React state only during child handoffs | Minimal implementation | Leaves the address bar, refresh, support links, and browser history stale | Rejected |
+| Put calculation IDs or evidence in the URL | Makes the handoff reloadable | Leaks sensitive/resource context and creates a second authority contract | Rejected |
+| Add a full client router | Rich nested route lifecycle | Adds dependency and lifecycle surface beyond the static SPA requirement | Rejected |
+| **Reuse one App-owned typed History API boundary for every handoff** | Canonical URL, no sensitive disclosure, one navigation policy, low overhead | Non-URL evidence still requires an authenticated reload | **Selected in ADR-0318** |
+
+### Bounded browser error disclosure (ADR-0319)
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Render server messages unchanged | Preserves diagnostics | Unbounded untrusted disclosure and control-character leakage | Rejected |
+| Status code only | Predictable and minimal | Removes actionable operator guidance | Rejected |
+| Sanitizer dependency | Broad reusable policy | Supply-chain and runtime cost for a small boundary | Rejected |
+| **Pure 512-character normalizer with strict UUIDv7 support references** | Deterministic, low-latency, dependency-free, and auditable | Detailed diagnostics remain in server-side evidence | **Selected in ADR-0319** |
+
+### On-chain stablecoin asset admission (ADR-0320)
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Off-chain route allow-list only | Smallest change and easy operations | Direct Solana callers bypass it; database state is not movement authority | Rejected |
+| Hard-code USDC/USDT mint addresses in the program | Very small runtime check | No governed rotation, network/issuer ambiguity, poor multi-tenant extensibility, and upgrade pressure | Rejected |
+| Infer stablecoin status from symbol, metadata, freeze authority, or price | No new PDA | Metadata and market state are mutable or unavailable on-chain; unsafe false positives | Rejected |
+| Per-merchant mutable asset lists in every settlement account | Flexible tenant policy | Larger hot accounts, mutable shared state, extra contention, and more account metas | Rejected |
+| **Mint-scoped immutable `AssetConfig` PDA plus server-verified route evidence** | Solana-native final authority, bounded account read, governed classification, deterministic compiler, and audit trail | Requires additive ABI/IDL update, migration, and Linux validator evidence | **Selected in ADR-0320** |
+
 ### Server-owned checkout policy binding
 
 **Criteria:** prevent operators from typing authority identifiers into a
@@ -2336,6 +2385,15 @@ See ADR-0286.
 Revenue-stream plans bind their immutable chain route at proposal time using
 ADR-0287; this prevents route and account substitution during later claim
 compilation.
+
+### Validator-backed revenue-stream movement conformance
+
+Domain and synthetic RPC tests do not prove the deployed SBF artifact, Anchor
+account constraints, vault-authority CPI signing, or real SPL conservation.
+ADR-0301 therefore selects a pinned Agave validator case covering finalized
+accruals, a single-use claim, duplicate rejection, and cancellation. Its
+stable evidence label is a release-bundle requirement; local Docker success
+does not close the independent Linux/amd64 gate.
 
 Browser E2E execution uses an isolated Compose project with an ephemeral
 database and no host-port publication; see ADR-0288. This preserves real
@@ -2449,3 +2507,189 @@ The selected boundary is recorded in ADR-0293.
 | Runtime and dependency cost | Pass | Partial | **Pass** | Fail |
 | Wallet/failure UX ownership | Pass | Weak | **Pass** | Partial |
 | Selected | No | No | **Yes; see ADR-0298** | Deferred |
+
+### Semantic color-token migration (ADR-0300)
+
+| Criterion | Final override only | Component-local variables | Third-party theme | Repository-wide semantic token contract |
+| --- | --- | --- | --- | --- |
+| Prevents literal-color drift | Weak | Partial | Partial | **Pass** |
+| Theme consistency | Partial | Partial | Pass | **Pass** |
+| State meaning remains auditable | Partial | Partial | Weak | **Pass** |
+| Runtime/dependency cost | Pass | Pass | Weak | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0300** |
+
+### Tonal surfaces and no decorative gradients (ADR-0310)
+
+| Criterion | Component gradients | Arbitrary component colors | Third-party Material theme | Repository Material roles with flat tonal surfaces |
+| --- | --- | --- | --- | --- |
+| Semantic state meaning | Weak | Fail | Partial | **Pass** |
+| Light/dark theme auditability | Partial | Fail | Partial | **Pass** |
+| Operator visual hierarchy | Partial | Weak | Partial | **Pass** |
+| Runtime/dependency cost | Pass | Pass | Weak | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0310** |
+
+### Solana Aurora Material 3 role palette (ADR-0311)
+
+| Criterion | Existing lavender/pink roles | Browser-generated dynamic color | Tenant-provided colors | Fixed Solana Aurora role matrix |
+| --- | --- | --- | --- | --- |
+| Product identity and visual coherence | Partial | Partial | Partial | **Pass** |
+| Deterministic accessibility evidence | Pass | Weak | Fail | **Pass** |
+| State-role meaning and auditability | Pass | Partial | Fail | **Pass** |
+| Runtime/dependency and latency cost | Pass | Partial | Pass | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0311** |
+
+### Document-payment outcome-first language (ADR-0312)
+
+| Criterion | Technical primary copy | Hide technical evidence | Tooltip-only explanation | Plain primary copy with inspectable evidence |
+| --- | --- | --- | --- | --- |
+| Finance/operator task clarity | Weak | Pass | Partial | **Pass** |
+| Audit and support evidence | Pass | Fail | Weak | **Pass** |
+| Keyboard, screen-reader, and localization quality | Partial | Pass | Fail | **Pass** |
+| Authority and settlement semantics unchanged | **Pass** | Pass | Pass | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0312** |
+
+### Compact protection context (ADR-0313)
+
+| Criterion | Repeated shell surfaces | Remove protection copy | Account-menu-only protection | One expandable page-context disclosure |
+| --- | --- | --- | --- | --- |
+| Workspace scanability | Fail | **Pass** | Pass | **Pass** |
+| Discoverability of responsibility and custody | Pass | Fail | Partial | **Pass** |
+| Separation of live authorization from explanatory copy | Weak | Pass | Partial | **Pass** |
+| Keyboard and screen-reader access | Partial | Pass | Partial | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0313** |
+
+### Non-custodial wallet source contract (ADR-0314)
+
+| Criterion | Provider policy only | Ban all key-related words | Bundle-only scan | Scoped source contract plus runtime wallet tests |
+| --- | --- | --- | --- | --- |
+| Detects request-boundary regressions early | Weak | **Pass** | Partial | **Pass** |
+| False-positive control for public/server-owned keys | Pass | Fail | Partial | **Pass** |
+| Diagnostic ownership in code review | Partial | Weak | Weak | **Pass** |
+| Runtime wallet authority preserved | Pass | Pass | Pass | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0314** |
+
+### Executable tax-responsibility language boundary (ADR-0315)
+
+| Criterion | Terms/counsel only | One global disclaimer | Ungoverned page copy | Executable context-specific language contract |
+| --- | --- | --- | --- | --- |
+| Prevents misleading compliance claims | Weak | Partial | Weak | **Pass** |
+| Preserves calculation/attestation/settlement distinctions | Partial | Weak | Partial | **Pass** |
+| Plain-language task clarity | Partial | Partial | Pass | **Pass** |
+| Reviewable failure diagnostics | Fail | Partial | Fail | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0315** |
+
+### Versioned rule-release provenance readiness (ADR-0316)
+
+| Criterion | Arbitrary JSON | Browser-only validation | Separate relational owner tables first | Versioned envelope plus Rust/DB publication gates |
+| --- | --- | --- | --- | --- |
+| Prevents incomplete publication | Fail | Partial | Pass | **Pass** |
+| Direct API/SQL bypass resistance | Fail | Fail | Pass | **Pass** |
+| Immutable digest and replay binding | Partial | Partial | Partial | **Pass** |
+| Bounded evolution and migration scope | Partial | Partial | Weak | **Pass** |
+| Selected | No | No | Deferred | **Yes; see ADR-0316** |
+
+### Versioned local display preferences (ADR-0302)
+
+| Criterion | Reset on reload | Persist full app state | Server-saved profile | Presentation-only local schema |
+| --- | --- | --- | --- | --- |
+| Operator continuity | Fail | Pass | Pass | **Pass** |
+| Credential and authority safety | Pass | Fail | Partial | **Pass** |
+| Reload latency/dependency cost | Pass | Pass | Weak | **Pass** |
+| Cross-device continuity | Fail | Fail | **Pass** | Partial |
+| Selected | No | No | Deferred | **Yes; see ADR-0302** |
+
+### Exact-commit release browser evidence (ADR-0303)
+
+| Criterion | Pull-request browser run only | Release run without retention | Raw retained result | Exact-commit run, binding, and checksum |
+| --- | --- | --- | --- | --- |
+| Evidence matches packaged source | Fail | Pass | Weak | **Pass** |
+| Post-run reviewability | Partial | Fail | Pass | **Pass** |
+| Missing/failing UI gate fails closed | Partial | Pass | Partial | **Pass** |
+| Release artifact integrity | Weak | Weak | Partial | **Pass** |
+| Added release latency and storage | Pass | Partial | Partial | Partial; bounded by the existing suite |
+| Selected | No | No | No | **Yes; see ADR-0303** |
+
+### Material role contrast contract (ADR-0304)
+
+| Criterion | Manual review only | Browser axe only | Third-party color dependency | Dependency-free role contract plus axe |
+| --- | --- | --- | --- | --- |
+| Deterministic merge gate | Fail | Partial | Pass | **Pass** |
+| Covers unrendered role pairs | Fail | Fail | Partial | **Pass** |
+| Runtime/dependency cost | Pass | Pass | Partial | **Pass** |
+| Expressive palette ownership | Pass | Pass | Weak | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0304** |
+
+### One-command Tier-1 local gate (ADR-0305)
+
+| Criterion | Separate commands only | Opaque shell script | Parallel all gates | Ordered Make orchestration |
+| --- | --- | --- | --- | --- |
+| Reviewer can reproduce the complete local gate | Partial | Pass | Pass | **Pass** |
+| Failure attribution and evidence ownership | Pass | Weak | Weak | **Pass** |
+| Shared-resource safety | Pass | Pass | Fail | **Pass** |
+| Validator capability failure remains visible | Pass | Partial | Partial | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0305** |
+
+### Collapsed advanced evidence disclosures (ADR-0306)
+
+| Criterion | Keep expanded | Remove from form | Custom modal | Native collapsed disclosure |
+| --- | --- | --- | --- | --- |
+| Outcome-first operator hierarchy | Fail | Pass | Pass | **Pass** |
+| Required evidence remains available | Pass | Fail | Pass | **Pass** |
+| Accessibility and focus failure surface | Pass | Pass | Weak | **Pass** |
+| Runtime and implementation cost | Pass | Pass | Weak | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0306** |
+
+### Project-scoped local reset (ADR-0307)
+
+| Criterion | Destructive `make down` | Raw operator Docker commands | Automatic checksum repair | Explicit scoped reset |
+| --- | --- | --- | --- | --- |
+| Preserves normal local evidence | Fail | Pass | Pass | **Pass** |
+| Fails closed on schema drift | Partial | Pass | Fail | **Pass** |
+| Prevents cross-project deletion | Partial | Weak | Pass | **Pass** |
+| Discoverability and reproducibility | Pass | Fail | Partial | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0307** |
+
+### Exact-commit authenticated integration evidence (ADR-0308)
+
+| Criterion | Separate CI job only | Selected-drill subset | Run without retention | **Run, bind, checksum, and retain** |
+| --- | --- | --- | --- | --- |
+| Evidence belongs to packaged source | Fail | Partial | Pass | **Pass** |
+| Covers authenticated multi-service invariants | Pass | Partial | Pass | **Pass** |
+| Reviewable after release job | Pass | Pass | Fail | **Pass** |
+| Failure remains visible and fail-closed | Pass | Partial | Weak | **Pass** |
+| Bounded operational cost | Pass | **Pass** | Pass | Pass |
+| Selected | No | No | No | **Yes; see ADR-0308** |
+
+### Finalized asset-configuration route evidence (ADR-0321)
+
+| Criterion | Four-account topology only | Database asset flag | Hot-path RPC verification | **Finalized PDA proof with versioned evidence** |
+| --- | --- | --- | --- | --- |
+| Proves the on-chain asset admission authority | Fail | Fail | Pass | **Pass** |
+| Preserves quote/compile/sign latency budget | Pass | Pass | Fail | **Pass** |
+| Rejects stale, disabled, or substituted assets | Fail | Fail | Partial | **Pass** |
+| Replay and audit clarity | Partial | Weak | Partial | **Pass** |
+| Bounded account/data surface | Pass | Pass | Weak | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0321** |
+
+### Route evidence-version migration (ADR-0322)
+
+| Criterion | Leave legacy active | Rewrite legacy evidence | Delete legacy rows | **Suspend and re-verify with expand/contract metadata** |
+| --- | --- | --- | --- | --- |
+| Preserves audit history | Pass | Fail | Fail | **Pass** |
+| Prevents unsafe legacy signing | Fail | Partial | Pass | **Pass** |
+| Rolling deployment compatibility | Pass | Partial | Fail | **Pass** |
+| Reproducible operator backfill | Weak | Fail | Fail | **Pass** |
+| Recovery/rollback safety | Partial | Fail | Fail | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0322** |
+
+### Material 3 Expressive operational workspace composition (ADR-0323)
+
+| Criterion | Everything expanded | Search-only navigation | Colored per-item badges | **Grouped native disclosure and active-workspace hierarchy** |
+| --- | --- | --- | --- | --- |
+| Route discoverability | Pass | Fail | Pass | **Pass** |
+| Operator scan cost | Fail | Pass | Partial | **Pass** |
+| Authorization clarity | Partial | Partial | Weak | **Pass** |
+| Palette/state discipline | Pass | Pass | Fail | **Pass** |
+| Keyboard and assistive technology support | Pass | Partial | Partial | **Pass** |
+| Runtime and bundle cost | Pass | Partial | Pass | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0323** |

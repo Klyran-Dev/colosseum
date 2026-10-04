@@ -88,6 +88,10 @@ function protocolConfig(): PublicKey {
   return pda(Buffer.from("protocol-config"));
 }
 
+function assetConfig(mint: PublicKey): PublicKey {
+  return pda(Buffer.from("asset-config"), mint.toBuffer());
+}
+
 function vaultAuthority(mint: PublicKey): PublicKey {
   return pda(Buffer.from("vault-authority"), merchant.publicKey.toBuffer(), mint.toBuffer());
 }
@@ -196,6 +200,39 @@ function initializeRegistryInstruction(mint: PublicKey, tokenProgram: PublicKey)
   );
 }
 
+function initializeAssetConfigInstruction(
+  mint: PublicKey,
+  tokenProgram: PublicKey,
+  assetKind = 1,
+): TransactionInstruction {
+  return instruction(
+    "initialize_asset_config",
+    [
+      { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+      { pubkey: protocolConfig(), isSigner: false, isWritable: false },
+      { pubkey: mint, isSigner: false, isWritable: false },
+      { pubkey: tokenProgram, isSigner: false, isWritable: false },
+      { pubkey: assetConfig(mint), isSigner: false, isWritable: true },
+      { pubkey: systemProgram, isSigner: false, isWritable: false },
+    ],
+    Buffer.from([assetKind]),
+  );
+}
+
+function setAssetEnabledInstruction(
+  mint: PublicKey,
+  enabledState: boolean,
+): TransactionInstruction {
+  return instruction(
+    "set_asset_enabled",
+    [
+      { pubkey: payer.publicKey, isSigner: true, isWritable: false },
+      { pubkey: assetConfig(mint), isSigner: false, isWritable: true },
+    ],
+    Buffer.from([enabledState ? 1 : 0]),
+  );
+}
+
 function registerPolicyInstruction(mint: PublicKey, tokenProgram: PublicKey): TransactionInstruction {
   return instruction(
     "register_policy_attestation",
@@ -224,6 +261,13 @@ function revokePolicyInstruction(mint: PublicKey): TransactionInstruction {
   );
 }
 
+interface SettlementInstructionOptions {
+  assetConfigAddress?: PublicKey;
+  grossAtomic?: bigint;
+  taxAtomic?: bigint;
+  netAtomic?: bigint;
+}
+
 function settleInstruction(
   mint: PublicKey,
   source: PublicKey,
@@ -231,7 +275,11 @@ function settleInstruction(
   destination: PublicKey,
   tokenProgram: PublicKey,
   nonce: bigint,
+  options: SettlementInstructionOptions = {},
 ): TransactionInstruction {
+  const grossAtomic = options.grossAtomic ?? gross;
+  const taxAtomic = options.taxAtomic ?? tax;
+  const netAtomic = options.netAtomic ?? net;
   return instruction(
     "settle",
     [
@@ -245,10 +293,11 @@ function settleInstruction(
       { pubkey: policyAttestation(mint), isSigner: false, isWritable: false },
       { pubkey: destination, isSigner: false, isWritable: true },
       { pubkey: receipt(mint, nonce), isSigner: false, isWritable: true },
+      { pubkey: options.assetConfigAddress ?? assetConfig(mint), isSigner: false, isWritable: false },
       { pubkey: tokenProgram, isSigner: false, isWritable: false },
       { pubkey: systemProgram, isSigner: false, isWritable: false },
     ],
-    Buffer.concat([u64(nonce), u64(1n), u64(gross), u64(tax), u64(net), digest]),
+    Buffer.concat([u64(nonce), u64(1n), u64(grossAtomic), u64(taxAtomic), u64(netAtomic), digest]),
   );
 }
 
@@ -278,6 +327,7 @@ function settleDocumentInstruction(
       { pubkey: policyAttestation(mint), isSigner: false, isWritable: false },
       { pubkey: destination, isSigner: false, isWritable: true },
       { pubkey: documentReceipt(nonce), isSigner: false, isWritable: true },
+      { pubkey: assetConfig(mint), isSigner: false, isWritable: false },
       { pubkey: tokenProgram, isSigner: false, isWritable: false },
       { pubkey: systemProgram, isSigner: false, isWritable: false },
     ],
@@ -414,6 +464,7 @@ function executeRefundInstruction(
       { pubkey: refundFunder.publicKey, isSigner: true, isWritable: false },
       { pubkey: merchant.publicKey, isSigner: false, isWritable: false },
       { pubkey: mint, isSigner: false, isWritable: false },
+      { pubkey: assetConfig(mint), isSigner: false, isWritable: false },
       { pubkey: tokenProgram, isSigner: false, isWritable: false },
       { pubkey: protocolConfig(), isSigner: false, isWritable: false },
       { pubkey: adjustmentRegistry(mint), isSigner: false, isWritable: false },
@@ -495,6 +546,7 @@ function settleSplitInstruction(
       { pubkey: policyAttestation(mint), isSigner: false, isWritable: false },
       { pubkey: splitPlan(mint, splitPlanVersion), isSigner: false, isWritable: false },
       { pubkey: receipt(mint, nonce), isSigner: false, isWritable: true },
+      { pubkey: assetConfig(mint), isSigner: false, isWritable: false },
       { pubkey: tokenProgram, isSigner: false, isWritable: false },
       { pubkey: systemProgram, isSigner: false, isWritable: false },
       ...recipientAccounts.map((pubkey) => ({ pubkey, isSigner: false, isWritable: true })),
@@ -588,6 +640,7 @@ function executeReleaseInstruction(
       { pubkey: protocolConfig(), isSigner: false, isWritable: false },
       { pubkey: merchant.publicKey, isSigner: false, isWritable: false },
       { pubkey: mint, isSigner: false, isWritable: false },
+      { pubkey: assetConfig(mint), isSigner: false, isWritable: false },
       { pubkey: tokenProgram, isSigner: false, isWritable: false },
       { pubkey: releaseRegistry(mint), isSigner: false, isWritable: false },
       { pubkey: taxVault, isSigner: false, isWritable: true },
@@ -610,6 +663,181 @@ function cancelReleaseInstruction(mint: PublicKey, nonce: bigint): TransactionIn
       { pubkey: releaseClaim(mint, nonce), isSigner: false, isWritable: true },
     ],
     u64(nonce),
+  );
+}
+
+function revenueStreamPlan(mint: PublicKey, planDigest: Buffer): PublicKey {
+  return pda(
+    Buffer.from("revenue-stream-plan"),
+    merchant.publicKey.toBuffer(),
+    mint.toBuffer(),
+    planDigest,
+  );
+}
+
+function revenueStreamAccrual(plan: PublicKey, sourceReceipt: PublicKey): PublicKey {
+  return pda(Buffer.from("revenue-stream-accrual"), plan.toBuffer(), sourceReceipt.toBuffer());
+}
+
+function revenueStreamClaim(plan: PublicKey, nonce: bigint): PublicKey {
+  return pda(Buffer.from("revenue-stream-claim"), plan.toBuffer(), u64(nonce));
+}
+
+function initializeRevenueStreamPlanInstruction(
+  mint: PublicKey,
+  taxVault: PublicKey,
+  tokenProgram: PublicKey,
+  planDigest: Buffer,
+  startSlot: bigint,
+  maxTotalAtomic: bigint,
+  maxClaimAtomic: bigint,
+): TransactionInstruction {
+  return instruction(
+    "initialize_revenue_stream_plan",
+    [
+      { pubkey: releaseGovernance.publicKey, isSigner: true, isWritable: true },
+      { pubkey: merchant.publicKey, isSigner: false, isWritable: false },
+      { pubkey: mint, isSigner: false, isWritable: false },
+      { pubkey: tokenProgram, isSigner: false, isWritable: false },
+      { pubkey: taxVault, isSigner: false, isWritable: false },
+      { pubkey: vaultAuthority(mint), isSigner: false, isWritable: false },
+      { pubkey: revenueStreamPlan(mint, planDigest), isSigner: false, isWritable: true },
+      { pubkey: systemProgram, isSigner: false, isWritable: false },
+    ],
+    Buffer.concat([
+      planDigest,
+      digest,
+      merchant.publicKey.toBuffer(),
+      releaseProposer.publicKey.toBuffer(),
+      releaseApprover.publicKey.toBuffer(),
+      adjustmentProposer.publicKey.toBuffer(),
+      u64(startSlot),
+      Buffer.from([0]),
+      u64(maxTotalAtomic),
+      u64(maxClaimAtomic),
+    ]),
+  );
+}
+
+function updateRevenueStreamPlanInstruction(
+  name: "approve_revenue_stream_plan" | "activate_revenue_stream_plan",
+  plan: PublicKey,
+): TransactionInstruction {
+  return instruction(name, [
+    { pubkey: releaseApprover.publicKey, isSigner: true, isWritable: false },
+    { pubkey: plan, isSigner: false, isWritable: true },
+  ], Buffer.alloc(0));
+}
+
+function recordRevenueStreamAccrualInstruction(
+  plan: PublicKey,
+  sourceReceipt: PublicKey,
+  accrual: PublicKey,
+  recipientAtomic: bigint,
+  finalizedSlot: bigint,
+): TransactionInstruction {
+  return instruction(
+    "record_revenue_stream_accrual",
+    [
+      { pubkey: adjustmentProposer.publicKey, isSigner: true, isWritable: true },
+      { pubkey: protocolConfig(), isSigner: false, isWritable: false },
+      { pubkey: plan, isSigner: false, isWritable: true },
+      { pubkey: sourceReceipt, isSigner: false, isWritable: false },
+      { pubkey: accrual, isSigner: false, isWritable: true },
+      { pubkey: systemProgram, isSigner: false, isWritable: false },
+    ],
+    Buffer.concat([u64(recipientAtomic), u64(finalizedSlot), Buffer.alloc(32, 12)]),
+  );
+}
+
+function createRevenueStreamClaimInstruction(
+  plan: PublicKey,
+  mint: PublicKey,
+  taxVault: PublicKey,
+  destination: PublicKey,
+  claim: PublicKey,
+  nonce: bigint,
+  amountAtomic: bigint,
+  executeAfterUnix: bigint,
+  expiresAtUnix: bigint,
+): TransactionInstruction {
+  return instruction(
+    "create_revenue_stream_claim",
+    [
+      { pubkey: adjustmentProposer.publicKey, isSigner: true, isWritable: true },
+      { pubkey: protocolConfig(), isSigner: false, isWritable: false },
+      { pubkey: plan, isSigner: false, isWritable: true },
+      { pubkey: mint, isSigner: false, isWritable: false },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: taxVault, isSigner: false, isWritable: false },
+      { pubkey: destination, isSigner: false, isWritable: false },
+      { pubkey: claim, isSigner: false, isWritable: true },
+      { pubkey: systemProgram, isSigner: false, isWritable: false },
+    ],
+    Buffer.concat([
+      u64(nonce),
+      u64(amountAtomic),
+      Buffer.alloc(32, 13),
+      Buffer.alloc(32, 14),
+      i64(executeAfterUnix),
+      i64(expiresAtUnix),
+    ]),
+  );
+}
+
+function executeRevenueStreamClaimInstruction(
+  plan: PublicKey,
+  mint: PublicKey,
+  taxVault: PublicKey,
+  destination: PublicKey,
+  claim: PublicKey,
+  nonce: bigint,
+): TransactionInstruction {
+  return instruction(
+    "execute_revenue_stream_claim",
+    [
+      { pubkey: releaseApprover.publicKey, isSigner: true, isWritable: false },
+      { pubkey: protocolConfig(), isSigner: false, isWritable: false },
+      { pubkey: plan, isSigner: false, isWritable: true },
+      { pubkey: mint, isSigner: false, isWritable: false },
+      { pubkey: assetConfig(mint), isSigner: false, isWritable: false },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: taxVault, isSigner: false, isWritable: true },
+      { pubkey: vaultAuthority(mint), isSigner: false, isWritable: false },
+      { pubkey: destination, isSigner: false, isWritable: true },
+      { pubkey: claim, isSigner: false, isWritable: true },
+    ],
+    u64(nonce),
+  );
+}
+
+function cancelRevenueStreamClaimInstruction(
+  plan: PublicKey,
+  claim: PublicKey,
+  nonce: bigint,
+): TransactionInstruction {
+  return instruction(
+    "cancel_revenue_stream_claim",
+    [
+      { pubkey: releaseGovernance.publicKey, isSigner: true, isWritable: false },
+      { pubkey: plan, isSigner: false, isWritable: true },
+      { pubkey: claim, isSigner: false, isWritable: true },
+    ],
+    u64(nonce),
+  );
+}
+
+function setRevenueStreamPlanPausedInstruction(
+  plan: PublicKey,
+  paused: boolean,
+): TransactionInstruction {
+  return instruction(
+    "set_revenue_stream_plan_paused",
+    [
+      { pubkey: releaseGovernance.publicKey, isSigner: true, isWritable: false },
+      { pubkey: plan, isSigner: false, isWritable: true },
+    ],
+    Buffer.from([paused ? 1 : 0]),
   );
 }
 
@@ -693,10 +921,90 @@ async function createExtendedMint(): Promise<PublicKey> {
   return mint.publicKey;
 }
 
+describe("stablecoin account topology", () => {
+  it("keeps AssetConfig read-only at the canonical movement positions", () => {
+    const mint = Keypair.generate().publicKey;
+    const source = Keypair.generate().publicKey;
+    const taxVault = Keypair.generate().publicKey;
+    const destination = Keypair.generate().publicKey;
+    const settle = settleInstruction(
+      mint,
+      source,
+      taxVault,
+      destination,
+      TOKEN_PROGRAM_ID,
+      1n,
+    );
+    const document = settleDocumentInstruction(
+      mint,
+      source,
+      taxVault,
+      destination,
+      TOKEN_PROGRAM_ID,
+      1n,
+      Buffer.alloc(32, 1),
+      Buffer.alloc(32, 2),
+    );
+    const split = settleSplitInstruction(
+      mint,
+      source,
+      taxVault,
+      [Keypair.generate().publicKey, Keypair.generate().publicKey],
+      TOKEN_PROGRAM_ID,
+      1n,
+    );
+    const release = executeReleaseInstruction(
+      mint,
+      taxVault,
+      destination,
+      TOKEN_PROGRAM_ID,
+      1n,
+    );
+    const refund = executeRefundInstruction(
+      mint,
+      taxVault,
+      source,
+      destination,
+      TOKEN_PROGRAM_ID,
+      1n,
+      1n,
+      1n,
+    );
+    const revenue = executeRevenueStreamClaimInstruction(
+      Keypair.generate().publicKey,
+      mint,
+      taxVault,
+      destination,
+      Keypair.generate().publicKey,
+      1n,
+    );
+
+    expect(initializeAssetConfigInstruction(mint, TOKEN_PROGRAM_ID).keys[4]).toMatchObject({
+      pubkey: assetConfig(mint),
+      isWritable: true,
+      isSigner: false,
+    });
+    for (const instructionValue of [settle, document, split]) {
+      expect(instructionValue.keys[10]).toMatchObject({
+        pubkey: assetConfig(mint),
+        isWritable: false,
+        isSigner: false,
+      });
+    }
+    for (const instructionValue of [release, refund, revenue]) {
+      expect(instructionValue.keys[4]).toMatchObject({
+        pubkey: assetConfig(mint),
+        isWritable: false,
+        isSigner: false,
+      });
+    }
+  });
+});
+
 describe("validator-backed settlement conformance", () => {
   const test = enabled ? it : it.skip;
 
-  test("settles legacy SPL, records adjustment evidence, executes a payer-bound refund claim with governance cancellation, rejects duplicate movement without balance drift, and blocks paused vault release without balance drift", async () => {
+  test("settles legacy SPL, records adjustment evidence, executes a payer-bound refund claim with governance cancellation, rejects duplicate movement without balance drift, rejects disabled or substituted asset admission without balance drift, and blocks paused vault release without balance drift", async () => {
     await airdrop(payer.publicKey, 10_000_000_000);
     await airdrop(merchant.publicKey);
     await airdrop(issuer.publicKey);
@@ -729,7 +1037,11 @@ describe("validator-backed settlement conformance", () => {
     );
     const destination = await getOrCreateAssociatedTokenAccount(connection, payer, mint, merchant.publicKey);
     await mintTo(connection, payer, mint, source.address, payer, 100n);
-    await send([initializeRegistryInstruction(mint, TOKEN_PROGRAM_ID), registerPolicyInstruction(mint, TOKEN_PROGRAM_ID)], [issuer]);
+    await send([
+      initializeAssetConfigInstruction(mint, TOKEN_PROGRAM_ID),
+      initializeRegistryInstruction(mint, TOKEN_PROGRAM_ID),
+      registerPolicyInstruction(mint, TOKEN_PROGRAM_ID),
+    ], [issuer]);
 
     await send([setProtocolPausedInstruction(true)], []);
     const pausedBalances = await Promise.all([
@@ -761,6 +1073,80 @@ describe("validator-backed settlement conformance", () => {
       getAccount(connection, destination.address, "finalized"),
     ]);
     expect(after.map((account) => account.amount)).toEqual([0n, 25n, 75n]);
+
+    await mintTo(connection, payer, mint, source.address, payer, 100n);
+    const beforeInvalidAmounts = await Promise.all([
+      getAccount(connection, source.address, "finalized"),
+      getAccount(connection, vault.address, "finalized"),
+      getAccount(connection, destination.address, "finalized"),
+    ]);
+    await expect(send([
+      ...settlementComputeBudgetInstructions(),
+      settleInstruction(
+        mint,
+        source.address,
+        vault.address,
+        destination.address,
+        TOKEN_PROGRAM_ID,
+        2n,
+        { grossAtomic: 100n, taxAtomic: 26n, netAtomic: 75n },
+      ),
+    ], [])).rejects.toThrow();
+    const afterInvalidAmounts = await Promise.all([
+      getAccount(connection, source.address, "finalized"),
+      getAccount(connection, vault.address, "finalized"),
+      getAccount(connection, destination.address, "finalized"),
+    ]);
+    expect(afterInvalidAmounts.map((account) => account.amount)).toEqual(
+      beforeInvalidAmounts.map((account) => account.amount),
+    );
+
+    const beforeDisabledAsset = await Promise.all([
+      getAccount(connection, source.address, "finalized"),
+      getAccount(connection, vault.address, "finalized"),
+      getAccount(connection, destination.address, "finalized"),
+    ]);
+    await send([setAssetEnabledInstruction(mint, false)], []);
+    await expect(send([
+      ...settlementComputeBudgetInstructions(),
+      settleInstruction(mint, source.address, vault.address, destination.address, TOKEN_PROGRAM_ID, 2n),
+    ], [])).rejects.toThrow();
+    const afterDisabledAsset = await Promise.all([
+      getAccount(connection, source.address, "finalized"),
+      getAccount(connection, vault.address, "finalized"),
+      getAccount(connection, destination.address, "finalized"),
+    ]);
+    expect(afterDisabledAsset.map((account) => account.amount)).toEqual(
+      beforeDisabledAsset.map((account) => account.amount),
+    );
+    await send([setAssetEnabledInstruction(mint, true)], []);
+
+    const beforeSubstitutedAsset = await Promise.all([
+      getAccount(connection, source.address, "finalized"),
+      getAccount(connection, vault.address, "finalized"),
+      getAccount(connection, destination.address, "finalized"),
+    ]);
+    const substitutedAssetConfig = pda(Buffer.from("asset-config"), Keypair.generate().publicKey.toBuffer());
+    await expect(send([
+      ...settlementComputeBudgetInstructions(),
+      settleInstruction(
+        mint,
+        source.address,
+        vault.address,
+        destination.address,
+        TOKEN_PROGRAM_ID,
+        3n,
+        { assetConfigAddress: substitutedAssetConfig },
+      ),
+    ], [])).rejects.toThrow();
+    const afterSubstitutedAsset = await Promise.all([
+      getAccount(connection, source.address, "finalized"),
+      getAccount(connection, vault.address, "finalized"),
+      getAccount(connection, destination.address, "finalized"),
+    ]);
+    expect(afterSubstitutedAsset.map((account) => account.amount)).toEqual(
+      beforeSubstitutedAsset.map((account) => account.amount),
+    );
 
     await send([initializeAdjustmentRegistryInstruction(mint, TOKEN_PROGRAM_ID)], []);
     const balancesBeforeAdjustmentEvidence = await Promise.all([
@@ -1049,6 +1435,191 @@ describe("validator-backed settlement conformance", () => {
     ], [releaseApprover])).rejects.toThrow();
   }, 30_000);
 
+  test("executes a revenue-stream single-use claim from finalized accruals and rejects duplicate or cancelled movement", async () => {
+    await airdrop(payer.publicKey, 10_000_000_000);
+    await airdrop(merchant.publicKey);
+    await airdrop(issuer.publicKey);
+    await airdrop(releaseGovernance.publicKey);
+    await airdrop(releaseProposer.publicKey);
+    await airdrop(releaseApprover.publicKey);
+    await airdrop(adjustmentProposer.publicKey);
+    if ((await connection.getAccountInfo(protocolConfig(), "finalized")) === null) {
+      await send([
+        instruction(
+          "initialize_protocol_config",
+          [
+            { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+            { pubkey: protocolConfig(), isSigner: false, isWritable: true },
+            { pubkey: systemProgram, isSigner: false, isWritable: false },
+          ],
+          Buffer.alloc(0),
+        ),
+      ], []);
+    }
+
+    const mint = await createMint(
+      connection,
+      payer,
+      payer.publicKey,
+      null,
+      0,
+      undefined,
+      undefined,
+      TOKEN_PROGRAM_ID,
+    );
+    const source = await getOrCreateAssociatedTokenAccount(connection, payer, mint, payer.publicKey);
+    const vault = await getOrCreateAssociatedTokenAccount(
+      connection,
+      payer,
+      mint,
+      vaultAuthority(mint),
+      true,
+    );
+    const destination = await getOrCreateAssociatedTokenAccount(connection, payer, mint, merchant.publicKey);
+    await send([
+      initializeAssetConfigInstruction(mint, TOKEN_PROGRAM_ID),
+      initializeRegistryInstruction(mint, TOKEN_PROGRAM_ID),
+      registerPolicyInstruction(mint, TOKEN_PROGRAM_ID),
+    ], [issuer]);
+
+    await mintTo(connection, payer, mint, source.address, payer, 100n);
+    await send([
+      ...settlementComputeBudgetInstructions(),
+      settleInstruction(mint, source.address, vault.address, destination.address, TOKEN_PROGRAM_ID, 201n),
+    ], []);
+    await mintTo(connection, payer, mint, source.address, payer, 100n);
+    await send([
+      ...settlementComputeBudgetInstructions(),
+      settleInstruction(mint, source.address, vault.address, destination.address, TOKEN_PROGRAM_ID, 202n),
+    ], []);
+
+    const planDigest = Buffer.alloc(32, 11);
+    const plan = revenueStreamPlan(mint, planDigest);
+    await send([
+      initializeRevenueStreamPlanInstruction(
+        mint,
+        vault.address,
+        TOKEN_PROGRAM_ID,
+        planDigest,
+        BigInt(Math.max(0, (await connection.getSlot("finalized")) - 1)),
+        30n,
+        20n,
+      ),
+    ], [releaseGovernance]);
+    await send([updateRevenueStreamPlanInstruction("approve_revenue_stream_plan", plan)], [releaseApprover]);
+    await send([updateRevenueStreamPlanInstruction("activate_revenue_stream_plan", plan)], [releaseApprover]);
+
+    const firstSourceReceipt = receipt(mint, 201n);
+    const secondSourceReceipt = receipt(mint, 202n);
+    const firstAccrual = revenueStreamAccrual(plan, firstSourceReceipt);
+    const secondAccrual = revenueStreamAccrual(plan, secondSourceReceipt);
+    const finalizedSlot = BigInt(await connection.getSlot("finalized"));
+    await send([
+      recordRevenueStreamAccrualInstruction(plan, firstSourceReceipt, firstAccrual, 20n, finalizedSlot),
+      recordRevenueStreamAccrualInstruction(plan, secondSourceReceipt, secondAccrual, 10n, finalizedSlot),
+    ], [adjustmentProposer]);
+
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    const firstClaim = revenueStreamClaim(plan, 1n);
+    await send([
+      createRevenueStreamClaimInstruction(
+        plan,
+        mint,
+        vault.address,
+        destination.address,
+        firstClaim,
+        1n,
+        20n,
+        now,
+        now + 3_600n,
+      ),
+    ], [adjustmentProposer]);
+    const beforeExecute = await Promise.all([
+      getAccount(connection, vault.address, "finalized"),
+      getAccount(connection, destination.address, "finalized"),
+    ]);
+    expect(beforeExecute.map((account) => account.amount)).toEqual([50n, 150n]);
+    await send([
+      executeRevenueStreamClaimInstruction(
+        plan,
+        mint,
+        vault.address,
+        destination.address,
+        firstClaim,
+        1n,
+      ),
+    ], [releaseApprover]);
+    const afterExecute = await Promise.all([
+      getAccount(connection, vault.address, "finalized"),
+      getAccount(connection, destination.address, "finalized"),
+    ]);
+    expect(afterExecute.map((account) => account.amount)).toEqual([30n, 170n]);
+    await expect(send([
+      executeRevenueStreamClaimInstruction(
+        plan,
+        mint,
+        vault.address,
+        destination.address,
+        firstClaim,
+        1n,
+      ),
+    ], [releaseApprover])).rejects.toThrow();
+    const afterDuplicate = await Promise.all([
+      getAccount(connection, vault.address, "finalized"),
+      getAccount(connection, destination.address, "finalized"),
+    ]);
+    expect(afterDuplicate.map((account) => account.amount)).toEqual([30n, 170n]);
+
+    const secondClaim = revenueStreamClaim(plan, 2n);
+    await send([
+      createRevenueStreamClaimInstruction(
+        plan,
+        mint,
+        vault.address,
+        destination.address,
+        secondClaim,
+        2n,
+        10n,
+        now,
+        now + 3_600n,
+      ),
+    ], [adjustmentProposer]);
+    await send([cancelRevenueStreamClaimInstruction(plan, secondClaim, 2n)], [releaseGovernance]);
+    await expect(send([
+      executeRevenueStreamClaimInstruction(
+        plan,
+        mint,
+        vault.address,
+        destination.address,
+        secondClaim,
+        2n,
+      ),
+    ], [releaseApprover])).rejects.toThrow();
+    const afterCancellation = await Promise.all([
+      getAccount(connection, vault.address, "finalized"),
+      getAccount(connection, destination.address, "finalized"),
+    ]);
+    expect(afterCancellation.map((account) => account.amount)).toEqual([30n, 170n]);
+
+    const pausedClaim = revenueStreamClaim(plan, 3n);
+    await send([setRevenueStreamPlanPausedInstruction(plan, true)], [releaseGovernance]);
+    await expect(send([
+      createRevenueStreamClaimInstruction(
+        plan,
+        mint,
+        vault.address,
+        destination.address,
+        pausedClaim,
+        3n,
+        10n,
+        now,
+        now + 3_600n,
+      ),
+    ], [adjustmentProposer])).rejects.toThrow();
+    expect(await connection.getAccountInfo(pausedClaim, "finalized")).toBeNull();
+    await send([setRevenueStreamPlanPausedInstruction(plan, false)], [releaseGovernance]);
+  }, 45_000);
+
   test("executes settlement through a real v0 address lookup table", async () => {
     await airdrop(payer.publicKey, 10_000_000_000);
     await airdrop(merchant.publicKey);
@@ -1088,6 +1659,7 @@ describe("validator-backed settlement conformance", () => {
     const destination = await getOrCreateAssociatedTokenAccount(connection, payer, mint, merchant.publicKey);
     await mintTo(connection, payer, mint, source.address, payer, 100n);
     await send([
+      initializeAssetConfigInstruction(mint, TOKEN_PROGRAM_ID),
       initializeRegistryInstruction(mint, TOKEN_PROGRAM_ID),
       registerPolicyInstruction(mint, TOKEN_PROGRAM_ID),
     ], [issuer]);
@@ -1160,7 +1732,11 @@ describe("validator-backed settlement conformance", () => {
     const vault = await getOrCreateAssociatedTokenAccount(connection, payer, mint, vaultAuthority(mint), true, undefined, undefined, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
     const destination = await getOrCreateAssociatedTokenAccount(connection, payer, mint, merchant.publicKey, false, undefined, undefined, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
     await mintTo(connection, payer, mint, source.address, payer, 100n, [], undefined, TOKEN_2022_PROGRAM_ID);
-    await send([initializeRegistryInstruction(mint, TOKEN_2022_PROGRAM_ID), registerPolicyInstruction(mint, TOKEN_2022_PROGRAM_ID)], [issuer]);
+    await send([
+      initializeAssetConfigInstruction(mint, TOKEN_2022_PROGRAM_ID),
+      initializeRegistryInstruction(mint, TOKEN_2022_PROGRAM_ID),
+      registerPolicyInstruction(mint, TOKEN_2022_PROGRAM_ID),
+    ], [issuer]);
     await send([
       ...settlementComputeBudgetInstructions(),
       settleInstruction(mint, source.address, vault.address, destination.address, TOKEN_2022_PROGRAM_ID, 2n),
@@ -1217,6 +1793,7 @@ describe("validator-backed settlement conformance", () => {
     );
     await mintTo(connection, payer, mint, source.address, payer, 100n);
     await send([
+      initializeAssetConfigInstruction(mint, TOKEN_PROGRAM_ID),
       initializeRegistryInstruction(mint, TOKEN_PROGRAM_ID),
       registerPolicyInstruction(mint, TOKEN_PROGRAM_ID),
     ], [issuer]);
@@ -1322,6 +1899,7 @@ describe("validator-backed settlement conformance", () => {
     await mintTo(connection, payer, mint, source.address, payer, 100n);
 
     await send([
+      initializeAssetConfigInstruction(mint, TOKEN_PROGRAM_ID),
       initializeRegistryInstruction(mint, TOKEN_PROGRAM_ID),
       registerPolicyInstruction(mint, TOKEN_PROGRAM_ID),
       initializeSplitPlanInstruction(mint, TOKEN_PROGRAM_ID, [
@@ -1460,6 +2038,7 @@ describe("validator-backed settlement conformance", () => {
     await mintTo(connection, payer, mint, source.address, payer, 100n, [], undefined, TOKEN_2022_PROGRAM_ID);
 
     await send([
+      initializeAssetConfigInstruction(mint, TOKEN_2022_PROGRAM_ID),
       initializeRegistryInstruction(mint, TOKEN_2022_PROGRAM_ID),
       registerPolicyInstruction(mint, TOKEN_2022_PROGRAM_ID),
       initializeSplitPlanInstruction(mint, TOKEN_2022_PROGRAM_ID, [
@@ -1490,8 +2069,41 @@ describe("validator-backed settlement conformance", () => {
 
   test("rejects a real Token-2022 TransferFeeConfig mint before registry activation", async () => {
     const mint = await createExtendedMint();
+    await expect(send([initializeAssetConfigInstruction(mint, TOKEN_2022_PROGRAM_ID)], [])).rejects.toThrow();
+    expect(await connection.getAccountInfo(assetConfig(mint), "finalized")).toBeNull();
     await expect(send([initializeRegistryInstruction(mint, TOKEN_2022_PROGRAM_ID)], [])).rejects.toThrow();
     expect(await connection.getAccountInfo(issuerRegistry(mint), "finalized")).toBeNull();
+  }, 30_000);
+
+  test("rejects a non-stable asset classification before configuration creation", async () => {
+    await airdrop(payer.publicKey, 10_000_000_000);
+    if ((await connection.getAccountInfo(protocolConfig(), "finalized")) === null) {
+      await send([
+        instruction(
+          "initialize_protocol_config",
+          [
+            { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+            { pubkey: protocolConfig(), isSigner: false, isWritable: true },
+            { pubkey: systemProgram, isSigner: false, isWritable: false },
+          ],
+          Buffer.alloc(0),
+        ),
+      ], []);
+    }
+    const mint = await createMint(
+      connection,
+      payer,
+      payer.publicKey,
+      null,
+      0,
+      undefined,
+      undefined,
+      TOKEN_PROGRAM_ID,
+    );
+    await expect(send([
+      initializeAssetConfigInstruction(mint, TOKEN_PROGRAM_ID, 0),
+    ], [])).rejects.toThrow();
+    expect(await connection.getAccountInfo(assetConfig(mint), "finalized")).toBeNull();
   }, 30_000);
 
   test("revoked policy attestations cannot move tokens", async () => {
@@ -1537,6 +2149,7 @@ describe("validator-backed settlement conformance", () => {
     );
     await mintTo(connection, payer, mint, source.address, payer, 100n);
     await send([
+      initializeAssetConfigInstruction(mint, TOKEN_PROGRAM_ID),
       initializeRegistryInstruction(mint, TOKEN_PROGRAM_ID),
       registerPolicyInstruction(mint, TOKEN_PROGRAM_ID),
     ], [issuer]);

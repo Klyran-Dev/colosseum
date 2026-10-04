@@ -69,5 +69,20 @@ release_workflow="$repo_root/.github/workflows/release-candidate.yml"
 
 check_workflow "$ci_workflow" solana-conformance
 check_workflow "$release_workflow" release-candidate
+require_job_text "$release_workflow" release-candidate 'run: make release-bundle-integrity-contract'
+require_job_text "$release_workflow" release-candidate 'run: ./scripts/create_release_bundle.sh'
+require_job_text "$release_workflow" release-candidate 'run: make web-browser-check'
+require_job_text "$release_workflow" release-candidate 'cp -R test-results/web-e2e/. release-bundle/web-e2e/'
+require_job_text "$release_workflow" release-candidate 'git rev-parse HEAD'
+require_job_text "$release_workflow" release-candidate 'path: test-results/web-e2e/'
+require_job_text "$release_workflow" release-candidate 'make integration-check 2>&1 | tee release-bundle/integration/evidence.txt'
+require_job_text "$release_workflow" release-candidate 'id: authenticated_integration'
+require_job_text "$release_workflow" release-candidate 'tee release-bundle/integration/evidence.txt'
+require_job_text "$release_workflow" release-candidate 'release-bundle/integration/source-revision.txt'
+require_job_text "$release_workflow" release-candidate 'path: release-bundle/integration/'
+require_job_text "$release_workflow" release-candidate "if: failure() && steps.authenticated_integration.outcome == 'failure'"
+require_order "$release_workflow" release-candidate 'run: make web-browser-check' 'run: make release-bundle-integrity-contract'
+require_order "$release_workflow" release-candidate 'make integration-check 2>&1 | tee release-bundle/integration/evidence.txt' 'run: make web-browser-check'
+require_order "$release_workflow" release-candidate 'run: make release-bundle-integrity-contract' 'run: ./scripts/create_release_bundle.sh'
 
 echo "Solana conformance workflow contract passed"

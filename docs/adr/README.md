@@ -299,3 +299,29 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0296](0296-validator-health-gates-chain-readers.md) — Gate the indexer on validator health
 - [ADR-0297](0297-production-account-session-menu.md) — Production account and session menu
 - [ADR-0298](0298-material-3-expressive-visual-system.md) — Material 3 Expressive visual system for the operational SaaS shell
+- [ADR-0299](0299-release-evidence-source-revision-binding.md) — Bind release evidence to the packaged source revision
+- [ADR-0300](0300-semantic-color-token-migration.md) — Close the semantic color-token boundary across the SPA
+- [ADR-0301](0301-validator-backed-revenue-stream-conformance.md) — Validator-backed revenue-stream movement conformance
+- [ADR-0302](0302-versioned-local-display-preferences.md) — Versioned local display preferences
+- [ADR-0303](0303-release-candidate-browser-evidence.md) — Exact-commit browser evidence in the release candidate
+- [ADR-0304](0304-material-role-contrast-contract.md) — Static contrast contract for Material color roles
+- [ADR-0305](0305-tier-1-local-gate-orchestration.md) — One-command Tier-1 local gate orchestration
+- [ADR-0306](0306-collapsed-advanced-evidence-disclosures.md) — Collapsed advanced evidence disclosures
+- [ADR-0307](0307-project-scoped-local-reset.md) — Project-scoped local reset for persistent Docker state
+- [ADR-0308](0308-release-candidate-authenticated-integration-evidence.md) — Exact-commit authenticated integration evidence in the release candidate
+- [ADR-0309](0309-contextual-status-disclosure.md) — Contextual status disclosure for a calm Material 3 shell
+- [ADR-0310](0310-tonal-surfaces-no-decorative-gradients.md) — Tonal surfaces and no decorative gradients in the operational shell
+- [ADR-0311](0311-solana-aurora-material-palette.md) — Solana Aurora Material 3 role palette
+- [ADR-0312](0312-document-payment-outcome-first-language.md) — Outcome-first language for document payment review
+- [ADR-0313](0313-compact-protection-context.md) — Compact protection context in the operations shell
+- [ADR-0314](0314-non-custodial-wallet-source-contract.md) — Executable non-custodial wallet source contract
+- [ADR-0315](0315-executable-tax-responsibility-language.md) — Executable tax-responsibility language boundary
+- [ADR-0316](0316-versioned-rule-release-provenance.md) — Versioned rule-release provenance readiness
+- [ADR-0317](0317-material-expressive-surface-hierarchy-and-navigation-density.md) — Material 3 Expressive surface hierarchy and navigation density
+- [ADR-0318](0318-workflow-handoff-url-integrity.md) — Preserve addressable URLs across workflow handoffs
+- [ADR-0319](0319-bounded-browser-error-disclosure.md) — Bounded browser error disclosure
+- [ADR-0320](0320-on-chain-stablecoin-asset-admission.md) — On-chain stablecoin asset admission
+- [ADR-0321](0321-finalized-asset-config-route-evidence.md) — Finalized asset-configuration evidence for route activation
+- [ADR-0322](0322-route-evidence-version-migration.md) — Expand/contract migration for stablecoin route evidence
+- [ADR-0323](0323-material-expressive-operational-workspace-composition.md) — Grouped navigation and one active-workspace hierarchy
+- [ADR-0324](0324-server-owned-vault-release-route-selection.md) — Server-owned vault-release route selection

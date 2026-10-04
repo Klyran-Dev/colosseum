@@ -83,6 +83,13 @@ The source of truth for money movement is Solana. The Tier-1 Tax Engine is an of
 - The checkout must show gross amount, tax components, net amount, protocol/network fee, asset mint, quote expiry, policy/rule version, attestation status, and exact wallet authorization before signing.
 - Tax explanations use progressive disclosure: summary, inputs, rule/component trace, evidence, limitations, and correlation identifiers.
 - Meet WCAG 2.2 AA: keyboard navigation, focus management, semantic labels, screen-reader support, color-independent status, reduced motion, responsive layouts, RTL readiness, locale-aware money/date/time formatting, and accessible errors.
+- Define one repository-owned Material 3 Expressive semantic color system for
+  the SPA. Component and workspace styles must consume documented roles or
+  role-derived alpha/elevation tokens; raw hex/rgb/rgba literals are permitted
+  only in the scheme token declarations and must be rejected by the web color
+  contract. Every light/dark text-role pairing must also pass the static 4.5:1
+  Material palette contrast contract. Color communicates action, access,
+  warning, error, or hierarchy—never arbitrary decoration.
 - Every async operation has loading, success, failure, timeout, retry, cancellation, stale-data, and reconciliation-required states.
 - Never state or imply that automated withholding equals legal compliance, filing, reporting, or tax advice.
 
@@ -208,6 +215,11 @@ Write tests in this order whenever applicable:
 - Shard writable accounts to reduce contention. Do not use global counters or shared hot PDAs for all merchants.
 - Prefer immutable versioned plans and policies over frequently mutated shared state.
 - Measure p50/p95/p99 quote, compile, submit, processed, confirmed, and finalized latency by region and provider.
+- Release-candidate evidence must run the authenticated Docker integration gate
+  on the exact packaged source revision, capture it with `pipefail`, bind it to
+  `git rev-parse HEAD`, checksum it in the release bundle, and retain failure
+  evidence separately. A PR integration result from another revision is not
+  release evidence.
 
 ## Docker and local-development mandates
 
@@ -245,12 +257,20 @@ The implementation must provide a Compose profile for:
 - All services have health checks, startup ordering based on health, bounded restart policy, logs, and documented ports.
 - A one-command bootstrap creates schemas, seeds safe fixtures, starts localnet, runs migrations, and exposes the real UI.
 - A one-command test flow runs Rust, frontend, contract, localnet integration, accessibility, and API tests.
+- `make tier1-local-check` is the canonical ordered end-to-end evidence gate:
+  repository checks, authenticated Docker integration, real-browser UI, then
+  validator-backed Solana conformance. It must fail closed on missing Linux
+  validator capabilities and may not silently skip a layer.
 - `make solana-conformance` is the explicit localnet release gate: it builds
   the pinned SBF artifact, starts the pinned Agave validator with that artifact
   under the fixed program ID, and runs real legacy-SPL, extension-free
   Token-2022, duplicate-nonce, and unsupported-extension transactions. If the
   artifact, validator, or RPC evidence is unavailable, the command fails; it
   must not downgrade to a skipped or mocked result.
+- `make reset-local` is the only approved recovery path for intentionally
+  discarding synthetic persistent state. It requires explicit confirmation and
+  scopes `docker compose down --volumes --remove-orphans` to the validated
+  Compose project; normal `make down` remains non-destructive.
 - A one-command teardown removes only this project’s named volumes and networks; never use broad host deletion commands.
 
 ## Toolchain and dependency policy

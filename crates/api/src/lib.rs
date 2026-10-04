@@ -303,6 +303,8 @@ pub struct TargetedRecoveryPorts {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+// NON_CUSTODIAL_WALLET_API_BOUNDARY_V1: API request DTOs accept wallet
+// addresses and signed artifacts only; user private-key material is forbidden.
 pub struct CalculateRequest {
     pub facts: TaxFacts,
     pub rule_set: RuleSet,
@@ -410,9 +412,7 @@ pub struct JurisdictionPolicyTransitionRequest {
 #[serde(deny_unknown_fields)]
 pub struct VaultReleaseClaimCreateRequest {
     pub idempotency_key: String,
-    pub mint: String,
-    pub token_program: String,
-    pub tax_vault: String,
+    pub route_id: Uuid,
     pub destination: String,
     #[serde(with = "policy::serde_u64_string")]
     pub nonce: u64,
@@ -1815,6 +1815,11 @@ impl From<StorageError> for ApiError {
                 "RULE_GOVERNANCE_EVIDENCE_TOO_LARGE",
                 "rule governance evidence exceeds the bounded size".to_string(),
             ),
+            StorageError::InvalidRuleReleaseProvenance(message) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_RULE_RELEASE_PROVENANCE",
+                message,
+            ),
             StorageError::InvalidRuleDraft(message) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "INVALID_RULE_DRAFT",
@@ -2224,6 +2229,10 @@ pub fn router() -> Router<AppState> {
             get(load_jurisdiction_policy_governance),
         )
         .route("/v1/vault/release-claims", post(create_vault_release_claim))
+        .route(
+            "/v1/vault/release-routes",
+            get(list_vault_release_routes),
+        )
         .route(
             "/v1/vault/release-claims/{claim_id}",
             get(load_vault_release_claim),
@@ -4474,9 +4483,7 @@ async fn create_vault_release_claim_inner(
             merchant_id: principal.merchant_id,
             actor_subject: principal.subject,
             idempotency_key: request.idempotency_key,
-            mint: request.mint,
-            token_program: request.token_program,
-            tax_vault: request.tax_vault,
+            route_id: request.route_id,
             destination: request.destination,
             nonce: request.nonce,
             amount_atomic: request.amount_atomic,
@@ -5120,25 +5127,19 @@ async fn transition_vault_release_claim_inner(
 }
 
 fn validate_release_public_keys(request: &VaultReleaseClaimCreateRequest) -> Result<(), ApiError> {
-    for (field, value) in [
-        ("mint", request.mint.as_str()),
-        ("token_program", request.token_program.as_str()),
-        ("tax_vault", request.tax_vault.as_str()),
-        ("destination", request.destination.as_str()),
-    ] {
-        Pubkey::from_str(value).map_err(|_| ApiError {
-            status: StatusCode::UNPROCESSABLE_ENTITY,
-            code: "INVALID_VAULT_RELEASE_ACCOUNT",
-            message: format!("{field} is not a valid Solana public key"),
-        })?;
-    }
-    if request.tax_vault == request.destination {
+    if request.route_id.get_version_num() != 7 {
         return Err(ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
-            code: "INVALID_VAULT_RELEASE_ACCOUNT",
-            message: "tax vault and destination must be distinct".to_string(),
+            code: "INVALID_VAULT_RELEASE_ROUTE",
+            message: "route_id must be a UUIDv7 verified payment route".to_string(),
         });
     }
+    let (field, value) = ("destination", request.destination.as_str());
+    Pubkey::from_str(value).map_err(|_| ApiError {
+        status: StatusCode::UNPROCESSABLE_ENTITY,
+        code: "INVALID_VAULT_RELEASE_ACCOUNT",
+        message: format!("{field} is not a valid Solana public key"),
+    })?;
     Ok(())
 }
 
@@ -5681,6 +5682,29 @@ async fn list_settlement_routes(
     headers: HeaderMap,
 ) -> Result<Json<Vec<storage::SettlementRoute>>, ApiError> {
     let principal = authenticate_scope(&state, &headers, "tax:settlement:compile")?;
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "SETTLEMENT_STORAGE_UNAVAILABLE",
+        message: "settlement route storage is not configured".to_string(),
+    })?;
+    Ok(Json(
+        store
+            .list_active_settlement_routes(principal.merchant_id)
+            .await
+            .map_err(ApiError::from)?,
+    ))
+}
+
+async fn list_vault_release_routes(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<storage::SettlementRoute>>, ApiError> {
+    let principal = authenticate_scope_role(
+        &state,
+        &headers,
+        "tax:vault:propose",
+        "vault_release_proposer",
+    )?;
     let store = state.storage.ok_or_else(|| ApiError {
         status: StatusCode::SERVICE_UNAVAILABLE,
         code: "SETTLEMENT_STORAGE_UNAVAILABLE",
@@ -8449,6 +8473,7 @@ async fn submit_settlement_inner(
                 vault_authority: instruction.vault_authority.clone(),
                 policy_attestation: instruction.policy_attestation.clone(),
                 receipt: instruction.receipt.clone(),
+                asset_config: instruction.asset_config.clone(),
                 compute_budget_policy: instruction.compute_budget_policy.clone(),
             },
         ),
@@ -8475,6 +8500,7 @@ async fn submit_settlement_inner(
                 vault_authority: instruction.vault_authority.clone(),
                 policy_attestation: instruction.policy_attestation.clone(),
                 receipt: instruction.receipt.clone(),
+                asset_config: instruction.asset_config.clone(),
                 compute_budget_policy: instruction.compute_budget_policy.clone(),
             },
         ),
@@ -11150,6 +11176,38 @@ mod tests {
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
+    #[test]
+    fn vault_release_request_accepts_only_a_verified_route_reference() {
+        let body = serde_json::json!({
+            "idempotency_key": "release-test",
+            "route_id": Uuid::now_v7(),
+            "destination": "11111111111111111111111111111111",
+            "nonce": "42",
+            "amount_atomic": "250000",
+            "reference_digest": vec![1u8; 32],
+            "execute_after_unix": 1_800_000_000,
+            "expires_at_unix": 1_800_003_600,
+        });
+        let request: VaultReleaseClaimCreateRequest =
+            serde_json::from_value(body).expect("route-bound release request parses");
+        assert_eq!(request.route_id.get_version_num(), 7);
+
+        let legacy = serde_json::json!({
+            "idempotency_key": "release-test",
+            "route_id": request.route_id,
+            "mint": "11111111111111111111111111111111",
+            "token_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "tax_vault": "Sysvar1nstructions1111111111111111111111111",
+            "destination": "SysvarRecentB1ockHashes11111111111111111111",
+            "nonce": "42",
+            "amount_atomic": "250000",
+            "reference_digest": vec![1u8; 32],
+            "execute_after_unix": 1_800_000_000,
+            "expires_at_unix": 1_800_003_600,
+        });
+        assert!(serde_json::from_value::<VaultReleaseClaimCreateRequest>(legacy).is_err());
+    }
+
     #[tokio::test]
     async fn vault_reconciliation_read_requires_a_governed_vault_role() {
         let now = SystemTime::now()
@@ -11364,7 +11422,7 @@ mod tests {
             .unwrap();
         let response: serde_json::Value = serde_json::from_slice(&response_body).unwrap();
         assert_eq!(response["status"], "prepared_unsubmitted");
-        assert_eq!(response["accounts"].as_array().unwrap().len(), 12);
+        assert_eq!(response["accounts"].as_array().unwrap().len(), 13);
     }
 
     #[tokio::test]

@@ -37,11 +37,15 @@ open.
   digests, security-scan result, test result, and validator-conformance result
   for every release candidate. ADR-0129 provides the tag/manual workflow,
   grouped dependency automation, checksums, SBOM, retained evidence bundle, and
-  ADR-0218's explicit final-program and resolved-configuration hashes;
+  ADR-0218's explicit final-program and resolved-configuration hashes. ADR-0299
+  additionally binds validator evidence to the exact packaged Git revision;
   the workflow does not publish images or deploy to production.
 - A maintainer has reviewed public examples, fixtures, logs, benchmark output,
   and test artifacts for credentials, private keys, PII, and sensitive
   jurisdiction evidence.
+- Local recovery documentation includes the explicit project-scoped
+  `make reset-local` command for synthetic volume drift; ordinary shutdown
+  remains non-destructive.
 
 ## Required before production settlement enablement
 

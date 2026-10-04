@@ -39,6 +39,7 @@ const instruction = {
   vault_authority: payer.toBase58(),
   policy_attestation: payer.toBase58(),
   receipt: payer.toBase58(),
+  asset_config: payer.toBase58(),
   compute_budget_policy: {
     policy_version: 1,
     compute_unit_limit: 200_000,
@@ -187,11 +188,11 @@ describe("checkout settlement boundary", () => {
       mint_decimals: 6,
       tax_vault: vectorInstruction.accounts[5].pubkey,
       net_destination: vectorInstruction.accounts[8].pubkey,
-      token_program: vectorInstruction.accounts[10].pubkey,
+      token_program: vectorInstruction.accounts[11].pubkey,
     };
     const [route] = parseSettlementRoutes([routePayload]);
     expect(route.id).toBe(routeId);
-    expect(route.token_program).toBe(vectorInstruction.accounts[10].pubkey);
+    expect(route.token_program).toBe(vectorInstruction.accounts[11].pubkey);
     expect(route.mint_decimals).toBe(6);
     expect(() => parseSettlementRoutes([{ ...routePayload, mint_decimals: 10 }])).toThrow(/mint decimals/);
     expect(() => parseSettlementRoutes([{ ...routePayload, mint_decimals: undefined }])).toThrow(/mint decimals/);
@@ -218,6 +219,7 @@ describe("checkout settlement boundary", () => {
         vectorInstruction.accounts[9],
         vectorInstruction.accounts[10],
         vectorInstruction.accounts[11],
+        vectorInstruction.accounts[12],
         { ...vectorInstruction.accounts[8], is_writable: true },
         { ...vectorInstruction.accounts[2], is_writable: true },
       ],
@@ -360,6 +362,7 @@ describe("checkout settlement boundary", () => {
         vectorInstruction.accounts[9],
         vectorInstruction.accounts[10],
         vectorInstruction.accounts[11],
+        vectorInstruction.accounts[12],
         { ...vectorInstruction.accounts[8], is_writable: true },
         { ...vectorInstruction.accounts[2], is_writable: true },
       ],
@@ -369,6 +372,7 @@ describe("checkout settlement boundary", () => {
       split_plan: vectorInstruction.accounts[7].pubkey,
       split_plan_digest: [25, ...new Array(31).fill(0)],
       receipt: vectorInstruction.accounts[9].pubkey,
+      asset_config: vectorInstruction.accounts[10].pubkey,
       compute_budget_policy: vectorInstruction.compute_budget_policy,
     };
     const vectorPayer = new PublicKey(settlementVector.request.payer);
@@ -383,7 +387,7 @@ describe("checkout settlement boundary", () => {
         }),
       } as unknown as Connection,
     );
-    expect(transaction.instructions[2].keys).toHaveLength(14);
+    expect(transaction.instructions[2].keys).toHaveLength(15);
     expect(transaction.instructions[2].data).toHaveLength(88);
   });
 
@@ -401,6 +405,7 @@ describe("checkout settlement boundary", () => {
         vectorInstruction.accounts[9],
         vectorInstruction.accounts[10],
         vectorInstruction.accounts[11],
+        vectorInstruction.accounts[12],
         { ...vectorInstruction.accounts[3], is_writable: true },
       ],
       protocol_config: vectorInstruction.accounts[1].pubkey,
@@ -409,12 +414,24 @@ describe("checkout settlement boundary", () => {
       split_plan: vectorInstruction.accounts[7].pubkey,
       split_plan_digest: [25, ...new Array(31).fill(0)],
       receipt: vectorInstruction.accounts[9].pubkey,
+      asset_config: vectorInstruction.accounts[10].pubkey,
       compute_budget_policy: vectorInstruction.compute_budget_policy,
     };
     expect(() => validateCompiledSettlementInstruction(
       splitInstruction,
       new PublicKey(settlementVector.request.payer),
     )).toThrow(/distinct/);
+  });
+
+  it("rejects an asset-admission PDA substituted into the compiled envelope", () => {
+    const substituted = {
+      ...vectorInstruction,
+      asset_config: vectorInstruction.accounts[1].pubkey,
+    };
+    expect(() => validateCompiledSettlementInstruction(
+      substituted,
+      new PublicKey(settlementVector.request.payer),
+    )).toThrow(/Asset admission PDA/);
   });
 
   it("rejects an API Split Plan response that does not conserve recipients", () => {

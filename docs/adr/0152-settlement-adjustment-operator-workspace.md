@@ -38,7 +38,11 @@ Add a dedicated lazy-loaded `SettlementAdjustmentPanel` to the React/Vite SPA:
    error, timeout, offline, malformed-response, and retry states. A timeout or
    unknown status never becomes success. Focus moves to the workspace heading
    when selected, and status/errors use semantic live regions.
-6. The layout follows the existing product visual language, works at mobile
+6. The proposal form starts empty for settlement identifiers, amounts, asset
+   and evidence digests, and source references. Test fixtures must supply
+   synthetic values explicitly; the production workspace never invents a
+   financial or evidence value.
+7. The layout follows the existing product visual language, works at mobile
    widths and RTL direction, and labels the legal/operational boundary:
    approval is evidence and does not mean refund paid, filing complete, or tax
    compliance.
@@ -58,6 +62,8 @@ flow without implying chain execution.
   coercion.
 - Component tests cover propose, replay, read, four-eyes approval, rejection,
   timeout, API error with support reference, and no `posted` control.
+- Component tests prove the proposal form does not prefill settlement,
+  financial, asset, or evidence values.
 - Automated accessibility tests cover the panel at desktop, mobile, and RTL
   direction with keyboard-reachable controls and no WCAG violations detected
   by the repository gate.

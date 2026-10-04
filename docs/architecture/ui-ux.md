@@ -82,6 +82,15 @@ the API repeats the decision for every protected request. A denied workspace
 explains the safe next step; it is not silently removed, which prevents a
 reviewer from confusing missing access with missing product functionality.
 
+The shell uses native Material 3 Expressive disclosure groups to keep the
+current task prominent without hiding production capability. Daily work is
+open by default; lower-frequency groups remain one keyboard action away, and
+the active group opens automatically for direct links and route changes. Group
+state is presentation-only: it is never an authorization decision. The Solana
+Aurora role palette remains the only production palette, so navigation does
+not add per-item colors or badges that compete with financial and error
+semantics. See ADR-0323 for the composition decision and alternatives.
+
 Every workspace follows the same review rhythm:
 
 1. **Orient:** account, environment, network, service health, and current task.
@@ -89,6 +98,14 @@ Every workspace follows the same review rhythm:
 3. **Inspect:** “Why this tax?”, “Record details”, or “Technical details” only when needed.
 4. **Act:** one clearly named next action with approval requirements beside it.
 5. **Confirm:** server response, evidence reference, and the next safe action.
+
+Protection context is intentionally compact. The page heading carries the
+current access result and one closed “Protection details” disclosure explains
+that decisions are recorded, sensitive actions may require approval, and
+wallets remain with their owners. Runtime, network, service, and sign-in
+diagnostics live in the separate system-status disclosure; account identity and
+sign-out live in the account menu. The shell does not repeat these assurances
+as a full-width banner or use them as a substitute for server authorization.
 
 Sensitive actions use progressive disclosure and four-eyes language. For
 example, Partner payouts begins with active plans, available balance, partner,

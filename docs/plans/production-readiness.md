@@ -23,11 +23,18 @@ staging identity, HSM/KMS, legal, or regional SLO gates.
 
 The final production UI language, location-verification disclosure, and
 server-owned payout-reference selection changes also passed
-`make web-browser-check`: all 21 real-browser journeys passed, including the
+`make web-browser-check`: all 25 real-browser journeys passed, including the
 WCAG A/AA audit workspaces, keyboard and responsive behavior, wallet rejection,
 expired-quote, evidence handoff, fail-closed API states, and ID-only payout
 plan proposal. This automated browser evidence does not replace manual
 assistive-technology, legal/tax, live-wallet, or staging identity review.
+
+On 2026-10-04, a fresh isolated Compose project initialized PostgreSQL 18,
+applied the complete migration set, started the API, and served the SPA through
+the pinned NGINX edge. The project-scoped `make reset-local` recovery command
+and its shell contract now provide a deliberate path for stale synthetic
+volume checksums; this does not authorize deleting production data or repair a
+historical migration in place.
 
 The 2026-10-03 native arm64 tax-engine benchmark after ADR-0284 measured
 uncached calculation at 1.4336–1.4431 microseconds, compiled calculation at
@@ -60,6 +67,14 @@ captured the validator failure before RPC readiness: Agave logged
 a validator conformance pass; the required Linux CI/runner execution remains
 open.
 
+On 2026-10-04, after synchronizing the real-validator builders with the
+`AssetConfig` account contract, the Dockerized SBF build produced artifact
+SHA-256 `e905ab9102b88bf015b095afb3af4b878870348b1a6c5a34d829f2dec40d50ce`.
+The same host again failed closed at Agave validator startup with the typed
+`validator_io_uring_unsupported` result, before RPC or transaction tests ran.
+This confirms the updated conformance source is buildable and wired to the
+release gate; it is not validator evidence.
+
 The current guarded Docker SBF build after ADR-0169 produced artifact
 SHA-256 `412a2d66c3edcc25c316377cc85a3bea85c8079d69bb4338d69119136e91457b`
 without the prior 4 KiB stack-frame diagnostics. This is build evidence only;
@@ -82,7 +97,7 @@ cross-tenant replay/attestation/compilation attempts returned 404 with the
 expected denial audit evidence. This closes the local Docker evidence gate;
 staging identity-provider and production authorization evidence remain open.
 
-On 2026-10-03, a fresh `make integration-check` passed on the current worktree
+On 2026-10-04, a fresh `make integration-check` passed on the current worktree
 after the production UI/navigation changes. The run rebuilt the pinned API,
 worker, migration, RPC-fixture, and NGINX images, applied migrations on a new
 PostgreSQL 18 volume, and exercised concurrent submission fencing (`200` and
@@ -122,6 +137,12 @@ case matrix before release evidence can pass. The local macOS `io_uring`
 failure remains a typed non-zero result and cannot satisfy this gate; the
 successful Linux run is still an open release item until retained evidence
 exists.
+
+The conformance postcondition now also requires the stablecoin admission cases:
+canonical account topology, disabled and substituted `AssetConfig` rollback,
+non-stable classification rejection, and TransferFeeConfig rejection. These
+cases are source-wired and locally topology-tested; they remain unchecked as
+release evidence until a successful Linux/amd64 validator run is retained.
 
 ADR-0241 adds an executable workflow-shape contract to the normal repository
 checks. It prevents CI or release-candidate edits from removing the required
@@ -226,14 +247,16 @@ close the separate successful Linux validator evidence gate.
   the follow-up document run did the same while preserving the exact
   persistence and latency invariants; CI retention, regional profiles, and
   production SLO acceptance remain open.
-- [ ] Legacy SPL Token and extension-free Token-2022 account ownership is checked in localnet transactions.
-- [ ] Unsupported Token-2022 extensions are rejected or explicitly tested in localnet transactions.
+- [ ] Legacy SPL Token and extension-free Token-2022 account ownership is checked in localnet transactions. The post-0320 transaction builders and exact account order are implemented in `apps/web/src/solana.localnet.test.ts`; successful Linux/amd64 execution remains required.
+- [ ] Unsupported Token-2022 extensions are rejected or explicitly tested in localnet transactions. The TransferFeeConfig rejection case is implemented; retained Linux/amd64 execution evidence remains required.
 - [ ] Policy issuer, sequence, expiry, revocation, merchant binding, and governed issuer-registry scope are enforced.
 - [ ] Replay, duplicate nonce, stale blockhash, and duplicate submission are covered.
 - [ ] Authenticated tenant configuration resolves merchant Solana accounts;
   settlement compilation does not rely on free-form caller-supplied merchant
   authority fields. ADR-0061 and its local integration slice provide the
-  registry boundary. ADR-0062 provides the bounded verifier design and
+  registry boundary, and the Docker integration flow now explicitly rejects a
+  foreign-principal aggregate compilation attempt with the same route and
+  calculation references. ADR-0062 provides the bounded verifier design and
   finalized account-proof implementation; production governance ceremonies and
   localnet activation evidence remain open.
 - [x] ADR-0216 persists finalized verifier-derived mint precision on immutable
@@ -558,7 +581,11 @@ close the separate successful Linux validator evidence gate.
   now keeps the deployment preflight aligned with both supported JWKS input
   forms, but it does not prove provider-managed rotation or key-ceremony
   completion.
-- [ ] Frontend/API do not receive seed phrases or user private keys.
+- [x] The browser wallet port and API request boundary do not receive seed
+  phrases or user private keys; ADR-0314 adds a scoped source contract to
+  reject those fields and client-side keypair construction. Live wallet
+  provider, validator, and independent security evidence remain separate
+  release gates.
 - [ ] Dependency, container, SBOM, and secret scans pass in CI.
 - [x] The local NGINX edge has a non-root UID, read-only root filesystem,
   dropped capabilities, bounded temporary storage, and a passing Trivy gate.
@@ -795,6 +822,10 @@ and operational gates are intentionally not marked complete by unit tests.
 - [x] ADR-0217 makes the Docker integration evidence upload fail closed when
   the expected capture directory is missing; retained Linux evidence for the
   exact release commit remains required.
+- [ ] ADR-0308 runs the authenticated Docker integration gate on the exact
+  release candidate, binds it to the source revision, and includes it in the
+  checksummed release evidence. Retained Linux execution and independent
+  review remain required.
 - [x] SLOs, error budgets, RTO/RPO, support ownership, and incident severity policy are published under ADR-0135; named deployment owners, alert-receiver delivery, and measured regional evidence remain open.
 - [ ] Backup restore, key recovery, RPC failover, and indexer replay drills
   pass in the required production-like environments. The Docker integration
@@ -810,9 +841,9 @@ and operational gates are intentionally not marked complete by unit tests.
 - [ ] Merchant terms identify who is responsible for tax registration and filing.
 - [ ] Policy issuer authority and evidence provenance are documented.
 - [ ] Stablecoin issuer and redemption/off-ramp dependencies are documented.
-- [ ] User-facing copy says “automated withholding and evidence,” not “guaranteed compliance.”
-- [ ] Each published rule has legal/tax owner, source provenance, effective period, review date, and jurisdiction scope.
-- [ ] UI clearly distinguishes calculated tax, attested policy, and legal responsibility.
+- [x] User-facing copy says “automated withholding and evidence,” not “guaranteed compliance”; ADR-0315 adds an executable language contract that rejects positive compliance and filing claims.
+- [x] Each published rule has a bounded versioned release-provenance envelope with legal/tax owner, source provenance, effective period, review date, and jurisdiction scope; ADR-0316 adds Rust, PostgreSQL, local integration, and governance-workbench evidence. Counsel, source verification, and jurisdiction-owner approval remain external release gates.
+- [x] UI clearly distinguishes calculated tax, attested policy, finalized settlement evidence, and legal responsibility boundaries; ADR-0315 makes the copy contract executable. Counsel and merchant-term approval remain open.
 
 ## User experience
 
@@ -923,8 +954,9 @@ and operational gates are intentionally not marked complete by unit tests.
 - [x] ADR-0152 adds the real lazy-loaded settlement-adjustment operator
   workspace with exact-string client validation, memory-only token use,
   server-owned lifecycle rendering, API conflict/support-reference states,
-  accessibility coverage, and a 3/3 pinned NGINX Playwright browser gate.
-  On-chain posting, wallet signing, and finalized reconciliation remain open.
+  empty authority/financial/evidence inputs, accessibility coverage, and the
+  component/browser gate. On-chain posting, wallet signing, and finalized
+  reconciliation remain open.
 - [ ] ADR-0153 on-chain adjustment evidence contract is implemented and
   vectorized. The Docker conformance contract now covers successful recording,
   duplicate rejection, wrong receipt binding, non-conserving deltas, and

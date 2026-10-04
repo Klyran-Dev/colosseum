@@ -59,8 +59,9 @@ pause, authorization, or evidence controls.
   business-record selection, ID-only proposal submission, technical-input
   redaction, and browser axe validation; `make web-browser-check` now covers
   the complete local flow.
-- [ ] Execute the Linux validator conformance matrix before enabling the
-  revenue-stream movement path.
+- [x] Add the real validator-backed revenue-stream movement case and release
+  evidence requirement; see ADR-0301. Execute it on Linux/amd64 before
+  enabling the revenue-stream movement path.
 
 ### ADR-0297 — production account and session menu
 
@@ -73,15 +74,248 @@ pause, authorization, or evidence controls.
 ### ADR-0298 — Material 3 Expressive visual system
 
 - [x] Define one semantic Material role palette for light, dark, and system
-  themes; remove ad-hoc component colors from the shell.
+  themes; enforce a final role-token cascade for the rendered shell while
+  enforcing the repository-wide semantic color-token contract from ADR-0300.
 - [x] Reduce navigation and top-bar repetition so task, state, and next action
   have a clear visual hierarchy.
 - [x] Add theme preference controls that only change presentation state and
   preserve authorization, wallet, and settlement behavior.
 - [x] Verify contrast, reduced motion, RTL, responsive layout, component tests,
   real-browser accessibility, and public design documentation.
+- [x] Add a real-browser cross-workspace theme regression covering all product
+  navigation entries and proving light/dark surface separation.
 - [x] Enforce the CSP, semantic color-role, and plain-language contracts in the
   pull-request web CI job so visual and content regressions block review.
+
+### ADR-0302 — versioned local display preferences
+
+- [x] Persist only validated locale, IANA time zone, and Material theme
+  preferences in a versioned local schema; malformed, oversized, or
+  unavailable browser storage falls back to safe defaults.
+- [x] Prove the preference store cannot restore credentials, authorization
+  snapshots, financial facts, signed bytes, or wallet material.
+- [x] Add real-browser reload evidence for locale, RTL direction, time zone,
+  and theme restoration while proving the local credential remains empty.
+
+### ADR-0300 — semantic color-token migration
+
+- [x] Add a failing-first stylesheet contract that rejects raw color literals
+  outside the Material token declaration blocks.
+- [x] Migrate all component and workspace color declarations to semantic roles,
+  role-derived alpha values, and shared elevation/action tokens.
+- [x] Re-run component, browser, contrast, responsive, RTL, reduced-motion,
+  typecheck, and production-build evidence after the migration.
+
+### ADR-0310 — tonal surfaces and no decorative gradients
+
+- [x] Add a failing-first web contract that rejects component gradients outside
+  the Material token declaration blocks.
+- [x] Replace decorative gradients in the brand mark, sidebar, selected
+  navigation, cards, primary actions, calculation totals, and review actions
+  with explicit Material surface, container, action, and state roles.
+- [x] Preserve expressive hierarchy through semantic palette roles, shared
+  elevation, shape, typography, responsive layout, and reduced-motion rules.
+- [ ] Re-run the complete manual operator usability and assistive-technology
+  review across every production tenant workspace before making UX claims.
+
+### ADR-0311 — Solana Aurora Material 3 role palette
+
+- [x] Name the repository theme family and document the fixed `#8DF0CE`
+  palette seed and role ownership.
+- [x] Replace the generic lavender/pink role matrix with deterministic Solana
+  navy, Aurora Mint, and accessible blue tertiary light/dark roles.
+- [x] Extend the dependency-free palette contract to pin exact role values and
+  contrast, preventing undocumented/random palette drift.
+- [ ] Complete manual visual, operator, localization, and assistive-technology
+  review across supported tenant roles before making production UX claims.
+
+### ADR-0317 — Material 3 Expressive surface hierarchy and navigation density
+
+- [x] Extend the fixed Solana Aurora matrix with the M3 surface-container
+  hierarchy and semantic aliases for shell layers.
+- [x] Reduce shell scan cost through compact navigation spacing and tonal
+  separation without removing any production workspace or authorization state.
+- [x] Add palette, component, browser, responsive, RTL, and reduced-motion
+  evidence for the hierarchy; manual operator and assistive-technology review
+  remains a release gate.
+
+### ADR-0323 — Material 3 Expressive operational workspace composition
+
+- [x] Add native accessible disclosure groups for navigation, keeping Daily
+  work open by default and opening the active group automatically.
+- [x] Preserve every production route, server-owned capability decision,
+  `aria-current` marking, keyboard reachability, and responsive mobile
+  navigation behavior.
+- [x] Update real-browser journeys to exercise the production group
+  interaction before activating a lower-frequency route.
+- [x] Verify the composition with 199 passing React tests, the semantic color
+  and Material palette contracts, and 25/25 Docker-backed browser journeys.
+- [ ] Complete manual wide/narrow, screen-reader, keyboard-only, RTL,
+  reduced-motion, and operator usability review before making production UX
+  claims.
+
+### ADR-0324 — Server-owned vault-release route selection
+
+- [x] Add the vault-proposer route-list endpoint using the existing bounded,
+  tenant-scoped, finalized-verified settlement-route registry.
+- [x] Remove browser-supplied mint, token-program, and tax-vault fields from
+  vault-release proposal requests; accept only a UUIDv7 route ID and the
+  beneficiary account.
+- [x] Resolve and validate the route inside the serializable persistence
+  transaction, bind the route ID and resolved account snapshot into the v2
+  request digest, and record route identity in creation evidence.
+- [x] Replace free-form merchant-side account inputs with a Material 3
+  route selector and read-only route evidence, with fail-closed loading and
+  empty-state behavior.
+- [ ] Add production staging evidence for route suspension during proposal
+  creation and retain a successful Linux/amd64 integration artifact.
+
+### ADR-0318 — workflow handoff URL integrity
+
+- [x] Route every user-initiated workspace change, including child-workspace
+  handoffs, through one App-owned typed History API boundary.
+- [x] Keep the document quote-to-payment calculation reference in memory while
+  updating the canonical `/operations/document-payment` URL exactly once.
+- [x] Keep credentials, wallet material, tenant identifiers, financial facts,
+  evidence, signatures, and authorization decisions outside browser history.
+- [x] Add a failing-first real-browser regression for the handoff URL and direct
+  destination reload, then verify the NGINX browser gate.
+- [ ] Complete manual support-link, screen-reader, localization, and operator
+  review across all handoff paths before making production UX claims.
+
+### ADR-0319 — bounded browser error disclosure
+
+- [x] Add a pure shared browser normalizer for untrusted API error messages;
+  control characters are removed, whitespace is collapsed, and messages are
+  bounded to 512 characters before entering React state.
+- [x] Preserve actionable operation-specific fallbacks for empty or malformed
+  server messages and append support references only for canonical UUIDv7 IDs.
+- [x] Add failing-first API-boundary tests for long messages, control
+  characters, whitespace-only messages, and invalid support references.
+- [ ] Complete staging support-artifact redaction, localization, and manual
+  operator review before making production supportability claims.
+
+### ADR-0320 — on-chain stablecoin asset admission
+
+- [x] Freeze the mint-scoped `AssetConfig` PDA decision and compare the
+  off-chain-only, hard-coded-mint, metadata-inference, and per-merchant-list
+  alternatives before changing the settlement ABI.
+- [x] Implement the first reviewable on-chain slice: immutable mint-scoped
+  configuration, governed enable/disable, and fail-closed admission checks on
+  every current token movement context; add the thirteenth aggregate/document
+  account and fixed Split Plan account order to the client/browser contracts.
+- [x] Add focused Rust, settlement-client, API, coordinator, and browser tests
+  for the new PDA, account order, and browser-side substitution rejection.
+- [x] Add failing-first domain tests for enabled/disabled state, wrong
+  mint/program/decimals, and non-stable classification; account-context
+  enforcement is covered by the compiled instruction and integration gates.
+- [x] Add the bounded initializer/disable instructions and require the enabled
+  stablecoin configuration in aggregate, document, split, vault-release,
+  revenue-stream, and adjustment-refund token movement contexts.
+- [x] Add the additive settlement-client, coordinator, browser-envelope, and
+  cross-language account-order vectors; reject pre-0320 prepared artifacts.
+- [x] Add PostgreSQL asset projection and route-verifier evidence with an
+  expand/contract migration; active routes without v2 evidence are suspended,
+  and active reads require finalized asset proof. Signing must never receive a
+  silent stablecoin default.
+- [x] Add real-validator transaction builders for legacy-SPL and extension-free
+  Token-2022 positive movement, disabled-asset rollback, and TransferFeeConfig
+  rejection; the builders now use the post-0320 `AssetConfig` account order.
+- [x] Add non-stable, non-conserving amount, and substituted-account validator
+  transaction negatives, plus authenticated Docker tenant-isolation rejection
+  for aggregate compile; successful Linux/amd64 execution and retained
+  evidence remain open.
+- [ ] Retain the successful Linux/amd64 execution evidence for the complete
+  stablecoin validator matrix.
+- [ ] Retain Linux/amd64 validator, audit, governance, and route-backfill
+  evidence before enabling paid-state movement. Until then, missing asset
+  evidence remains an explicit unavailable or re-verification-required state.
+
+### ADR-0321 — finalized asset-configuration route evidence
+
+- [x] Extend finalized settlement-route verification to request and validate
+  the deterministic five-account topology, including the enabled stablecoin
+  `AssetConfig` PDA, exact discriminator/layout, mint, token program, decimals,
+  asset kind, and PDA bump.
+- [x] Require five bounded account evidence records for route activation and
+  version the route-verification digest to `v2`, preventing four-account
+  pre-admission evidence from being replayed as current evidence.
+- [x] Add failing-first indexer coverage for five-account requests and disabled
+  asset configurations; preserve provider agreement and finalized commitment.
+- [ ] Run the route verifier against every existing active route and retain
+  backfill/re-verification evidence before enabling signing in a non-local
+  environment.
+- [ ] Add Linux/amd64 validator vectors for initialized, enabled, disabled,
+  non-stable, and substituted asset configurations, followed by independent
+  audit and governance review.
+
+### ADR-0322 — route-evidence version migration
+
+- [x] Add the expand/contract migration with explicit legacy/v2 schema
+  metadata, preserve append-only historical evidence, and suspend active rows
+  that cannot prove the v2 five-account topology.
+- [x] Require v2 evidence in route activation and every active-route read, so
+  stale services and direct callers cannot advertise legacy routes.
+- [x] Exercise migration/bootstrap, concurrent submission, ambiguous outcome,
+  process-crash reconciliation, and rule-rollback integration scenarios in the
+  Docker PostgreSQL 18 stack.
+- [ ] Run the migration against a representative production snapshot, retain
+  suspended-row and re-verification counts, and rehearse rollback/restore.
+- [ ] Re-verify every non-local route at finalized commitment before enabling
+  signing; complete the Linux/amd64 validator, audit, governance, and legal
+  gates.
+
+### ADR-0312 — outcome-first document payment language
+
+- [x] Replace protocol-first document checkout labels with plain-language
+  review, evidence, wallet, route, and approval language.
+- [x] Preserve server-owned evidence, exact workflow states, accessible labels,
+  and the explicit boundary between wallet approval and finalized settlement.
+- [x] Add component, real-browser, and executable language-contract coverage;
+  complete manual operator, localization, and assistive-technology review
+  before making production UX claims.
+
+### ADR-0313 — compact protection context
+
+- [x] Remove the repeated full-width shell security strip and keep one
+  page-context access summary as the primary location for protection context.
+- [x] Preserve the complete assurance copy behind a closed, keyboard-operable
+  disclosure without changing server authorization or custody semantics.
+- [x] Add component, real-browser, language-contract, and accessibility
+  coverage; manual operator and assistive-technology review remain release
+  gates.
+
+### ADR-0314 — non-custodial wallet source contract
+
+- [x] Add a scoped, failing-first source contract for browser and API request
+  boundaries that rejects seed phrases, mnemonics, private-key fields, and
+  client-side keypair construction while allowing public keys and server-owned
+  signer identifiers.
+- [x] Run the contract in `make check` and retain the existing Wallet Standard,
+  signed-message, and exact-artifact tests as the runtime defense in depth.
+- [ ] Complete live wallet-provider matrix, Linux validator, independent
+  security, and production custody review before enabling production movement.
+
+### ADR-0315 — executable tax-responsibility language boundary
+
+- [x] Add failing-first checks for automated withholding/evidence language and
+  explicit calculated, attested, settlement, and legal-responsibility states.
+- [x] Reject positive UI claims that imply guaranteed compliance, completed
+  filing, or legal compliance; keep the check scoped to production UI source.
+- [ ] Complete counsel, merchant-terms, jurisdiction-owner, localization, and
+  assistive-technology review before production language claims.
+
+### ADR-0316 — versioned rule-release provenance readiness
+
+- [x] Add the failing-first storage and migration tests for the exact
+  `tax-rule-provenance/v1` publication envelope.
+- [x] Enforce source reference/digest, legal-tax owner, review record, and
+  jurisdiction binding at both Rust storage and PostgreSQL publication
+  boundaries; keep incomplete drafts authorable.
+- [x] Update the governance workbench with structured release-evidence fields,
+  local integration fixtures, executable repository contracts, and the public
+  evidence matrix; legal/tax owner approval and source verification remain
+  external release gates.
 
 ## ADR-0284 — zero-copy tax-fact normalization
 
@@ -510,6 +744,79 @@ advance a movement to a successful state.
   binary and effective configuration, with a failing-first contract test.
 - [ ] Retain a successful Linux release-candidate artifact and independently
   review its program/configuration hashes before production enablement.
+
+### ADR-0299 — release evidence source-revision binding
+
+- [x] Require validator-conformance metadata to name the exact Git revision
+  packaged by the release bundle.
+- [x] Reject mismatched evidence before copying or reporting a complete bundle,
+  with a negative integrity-contract test.
+- [ ] Retain and independently review a successful Linux release-candidate
+  bundle for the exact release commit.
+
+### ADR-0303 — exact-commit release browser evidence
+
+- [x] Run the pinned NGINX/Playwright browser journeys on the exact release
+  candidate revision before bundle creation.
+- [x] Copy the result and a full Git revision binding into the release evidence
+  input, and reject missing or mismatched browser evidence.
+- [x] Include the browser result in the release artifact checksum set and
+  machine-readable manifest.
+- [ ] Retain and independently review a successful Linux release-candidate
+  browser artifact; automated synthetic journeys do not replace live-wallet,
+  assistive-technology, legal/tax, or production SLO evidence.
+
+### ADR-0304 — Material role contrast contract
+
+- [x] Add a dependency-free WCAG contrast verifier for the dark and light
+  Material role pairs used by the product shell.
+- [x] Run the verifier through `make material-palette-contract`, `make check`,
+  and the web CI job before UI tests and build.
+- [ ] Complete manual assistive-technology and operator usability review for
+  the full production tenant surface; the static and automated gates do not
+  constitute that external evidence.
+
+### ADR-0305 — one-command Tier-1 local gate orchestration
+
+- [x] Add `make tier1-local-check` with ordered Rust/frontend/contracts,
+  authenticated Docker integration, real-browser, and validator-backed gates.
+- [x] Add a failing-first Makefile contract that prevents command omission or
+  reordering and preserves fail-fast behavior.
+- [ ] Execute the complete gate on the retained Linux/amd64 runner and review
+  its artifacts; a Mac Docker capability failure must remain an explicit
+  conformance blocker rather than a skipped result.
+
+### ADR-0306 — collapsed advanced evidence disclosures
+
+- [x] Collapse provider-signed location evidence by default in aggregate and
+  document quote workspaces while keeping the required input available through
+  native accessible disclosure.
+- [x] Add component and real-browser coverage proving the disclosure is closed
+  initially and can be opened before submission.
+- [ ] Complete manual operator usability review across supported tenant roles,
+  mobile widths, and assistive technologies.
+
+### ADR-0307 — project-scoped local reset
+
+- [x] Add an explicit `make reset-local` command that removes only the
+  validated Compose project's synthetic volumes and orphans.
+- [x] Add a shell contract proving project-name validation, warning text,
+  exact Compose scoping, and the absence of broad deletion commands.
+- [x] Verify fresh PostgreSQL 18 migration and API/NGINX startup from a clean
+  scoped Compose project on the current Docker runtime. Linux/amd64 full
+  topology and validator evidence remain separate release gates.
+
+### ADR-0308 — exact-commit authenticated integration evidence
+
+- [x] Run the authenticated Docker integration gate in the release-candidate
+  workflow after repository checks and before release bundle creation.
+- [x] Bind the captured integration stream to the packaged Git revision and
+  reject missing or mismatched evidence in the bundle creator.
+- [x] Include the integration evidence in the common checksum set and release
+  manifest, with a separate failure-evidence upload path.
+- [ ] Retain and independently review a successful Linux release-candidate
+  integration artifact; synthetic Docker evidence does not replace staging,
+  live-provider, legal/tax, or regional production SLO evidence.
 
 ## ADR-0219 — JWKS JSON deployment-preflight parity
 
@@ -1075,9 +1382,11 @@ a separate on-chain posting and finalized reconciliation design exists.
 Add the dedicated lazy-loaded React workspace for proposal, tenant-scoped
 lookup, evidence review, and governed approve/reject/void operations. Preserve
 decimal strings and server-owned lifecycle state, use memory-only bearer
-tokens, and expose no `posted` or payment-success control. Prove parsing,
-failure states, accessibility, mobile/RTL layout, and the NGINX browser journey
-before considering this UI slice complete.
+tokens, and expose no `posted` or payment-success control. The proposal form
+starts empty for all settlement, financial, asset, and evidence values; test
+fixtures provide synthetic inputs explicitly. Prove parsing, failure states,
+accessibility, mobile/RTL layout, and the NGINX browser journey before
+considering this UI slice complete.
 
 ## ADR-0132 — explicit worker deployment-environment safety
 
@@ -1660,8 +1969,10 @@ claim PDAs bind amount, destination, reference digest, nonce, and bounded
 execution window; the vault PDA performs one checked CPI atomically with claim
 consumption. The next vertical slice adds the authenticated durable claim API,
 outbox/evidence projection, treasury review UI, and validator-backed release
-and cancellation evidence. No API or browser key may authorize a vault
-transfer.
+and cancellation evidence. The treasury UI now starts without invented
+evidence, nonce, or amount values and fails form validation until approved
+inputs are supplied; the browser still cannot authorize a vault transfer. No
+API or browser key may authorize a vault transfer.
 
 ADR-0107 closes the settlement-intent tenant boundary. Submit, status, and
 reconciliation reads now carry the authenticated merchant into PostgreSQL, and
@@ -1731,6 +2042,12 @@ tax-on-tax, cascading, inclusive/exclusive, threshold, cumulative, exemption,
 credit, min/max, truncation, and rounding semantics, plus an exact cumulative
 facts-digest regression. Property, fuzz, differential, legal-coverage, and
 replay-evidence gates remain separate requirements.
+
+The public [tax coverage matrix](../product/tax-coverage-matrix.md) now maps
+each engine capability to its vector and domain-test evidence while explicitly
+separating calculational capability from jurisdiction approval. It remains
+forbidden to publish a jurisdiction without provenance, effective dating,
+legal/tax ownership, required facts, and an approved rule release.
 
 ADR-0037 adds explicit JWT scope authorization at the service boundary. ADR-0028 defines the bounded PostgreSQL adapter and transactional production
 quote endpoint backed only by published immutable rule releases. ADR-0029 adds
@@ -2368,7 +2685,7 @@ disclosure/reload journey. It also injects the locked dev-only `axe-core`
 source into the real browser and audits the quote, API-unavailable state,
 every lazy workspace, and the refund-proof surface against WCAG A/AA tags. Use
 `make web-browser-check`; the current Docker run type-checks the e2e project
-before launching and passes 15/15 test cases while auditing the covered
+before launching and passes 23/23 test cases while auditing the covered
 surfaces. This evidence uses synthetic API fixtures and does not claim live
 wallet or chain finality.
 CI retains failure traces, screenshots, videos,
@@ -2414,6 +2731,17 @@ Exit criteria: controlled production meets the Tier-1 product standard for the p
   never personalizes protected controls from decoded JWT claims.
 - [ ] Add real-browser visual/responsive, screen-reader, CSP, and multi-tenant
   authorization evidence before any production UI authorization claim.
+
+## ADR-0309 contextual status disclosure
+
+- [x] Consolidate deployment, Solana-network, service, and unconfigured
+  sign-in diagnostics into native Material 3 disclosures while preserving
+  complete accessible explanations and fail-closed behavior.
+- [x] Remove retired persistent shell-status selectors and add a stylesheet
+  contract preventing the former noisy badge pattern from returning.
+- [ ] Complete manual assistive-technology and operator usability review for
+  the compact status summaries across supported roles, themes, narrow layouts,
+  and RTL.
 
 ## ADR-0276 multi-tenant capability session reset evidence
 

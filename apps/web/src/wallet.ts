@@ -4,6 +4,8 @@ import { StandardConnect } from "@wallet-standard/features";
 import { SolanaSignTransaction } from "@solana/wallet-standard-features";
 import { PublicKey, Transaction } from "@solana/web3.js";
 
+// NON_CUSTODIAL_WALLET_PORT_V1: the browser connects and requests signatures;
+// it never receives, derives, stores, or sends user private-key material.
 export const SOLANA_WALLET_CHAINS = [
   "solana:mainnet",
   "solana:devnet",

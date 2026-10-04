@@ -633,6 +633,8 @@ mod tests {
             tax_vault: "vault".to_string(),
             net_destination: "destination".to_string(),
             token_program: "program".to_string(),
+            asset_config: "asset-config".to_string(),
+            verification_schema: indexer::SETTLEMENT_ROUTE_VERIFICATION_SCHEMA,
             verification_slot: 7,
             verification_commitment: "finalized",
             mint_decimals: 6,

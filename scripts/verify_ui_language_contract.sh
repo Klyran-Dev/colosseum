@@ -52,7 +52,30 @@ require_text apps/web/src/DocumentQuotePanel.tsx 'Calculate tax for an invoice'
 require_text apps/web/src/DocumentQuotePanel.tsx 'Location verification'
 require_text apps/web/src/DocumentQuotePanel.tsx 'Provider-signed location record (advanced)'
 require_text apps/web/src/DocumentQuotePanel.tsx 'Retry protection selected automatically'
-require_text apps/web/src/DocumentCheckoutPanel.tsx 'Payment ready for review'
+require_text apps/web/src/DocumentCheckoutPanel.tsx 'Payment ready for your approval'
+require_text apps/web/src/ProductShell.tsx 'Protection details'
+require_text apps/web/src/ProductShell.tsx 'Automated withholding and evidence'
+require_text apps/web/src/App.tsx 'not tax advice, a filing, or a compliance guarantee.'
+require_text apps/web/src/App.tsx 'Calculated; verification still needed'
+require_text apps/web/src/App.tsx 'Published rule and issuer attestation'
+require_text apps/web/src/DocumentQuotePanel.tsx 'calculated but not attested'
+require_text apps/web/src/DocumentCheckoutPanel.tsx 'This is withholding authorization—not tax filing, reporting, legal compliance, or tax advice.'
+require_text apps/web/src/SettlementAdjustmentPanel.tsx 'does not transfer tokens, issue a refund, file taxes, or establish legal compliance.'
+require_text apps/web/src/TaxDocumentSimulationPanel.tsx 'cannot create a quote or authorize settlement'
+for forbidden in \
+  'guaranteed compliance' \
+  'tax compliance guaranteed' \
+  'legally compliant' \
+  'tax filing completed' \
+  'taxes filed'
+do
+  if grep -Fqi "$forbidden" apps/web/src/*.tsx; then
+    fail "user-facing source contains prohibited compliance claim: $forbidden"
+  fi
+done
+if grep -Fq 'security-strip' apps/web/src/ProductShell.tsx apps/web/src/styles.css; then
+  fail "retired repeated security strip returned to the shell"
+fi
 require_text apps/web/src/VaultReconciliationPanel.tsx 'Check tax balances'
 require_text apps/web/src/ReplayOpsPanel.tsx 'Recovery queue'
 require_text apps/web/src/SettlementAdjustmentPanel.tsx 'Create an adjustment request'

@@ -31,6 +31,7 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [Jurisdiction-resolution bounded context](architecture/jurisdiction-resolution.md)
 - [Gold-standard UI/UX](architecture/ui-ux.md)
 - [Tier-1 decision register](operations/decision-register.md)
+- [Requirements traceability and evidence matrix](operations/requirements-traceability.md)
 - [Architecture alternative analysis](architecture/alternative-analysis.md)
 - [Docker full-topology bootstrap](adr/0210-docker-full-topology-bootstrap.md)
 - [Docker host-port override policy](adr/0211-compose-host-port-overrides.md)

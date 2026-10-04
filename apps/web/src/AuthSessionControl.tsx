@@ -22,14 +22,17 @@ export default function AuthSessionControl({
   onSignOut,
 }: AuthSessionControlProps) {
   if (config.mode === "local-credential") {
-    return <div className="session-control session-control-local" aria-label="Local sign-in">
-      <label>
-        <span>Sign-in credential (held in memory)</span>
-        <textarea value={accessToken} onChange={(event) => onCredentialChange(event.target.value)} placeholder="Paste a local test credential" autoComplete="off" spellCheck={false} rows={2} aria-describedby="local-sign-in-help" />
-      </label>
-      <small id="local-sign-in-help">Local development only. This field is unavailable in staging and production builds.</small>
-      {error && <p className="inline-error" role="alert">{error}</p>}
-    </div>;
+    return <details className="session-control session-control-local" aria-label="Local sign-in">
+      <summary role="button" aria-label="Open local sign-in">Local sign-in</summary>
+      <div className="session-control-local-fields">
+        <label>
+          <span>Sign-in credential (held in memory)</span>
+          <textarea value={accessToken} onChange={(event) => onCredentialChange(event.target.value)} placeholder="Paste a local test credential" autoComplete="off" spellCheck={false} rows={2} aria-describedby="local-sign-in-help" />
+        </label>
+        <small id="local-sign-in-help">Local development only. This field is unavailable in staging and production builds.</small>
+        {error && <p className="inline-error" role="alert">{error}</p>}
+      </div>
+    </details>;
   }
 
   if (config.mode === "oidc") {
@@ -46,8 +49,11 @@ export default function AuthSessionControl({
     </div>;
   }
 
-  return <div className="session-control session-control-unconfigured" aria-label="Sign-in unavailable">
-    <span className="session-state">Sign-in unavailable</span>
-    <p className="inline-error" role="alert">{error ?? config.warnings.join(" ")}</p>
-  </div>;
+  return <details className="session-control session-control-unconfigured" aria-label="Sign-in unavailable">
+    <summary role="button" aria-label="Sign-in unavailable"><span className="session-state"><span className="status-dot" aria-hidden="true" />Sign-in unavailable</span></summary>
+    <div className="session-control-unconfigured-details">
+      <p className="inline-error" role="alert">{error ?? config.warnings.join(" ")}</p>
+      <small>Ask your administrator to configure secure sign-in for this deployment.</small>
+    </div>
+  </details>;
 }

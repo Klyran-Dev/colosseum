@@ -37,6 +37,40 @@ jobs:
       - name: Run repository checks
         run: make check
 
+      - name: Run exact-release authenticated Docker integration
+        id: authenticated_integration
+        run: |
+          set -o pipefail
+          mkdir -p release-bundle/integration
+          make integration-check 2>&1 | tee release-bundle/integration/evidence.txt
+      - name: Bind release integration evidence to source revision
+        run: |
+          printf 'git_revision=%s\n' "$(git rev-parse HEAD)" > release-bundle/integration/source-revision.txt
+      - name: Upload release integration failure evidence
+        if: failure() && steps.authenticated_integration.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-integration-failure-${{ github.run_id }}
+          path: release-bundle/integration/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Run exact-release browser UI journeys
+        run: make web-browser-check
+      - name: Bind release browser evidence to source revision
+        run: |
+          mkdir -p release-bundle/web-e2e
+          cp -R test-results/web-e2e/. release-bundle/web-e2e/
+          printf 'git_revision=%s\n' "$(git rev-parse HEAD)" > release-bundle/web-e2e/source-revision.txt
+      - name: Upload release browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-web-e2e-failure-${{ github.run_id }}
+          path: test-results/web-e2e/
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Run OTLP trace receipt and redaction drill
         env:
           OTEL_TRACE_EVIDENCE_DIR: release-bundle/otel-trace

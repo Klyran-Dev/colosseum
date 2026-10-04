@@ -55,7 +55,23 @@ esac
 [ -f "$bundle_dir/sbom.cdx.json" ] || fail_missing "$bundle_dir/sbom.cdx.json"
 [ -f "$bundle_dir/compose-config.yml" ] || fail_missing "$bundle_dir/compose-config.yml"
 [ -f "$bundle_dir/validator-conformance/result.env" ] || fail_missing "$bundle_dir/validator-conformance/result.env"
+[ -f "$bundle_dir/web-e2e/results.json" ] || fail_missing "$bundle_dir/web-e2e/results.json"
+[ -f "$bundle_dir/web-e2e/source-revision.txt" ] || fail_missing "$bundle_dir/web-e2e/source-revision.txt"
+[ -f "$bundle_dir/integration/evidence.txt" ] || fail_missing "$bundle_dir/integration/evidence.txt"
+[ -f "$bundle_dir/integration/source-revision.txt" ] || fail_missing "$bundle_dir/integration/source-revision.txt"
 "$repo_root/scripts/verify_solana_conformance_evidence.sh" "$bundle_dir/validator-conformance"
+grep -Fxq "git_revision=$repo_revision" "$bundle_dir/validator-conformance/metadata.txt" || {
+  echo "validator evidence revision does not match the release source revision" >&2
+  exit 1
+}
+grep -Fxq "git_revision=$repo_revision" "$bundle_dir/web-e2e/source-revision.txt" || {
+  echo "browser evidence revision does not match the release source revision" >&2
+  exit 1
+}
+grep -Fxq "git_revision=$repo_revision" "$bundle_dir/integration/source-revision.txt" || {
+  echo "integration evidence revision does not match the release source revision" >&2
+  exit 1
+}
 
 rm -rf "$artifacts_dir"
 mkdir -p "$artifacts_dir"
@@ -67,6 +83,10 @@ copy_file "$repo_root/target/release/route-verifier" "$artifacts_dir/bin/route-v
 copy_file "$repo_root/target/release/worker" "$artifacts_dir/bin/worker"
 copy_file "$repo_root/target/deploy/settlement.so" "$artifacts_dir/solana/settlement.so"
 copy_file "$bundle_dir/compose-config.yml" "$artifacts_dir/config/compose-config.yml"
+mkdir -p "$artifacts_dir/evidence/web-e2e"
+cp -R "$bundle_dir/web-e2e/." "$artifacts_dir/evidence/web-e2e/"
+mkdir -p "$artifacts_dir/evidence/integration"
+cp -R "$bundle_dir/integration/." "$artifacts_dir/evidence/integration/"
 [ -d "$repo_root/apps/web/dist" ] || fail_missing "$repo_root/apps/web/dist"
 cp -R "$repo_root/apps/web/dist" "$artifacts_dir/web"
 
@@ -114,7 +134,7 @@ effective_configuration_hash=$(sha256_file "$bundle_dir/$effective_configuration
   printf '  "source": {"revision": "%s", "ref": "%s"},\n' \
     "$(json_value "$repo_revision")" "$(json_value "$release_ref")"
   printf '  "build": {"source_date_epoch": %s, "artifacts_are_not_deployments": true},\n' "$source_date_epoch"
-  printf '  "evidence": {"security_scan": "security-scan.txt", "sbom": "sbom.cdx.json", "validator_conformance": "validator-conformance/result.env"},\n'
+  printf '  "evidence": {"security_scan": "security-scan.txt", "sbom": "sbom.cdx.json", "validator_conformance": "validator-conformance/result.env", "browser_ui": "artifacts/evidence/web-e2e/results.json", "authenticated_integration": "artifacts/evidence/integration/evidence.txt"},\n'
   printf '  "integrity": {"program_binary": {"path": "%s", "sha256": "%s"}, "effective_configuration": {"path": "%s", "sha256": "%s"}},\n' \
     "$program_binary_path" "$program_binary_hash" \
     "$effective_configuration_path" "$effective_configuration_hash"

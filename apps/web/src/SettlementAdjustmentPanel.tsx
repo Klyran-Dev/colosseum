@@ -31,10 +31,6 @@ type SettlementAdjustmentPanelProps = {
 };
 
 const KINDS: AdjustmentKind[] = ["Refund", "Reversal", "Correction", "Chargeback", "RemittanceAdjustment"];
-const DEFAULT_ASSET = JSON.stringify(Array(32).fill(4));
-const DEFAULT_EVIDENCE = JSON.stringify(Array(32).fill(5));
-const DEFAULT_ORIGINAL = "01992f1b-4a70-7e30-8ea2-b6e37a9d9d13";
-const DEFAULT_CALCULATION = "01992f1b-4a70-7e30-8ea2-b6e37a9d9d14";
 
 function digestPreview(value: number[]): string {
   return value.map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 16) + "…";
@@ -56,20 +52,20 @@ function statusLabel(status: string): string {
 
 export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, accessToken }: SettlementAdjustmentPanelProps) {
   const [idempotencyKey, setIdempotencyKey] = useState(() => createClientUuid());
-  const [originalSettlementId, setOriginalSettlementId] = useState(DEFAULT_ORIGINAL);
-  const [assetId, setAssetId] = useState(DEFAULT_ASSET);
+  const [originalSettlementId, setOriginalSettlementId] = useState("");
+  const [assetId, setAssetId] = useState("");
   const [kind, setKind] = useState<AdjustmentKind>("Refund");
-  const [grossAtomic, setGrossAtomic] = useState("-250");
-  const [taxAtomic, setTaxAtomic] = useState("-25");
-  const [netAtomic, setNetAtomic] = useState("-225");
-  const [reasonCode, setReasonCode] = useState("customer_refund");
-  const [evidenceDigest, setEvidenceDigest] = useState(DEFAULT_EVIDENCE);
-  const [sourceCalculationId, setSourceCalculationId] = useState(DEFAULT_CALCULATION);
+  const [grossAtomic, setGrossAtomic] = useState("");
+  const [taxAtomic, setTaxAtomic] = useState("");
+  const [netAtomic, setNetAtomic] = useState("");
+  const [reasonCode, setReasonCode] = useState("");
+  const [evidenceDigest, setEvidenceDigest] = useState("");
+  const [sourceCalculationId, setSourceCalculationId] = useState("");
   const [replacementCalculationId, setReplacementCalculationId] = useState("");
   const [lookupId, setLookupId] = useState("");
   const [record, setRecord] = useState<SettlementAdjustment | null>(null);
   const [transitionStatus, setTransitionStatus] = useState<"approved" | "rejected" | "voided">("approved");
-  const [transitionEvidence, setTransitionEvidence] = useState('{"review_ticket":""}');
+  const [transitionEvidence, setTransitionEvidence] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);

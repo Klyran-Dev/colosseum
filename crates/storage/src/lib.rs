@@ -29,6 +29,7 @@ use indexer::{
     decode_refund_claim_created_event, merge_adjustment_refund_execution, merge_raw_evidence,
     merge_receipt, merge_settlement_adjustment, rebuild_receipt_from_raw_evidence,
     rebuild_split_settlement_from_raw_evidence, reconcile,
+    SETTLEMENT_ROUTE_VERIFICATION_SCHEMA,
 };
 use jurisdiction::{JurisdictionCandidate, ResolutionPolicy, candidate_set_digest};
 use policy::{
@@ -355,6 +356,8 @@ pub enum StorageError {
     InvalidRuleGovernanceEvidence,
     #[error("tax-rule governance evidence exceeds the bounded size")]
     RuleGovernanceEvidenceTooLarge,
+    #[error("invalid tax-rule release provenance: {0}")]
+    InvalidRuleReleaseProvenance(String),
     #[error("invalid tax-rule draft: {0}")]
     InvalidRuleDraft(String),
     #[error("a rule draft with this tenant, external ID, and version already exists")]
@@ -1095,9 +1098,7 @@ pub struct CreateVaultReleaseClaimCommand {
     pub merchant_id: Uuid,
     pub actor_subject: String,
     pub idempotency_key: String,
-    pub mint: String,
-    pub token_program: String,
-    pub tax_vault: String,
+    pub route_id: Uuid,
     pub destination: String,
     pub nonce: u64,
     pub amount_atomic: u64,
@@ -6063,7 +6064,7 @@ impl PgStore {
         let row = transaction
             .query_opt(
                 "SELECT status, author_subject, reviewer_subject, approver_subject,
-                        governance_revision
+                        governance_revision, provenance, jurisdiction
                  FROM rule_sets
                  WHERE id = $1 AND merchant_id = $2
                  FOR UPDATE",
@@ -6076,6 +6077,12 @@ impl PgStore {
         let reviewer_subject: Option<String> = row.get(2);
         let approver_subject: Option<String> = row.get(3);
         let governance_revision: i64 = row.get(4);
+        let provenance: Value = row.get(5);
+        let jurisdiction: String = row.get(6);
+
+        if command.to_status == "published" {
+            validate_rule_release_provenance(&provenance, &jurisdiction)?;
+        }
 
         let (author_subject, reviewer_subject, approver_subject) = assign_governance_subjects(
             &from_status,
@@ -8241,7 +8248,6 @@ impl PgStore {
         command: CreateVaultReleaseClaimCommand,
     ) -> Result<VaultReleaseClaimOutcome, StorageError> {
         validate_vault_release_claim_command(&command)?;
-        let request_digest = vault_release_request_digest(&command)?;
         let mut client = self
             .pool
             .get()
@@ -8259,6 +8265,70 @@ impl PgStore {
                 DEFAULT_STATEMENT_TIMEOUT.as_millis()
             ))
             .await?;
+        let route = transaction
+            .query_opt(
+                "SELECT status, mint, token_program, tax_vault,
+                        mint_decimals,
+                        effective_from <= now()
+                            AND (effective_until IS NULL OR now() < effective_until)
+                 FROM settlement_routes
+                 WHERE id = $1 AND merchant_id = $2
+                   AND verification_schema = 'settlement-route-verification/v2'
+                 FOR SHARE",
+                &[&command.route_id, &command.merchant_id],
+            )
+            .await?
+            .ok_or(StorageError::SettlementRouteNotFound)?;
+        let route_status: String = route.get(0);
+        let route_effective: bool = route.get(5);
+        let mint: String = route.get(1);
+        let token_program: String = route.get(2);
+        let tax_vault: String = route.get(3);
+        let mint_decimals: i16 = route.get(4);
+        if !(0..=9).contains(&mint_decimals)
+            || !matches!(token_program.as_str(), SPL_TOKEN_PROGRAM_ID | TOKEN_2022_PROGRAM_ID)
+        {
+            return Err(StorageError::SettlementRouteIntegrity(
+                "verified release route has unsupported asset metadata".to_string(),
+            ));
+        }
+        if tax_vault == command.destination {
+            return Err(StorageError::InvalidVaultReleaseClaim(
+                "tax_vault and destination must be distinct".into(),
+            ));
+        }
+        let request_digest =
+            vault_release_request_digest(&command, &mint, &token_program, &tax_vault)?;
+        if route_status != "active" || !route_effective {
+            // Route suspension prevents new release proposals, but it must
+            // not turn a previously accepted idempotent request into an
+            // unknown outcome. The route row remains locked for this
+            // transaction, so lifecycle changes cannot race this decision.
+            let existing = transaction
+                .query_opt(
+                    "SELECT id, merchant_id, idempotency_key, request_digest, mint,
+                            token_program, tax_vault, destination, claim_pda,
+                            nonce::text, amount_atomic::text, reference_digest,
+                            status, proposer_subject, approver_subject,
+                            extract(epoch from execute_after)::bigint,
+                            extract(epoch from expires_at)::bigint,
+                            transaction_signature, slot::text, last_error_code
+                     FROM vault_release_claims
+                     WHERE merchant_id = $1 AND idempotency_key = $2
+                     FOR UPDATE",
+                    &[&command.merchant_id, &command.idempotency_key],
+                )
+                .await?;
+            if let Some(row) = existing {
+                let claim = parse_vault_release_claim_row(row)?;
+                if claim.request_digest != request_digest {
+                    return Err(StorageError::VaultReleaseClaimIdempotencyConflict);
+                }
+                transaction.commit().await?;
+                return Ok(VaultReleaseClaimOutcome::Replay(claim));
+            }
+            return Err(StorageError::SettlementRouteUnavailable);
+        }
         let id = Uuid::now_v7();
         let execute_after_unix = command.execute_after_unix as f64;
         let expires_at_unix = command.expires_at_unix as f64;
@@ -8285,9 +8355,9 @@ impl PgStore {
                     &command.merchant_id,
                     &command.idempotency_key,
                     &&request_digest[..],
-                    &command.mint,
-                    &command.token_program,
-                    &command.tax_vault,
+                    &mint,
+                    &token_program,
+                    &tax_vault,
                     &command.destination,
                     &command.nonce.to_string(),
                     &command.amount_atomic.to_string(),
@@ -8312,6 +8382,7 @@ impl PgStore {
                         &command.actor_subject,
                         &serde_json::json!({
                             "request_digest": request_digest,
+                            "route_id": command.route_id,
                             "reference_digest": command.reference_digest,
                         }),
                     ],
@@ -12442,7 +12513,9 @@ impl PgStore {
         if verification.route_id != route_id
             || verification.route_version <= 0
             || verification.verification_digest == [0; 32]
-            || verification.accounts.len() != 4
+            || verification.accounts.len() != 5
+            || verification.verification_schema != SETTLEMENT_ROUTE_VERIFICATION_SCHEMA
+            || verification.asset_config.trim().is_empty()
             || verification.mint_decimals > 9
             || !matches!(
                 verification.verification_commitment,
@@ -12452,6 +12525,20 @@ impl PgStore {
             return Err(StorageError::SettlementRouteVerificationInvalid(
                 "verification identity, commitment, account count, or digest is invalid"
                     .to_string(),
+            ));
+        }
+        let mint = Pubkey::from_str(verification.mint.trim()).map_err(|_| {
+            StorageError::SettlementRouteVerificationInvalid(
+                "verification mint is not a canonical public key".to_string(),
+            )
+        })?;
+        let (expected_asset_config, _) = Pubkey::find_program_address(
+            &[b"asset-config", mint.as_ref()],
+            &settlement_client::settlement_program_id(),
+        );
+        if verification.asset_config != expected_asset_config.to_string() {
+            return Err(StorageError::SettlementRouteVerificationInvalid(
+                "verification asset admission PDA does not match the route mint".to_string(),
             ));
         }
         let evidence = serde_json::to_value(verification)?;
@@ -12523,8 +12610,8 @@ impl PgStore {
             .execute(
                 "INSERT INTO settlement_route_verifications
                     (route_id, merchant_id, route_version, verification_digest,
-                     verification_slot, verification_commitment, evidence)
-                 VALUES ($1, $2, $3, $4, $5::text::numeric, $6, $7)
+                     verification_slot, verification_commitment, verification_schema, evidence)
+                 VALUES ($1, $2, $3, $4, $5::text::numeric, $6, $7, $8)
                  ON CONFLICT (route_id, verification_digest) DO NOTHING",
                 &[
                     &route_id,
@@ -12533,6 +12620,7 @@ impl PgStore {
                     &&verification.verification_digest[..],
                     &verification.verification_slot.to_string(),
                     &verification.verification_commitment,
+                    &verification.verification_schema,
                     &evidence,
                 ],
             )
@@ -12545,8 +12633,8 @@ impl PgStore {
                      verification_slot = $3::text::numeric,
                      verification_commitment = $4,
                      verification_evidence = $5, mint_decimals = $6,
-                     verified_at = now(), updated_at = now()
-                 WHERE id = $1 AND merchant_id = $7
+                     verification_schema = $7, verified_at = now(), updated_at = now()
+                 WHERE id = $1 AND merchant_id = $8
                    AND status IN ('pending_verification', 'suspended')",
                 &[
                     &route_id,
@@ -12555,6 +12643,7 @@ impl PgStore {
                     &verification.verification_commitment,
                     &evidence,
                     &mint_decimals,
+                    &verification.verification_schema,
                     &merchant_id,
                 ],
             )
@@ -12586,7 +12675,8 @@ impl PgStore {
                         effective_from <= now()
                             AND (effective_until IS NULL OR now() < effective_until)
                  FROM settlement_routes
-                 WHERE id = $1 AND merchant_id = $2",
+                 WHERE id = $1 AND merchant_id = $2
+                   AND verification_schema = 'settlement-route-verification/v2'",
                 &[&route_id, &merchant_id],
             )
             .await?
@@ -12642,6 +12732,7 @@ impl PgStore {
                  FROM settlement_routes
                  WHERE merchant_id = $1
                    AND status = 'active'
+                   AND verification_schema = 'settlement-route-verification/v2'
                    AND effective_from <= now()
                    AND (effective_until IS NULL OR now() < effective_until)
                    AND merchant_account = $2
@@ -12699,6 +12790,7 @@ impl PgStore {
                  FROM settlement_routes
                  WHERE merchant_id = $1
                    AND status = 'active'
+                   AND verification_schema = 'settlement-route-verification/v2'
                    AND effective_from <= now()
                    AND (effective_until IS NULL OR now() < effective_until)
                    AND mint = $2
@@ -13074,6 +13166,7 @@ impl PgStore {
                  FROM settlement_routes
                  WHERE merchant_id = $1
                    AND status = 'active'
+                   AND verification_schema = 'settlement-route-verification/v2'
                    AND effective_from <= now()
                    AND (effective_until IS NULL OR now() < effective_until)
                  ORDER BY route_key, version DESC, id
@@ -14283,6 +14376,84 @@ fn validate_rule_governance_command(
     Ok(())
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuleReleaseProvenanceV1 {
+    schema: String,
+    source_reference: String,
+    source_digest_hex: String,
+    legal_tax_owner: String,
+    jurisdiction_scope: String,
+    reviewed_at_unix: i64,
+    review_reference: String,
+}
+
+fn validate_rule_release_provenance(
+    provenance: &Value,
+    rule_jurisdiction: &str,
+) -> Result<(), StorageError> {
+    let envelope: RuleReleaseProvenanceV1 =
+        serde_json::from_value(provenance.clone()).map_err(|_| {
+            StorageError::InvalidRuleReleaseProvenance(
+                "expected the exact tax-rule-provenance/v1 envelope".to_string(),
+            )
+        })?;
+    if envelope.schema != "tax-rule-provenance/v1" {
+        return Err(StorageError::InvalidRuleReleaseProvenance(
+            "schema must be tax-rule-provenance/v1".to_string(),
+        ));
+    }
+    for (field, value, max_bytes) in [
+        (
+            "source_reference",
+            envelope.source_reference.as_str(),
+            512_usize,
+        ),
+        (
+            "legal_tax_owner",
+            envelope.legal_tax_owner.as_str(),
+            256_usize,
+        ),
+        (
+            "jurisdiction_scope",
+            envelope.jurisdiction_scope.as_str(),
+            64_usize,
+        ),
+        (
+            "review_reference",
+            envelope.review_reference.as_str(),
+            512_usize,
+        ),
+    ] {
+        if value.trim().is_empty() || value.len() > max_bytes || value.contains('\0') {
+            return Err(StorageError::InvalidRuleReleaseProvenance(format!(
+                "{field} must contain 1 to {max_bytes} bytes"
+            )));
+        }
+    }
+    if envelope.source_digest_hex.len() != 64
+        || !envelope
+            .source_digest_hex
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(StorageError::InvalidRuleReleaseProvenance(
+            "source_digest_hex must contain exactly 64 hexadecimal characters".to_string(),
+        ));
+    }
+    if envelope.jurisdiction_scope != rule_jurisdiction {
+        return Err(StorageError::InvalidRuleReleaseProvenance(
+            "jurisdiction_scope must match the persisted rule jurisdiction".to_string(),
+        ));
+    }
+    if envelope.reviewed_at_unix <= 0 || envelope.reviewed_at_unix > 4_102_444_800 {
+        return Err(StorageError::InvalidRuleReleaseProvenance(
+            "reviewed_at_unix must be between 1970 and 2100".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn validate_jurisdiction_policy_draft_command(
     command: &CreateJurisdictionPolicyCommand,
 ) -> Result<(), StorageError> {
@@ -14382,22 +14553,17 @@ fn validate_vault_release_claim_command(
             "idempotency key must contain 1 to 200 bytes".into(),
         ));
     }
-    for (field, value) in [
-        ("mint", command.mint.as_str()),
-        ("token_program", command.token_program.as_str()),
-        ("tax_vault", command.tax_vault.as_str()),
-        ("destination", command.destination.as_str()),
-    ] {
+    if command.route_id.get_version_num() != 7 {
+        return Err(StorageError::InvalidVaultReleaseClaim(
+            "route_id must be a UUIDv7 verified payment route".into(),
+        ));
+    }
+    for (field, value) in [("destination", command.destination.as_str())] {
         if value.trim().len() < 32 || value.trim().len() > 64 || value != value.trim() {
             return Err(StorageError::InvalidVaultReleaseClaim(format!(
                 "{field} must contain a bounded Solana address"
             )));
         }
-    }
-    if command.tax_vault == command.destination {
-        return Err(StorageError::InvalidVaultReleaseClaim(
-            "tax_vault and destination must be distinct".into(),
-        ));
     }
     if command.amount_atomic == 0 {
         return Err(StorageError::InvalidVaultReleaseClaim(
@@ -14425,14 +14591,18 @@ fn validate_vault_release_claim_command(
 
 fn vault_release_request_digest(
     command: &CreateVaultReleaseClaimCommand,
+    mint: &str,
+    token_program: &str,
+    tax_vault: &str,
 ) -> Result<Digest32, StorageError> {
     let mut hasher = Sha256::new();
-    hasher.update(b"solana-tax-protocol/vault-release-claim/v1");
+    hasher.update(b"solana-tax-protocol/vault-release-claim/v2");
     hasher.update(command.merchant_id.as_bytes());
+    hasher.update(command.route_id.as_bytes());
     write_projection_text(&mut hasher, &command.idempotency_key);
-    write_projection_text(&mut hasher, &command.mint);
-    write_projection_text(&mut hasher, &command.token_program);
-    write_projection_text(&mut hasher, &command.tax_vault);
+    write_projection_text(&mut hasher, mint);
+    write_projection_text(&mut hasher, token_program);
+    write_projection_text(&mut hasher, tax_vault);
     write_projection_text(&mut hasher, &command.destination);
     hasher.update(command.nonce.to_le_bytes());
     hasher.update(command.amount_atomic.to_le_bytes());
@@ -17663,9 +17833,7 @@ mod tests {
             merchant_id: Uuid::now_v7(),
             actor_subject: "proposer".to_string(),
             idempotency_key: "release-1".to_string(),
-            mint: "So11111111111111111111111111111111111111112".to_string(),
-            token_program: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA".to_string(),
-            tax_vault: "11111111111111111111111111111111".to_string(),
+            route_id: Uuid::now_v7(),
             destination: "SysvarRent111111111111111111111111111111111".to_string(),
             nonce: 7,
             amount_atomic: 25,
@@ -18510,6 +18678,84 @@ mod tests {
         )
         .unwrap();
         assert_eq!(approver.as_deref(), Some("approver"));
+    }
+
+    #[test]
+    fn rule_release_provenance_requires_a_bounded_versioned_envelope() {
+        let provenance = serde_json::json!({
+            "schema": "tax-rule-provenance/v1",
+            "source_reference": "controlled-record://tax/us-ca/2026-01",
+            "source_digest_hex": "ab".repeat(32),
+            "legal_tax_owner": "tax-owner:us-ca",
+            "jurisdiction_scope": "US-CA",
+            "reviewed_at_unix": 1_790_000_000_i64,
+            "review_reference": "review://tax/us-ca/2026-01"
+        });
+
+        assert!(validate_rule_release_provenance(&provenance, "US-CA").is_ok());
+    }
+
+    #[test]
+    fn rule_release_provenance_rejects_missing_or_ambiguous_fields() {
+        let missing_owner = serde_json::json!({
+            "schema": "tax-rule-provenance/v1",
+            "source_reference": "controlled-record://tax/us-ca/2026-01",
+            "source_digest_hex": "ab".repeat(32),
+            "jurisdiction_scope": "US-CA",
+            "reviewed_at_unix": 1_790_000_000_i64,
+            "review_reference": "review://tax/us-ca/2026-01"
+        });
+        assert!(matches!(
+            validate_rule_release_provenance(&missing_owner, "US-CA"),
+            Err(StorageError::InvalidRuleReleaseProvenance(_))
+        ));
+
+        let unknown_schema = serde_json::json!({
+            "schema": "tax-rule-provenance/v2",
+            "source_reference": "controlled-record://tax/us-ca/2026-01",
+            "source_digest_hex": "ab".repeat(32),
+            "legal_tax_owner": "tax-owner:us-ca",
+            "jurisdiction_scope": "US-CA",
+            "reviewed_at_unix": 1_790_000_000_i64,
+            "review_reference": "review://tax/us-ca/2026-01"
+        });
+        assert!(matches!(
+            validate_rule_release_provenance(&unknown_schema, "US-CA"),
+            Err(StorageError::InvalidRuleReleaseProvenance(_))
+        ));
+    }
+
+    #[test]
+    fn rule_release_provenance_rejects_digest_time_and_jurisdiction_substitution() {
+        let mut provenance = serde_json::json!({
+            "schema": "tax-rule-provenance/v1",
+            "source_reference": "controlled-record://tax/us-ca/2026-01",
+            "source_digest_hex": "ab".repeat(32),
+            "legal_tax_owner": "tax-owner:us-ca",
+            "jurisdiction_scope": "US-CA",
+            "reviewed_at_unix": 1_790_000_000_i64,
+            "review_reference": "review://tax/us-ca/2026-01"
+        });
+
+        provenance["source_digest_hex"] = serde_json::json!("not-a-digest");
+        assert!(matches!(
+            validate_rule_release_provenance(&provenance, "US-CA"),
+            Err(StorageError::InvalidRuleReleaseProvenance(_))
+        ));
+
+        provenance["source_digest_hex"] = serde_json::json!("ab".repeat(32));
+        provenance["reviewed_at_unix"] = serde_json::json!(4_102_444_801_i64);
+        assert!(matches!(
+            validate_rule_release_provenance(&provenance, "US-CA"),
+            Err(StorageError::InvalidRuleReleaseProvenance(_))
+        ));
+
+        provenance["reviewed_at_unix"] = serde_json::json!(1_790_000_000_i64);
+        provenance["jurisdiction_scope"] = serde_json::json!("GB");
+        assert!(matches!(
+            validate_rule_release_provenance(&provenance, "US-CA"),
+            Err(StorageError::InvalidRuleReleaseProvenance(_))
+        ));
     }
 
     #[test]

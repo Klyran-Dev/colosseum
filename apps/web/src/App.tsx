@@ -1,16 +1,14 @@
 import { FormEvent, Suspense, lazy, useEffect, useRef, useState } from "react";
 import { fetchWithTimeout, REQUEST_TIMEOUT_MS, responseError } from "./api";
 import {
-  DEFAULT_LOCALE,
   DEFAULT_TIME_ZONE,
   directionForLocale,
   formatAtomic as formatAtomicValue,
   isValidTimeZone,
-  SupportedLocale,
 } from "./formatters";
 import WorkspaceErrorBoundary from "./WorkspaceErrorBoundary";
 import { createClientUuid } from "./clientIdentity";
-import ProductShell, { ProductWorkspace, ThemePreference } from "./ProductShell";
+import ProductShell, { ProductWorkspace } from "./ProductShell";
 import { isAuthenticationCallback, pathForWorkspace, workspaceFromPath } from "./navigation";
 import AccessControlPanel from "./AccessControlPanel";
 import { authorizationSnapshotForToken, AuthorizationSnapshot, parseAuthorizationCapabilities } from "./authorization";
@@ -18,6 +16,7 @@ import { BROWSER_RUNTIME_CONTEXT } from "./runtimeContext";
 import { BROWSER_AUTH_CONFIG } from "./authConfig";
 import { AuthSessionStatus } from "./AuthSessionControl";
 import { beginOidcAuthorization, completeOidcCallback, PKCE_TRANSACTION_STORAGE_KEY } from "./oidcSession";
+import { loadDisplayPreferences, saveDisplayPreferences } from "./displayPreferences";
 import {
   Calculation,
   parseCalculationResponse,
@@ -74,16 +73,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isReplaying, setIsReplaying] = useState(false);
-  const [locale, setLocale] = useState<SupportedLocale>(DEFAULT_LOCALE);
-  const [timeZone, setTimeZone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || DEFAULT_TIME_ZONE);
-  const [themePreference, setThemePreference] = useState<ThemePreference>(() => {
-    try {
-      const stored = window.localStorage.getItem("solana-tax-protocol.theme");
-      return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
-    } catch {
-      return "system";
-    }
-  });
+  const [displayPreferences, setDisplayPreferences] = useState(loadDisplayPreferences);
+  const { locale, timeZone, theme: themePreference } = displayPreferences;
 
   const effectiveTimeZone = isValidTimeZone(timeZone) ? timeZone : DEFAULT_TIME_ZONE;
   const direction = directionForLocale(locale);
@@ -152,11 +143,11 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = themePreference;
     try {
-      window.localStorage.setItem("solana-tax-protocol.theme", themePreference);
+      saveDisplayPreferences(window.localStorage, displayPreferences);
     } catch {
       // Appearance remains usable when browser persistence is unavailable.
     }
-  }, [themePreference]);
+  }, [displayPreferences, themePreference]);
 
   useEffect(() => {
     if (BROWSER_AUTH_CONFIG.mode !== "oidc" || !BROWSER_AUTH_CONFIG.oidc) return;
@@ -272,6 +263,15 @@ export default function App() {
     setReplayVerification(null);
   }
 
+  function navigateToWorkspace(nextWorkspace: Workspace, preserveCurrentResult = false) {
+    const nextPath = pathForWorkspace(nextWorkspace);
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({ workspace: nextWorkspace }, "", nextPath);
+    }
+    setWorkspace(nextWorkspace);
+    if (!preserveCurrentResult) clearResult();
+  }
+
   async function calculatePreview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     clearResult();
@@ -384,12 +384,7 @@ export default function App() {
       workspace={workspace}
       onNavigate={(nextWorkspace) => {
         const preservesQuoteHandoff = (workspace === "quote" && nextWorkspace === "checkout") || (workspace === "checkout" && nextWorkspace === "quote");
-        const nextPath = pathForWorkspace(nextWorkspace);
-        if (window.location.pathname !== nextPath) {
-          window.history.pushState({ workspace: nextWorkspace }, "", nextPath);
-        }
-        setWorkspace(nextWorkspace);
-        if (!preservesQuoteHandoff) clearResult();
+        navigateToWorkspace(nextWorkspace, preservesQuoteHandoff);
       }}
       serviceState={serviceState}
       accessToken={accessToken}
@@ -404,10 +399,10 @@ export default function App() {
       onSignOut={signOut}
       locale={locale}
       timeZone={timeZone}
-      onLocaleChange={setLocale}
-      onTimeZoneChange={setTimeZone}
+      onLocaleChange={(nextLocale) => setDisplayPreferences((current) => ({ ...current, locale: nextLocale }))}
+      onTimeZoneChange={(nextTimeZone) => setDisplayPreferences((current) => ({ ...current, timeZone: nextTimeZone }))}
       themePreference={themePreference}
-      onThemeChange={setThemePreference}
+      onThemeChange={(nextTheme) => setDisplayPreferences((current) => ({ ...current, theme: nextTheme }))}
     >
         <div id="workspace-content" ref={workspaceContentRef} className="workspace-content" role="region" aria-label="Current tax workspace" tabIndex={-1}>
           <WorkspaceErrorBoundary key={workspace} workspace={workspace}>
@@ -418,7 +413,7 @@ export default function App() {
           formatAtomic={formatAtomic}
           locale={locale}
           timeZone={effectiveTimeZone}
-          onOpenCheckout={(calculationId) => { clearResult(); setDocumentCalculationId(calculationId); setWorkspace("document-checkout"); }}
+          onOpenCheckout={(calculationId) => { setDocumentCalculationId(calculationId); navigateToWorkspace("document-checkout", true); }}
         /></Suspense> : workspace === "document-checkout" ? <Suspense fallback={<section className="checkout-layout" aria-live="polite"><article className="panel empty-state"><strong>Loading document checkout…</strong><p>Document attestation and payment scope controls are loaded only when selected.</p></article></section>}><DocumentCheckoutPanel
           apiBase={API_BASE}
           serviceOnline={serviceState === "online"}
@@ -481,7 +476,7 @@ export default function App() {
             <div className="panel-heading"><div><p className="eyebrow">{workspace === "quote" ? "Customer quote" : "Try a scenario"}</p><h2>{workspace === "quote" ? "Create a tax quote" : "Explore a tax scenario"}</h2></div><span className="status-pill">{workspace === "quote" ? "Ready to review" : "No live changes"}</span></div>
             <p className="panel-copy">{workspace === "quote" ? "Create a quote from an approved tax rule. Your account and the quote details are checked by the service, and the result can be reviewed later." : "Explore a what-if scenario. It does not change a live rule or authorize a payment."}</p>
             {workspace === "quote" && BROWSER_AUTH_CONFIG.mode === "unconfigured" && <p className="inline-warning" role="alert">Sign-in is not configured for this deployment. Protected quote actions stay unavailable.</p>}
-            {workspace === "quote" && <details className="route-evidence full-field" open><summary>Location verification</summary><p className="field-help">A production quote requires a record from an approved location provider. This advanced exchange keeps the signed record intact for server verification.</p><label htmlFor="aggregate-jurisdiction-evidence"><span>Provider-signed location record (advanced)</span><textarea id="aggregate-jurisdiction-evidence" value={jurisdictionEvidenceJson} onChange={(event) => setJurisdictionEvidenceJson(event.target.value)} placeholder="Paste the signed record from your approved provider" autoComplete="off" spellCheck={false} rows={6} aria-describedby="jurisdiction-evidence-help" /><small id="jurisdiction-evidence-help">Required for production quotes. The service checks the source, account, dates, and location before it uses this record.</small></label></details>}
+            {workspace === "quote" && <details className="route-evidence full-field"><summary>Location verification</summary><p className="field-help">A production quote requires a record from an approved location provider. This advanced exchange keeps the signed record intact for server verification.</p><label htmlFor="aggregate-jurisdiction-evidence"><span>Provider-signed location record (advanced)</span><textarea id="aggregate-jurisdiction-evidence" value={jurisdictionEvidenceJson} onChange={(event) => setJurisdictionEvidenceJson(event.target.value)} placeholder="Paste the signed record from your approved provider" autoComplete="off" spellCheck={false} rows={6} aria-describedby="jurisdiction-evidence-help" /><small id="jurisdiction-evidence-help">Required for production quotes. The service checks the source, account, dates, and location before it uses this record.</small></label></details>}
             <form onSubmit={submit} className="form-grid">
               <label><span>Total before tax</span><input inputMode="numeric" min="0" value={gross} onChange={(event) => setGross(event.target.value)} placeholder="Enter the total amount" aria-describedby="amount-help" required /></label>
               <label><span>Amount subject to tax</span><input inputMode="numeric" min="0" value={net} onChange={(event) => setNet(event.target.value)} placeholder="Enter the taxable amount" aria-describedby="amount-help" required /></label>

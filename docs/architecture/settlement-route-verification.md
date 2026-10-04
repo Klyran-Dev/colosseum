@@ -14,18 +14,25 @@ bounded provider pool -- finalized getMultipleAccounts --> account proof
                                       serializable evidence + activation
 ```
 
-The verifier requests exactly four accounts in a fixed order:
+The verifier requests exactly five accounts in a fixed order:
 
 1. merchant system account;
 2. configured mint;
 3. configured tax-vault token account;
-4. configured net-destination token account.
+4. configured net-destination token account;
+5. the mint-scoped `AssetConfig` PDA derived from
+   `["asset-config", mint]`.
 
 It validates the RPC context, account existence, owner program, executable
 flag, data length, token-account mint fields, and the tax-vault authority PDA.
-The account data is bounded before decoding. The resulting evidence contains
-only public account metadata, data digests, mint decimals, commitment, and
-slot; raw account bytes are not retained in the route registry.
+The asset configuration must be owned by the settlement program, use the
+canonical Anchor account discriminator and exact layout, bind the mint, token
+program, and decimals, identify the governed stablecoin kind, remain enabled,
+and carry the derived PDA bump. The account data is bounded before decoding.
+The resulting evidence contains only public account metadata, data digests,
+mint decimals, commitment, and slot; raw account bytes are not retained in
+the route registry. The topology digest is versioned to `v2` so pre-asset-
+admission evidence cannot be replayed as current evidence.
 
 Activation is an atomic PostgreSQL operation. The evidence row is append-only,
 and the route row stores the selected evidence digest and verification

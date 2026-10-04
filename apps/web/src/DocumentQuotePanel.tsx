@@ -148,7 +148,7 @@ export default function DocumentQuotePanel({
         <label><span>Approved tax rule</span><input value={ruleSetId} onChange={(event) => { setRuleSetId(event.target.value); setQuote(null); }} placeholder="Enter the approved rule reference" required /></label>
         <label><span>Rule version</span><input inputMode="numeric" value={ruleVersion} onChange={(event) => { setRuleVersion(event.target.value); setQuote(null); }} required /></label>
         <div className="route-evidence full-field"><strong>Retry protection selected automatically</strong><small>A secure retry reference is assigned automatically and stays the same while these invoice details remain unchanged.</small></div>
-        <details className="route-evidence full-field" open>
+        <details className="route-evidence full-field">
           <summary>Location verification</summary>
           <p className="field-help">A production quote requires a record from an approved location provider. This advanced exchange keeps the signed record intact for server verification.</p>
           <label htmlFor="jurisdiction-evidence"><span>Provider-signed location record (advanced)</span><textarea id="jurisdiction-evidence" value={jurisdictionEvidenceJson} onChange={(event) => { setJurisdictionEvidenceJson(event.target.value); setQuote(null); }} rows={7} autoComplete="off" spellCheck={false} placeholder="Paste the signed record from your approved provider" required /><small className="field-help">The service checks the source, account, dates, and location before using this record. It does not guess a customer location.</small></label>

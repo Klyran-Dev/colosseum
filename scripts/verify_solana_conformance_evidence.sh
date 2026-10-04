@@ -64,7 +64,9 @@ grep -Fq "sbf_artifact_sha256=$actual_hash" "$evidence_dir/artifact.txt" \
     || fail "retained SBF hash does not match the built artifact"
 
 for expected_case in \
+    'stablecoin account topology' \
     'settles legacy SPL' \
+    'rejects disabled or substituted asset admission' \
     'payer-bound refund claim' \
     'governance cancellation' \
     'blocks paused vault release' \
@@ -75,7 +77,9 @@ for expected_case in \
     'rejects wrong recipient order without balance drift' \
     'extension-free Token-2022 two-recipient Split Plan' \
     'real Token-2022 TransferFeeConfig' \
-    'revoked policy attestations'; do
+    'non-stable asset classification' \
+    'revoked policy attestations' \
+    'revenue-stream single-use claim'; do
     grep -Fq "$expected_case" "$evidence_dir/localnet-tests.log" \
         || fail "localnet evidence is missing test case: $expected_case"
 done

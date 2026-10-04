@@ -23,8 +23,8 @@ pub const DEFAULT_COMPUTE_UNIT_LIMIT: u32 = 200_000;
 pub const DEFAULT_MICRO_LAMPORTS_PER_COMPUTE_UNIT: u64 = 1_000;
 pub const MAX_COMPUTE_UNIT_LIMIT: u32 = 1_400_000;
 pub const MAX_MICRO_LAMPORTS_PER_COMPUTE_UNIT: u64 = 10_000_000;
-pub const SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT: usize = 12;
-pub const SPLIT_SETTLEMENT_INSTRUCTION_BASE_ACCOUNT_COUNT: usize = 12;
+pub const SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT: usize = 13;
+pub const SPLIT_SETTLEMENT_INSTRUCTION_BASE_ACCOUNT_COUNT: usize = 13;
 pub const SOLANA_LEGACY_PACKET_BYTES: usize = 1_232;
 pub const SETTLEMENT_PACKET_SAFETY_MARGIN_BYTES: usize = 256;
 pub const MAX_SETTLEMENT_SIGNED_BYTES: usize =
@@ -184,6 +184,7 @@ pub struct CompiledSettlementInstruction {
     pub vault_authority: String,
     pub policy_attestation: String,
     pub receipt: String,
+    pub asset_config: String,
     pub compute_budget_policy: ComputeBudgetPolicy,
 }
 
@@ -197,6 +198,7 @@ pub struct CompiledDocumentSettlementInstruction {
     pub vault_authority: String,
     pub policy_attestation: String,
     pub receipt: String,
+    pub asset_config: String,
     pub document_attestation_digest: Vec<u8>,
     pub payment_scope_digest: Vec<u8>,
     pub compute_budget_policy: ComputeBudgetPolicy,
@@ -214,6 +216,7 @@ pub struct CompiledSplitSettlementInstruction {
     pub split_plan: String,
     pub split_plan_digest: Vec<u8>,
     pub receipt: String,
+    pub asset_config: String,
     pub compute_budget_policy: ComputeBudgetPolicy,
 }
 
@@ -487,6 +490,18 @@ pub fn spl_token_program_id() -> Pubkey {
     Pubkey::new_from_array(SPL_TOKEN_PROGRAM_BYTES)
 }
 
+/// Derives the canonical mint-scoped asset-admission PDA. The program remains
+/// the final authority; this helper only prevents callers from substituting a
+/// different account in a prepared transaction.
+pub fn asset_config_pda(mint: &str) -> Result<(String, u8), SettlementCompileError> {
+    let mint = parse_pubkey("mint", mint)?;
+    let (address, bump) = Pubkey::find_program_address(
+        &[b"asset-config", mint.as_ref()],
+        &settlement_program_id(),
+    );
+    Ok((address.to_string(), bump))
+}
+
 /// Derives the canonical merchant/mint-scoped adjustment registry PDA and
 /// returns its bump. The API and RPC verifier use this server-owned helper so
 /// callers cannot substitute a registry account.
@@ -596,6 +611,10 @@ pub fn compile_settlement_instruction(
         ],
         &program_id,
     );
+    let (asset_config, _) = Pubkey::find_program_address(
+        &[b"asset-config", mint.as_ref()],
+        &program_id,
+    );
 
     let accounts = vec![
         account(payer, true, true),
@@ -608,6 +627,7 @@ pub fn compile_settlement_instruction(
         account(policy_attestation, false, false),
         account(net_destination, false, true),
         account(receipt, false, true),
+        account(asset_config, false, false),
         account(token_program, false, false),
         account(
             parse_pubkey("system_program", SYSTEM_PROGRAM_ID)?,
@@ -638,6 +658,7 @@ pub fn compile_settlement_instruction(
         vault_authority: vault_authority.to_string(),
         policy_attestation: policy_attestation.to_string(),
         receipt: receipt.to_string(),
+        asset_config: asset_config.to_string(),
         compute_budget_policy,
     })
 }
@@ -709,6 +730,10 @@ pub fn compile_document_settlement_instruction(
         ],
         &program_id,
     );
+    let (asset_config, _) = Pubkey::find_program_address(
+        &[b"asset-config", mint.as_ref()],
+        &program_id,
+    );
     let accounts = vec![
         account(payer, true, true),
         account(protocol_config, false, false),
@@ -720,6 +745,7 @@ pub fn compile_document_settlement_instruction(
         account(policy_attestation, false, false),
         account(net_destination, false, true),
         account(receipt, false, true),
+        account(asset_config, false, false),
         account(token_program, false, false),
         account(
             parse_pubkey("system_program", SYSTEM_PROGRAM_ID)?,
@@ -750,6 +776,7 @@ pub fn compile_document_settlement_instruction(
         vault_authority: vault_authority.to_string(),
         policy_attestation: policy_attestation.to_string(),
         receipt: receipt.to_string(),
+        asset_config: asset_config.to_string(),
         document_attestation_digest: request.document_attestation_digest.to_vec(),
         payment_scope_digest: request.payment_scope_digest.to_vec(),
         compute_budget_policy,
@@ -1548,6 +1575,10 @@ pub fn compile_split_settlement_instruction(
         ],
         &program_id,
     );
+    let (asset_config, _) = Pubkey::find_program_address(
+        &[b"asset-config", mint.as_ref()],
+        &program_id,
+    );
 
     let mut accounts = vec![
         account(payer, true, true),
@@ -1560,6 +1591,7 @@ pub fn compile_split_settlement_instruction(
         account(policy_attestation, false, false),
         account(split_plan, false, false),
         account(receipt, false, true),
+        account(asset_config, false, false),
         account(token_program, false, false),
         account(
             parse_pubkey("system_program", SYSTEM_PROGRAM_ID)?,
@@ -1599,6 +1631,7 @@ pub fn compile_split_settlement_instruction(
         split_plan: split_plan.to_string(),
         split_plan_digest: split_plan_digest.to_vec(),
         receipt: receipt.to_string(),
+        asset_config: asset_config.to_string(),
         compute_budget_policy,
     })
 }
@@ -1859,6 +1892,7 @@ mod tests {
         vault_authority: String,
         policy_attestation: String,
         receipt: String,
+        asset_config: String,
         compute_budget_policy: ComputeBudgetPolicy,
     }
 
@@ -1866,6 +1900,18 @@ mod tests {
     fn fixed_program_id_bytes_match_canonical_base58_contract() {
         assert_eq!(settlement_program_id().to_string(), SETTLEMENT_PROGRAM_ID);
         assert_eq!(spl_token_program_id().to_string(), SPL_TOKEN_PROGRAM_ID);
+    }
+
+    #[test]
+    fn derives_the_mint_scoped_asset_admission_pda() {
+        let mint = "GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq";
+        let (asset_config, bump) = asset_config_pda(mint).expect("valid mint");
+        assert_eq!(
+            asset_config,
+            "2nqeGnn1BrXoKjG6H5cSFReSEuDxpb18GH3g8bkt3YVy"
+        );
+        assert!(bump > 0);
+        assert_ne!(asset_config_pda("11111111111111111111111111111111").unwrap().0, asset_config);
     }
 
     #[test]
@@ -1895,6 +1941,7 @@ mod tests {
             vector.expected.policy_attestation
         );
         assert_eq!(compiled.receipt, vector.expected.receipt);
+        assert_eq!(compiled.asset_config, vector.expected.asset_config);
         assert_eq!(
             compiled.compute_budget_policy,
             vector.expected.compute_budget_policy
@@ -1907,7 +1954,7 @@ mod tests {
         let compiled = compile_settlement_instruction(&request).expect("valid instruction");
 
         assert_eq!(compiled.status, "prepared_unsubmitted");
-        assert_eq!(compiled.accounts.len(), 12);
+        assert_eq!(compiled.accounts.len(), 13);
         assert_eq!(compiled.accounts[0].pubkey, request.payer);
         assert!(compiled.accounts[0].is_signer);
         assert!(compiled.accounts[0].is_writable);
@@ -1915,6 +1962,7 @@ mod tests {
         assert_eq!(compiled.accounts[7].pubkey, compiled.policy_attestation);
         assert_eq!(compiled.accounts[8].pubkey, request.net_destination);
         assert_eq!(compiled.accounts[9].pubkey, compiled.receipt);
+        assert_eq!(compiled.accounts[10].pubkey, compiled.asset_config);
         assert_eq!(compiled.instruction_data_base64.len(), 108);
         assert_eq!(
             compiled.instruction_data_base64,
@@ -1947,7 +1995,7 @@ mod tests {
     fn compiles_document_settlement_with_provenance_and_document_receipt() {
         let request = document_request();
         let compiled = compile_document_settlement_instruction(&request).expect("valid document");
-        assert_eq!(compiled.accounts.len(), 12);
+        assert_eq!(compiled.accounts.len(), 13);
         assert_eq!(compiled.accounts[9].pubkey, compiled.receipt);
         assert_eq!(compiled.document_attestation_digest, vec![8; 32]);
         assert_eq!(compiled.payment_scope_digest, vec![9; 32]);
@@ -1995,11 +2043,11 @@ mod tests {
         );
         assert_eq!(compiled.accounts[8].pubkey, compiled.split_plan);
         assert_eq!(
-            compiled.accounts[12].pubkey,
+            compiled.accounts[13].pubkey,
             request.recipients[0].token_account
         );
         assert_eq!(
-            compiled.accounts[13].pubkey,
+            compiled.accounts[14].pubkey,
             request.recipients[1].token_account
         );
         assert_eq!(

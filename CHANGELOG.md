@@ -2,6 +2,126 @@
 
 ## 2026-10-04
 
+- Tightened the Linux conformance evidence postcondition so successful
+  release artifacts must include stablecoin account-topology assertions,
+  disabled/substituted-asset rollback, non-stable classification rejection,
+  and TransferFeeConfig rejection; a build without those cases cannot satisfy
+  the validator gate.
+- Synchronized the real-validator TypeScript conformance harness with the
+  stablecoin `AssetConfig` account contract. Legacy SPL and extension-free
+  Token-2022 setup now provisions the governed PDA, every movement builder
+  supplies it in canonical order, disabled assets prove no balance drift, and
+  TransferFeeConfig mints fail before activation.
+- Added ADR-0322 and an expand/contract migration for settlement-route
+  evidence. Existing active routes without finalized v2 asset evidence are
+  suspended without rewriting or deleting historical records; only routes
+  re-verified through the bounded finalized verifier can become active again.
+- Added ADR-0321 and bound finalized settlement-route activation to the
+  mint-scoped on-chain `AssetConfig` PDA. The verifier now requests five
+  accounts, proves the exact stablecoin layout and enabled state, stores five
+  bounded evidence records, and uses a v2 topology digest so pre-admission
+  route evidence cannot be replayed. Existing route backfill and Linux
+  validator evidence remain required before non-local signing.
+- Added ADR-0320 and froze the on-chain stablecoin admission boundary: every
+  v1 token movement will require a governed, mint-scoped `AssetConfig` PDA,
+  while route configuration remains only an admission aid. The ABI, route
+  backfill, validator, audit, and governance work is intentionally still open;
+  missing asset evidence cannot enable signing.
+- Added the first ADR-0320 implementation slice: the Solana movement contexts,
+  settlement-client, coordinator-facing artifact, and browser signing envelope
+  now carry and verify the bounded asset-admission account. Focused tests pass;
+  this does not enable paid-state movement until route evidence is backfilled
+  and retained Linux validator and governance gates are complete.
+- Added ADR-0319 and bounded browser-facing API errors at the shared response
+  boundary: untrusted messages are normalized, control characters are removed,
+  text is capped at 512 characters, whitespace-only messages use the operation
+  fallback, and only canonical UUIDv7 support references are rendered.
+- Added ADR-0318 and routed document quote-to-payment handoffs through one
+  App-owned typed History API boundary; the visible payment-review workspace
+  and canonical browser URL now change together without placing evidence,
+  credentials, wallet material, or financial facts in browser history. The
+  Docker browser journey also proves that a refreshed destination remains
+  fail-closed until its authenticated calculation context is re-established.
+- Added ADR-0317 and completed the next Material 3 Expressive shell pass:
+  the fixed Solana Aurora palette now includes explicit lowest/dim/bright
+  surface roles, while the sidebar, top bar, menus, panels, and navigation use
+  a deterministic tonal hierarchy with lower visual scan cost. No workspace,
+  authorization state, or production workflow was hidden or weakened.
+- Added ADR-0312 and applied outcome-first language to document payment review;
+  finance and operations users now see invoice evidence, payment route, wallet
+  approval, and finalized-settlement boundaries without losing technical
+  evidence or fail-closed behavior.
+- Added ADR-0313 and consolidated repeated shell security messaging into one
+  compact, keyboard-operable protection disclosure while preserving complete
+  access, approval, decision-record, and wallet-custody explanations.
+- Added ADR-0314 and an executable non-custodial wallet source contract to
+  reject seed phrases, mnemonics, private-key fields, and client-side keypair
+  construction at the browser/API boundary.
+- Added ADR-0315 and extended the executable UI language contract so tax
+  calculation, attestation, settlement evidence, filing, and legal
+  responsibility remain distinct; positive compliance claims now fail the
+  repository check.
+- Added ADR-0316 and implemented a versioned rule-release provenance envelope;
+  Rust, PostgreSQL, integration, and structured governance-workbench gates now
+  fail closed at publication until source, ownership, review, and jurisdiction
+  evidence are complete.
+- Added ADR-0311 and named the fixed Solana Aurora Material 3 theme family;
+  light/dark roles now use documented Solana navy, Aurora Mint, and accessible
+  blue tertiary values with exact palette-contract enforcement.
+- Added ADR-0310 and removed decorative gradients from production selectors;
+  shell, navigation, cards, actions, totals, and review states now use flat
+  Material tonal roles with a fail-closed gradient regression contract.
+- Expanded the public tax coverage matrix with an explicit engine-semantics
+  evidence table for simple, progressive, cascading, inclusive/exclusive,
+  threshold, exemption, credit, min/max, truncation, rounding, residual, and
+  replay/conservation behavior. Jurisdiction support remains unpublished until
+  provenance and legal ownership are approved.
+- Added ADR-0309 and consolidated deployment, network, service, and sign-in
+  diagnostics into calm, accessible Material 3 disclosures. Full detail and
+  safe next steps remain available without obscuring the operator's primary
+  task.
+- Removed dormant legacy shell-status styles and added a contract preventing
+  the retired persistent badge pattern from returning.
+- Added ADR-0308 and exact-release authenticated Docker integration evidence
+  binding for release candidates.
+- Added ADR-0303 exact-commit browser UI evidence to the release-candidate
+  workflow, including revision binding, checksum inclusion, and failure
+  artifact retention.
+- Added ADR-0304's dependency-free Material role contrast contract to the
+  standard web and repository checks; both light and dark semantic palettes
+  must maintain a 4.5:1 text contrast ratio.
+- Added ADR-0305 and `make tier1-local-check` as the canonical ordered local
+  evidence gate across repository checks, authenticated Docker integration,
+  real-browser UI journeys, and validator-backed Solana conformance.
+- Added ADR-0302 and a versioned presentation-only preference store for locale,
+  time zone, and Material theme. Preferences restore across reloads, while
+  credentials, authorization state, financial facts, and wallet artifacts do
+  not enter browser persistence.
+- Refined the local development sign-in affordance into an accessible closed
+  disclosure, keeping the credential field and its safety warning available
+  without competing with the primary workspace task.
+- Added ADR-0301 and a real pinned-validator revenue-stream movement case:
+  finalized accruals, one-use claim execution, duplicate rejection, and
+  cancellation preserve token balances on rejected paths; plan pause also
+  rejects new claims without creating claim state. Linux/amd64 execution and
+  retained release evidence remain required before enablement.
+- Refined the Material navigation shell so access decisions are quiet semantic
+  marks instead of repeated “Not available” sentences; accessible descriptions,
+  tooltips, and the page-level access card retain the complete authorization
+  context.
+- Added a public requirements-traceability and evidence matrix that maps
+  `AGENTS.md` mandates to source, local Docker, Linux CI, staging, and external
+  production evidence without overstating readiness.
+- Added a real-browser Material theme regression that switches light/dark
+  schemes and verifies the selected semantic surface across every workspace.
+- Added ADR-0299 and fail-closed release-bundle source-revision binding so
+  validator evidence from another commit cannot be combined with packaged
+  binaries and configuration.
+- Added ADR-0300 and closed the Material color-token boundary across the SPA:
+  component rules now use semantic roles and role-derived alpha values, while
+  the web contract rejects raw color literals outside the token declarations.
+- Extended the Solana workflow contract to protect release-bundle integrity
+  verification ordering before final bundle creation.
 - Added ADR-0298 and a final Material 3 Expressive precedence layer for the
   operational shell. Light, dark, and system themes now consume semantic roles
   for action, surface, status, risk, and navigation states; the color, CSP, and
@@ -816,6 +936,14 @@ All notable changes to this project will be documented here. The project follows
 - Architecture and implementation foundation phase; the simulation API and first settlement contract are not production deployment claims.
 - No production deployment, audit completion, legal/tax certification, or mainnet support is claimed.
 ## Unreleased
+
+- Added ADR-0306 and collapsed advanced provider-location evidence by default
+  in quote workspaces. Required evidence remains available through an
+  accessible native disclosure, keeping the primary financial task readable
+  without weakening server-side validation.
+- Added ADR-0307 and an explicit `make reset-local` recovery path for stale
+  synthetic Docker volumes. The command validates the Compose project name,
+  requires confirmation, and never performs broad host deletion.
 
 - Refined the SaaS navigation and visible product language around operator
   tasks, approvals, money movement, and evidence. Engineering terminology is

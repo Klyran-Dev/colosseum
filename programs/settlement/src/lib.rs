@@ -21,6 +21,7 @@ const STREAM_STATUS_PROPOSED: u8 = 1;
 const STREAM_STATUS_APPROVED: u8 = 2;
 const STREAM_STATUS_ACTIVE: u8 = 3;
 const STREAM_STATUS_PAUSED: u8 = 4;
+const ASSET_KIND_STABLECOIN: u8 = 1;
 
 declare_id!("4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi");
 
@@ -47,6 +48,43 @@ pub mod settlement {
             authority: ctx.accounts.authority.key(),
             paused,
         });
+        Ok(())
+    }
+
+    pub fn initialize_asset_config(
+        ctx: Context<InitializeAssetConfig>,
+        asset_kind: u8,
+    ) -> Result<()> {
+        validate_protocol_authority(
+            &ctx.accounts.protocol_config,
+            ctx.accounts.authority.key(),
+        )?;
+        require!(
+            asset_kind == ASSET_KIND_STABLECOIN,
+            SettlementError::UnsupportedAssetKind
+        );
+        validate_supported_mint_program(
+            &ctx.accounts.token_program,
+            &ctx.accounts.mint.to_account_info(),
+        )?;
+        let asset_config = &mut ctx.accounts.asset_config;
+        asset_config.mint = ctx.accounts.mint.key();
+        asset_config.token_program = ctx.accounts.token_program.key();
+        asset_config.decimals = ctx.accounts.mint.decimals;
+        asset_config.asset_kind = asset_kind;
+        asset_config.authority = ctx.accounts.authority.key();
+        asset_config.enabled = true;
+        asset_config.bump = ctx.bumps.asset_config;
+        Ok(())
+    }
+
+    pub fn set_asset_enabled(ctx: Context<UpdateAssetConfig>, enabled: bool) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.asset_config.authority,
+            ctx.accounts.authority.key(),
+            SettlementError::AssetConfigAuthorityMismatch
+        );
+        ctx.accounts.asset_config.enabled = enabled;
         Ok(())
     }
 
@@ -365,6 +403,12 @@ pub mod settlement {
             &ctx.accounts.mint,
             &ctx.accounts.tax_vault,
             &ctx.accounts.destination,
+        )?;
+        validate_asset_admission(
+            &ctx.accounts.asset_config,
+            ctx.accounts.mint.key(),
+            ctx.accounts.token_program.key(),
+            ctx.accounts.mint.decimals,
         )?;
         require_keys_eq!(
             ctx.accounts.tax_vault.owner,
@@ -826,6 +870,12 @@ pub mod settlement {
             &ctx.accounts.tax_vault,
             &ctx.accounts.destination,
         )?;
+        validate_asset_admission(
+            &ctx.accounts.asset_config,
+            ctx.accounts.mint.key(),
+            ctx.accounts.token_program.key(),
+            ctx.accounts.mint.decimals,
+        )?;
         require_keys_eq!(
             ctx.accounts.tax_vault.owner,
             ctx.accounts.vault_authority.key(),
@@ -956,6 +1006,12 @@ pub mod settlement {
             &ctx.accounts.source,
             &ctx.accounts.tax_vault,
             &ctx.accounts.net_destination,
+        )?;
+        validate_asset_admission(
+            &ctx.accounts.asset_config,
+            ctx.accounts.mint.key(),
+            ctx.accounts.token_program.key(),
+            ctx.accounts.mint.decimals,
         )?;
         require_keys_eq!(
             ctx.accounts.source.owner,
@@ -1101,6 +1157,12 @@ pub mod settlement {
             &ctx.accounts.source,
             &ctx.accounts.tax_vault,
             &ctx.accounts.net_destination,
+        )?;
+        validate_asset_admission(
+            &ctx.accounts.asset_config,
+            ctx.accounts.mint.key(),
+            ctx.accounts.token_program.key(),
+            ctx.accounts.mint.decimals,
         )?;
         require_keys_eq!(
             ctx.accounts.source.owner,
@@ -1570,6 +1632,12 @@ pub mod settlement {
             ctx.accounts.refund_funder.key(),
             ctx.accounts.original_receipt.payer,
         )?;
+        validate_asset_admission(
+            &ctx.accounts.asset_config,
+            ctx.accounts.mint.key(),
+            ctx.accounts.token_program.key(),
+            ctx.accounts.mint.decimals,
+        )?;
         require!(
             ctx.accounts.tax_vault.amount >= ctx.accounts.claim.tax_magnitude,
             SettlementError::AdjustmentTaxVaultInsufficientFunds
@@ -1741,6 +1809,12 @@ pub mod settlement {
             &ctx.accounts.mint,
             &ctx.accounts.source,
             &ctx.accounts.tax_vault,
+        )?;
+        validate_asset_admission(
+            &ctx.accounts.asset_config,
+            ctx.accounts.mint.key(),
+            ctx.accounts.token_program.key(),
+            ctx.accounts.mint.decimals,
         )?;
         require_keys_eq!(
             ctx.accounts.source.owner,
@@ -1954,6 +2028,11 @@ pub struct ExecuteVaultRelease<'info> {
     pub protocol_config: Account<'info, ProtocolConfig>,
     pub merchant: SystemAccount<'info>,
     pub mint: InterfaceAccount<'info, Mint>,
+    #[account(
+        seeds = [b"asset-config", mint.key().as_ref()],
+        bump = asset_config.bump,
+    )]
+    pub asset_config: Account<'info, AssetConfig>,
     pub token_program: Interface<'info, TokenInterface>,
     #[account(
         seeds = [b"vault-release-registry", merchant.key().as_ref(), mint.key().as_ref()],
@@ -2153,6 +2232,11 @@ pub struct ExecuteRevenueStreamClaim<'info> {
     )]
     pub plan: Account<'info, RevenueStreamPlan>,
     pub mint: InterfaceAccount<'info, Mint>,
+    #[account(
+        seeds = [b"asset-config", mint.key().as_ref()],
+        bump = asset_config.bump,
+    )]
+    pub asset_config: Account<'info, AssetConfig>,
     pub token_program: Interface<'info, TokenInterface>,
     #[account(mut)]
     pub tax_vault: InterfaceAccount<'info, TokenAccount>,
@@ -2204,6 +2288,39 @@ pub struct UpdateProtocolConfig<'info> {
         bump = protocol_config.bump,
     )]
     pub protocol_config: Account<'info, ProtocolConfig>,
+}
+
+#[derive(Accounts)]
+pub struct InitializeAssetConfig<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    #[account(
+        seeds = [b"protocol-config"],
+        bump = protocol_config.bump,
+    )]
+    pub protocol_config: Account<'info, ProtocolConfig>,
+    pub mint: InterfaceAccount<'info, Mint>,
+    pub token_program: Interface<'info, TokenInterface>,
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + AssetConfig::INIT_SPACE,
+        seeds = [b"asset-config", mint.key().as_ref()],
+        bump,
+    )]
+    pub asset_config: Account<'info, AssetConfig>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateAssetConfig<'info> {
+    pub authority: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [b"asset-config", asset_config.mint.as_ref()],
+        bump = asset_config.bump,
+    )]
+    pub asset_config: Account<'info, AssetConfig>,
 }
 
 #[derive(Accounts)]
@@ -2335,6 +2452,11 @@ pub struct ExecuteAdjustmentRefund<'info> {
     pub refund_funder: Signer<'info>,
     pub merchant: SystemAccount<'info>,
     pub mint: Box<InterfaceAccount<'info, Mint>>,
+    #[account(
+        seeds = [b"asset-config", mint.key().as_ref()],
+        bump = asset_config.bump,
+    )]
+    pub asset_config: Box<Account<'info, AssetConfig>>,
     pub token_program: Interface<'info, TokenInterface>,
     #[account(
         seeds = [b"protocol-config"],
@@ -2478,6 +2600,11 @@ pub struct Settle<'info> {
         bump
     )]
     pub receipt: Account<'info, SettlementReceipt>,
+    #[account(
+        seeds = [b"asset-config", mint.key().as_ref()],
+        bump = asset_config.bump,
+    )]
+    pub asset_config: Account<'info, AssetConfig>,
     pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
@@ -2519,6 +2646,11 @@ pub struct SettleDocument<'info> {
         bump
     )]
     pub receipt: Account<'info, DocumentSettlementReceipt>,
+    #[account(
+        seeds = [b"asset-config", mint.key().as_ref()],
+        bump = asset_config.bump,
+    )]
+    pub asset_config: Account<'info, AssetConfig>,
     pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
@@ -2563,6 +2695,11 @@ pub struct SettleSplit<'info> {
         bump
     )]
     pub receipt: Account<'info, SettlementReceipt>,
+    #[account(
+        seeds = [b"asset-config", mint.key().as_ref()],
+        bump = asset_config.bump,
+    )]
+    pub asset_config: Account<'info, AssetConfig>,
     pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
@@ -2613,6 +2750,18 @@ pub struct RevokePolicyAttestation<'info> {
 pub struct ProtocolConfig {
     pub authority: Pubkey,
     pub paused: bool,
+    pub bump: u8,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct AssetConfig {
+    pub mint: Pubkey,
+    pub token_program: Pubkey,
+    pub decimals: u8,
+    pub asset_kind: u8,
+    pub authority: Pubkey,
+    pub enabled: bool,
     pub bump: u8,
 }
 
@@ -3209,6 +3358,37 @@ fn validate_supported_mint_program(
         SettlementError::TokenProgramMismatch
     );
     validate_supported_mint_layout(mint.data_len())
+}
+
+fn validate_asset_admission(
+    asset_config: &AssetConfig,
+    mint: Pubkey,
+    token_program: Pubkey,
+    decimals: u8,
+) -> Result<()> {
+    require!(
+        asset_config.enabled,
+        SettlementError::AssetConfigDisabled
+    );
+    require!(
+        asset_config.asset_kind == ASSET_KIND_STABLECOIN,
+        SettlementError::UnsupportedAssetKind
+    );
+    require_keys_eq!(
+        asset_config.mint,
+        mint,
+        SettlementError::AssetConfigMintMismatch
+    );
+    require_keys_eq!(
+        asset_config.token_program,
+        token_program,
+        SettlementError::AssetConfigTokenProgramMismatch
+    );
+    require!(
+        asset_config.decimals == decimals,
+        SettlementError::AssetConfigDecimalsMismatch
+    );
+    Ok(())
 }
 
 fn validate_supported_token_accounts(
@@ -3957,6 +4137,18 @@ pub enum SettlementError {
     TokenProgramMismatch,
     #[msg("the token mint or account uses an unsupported extension")]
     UnsupportedTokenExtension,
+    #[msg("the asset configuration is disabled")]
+    AssetConfigDisabled,
+    #[msg("the asset kind is not an admitted stablecoin")]
+    UnsupportedAssetKind,
+    #[msg("the asset configuration authority does not match the signer")]
+    AssetConfigAuthorityMismatch,
+    #[msg("the asset configuration mint does not match the settlement mint")]
+    AssetConfigMintMismatch,
+    #[msg("the asset configuration token program does not match the settlement")]
+    AssetConfigTokenProgramMismatch,
+    #[msg("the asset configuration decimals do not match the mint")]
+    AssetConfigDecimalsMismatch,
     #[msg("policy issuer registry authority does not match the signer")]
     RegistryAuthorityMismatch,
     #[msg("policy issuer registry does not match the merchant and mint scope")]
@@ -4661,6 +4853,60 @@ mod tests {
         assert!(validate_supported_token_layout(82, 166, 165, 165).is_err());
         assert!(validate_supported_token_layout(82, 165, 166, 165).is_err());
         assert!(validate_supported_token_layout(82, 165, 165, 166).is_err());
+    }
+
+    fn asset_config_fixture(enabled: bool) -> AssetConfig {
+        AssetConfig {
+            mint: Pubkey::new_from_array([2; 32]),
+            token_program: Pubkey::new_from_array([3; 32]),
+            decimals: 6,
+            asset_kind: ASSET_KIND_STABLECOIN,
+            authority: Pubkey::new_from_array([4; 32]),
+            enabled,
+            bump: 5,
+        }
+    }
+
+    #[test]
+    fn asset_admission_requires_enabled_matching_stablecoin_configuration() {
+        let config = asset_config_fixture(true);
+        assert!(validate_asset_admission(
+            &config,
+            config.mint,
+            config.token_program,
+            config.decimals,
+        )
+        .is_ok());
+
+        let mut disabled = config.clone();
+        disabled.enabled = false;
+        assert!(validate_asset_admission(
+            &disabled,
+            config.mint,
+            config.token_program,
+            config.decimals,
+        )
+        .is_err());
+
+        let mut wrong_mint = config.clone();
+        wrong_mint.mint = Pubkey::new_from_array([9; 32]);
+        assert!(validate_asset_admission(
+            &wrong_mint,
+            config.mint,
+            config.token_program,
+            config.decimals,
+        )
+        .is_err());
+
+        let mut non_stable = config.clone();
+        non_stable.asset_kind = 0;
+        assert!(validate_asset_admission(
+            &non_stable,
+            config.mint,
+            config.token_program,
+            config.decimals,
+        )
+        .is_err());
     }
 
     fn protocol_fixture(paused: bool) -> ProtocolConfig {

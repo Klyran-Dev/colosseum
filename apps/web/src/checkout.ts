@@ -31,7 +31,7 @@ export const SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
 export const SPL_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 export const TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 export const COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111";
-export const SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT = 12;
+export const SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT = 13;
 const SETTLE_DISCRIMINATOR_BASE64 = "ryq5V5CDZtQ=";
 const DOCUMENT_SETTLE_DISCRIMINATOR_BASE64 = "XAF7GP/zWDU=";
 const SPLIT_SETTLE_DISCRIMINATOR_BASE64 = "A6qY2V4JCdU=";
@@ -229,6 +229,7 @@ export type CompiledSettlementInstruction = {
   vault_authority: string;
   policy_attestation: string;
   receipt: string;
+  asset_config: string;
   compute_budget_policy: ComputeBudgetPolicy;
 };
 
@@ -243,6 +244,7 @@ export type CompiledSplitSettlementInstruction = {
   split_plan: string;
   split_plan_digest: number[];
   receipt: string;
+  asset_config: string;
   compute_budget_policy: ComputeBudgetPolicy;
 };
 
@@ -342,6 +344,7 @@ function parseCompiledInstructionFields(record: Record<string, unknown>): Compil
     vault_authority: requirePublicKey(record.vault_authority as string, "vault authority PDA").toBase58(),
     policy_attestation: requirePublicKey(record.policy_attestation as string, "policy attestation PDA").toBase58(),
     receipt: requirePublicKey(record.receipt as string, "receipt PDA").toBase58(),
+    asset_config: requirePublicKey(record.asset_config as string, "asset admission PDA").toBase58(),
     compute_budget_policy: {
       policy_version: policyVersion,
       compute_unit_limit: computeUnitLimit,
@@ -768,7 +771,7 @@ export function validateCompiledSettlementInstruction(
   const isDocument = "document_attestation_digest" in instruction;
   if (isSplit && isDocument) throw new Error("Settlement artifact cannot be both split and document scoped.");
   const expectedAccountCount = isSplit
-    ? SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT + 1
+    ? SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT
     : SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT;
   const invalidAccountCount = isSplit
     ? instruction.accounts.length < expectedAccountCount
@@ -796,6 +799,7 @@ export function validateCompiledSettlementInstruction(
         [false, true],
         [false, false],
         [false, false],
+        [false, false],
       ]
     : [
         [true, true],
@@ -808,6 +812,7 @@ export function validateCompiledSettlementInstruction(
         [false, false],
         [false, true],
         [false, true],
+        [false, false],
         [false, false],
         [false, false],
       ];
@@ -842,16 +847,20 @@ export function validateCompiledSettlementInstruction(
   if (isSplit && !accountKeys[8].key.equals(requirePublicKey(instruction.split_plan, "Split Plan PDA"))) {
     throw new Error("Split Plan PDA does not match the canonical account order.");
   }
-  const tokenProgramIndex = isSplit ? 10 : 10;
+  const assetConfigIndex = 10;
+  if (!accountKeys[assetConfigIndex].key.equals(requirePublicKey(instruction.asset_config, "asset admission PDA"))) {
+    throw new Error("Asset admission PDA does not match the canonical account order.");
+  }
+  const tokenProgramIndex = 11;
   if (accountKeys[tokenProgramIndex].key.toBase58() !== SPL_TOKEN_PROGRAM_ID
       && accountKeys[tokenProgramIndex].key.toBase58() !== TOKEN_2022_PROGRAM_ID) {
     throw new Error("Settlement token program is not supported.");
   }
-  const systemProgramIndex = isSplit ? 11 : 11;
+  const systemProgramIndex = 12;
   if (accountKeys[systemProgramIndex].key.toBase58() !== SYSTEM_PROGRAM_ID) {
     throw new Error("Settlement System Program account is not canonical.");
   }
-  const tokenIndexes = isSplit ? [3, 5, ...Array.from({ length: instruction.accounts.length - 12 }, (_, index) => index + 12)] : [3, 5, 8];
+  const tokenIndexes = isSplit ? [3, 5, ...Array.from({ length: instruction.accounts.length - 13 }, (_, index) => index + 13)] : [3, 5, 8];
   if (new Set(tokenIndexes.map((index) => accountKeys[index].key.toBase58())).size !== tokenIndexes.length) {
     throw new Error("Settlement token accounts must be distinct.");
   }

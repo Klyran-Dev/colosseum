@@ -68,12 +68,70 @@ function completeCapabilityCatalog(overrides: Record<string, { decision: "allow"
   ]));
 }
 
+async function fillLocalCredential(page: Page, value: string): Promise<void> {
+  const field = page.getByLabel("Sign-in credential (held in memory)");
+  if (!(await field.isVisible())) {
+    await page.getByRole("button", { name: "Open local sign-in" }).click();
+  }
+  await field.fill(value);
+}
+
+async function openLocationVerification(page: Page): Promise<void> {
+  const details = page.locator("details.route-evidence").filter({ hasText: "Location verification" }).first();
+  if (await details.getAttribute("open") === null) {
+    await details.locator("summary").click();
+  }
+  await expect(details).toHaveAttribute("open", "");
+}
+
+async function openSystemStatus(page: Page): Promise<void> {
+  const details = page.locator("details.system-status");
+  if (await details.getAttribute("open") === null) {
+    await details.locator("summary").click();
+  }
+  await expect(details).toHaveAttribute("open", "");
+  await expect(details.getByText("All systems operational", { exact: true })).toBeVisible();
+}
+
+const NAVIGATION_GROUPS: Record<string, string> = {
+  "Tax quotes": "Daily work",
+  "Tax simulator": "Daily work",
+  "Invoice tax": "Daily work",
+  "Payment review": "Daily work",
+  "Document payment": "Daily work",
+  "Tax rules": "Rules & access",
+  "Access & approvals": "Rules & access",
+  "Treasury": "Money movement",
+  "Balance checks": "Money movement",
+  "Partner payouts": "Money movement",
+  "Adjustments": "Money movement",
+  "Refund requests": "Money movement",
+  "Refund cancellations": "Money movement",
+  "Refund payments": "Money movement",
+  "Exceptions & recovery": "Records & issues",
+};
+
+async function openNavigationGroupFor(page: Page, workspace: string): Promise<void> {
+  const item = page.getByRole("button", { name: workspace, exact: true });
+  if (await item.isVisible()) return;
+  const group = NAVIGATION_GROUPS[workspace];
+  if (!group) throw new Error(`No navigation group is registered for ${workspace}`);
+  const details = page.locator("details.nav-group-disclosure").filter({ hasText: group }).first();
+  if (await details.getAttribute("open") === null) await details.locator("summary").click();
+  await expect(item).toBeVisible();
+}
+
 test.describe("real-browser SPA journeys", () => {
   test("supports direct workspace links and browser history", async ({ page }) => {
+    await page.goto("/operations/tax-quotes");
+    const aggregateLocationVerification = page.locator("details.route-evidence").filter({ hasText: "Location verification" }).first();
+    await expect(aggregateLocationVerification).not.toHaveAttribute("open");
+
     await page.goto("/money/refund-payments");
     await expect(page).toHaveURL(/\/money\/refund-payments$/);
     await expect(page.getByRole("heading", { name: "Prepare refund release", exact: true })).toBeVisible();
 
+    await openNavigationGroupFor(page, "Balance checks");
     await page.getByRole("button", { name: "Balance checks", exact: true }).click();
     await expect(page).toHaveURL(/\/money\/balance-checks$/);
     await expect(page.getByRole("heading", { name: "Check tax balances", exact: true })).toBeVisible();
@@ -88,19 +146,20 @@ test.describe("real-browser SPA journeys", () => {
 
   test("supports keyboard context and real lazy workspace loading", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText("All systems operational")).toBeVisible();
+    await openSystemStatus(page);
     await expect(page.getByText("Local development", { exact: true })).toBeVisible();
     await expect(page.getByText("Local Solana ledger", { exact: true })).toBeVisible();
     await expect(page.getByText("Acme Treasury", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Test network", { exact: true })).toHaveCount(0);
+    await page.locator("details.system-status summary").click();
+    await expect(page.locator("details.system-status")).not.toHaveAttribute("open", "");
 
     await page.getByRole("button", { name: "Open display settings" }).click();
     await page.getByRole("combobox", { name: "Theme" }).selectOption("light");
     await expect(page.locator(".product-shell")).toHaveAttribute("data-theme", "light");
     await page.getByRole("combobox", { name: "Theme" }).selectOption("system");
     await expect(page.locator(".product-shell")).toHaveAttribute("data-theme", "system");
-    await page.goto("/");
-    await expect(page.getByText("All systems operational")).toBeVisible();
+    await page.reload();
 
     await page.keyboard.press("Tab");
     const skipLink = page.getByRole("link", { name: "Skip to workspace content" });
@@ -118,14 +177,47 @@ test.describe("real-browser SPA journeys", () => {
       ["Refund payments", "Prepare refund release"],
       ["Payment review", "Review payment before signing"],
       ["Invoice tax", "Calculate tax for an invoice"],
-      ["Document payment", "Authorize a documented payment"],
+      ["Document payment", "Review and authorize this payment"],
     ] as const;
 
     for (const [buttonName, headingName] of workspaces) {
+      await openNavigationGroupFor(page, buttonName);
       await page.getByRole("button", { name: buttonName, exact: true }).click();
       await expect(page.getByRole("heading", { name: headingName, exact: true })).toBeVisible();
       await expect(page.locator("#workspace-content")).toBeFocused();
     }
+  });
+
+  test("keeps system status disclosure keyboard operable", async ({ page }) => {
+    await page.goto("/");
+    const details = page.locator("details.system-status");
+    const summary = details.locator("summary");
+
+    await summary.focus();
+    await expect(summary).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(details).toHaveAttribute("open", "");
+    await expect(page.getByText("Deployment environment", { exact: true })).toBeVisible();
+
+    await page.keyboard.press("Space");
+    await expect(details).not.toHaveAttribute("open", "");
+  });
+
+  test("keeps protection assurances in one compact keyboard disclosure", async ({ page }) => {
+    await page.goto("/");
+    const details = page.locator("details.protection-details");
+    const summary = details.locator("summary");
+
+    await expect(details).not.toHaveAttribute("open", "");
+    await summary.focus();
+    await page.keyboard.press("Enter");
+    await expect(details).toHaveAttribute("open", "");
+    await expect(details.getByText("Account access", { exact: true })).toBeVisible();
+    await expect(details.getByText("Every decision has a record.", { exact: true })).toBeVisible();
+    await expect(details.getByText("Sensitive actions need approval.", { exact: true })).toBeVisible();
+    await expect(details.getByText("Wallets stay with their owners.", { exact: true })).toBeVisible();
+    await expect(page.locator(".security-strip")).toHaveCount(0);
+    await expectNoBrowserAxeViolations(page, "compact protection disclosure");
   });
 
   test("provides account context and a safe sign-out path in the real shell", async ({ page }) => {
@@ -148,7 +240,7 @@ test.describe("real-browser SPA journeys", () => {
 
     await page.goto("/");
     const credential = page.getByLabel("Sign-in credential (held in memory)");
-    await credential.fill("tenant-a-session");
+    await fillLocalCredential(page, "tenant-a-session");
     const accountMenu = page.locator("details.account-menu");
     await page.getByRole("button", { name: "Open account menu" }).click();
     await expect(accountMenu.getByText("Account 01900000", { exact: true })).toBeVisible();
@@ -203,18 +295,19 @@ test.describe("real-browser SPA journeys", () => {
     });
 
     await page.goto("/");
-    await expect(page.getByText("All systems operational")).toBeVisible();
+    await openSystemStatus(page);
     const credential = page.getByLabel("Sign-in credential (held in memory)");
-    await credential.fill(tenantA.token);
+    await fillLocalCredential(page, tenantA.token);
     const productNavigation = page.getByRole("complementary", { name: "Product navigation" });
     await expect(productNavigation.getByText("Account 01900000", { exact: true })).toBeVisible();
+    await openNavigationGroupFor(page, "Access & approvals");
     await page.getByRole("button", { name: "Access & approvals", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Who can do what", exact: true })).toBeVisible();
     const workspaceContent = page.getByRole("region", { name: "Current tax workspace" });
     await expect(workspaceContent.getByText("operator-a", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Tax simulator", exact: true })).toHaveAttribute("title", /Available/);
 
-    await credential.fill(tenantB.token);
+    await fillLocalCredential(page, tenantB.token);
     await expect(productNavigation.getByText("Account 02900000", { exact: true })).toBeVisible();
     await expect(productNavigation.getByText("Account 01900000", { exact: true })).toHaveCount(0);
     await expect(workspaceContent.getByText("operator-b", { exact: true })).toBeVisible();
@@ -274,7 +367,7 @@ test.describe("real-browser SPA journeys", () => {
     }));
 
     await page.goto("/money/partner-payouts");
-    await page.getByLabel("Sign-in credential (held in memory)").fill("partner-payout-operator");
+    await fillLocalCredential(page, "partner-payout-operator");
     await expect(page.getByRole("heading", { name: "Partner payouts", exact: true })).toBeVisible();
     await expect(page.getByText("Receiving accruals", { exact: true })).toBeVisible();
     await expect(page.getByText("Prepare a payout", { exact: true })).toBeVisible();
@@ -367,7 +460,7 @@ test.describe("real-browser SPA journeys", () => {
     });
 
     await page.goto("/money/partner-payouts");
-    await page.getByLabel("Sign-in credential (held in memory)").fill("partner-proposer-session");
+    await fillLocalCredential(page, "partner-proposer-session");
     await expect(page.getByRole("heading", { name: "Create a payout plan", exact: true })).toBeVisible();
     await expect(page.getByRole("combobox", { name: "Verified payout destination" })).toBeVisible();
     await page.getByRole("combobox", { name: "Verified payout destination" }).selectOption(destinationId);
@@ -413,7 +506,7 @@ test.describe("real-browser SPA journeys", () => {
       }),
     }));
     await page.goto("/money/partner-payouts");
-    await page.getByLabel("Sign-in credential (held in memory)").fill("viewer-session");
+    await fillLocalCredential(page, "viewer-session");
     await expect(page.getByText("This workspace is not available to your account", { exact: true })).toBeVisible();
     await expect(page.getByText(/did not grant access to partner payout plans/i)).toBeVisible();
     await expect(page.getByText("Prepare a payout release", { exact: true })).toHaveCount(0);
@@ -422,7 +515,7 @@ test.describe("real-browser SPA journeys", () => {
 
   test("has no rendered WCAG A/AA violations across the real SPA workspaces", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText("All systems operational")).toBeVisible();
+    await openSystemStatus(page);
     await expectNoBrowserAxeViolations(page, "production quote");
 
     const workspaces = [
@@ -435,14 +528,70 @@ test.describe("real-browser SPA journeys", () => {
       ["Refund payments", "Prepare refund release"],
       ["Payment review", "Review payment before signing"],
       ["Invoice tax", "Calculate tax for an invoice"],
-      ["Document payment", "Authorize a documented payment"],
+      ["Document payment", "Review and authorize this payment"],
     ] as const;
 
     for (const [buttonName, headingName] of workspaces) {
+      await openNavigationGroupFor(page, buttonName);
       await page.getByRole("button", { name: buttonName, exact: true }).click();
       await expect(page.getByRole("heading", { name: headingName, exact: true })).toBeVisible();
       await expectNoBrowserAxeViolations(page, buttonName);
     }
+  });
+
+  test("keeps the selected semantic theme across every workspace", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Open display settings" }).click();
+    const theme = page.getByRole("combobox", { name: "Theme" });
+
+    await theme.selectOption("light");
+    const lightShellBackground = await page.locator(".product-shell").evaluate(
+      (element) => getComputedStyle(element).backgroundColor,
+    );
+    await theme.selectOption("dark");
+    const darkShellBackground = await page.locator(".product-shell").evaluate(
+      (element) => getComputedStyle(element).backgroundColor,
+    );
+
+    expect(lightShellBackground).not.toBe(darkShellBackground);
+
+    const workspaces = [
+      "Tax quotes", "Tax simulator", "Invoice tax", "Payment review",
+      "Document payment", "Tax rules", "Access & approvals", "Treasury",
+      "Balance checks", "Partner payouts", "Adjustments", "Refund requests",
+      "Refund cancellations", "Refund payments", "Exceptions & recovery",
+    ] as const;
+
+    for (const workspace of workspaces) {
+      await openNavigationGroupFor(page, workspace);
+      await page.getByRole("button", { name: workspace, exact: true }).click();
+      await expect(page.locator(".product-shell")).toHaveAttribute("data-theme", "dark");
+      await expect.poll(() => page.locator(".product-shell").evaluate(
+        (element) => getComputedStyle(element).backgroundColor,
+      )).toBe(darkShellBackground);
+    }
+  });
+
+  test("restores display preferences without restoring local credentials", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Open display settings" }).click();
+    await page.getByRole("combobox", { name: "Language" }).selectOption("ar-EG");
+    await page.getByRole("combobox", { name: "Time zone" }).fill("Asia/Kolkata");
+    await page.getByRole("combobox", { name: "Theme" }).selectOption("light");
+    await fillLocalCredential(page, "never-persist-this-credential");
+
+    await page.reload();
+
+    await expect(page.locator(".product-shell")).toHaveAttribute("data-theme", "light");
+    await expect(page.locator("html")).toHaveAttribute("lang", "ar");
+    await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+    await page.getByRole("button", { name: "Open display settings" }).click();
+    await expect(page.getByRole("combobox", { name: "Language" })).toHaveValue("ar-EG");
+    await expect(page.getByRole("combobox", { name: "Time zone" })).toHaveValue("Asia/Kolkata");
+
+    await page.getByRole("button", { name: "Open local sign-in" }).click();
+    await expect(page.getByLabel("Sign-in credential (held in memory)")).toHaveValue("");
+    await expectNoBrowserAxeViolations(page, "persisted display preferences");
   });
 
   test("keeps narrow RTL and reduced-motion display behavior bounded", async ({ page }) => {
@@ -452,7 +601,9 @@ test.describe("real-browser SPA journeys", () => {
     await page.getByText("Display settings", { exact: true }).click();
     await page.getByRole("combobox", { name: "Language" }).selectOption("ar-EG");
     await page.getByRole("button", { name: "Open navigation", exact: true }).click();
+    await openNavigationGroupFor(page, "Tax rules");
     await expect(page.getByRole("button", { name: "Tax rules", exact: true })).toBeVisible();
+    await openNavigationGroupFor(page, "Balance checks");
     await page.getByRole("button", { name: "Balance checks", exact: true }).click();
     await expect(page.getByRole("button", { name: "Open navigation", exact: true })).toHaveAttribute("aria-expanded", "false");
     await page.getByRole("button", { name: "Open navigation", exact: true }).click();
@@ -470,6 +621,7 @@ test.describe("real-browser SPA journeys", () => {
   test("contains a real dynamic-import failure without exposing exception data", async ({ page }) => {
     await page.route("**/assets/GovernancePanel-*.js", (route) => route.abort("failed"));
     await page.goto("/");
+    await openNavigationGroupFor(page, "Tax rules");
     await page.getByRole("button", { name: "Tax rules", exact: true }).click();
 
     await expect(page.getByRole("heading", { name: "This workspace could not be loaded" })).toBeVisible();
@@ -550,8 +702,9 @@ test.describe("real-browser SPA journeys", () => {
     }));
 
     await page.goto("/");
-    await expect(page.getByText("All systems operational")).toBeVisible();
-    await page.getByLabel("Sign-in credential (held in memory)").fill("synthetic-browser-token");
+    await openSystemStatus(page);
+    await fillLocalCredential(page, "synthetic-browser-token");
+    await openLocationVerification(page);
     await page.getByLabel("Provider-signed location record (advanced)").fill("[{}]");
     await page.getByLabel("Total before tax").fill("1100");
     await page.getByLabel("Amount subject to tax").fill("1000");
@@ -581,7 +734,7 @@ test.describe("real-browser SPA journeys", () => {
     });
 
     await page.goto("/");
-    await expect(page.getByText("All systems operational")).toBeVisible();
+    await openSystemStatus(page);
     await page.getByRole("button", { name: "Payment review", exact: true }).click();
     await page.getByRole("button", { name: "Connect wallet", exact: true }).click();
     await expect(page.getByRole("alert")).toContainText("User rejected wallet connection");
@@ -645,7 +798,7 @@ test.describe("real-browser SPA journeys", () => {
     });
 
     await page.goto("/");
-    await expect(page.getByText("All systems operational")).toBeVisible();
+    await openSystemStatus(page);
     await page.getByRole("button", { name: "Payment review", exact: true }).click();
     await page.getByRole("button", { name: "Connect wallet", exact: true }).click();
 
@@ -659,7 +812,7 @@ test.describe("real-browser SPA journeys", () => {
     await expectNoBrowserAxeViolations(page, "Wallet Standard account selection");
 
     await page.reload();
-    await expect(page.getByText("All systems operational")).toBeVisible();
+    await openSystemStatus(page);
     await page.getByRole("button", { name: "Payment review", exact: true }).click();
     await page.getByRole("button", { name: "Connect wallet", exact: true }).click();
     await expect(page.getByRole("combobox", { name: "Wallet account" })).toHaveValue("");
@@ -677,8 +830,9 @@ test.describe("real-browser SPA journeys", () => {
     });
 
     await page.goto("/");
-    await expect(page.getByText("All systems operational")).toBeVisible();
-    await page.getByLabel("Sign-in credential (held in memory)").fill("synthetic-browser-token");
+    await openSystemStatus(page);
+    await fillLocalCredential(page, "synthetic-browser-token");
+    await openNavigationGroupFor(page, "Refund requests");
     await page.getByRole("button", { name: "Refund requests", exact: true }).click();
     await page.getByLabel("Approved correction reference").fill("01992f1b-4a70-7e30-8ea2-b6e37a9d9d12");
     await page.getByRole("button", { name: "Prepare refund request", exact: true }).click();
@@ -690,8 +844,9 @@ test.describe("real-browser SPA journeys", () => {
     await expectNoBrowserAxeViolations(page, "finalized refund proof");
 
     await page.reload();
-    await expect(page.getByText("All systems operational")).toBeVisible();
-    await page.getByLabel("Sign-in credential (held in memory)").fill("synthetic-browser-token");
+    await openSystemStatus(page);
+    await fillLocalCredential(page, "synthetic-browser-token");
+    await openNavigationGroupFor(page, "Refund requests");
     await page.getByRole("button", { name: "Refund requests", exact: true }).click();
     await page.getByLabel("Refund request reference").fill("01992f1b-4a70-7e30-8ea2-b6e37a9d9d14");
     await page.getByRole("button", { name: "Load saved request", exact: true }).click();
@@ -710,8 +865,8 @@ test.describe("real-browser SPA journeys", () => {
     }));
 
     await page.goto("/");
-    await expect(page.getByText("All systems operational")).toBeVisible();
-    await page.getByLabel("Sign-in credential (held in memory)").fill("synthetic-browser-token");
+    await openSystemStatus(page);
+    await fillLocalCredential(page, "synthetic-browser-token");
     await page.getByRole("button", { name: "Invoice tax", exact: true }).click();
     await page.getByLabel("Document ID").fill("invoice-1");
     await page.getByLabel("Currency").fill("USD");
@@ -722,6 +877,7 @@ test.describe("real-browser SPA journeys", () => {
     await page.getByLabel("Line ID").fill("line-a");
     await page.getByLabel("Amount before tax").fill("3000");
     await page.getByLabel("Amount after tax").fill("3000");
+    await openLocationVerification(page);
     await page.getByLabel("Provider-signed location record (advanced)").fill("[{}]");
     await page.getByRole("button", { name: "Calculate invoice tax", exact: true }).click();
 
@@ -740,13 +896,13 @@ test.describe("real-browser SPA journeys", () => {
     }));
 
     await page.goto("/");
-    await expect(page.getByText("All systems operational")).toBeVisible();
-    await page.getByLabel("Sign-in credential (held in memory)").fill("synthetic-browser-token");
+    await openSystemStatus(page);
+    await fillLocalCredential(page, "synthetic-browser-token");
     await page.getByRole("button", { name: "Document payment", exact: true }).click();
 
     await expect(page.getByRole("alert")).toContainText("active settlement routes are unavailable");
-    await expect(page.getByRole("combobox", { name: "Active settlement route" })).toHaveValue("");
-    await expect(page.getByRole("button", { name: "Compile document payment for review", exact: true })).toBeDisabled();
+    await expect(page.getByRole("combobox", { name: "Payment route" })).toHaveValue("");
+    await expect(page.getByRole("button", { name: "Prepare payment for review", exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Sign and submit", exact: true })).toHaveCount(0);
     await expectNoBrowserAxeViolations(page, "document checkout route failure state");
   });
@@ -787,6 +943,7 @@ test.describe("real-browser SPA journeys", () => {
       { pubkey: "3MUvGdb23Wh2N42NKSiQE1wcRbR3RXSXZde2MPiihHAq", is_signer: false, is_writable: false },
       { pubkey: route.net_destination, is_signer: false, is_writable: true },
       { pubkey: "8nGRRJuGoubpUKHVa5paPCvGLQU39nnu3zFWYREbSeNN", is_signer: false, is_writable: true },
+      { pubkey: "2nqeGnn1BrXoKjG6H5cSFReSEuDxpb18GH3g8bkt3YVy", is_signer: false, is_writable: false },
       { pubkey: tokenProgram, is_signer: false, is_writable: false },
       { pubkey: "11111111111111111111111111111111", is_signer: false, is_writable: false },
     ];
@@ -893,6 +1050,7 @@ test.describe("real-browser SPA journeys", () => {
         vault_authority: accounts[6].pubkey,
         policy_attestation: accounts[7].pubkey,
         receipt: accounts[9].pubkey,
+        asset_config: accounts[10].pubkey,
         compute_budget_policy: { policy_version: 1, compute_unit_limit: 200000, micro_lamports_per_compute_unit: 1000 },
         document_attestation_digest: new Array(32).fill(8),
         payment_scope_digest: new Array(32).fill(9),
@@ -914,8 +1072,8 @@ test.describe("real-browser SPA journeys", () => {
     }));
 
     await page.goto("/");
-    await expect(page.getByText("All systems operational")).toBeVisible();
-    await page.getByLabel("Sign-in credential (held in memory)").fill("synthetic-browser-token");
+    await openSystemStatus(page);
+    await fillLocalCredential(page, "synthetic-browser-token");
     await page.getByRole("button", { name: "Invoice tax", exact: true }).click();
     await page.getByLabel("Document ID").fill("invoice-1");
     await page.getByLabel("Currency").fill("USD");
@@ -926,24 +1084,32 @@ test.describe("real-browser SPA journeys", () => {
     await page.getByLabel("Line ID").fill("line-a");
     await page.getByLabel("Amount before tax").fill("3000");
     await page.getByLabel("Amount after tax").fill("3000");
+    await openLocationVerification(page);
     await page.getByLabel("Provider-signed location record (advanced)").fill("[{}]");
     await page.getByRole("button", { name: "Calculate invoice tax", exact: true }).click();
     await expect(page.getByText(`Calculation ID ${calculationId}`, { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Open document checkout", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Authorize a documented payment", exact: true })).toBeVisible();
+    await expect(page).toHaveURL(/\/operations\/document-payment$/);
+    await expect(page.getByRole("heading", { name: "Review and authorize this payment", exact: true })).toBeVisible();
 
-    await page.getByLabel("Issuer-signed document attestation (JSON)").fill('{"issuer":"synthetic-test"}');
-    await page.getByRole("button", { name: "Verify document attestation", exact: true }).click();
-    await expect(page.getByText("Document attested, not settled", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Compile document payment for review", exact: true })).toBeDisabled();
+    await page.getByLabel("Invoice evidence (signed record)").fill('{"issuer":"synthetic-test"}');
+    await page.getByRole("button", { name: "Verify invoice evidence", exact: true }).click();
+    await expect(page.getByText("Invoice verified; payment not sent", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Prepare payment for review", exact: true })).toBeDisabled();
 
     await page.getByRole("button", { name: "Connect wallet", exact: true }).click();
-    await page.getByRole("button", { name: "Compile document payment for review", exact: true }).click();
-    await expect(page.getByText("Payment ready for review", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Prepare payment for review", exact: true }).click();
+    await expect(page.getByText("Payment ready for your approval", { exact: true })).toBeVisible();
     await expect(page.getByText("3000", { exact: true })).toBeVisible();
     await expect(page.getByText("247", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Sign and send payment", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Approve and send payment", exact: true })).toBeEnabled();
     await expectNoBrowserAxeViolations(page, "document evidence handoff and reviewed artifact");
+
+    await page.reload();
+    await expect(page).toHaveURL(/\/operations\/document-payment$/);
+    await expect(page.getByRole("heading", { name: "Review and authorize this payment", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Verify invoice evidence", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Prepare payment for review", exact: true })).toBeDisabled();
   });
 
   test("renders server-owned reconciliation evidence and stops on mismatch", async ({ page }) => {
@@ -984,8 +1150,9 @@ test.describe("real-browser SPA journeys", () => {
     });
 
     await page.goto("/");
+    await openNavigationGroupFor(page, "Balance checks");
     await page.getByRole("button", { name: "Balance checks", exact: true }).click();
-    await page.getByLabel("Sign-in credential (held in memory)").fill("synthetic-browser-token");
+    await fillLocalCredential(page, "synthetic-browser-token");
     await page.getByRole("button", { name: "Load reconciliation targets", exact: true }).click();
 
     await expect(page.getByText("Mismatch — stop and investigate", { exact: true }).first()).toBeVisible();
@@ -1033,8 +1200,9 @@ test.describe("real-browser SPA journeys", () => {
     }));
 
     await page.goto("/");
+    await openNavigationGroupFor(page, "Balance checks");
     await page.getByRole("button", { name: "Balance checks", exact: true }).click();
-    await page.getByLabel("Sign-in credential (held in memory)").fill("synthetic-browser-token");
+    await fillLocalCredential(page, "synthetic-browser-token");
     await page.getByRole("button", { name: "Load reconciliation targets", exact: true }).click();
 
     await expect(page.getByText("Stale — stop and investigate", { exact: true }).first()).toBeVisible();
@@ -1052,8 +1220,9 @@ test.describe("real-browser SPA journeys", () => {
     }));
 
     await page.goto("/");
+    await openNavigationGroupFor(page, "Balance checks");
     await page.getByRole("button", { name: "Balance checks", exact: true }).click();
-    await page.getByLabel("Sign-in credential (held in memory)").fill("synthetic-browser-token");
+    await fillLocalCredential(page, "synthetic-browser-token");
     await page.getByRole("button", { name: "Load reconciliation targets", exact: true }).click();
 
     await expect(page.getByRole("alert")).toContainText("vault reconciliation access is not authorized");

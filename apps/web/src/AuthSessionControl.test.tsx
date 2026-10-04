@@ -21,6 +21,8 @@ describe("shared browser sign-in control", () => {
 
     const field = screen.getByLabelText("Sign-in credential (held in memory)");
     expect(field).toBeTruthy();
+    const disclosure = screen.getByRole("button", { name: "Open local sign-in" });
+    expect(disclosure.closest("details")?.hasAttribute("open")).toBe(false);
     fireEvent.change(field, { target: { value: "synthetic" } });
     expect(onCredentialChange).toHaveBeenCalledWith("synthetic");
   });
@@ -60,6 +62,23 @@ describe("shared browser sign-in control", () => {
 
     expect(screen.getByRole("alert").textContent).toContain("The identity provider is not configured.");
     expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+  });
+
+  it("does not make an unconfigured sign-in error dominate the shell", () => {
+    render(<AuthSessionControl
+      config={parseBrowserAuthConfig({ VITE_DEPLOYMENT_ENVIRONMENT: "production" })}
+      accessToken=""
+      status="error"
+      error="The identity provider is not configured."
+      onCredentialChange={() => undefined}
+      onSignIn={() => undefined}
+      onSignOut={() => undefined}
+    />);
+
+    const summary = screen.getByRole("button", { name: "Sign-in unavailable" });
+    expect(summary.closest("details")?.hasAttribute("open")).toBe(false);
+    fireEvent.click(summary);
+    expect(screen.getByRole("alert").textContent).toContain("The identity provider is not configured.");
   });
 
   it("offers sign out without exposing the access token", () => {

@@ -939,16 +939,20 @@ All endpoints derive the merchant from the authenticated principal and never
 accept a caller-supplied merchant identifier.
 
 `POST /v1/vault/release-claims` requires `tax:vault:propose` and the
-`vault_release_proposer` role. It accepts Solana account addresses, decimal
-string `u64` values, a non-zero 32-byte reference digest, and a Unix execution
-window no longer than 90 days:
+`vault_release_proposer` role. The browser selects a UUIDv7 route from the
+server-owned route registry and supplies only the beneficiary account,
+decimal-string `u64` values, a non-zero 32-byte reference digest, and a Unix
+execution window no longer than 90 days:
+
+`GET /v1/vault/release-routes` requires the same scope and role. It returns at
+most 64 active, effective, finalized-verified settlement routes for the
+authenticated merchant. The route's mint, token program, tax vault, and
+verification evidence are not caller-selectable.
 
 ```json
 {
   "idempotency_key": "release-01J8Q4J0M9M2G7YB8F5N3D6K9R",
-  "mint": "<base58-mint>",
-  "token_program": "<base58-token-program>",
-  "tax_vault": "<base58-vault-token-account>",
+  "route_id": "01992f1b-4a70-7e30-8ea2-b6e37a9d9d23",
   "destination": "<base58-destination-token-account>",
   "nonce": "42",
   "amount_atomic": "250000",
@@ -957,6 +961,12 @@ window no longer than 90 days:
   "expires_at_unix": 1790003600
 }
 ```
+
+The service resolves `route_id` inside the serializable write transaction and
+stores the resolved mint, token program, and tax-vault snapshot. The request
+digest binds both the route ID and that resolved snapshot; a client-provided
+merchant account, mint, token program, or tax-vault address is rejected as an
+unknown field.
 
 Claim responses use the exact wire contract `nonce`, `amount_atomic`, and
 optional `slot` as canonical decimal strings, including values above

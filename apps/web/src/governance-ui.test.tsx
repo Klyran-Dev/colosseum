@@ -10,11 +10,24 @@ afterEach(() => {
 });
 
 describe("governance workbench submission boundary", () => {
+  function fillReleaseEvidence() {
+    fireEvent.change(screen.getByLabelText("Source record"), { target: { value: "controlled-record://test/rule-001" } });
+    fireEvent.change(screen.getByLabelText(/^Source SHA-256 digest/), { target: { value: "ab".repeat(32) } });
+    fireEvent.change(screen.getByLabelText("Legal/tax owner"), { target: { value: "tax-owner:test" } });
+    fireEvent.change(screen.getByLabelText("Reviewed on"), { target: { value: "2026-09-27T10:00" } });
+    fireEvent.change(screen.getByLabelText("Review record"), { target: { value: "review://test/rule-001" } });
+  }
+
   it("presents rule authoring as a guided tax task", () => {
     render(<GovernancePanel apiBase="/api" serviceOnline accessToken="author-token" />);
 
     expect(screen.getByRole("heading", { name: "How the tax is calculated" })).toBeTruthy();
     expect(screen.getByText("Checked before publishing")).toBeTruthy();
+    expect(screen.getByLabelText("Source record")).toBeTruthy();
+    expect(screen.getByLabelText(/^Source SHA-256 digest/)).toBeTruthy();
+    expect(screen.getByLabelText("Legal/tax owner")).toBeTruthy();
+    expect(screen.getByLabelText("Reviewed on")).toBeTruthy();
+    expect(screen.getByLabelText("Review record")).toBeTruthy();
     expect(screen.getByLabelText("How the rate changes")).toBeTruthy();
     expect(screen.getByLabelText("When rounding happens")).toBeTruthy();
     expect(screen.queryByText("Structured Tier-1 authoring")).toBeNull();
@@ -57,6 +70,7 @@ describe("governance workbench submission boundary", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<GovernancePanel apiBase="/api" serviceOnline accessToken="author-token" />);
+    fillReleaseEvidence();
     fireEvent.click(screen.getByRole("button", { name: "Create governed draft" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
@@ -71,6 +85,15 @@ describe("governance workbench submission boundary", () => {
     expect(component.rate).toEqual({ Flat: { numerator: "10", denominator: "100" } });
     expect(component.base).toEqual({ sources: ["Net"] });
     expect(component.credit_atomic).toBe("0");
+    expect(requestBody.provenance).toEqual({
+      schema: "tax-rule-provenance/v1",
+      source_reference: "controlled-record://test/rule-001",
+      source_digest_hex: "ab".repeat(32),
+      legal_tax_owner: "tax-owner:test",
+      jurisdiction_scope: "US-CA",
+      reviewed_at_unix: Math.floor(Date.parse("2026-09-27T10:00") / 1000),
+      review_reference: "review://test/rule-001",
+    });
     expect(fetchMock.mock.calls[0][1].headers).toMatchObject({ authorization: "Bearer author-token" });
     expect(screen.getByText(/Draft new-sales-tax v1 was created/)).toBeTruthy();
   });
@@ -128,6 +151,7 @@ describe("governance workbench submission boundary", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<GovernancePanel apiBase="/api" serviceOnline accessToken="author-token" />);
+    fillReleaseEvidence();
     fireEvent.click(screen.getByRole("button", { name: "Create governed draft" }));
     await waitFor(() => expect((screen.getByRole("button", { name: "Run controlled simulation" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.change(screen.getAllByLabelText("Amount before tax")[0], { target: { value: "1100" } });
@@ -140,6 +164,6 @@ describe("governance workbench submission boundary", () => {
     expect(JSON.parse(fetchMock.mock.calls[2][1].body as string)).toEqual({
       facts: { gross_atomic: "1100", net_atomic: "1000", currency: "USD", jurisdiction: "US-CA" },
     });
-    expect(screen.getByText(/controlled scenario result/i)).toBeTruthy();
+    await waitFor(() => expect(screen.getByText(/controlled scenario result/i)).toBeTruthy());
   });
 });

@@ -2599,6 +2599,24 @@ mod tests {
     }
 
     #[test]
+    fn document_rounding_rejects_non_conserving_tiny_line() {
+        let result = calculate_document(
+            &independent_document_rule(RoundingScope::Invoice),
+            &document_facts(vec![
+                line("line-00", 1),
+                line("line-01", 2_305),
+                line("line-02", 4_162),
+            ]),
+        );
+
+        assert!(matches!(
+            result,
+            Err(TaxError::InvalidFacts(message))
+                if message.contains("line tax cannot exceed gross amount")
+        ));
+    }
+
+    #[test]
     fn document_digest_is_line_order_independent_but_line_identity_bound() {
         let first = document_facts(vec![line("line-a", 10), line("line-b", 20)]);
         let second = document_facts(vec![line("line-b", 20), line("line-a", 10)]);
@@ -3681,7 +3699,11 @@ mod tests {
 
         #[test]
         fn document_rounding_preserves_conservation_for_bounded_line_sets(
-            amounts in prop::collection::vec(1i128..10_000i128, 1..=8),
+            // The fixture has two independent 1/3 components. A one- or
+            // two-unit line can round both components up and is therefore an
+            // intentionally invalid conservation case, not a valid input for
+            // this property. Rejection is covered by the boundary tests.
+            amounts in prop::collection::vec(3i128..10_000i128, 1..=8),
         ) {
             let rule = independent_document_rule(RoundingScope::Invoice);
             let lines = amounts

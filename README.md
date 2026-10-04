@@ -50,10 +50,11 @@ The Solana core uses Rust/Anchor-compatible interfaces. The Tier-1 Tax Engine is
 - [Code of conduct](CODE_OF_CONDUCT.md)
 - [Operations runbooks](docs/runbooks/README.md)
 - [Tier-1 decision register](docs/operations/decision-register.md)
+- [Requirements traceability and evidence matrix](docs/operations/requirements-traceability.md)
 
 ## Engineering contract
 
-All implementation work follows [AGENTS.md](AGENTS.md): design before code, alternatives before decisions, TDD, production-quality vertical slices, bounded concurrency, measurable latency, Docker-based development, explicit security controls, and no demo-only paths. `make security-scan` runs the pinned Trivy vulnerability, secret, and Docker misconfiguration gate used by CI; critical/high findings fail the check.
+All implementation work follows [AGENTS.md](AGENTS.md): design before code, alternatives before decisions, TDD, production-quality vertical slices, bounded concurrency, measurable latency, Docker-based development, explicit security controls, and no demo-only paths. `make check` includes the semantic Material color contract and the static 4.5:1 light/dark palette contrast gate; `make tier1-local-check` runs the full ordered local evidence gate (`check`, authenticated Docker integration, real-browser UI, and validator conformance); `make security-scan` runs the pinned Trivy vulnerability, secret, and Docker misconfiguration gate used by CI; critical/high findings fail the check.
 
 ## Public repository status
 
@@ -82,6 +83,11 @@ commands (`make solana-conformance` and `make web-browser-check`).
 If a host port is already in use, provide an explicit alternate port map (for
 example `REDIS_PORT=46380 SOLANA_RPC_PORT=18899 SOLANA_FAUCET_PORT=18900`)
 and keep the printed endpoints as the client configuration for that stack.
+
+If a deliberately reused local volume fails closed on a historical migration
+checksum, run `make reset-local` and type `YES` at the explicit prompt. This
+removes only the named Compose project's synthetic local volumes; `make down`
+remains non-destructive and no production workflow calls the reset command.
 
 Run `make benchmark-rule-simulation` for the separate facts-only persisted-rule
 simulation workload. It verifies server-owned rule identity and digest binding,

@@ -32,6 +32,9 @@ The verifier requires:
 - both token accounts to encode the configured mint;
 - the tax-vault token account owner to equal the deterministic
   `vault-authority` PDA for the configured merchant and mint;
+- the mint-scoped `AssetConfig` PDA to be owned by the settlement program,
+  initialized with the exact mint, token program, decimals, stablecoin kind,
+  enabled state, discriminator, and derived bump;
 - an RPC context slot and exact account response cardinality, with bounded
   response bytes and no null account values.
 
@@ -85,7 +88,7 @@ selection read without an RPC dependency.
    executable flags, bounded account-data digests, mint decimals, commitment,
    and observed slot.
 3. The verified account order is fixed and the response must contain exactly
-   the requested four accounts.
+   the requested five accounts, including the asset-admission PDA.
 4. Account substitution, null responses, unsupported owners, unsupported
    layouts, vault-authority mismatch, provider disagreement, and deadline
    expiry fail closed.
@@ -112,4 +115,3 @@ Trade-offs and release gates:
 - This verifies account topology and layout, not legal tax correctness,
   liquidity, issuer solvency, or governance authorization; those remain
   separate release gates.
-

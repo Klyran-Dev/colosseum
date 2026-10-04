@@ -86,8 +86,9 @@ finality, or reconciliation result.
 runner type-checks the e2e project before launching Playwright and audits the
 quote, degraded API-health state, every lazy operational workspace, and the
 finalized refund-proof journey with axe-core WCAG A/AA tags. The current run
-passes 15/15 journeys. CI retains failure artifacts and publishes the result
-as a separate browser journey gate. This closes the deterministic real-browser
+passed 15/15 journeys at the original decision point; the current suite is
+expanded and tracked by the release evidence ADR. CI retains failure artifacts
+and publishes the result as a separate browser journey gate. This closes the deterministic real-browser
 journey contract but does not, by itself, prove screen-reader quality,
 legal/tax correctness, live RPC behavior, or general WCAG 2.2 AA conformance;
 manual assistive-technology review and live-provider release gates remain

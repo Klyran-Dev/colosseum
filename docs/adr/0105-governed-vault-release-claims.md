@@ -48,6 +48,13 @@ vault balance or a consumed claim. Release events contain the claim, scope,
 amount, destination, reference digest, and actor identities for finalized
 indexing and reconciliation.
 
+The treasury proposal UI must never invent a reference digest, nonce, amount,
+or present a fixture as approved evidence. Evidence, nonce, and amount start
+empty and the create action remains browser-form-invalid until the operator
+supplies the exact values produced by the approved workflow. This is a
+usability and safety boundary only; the API and chain contracts remain
+authoritative.
+
 This ADR does not claim that a release is tax remittance, legal filing, or
 custody approval. Those meanings require a jurisdiction/product-specific
 policy, legal owner, and off-chain evidence workflow.
@@ -108,5 +115,6 @@ gates.
 - `crates/storage/src/lib.rs`
 - `crates/api/src/lib.rs`
 - `apps/web/src/VaultReleasePanel.tsx`
+- `apps/web/src/vaultRelease-ui.test.tsx` (empty-evidence fail-closed contract)
 - `apps/web/src/solana.localnet.test.ts`
 - `scripts/verify_local_stack.sh`

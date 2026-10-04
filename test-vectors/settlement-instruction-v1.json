@@ -51,6 +51,7 @@
       { "pubkey": "3MUvGdb23Wh2N42NKSiQE1wcRbR3RXSXZde2MPiihHAq", "is_signer": false, "is_writable": false },
       { "pubkey": "QWmroo4YnnMqYW3cnxWkFdaTxGD3P7vMSzwMHGbUzwF", "is_signer": false, "is_writable": true },
       { "pubkey": "8nGRRJuGoubpUKHVa5paPCvGLQU39nnu3zFWYREbSeNN", "is_signer": false, "is_writable": true },
+      { "pubkey": "2nqeGnn1BrXoKjG6H5cSFReSEuDxpb18GH3g8bkt3YVy", "is_signer": false, "is_writable": false },
       { "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "is_signer": false, "is_writable": false },
       { "pubkey": "11111111111111111111111111111111", "is_signer": false, "is_writable": false }
     ],
@@ -58,6 +59,7 @@
     "vault_authority": "CsNjEE9EUZUJeAVqSWmbZxT9WB9h4xYvuLNRRPymrGcs",
     "policy_attestation": "3MUvGdb23Wh2N42NKSiQE1wcRbR3RXSXZde2MPiihHAq",
     "receipt": "8nGRRJuGoubpUKHVa5paPCvGLQU39nnu3zFWYREbSeNN",
+    "asset_config": "2nqeGnn1BrXoKjG6H5cSFReSEuDxpb18GH3g8bkt3YVy",
     "compute_budget_policy": {
       "policy_version": 1,
       "compute_unit_limit": 200000,

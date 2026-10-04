@@ -1,4 +1,4 @@
-import { ReactNode, useMemo, useState } from "react";
+import { ReactNode, useEffect, useMemo, useState } from "react";
 import {
   ActionRisk,
   AuthorizationSnapshot,
@@ -13,9 +13,10 @@ import { BROWSER_RUNTIME_CONTEXT, RuntimeContext } from "./runtimeContext";
 import AuthSessionControl, { AuthSessionStatus } from "./AuthSessionControl";
 import { BROWSER_AUTH_CONFIG, BrowserAuthConfig } from "./authConfig";
 import { pathForWorkspace, ProductWorkspace } from "./navigation";
+import { DisplayTheme } from "./displayPreferences";
 
 export type { ProductWorkspace } from "./navigation";
-export type ThemePreference = "system" | "light" | "dark";
+export type ThemePreference = DisplayTheme;
 
 type ServiceState = "checking" | "online" | "offline";
 
@@ -71,9 +72,56 @@ const NAVIGATION: readonly NavigationItem[] = [
 
 const GROUPS: readonly WorkspaceGroup[] = ["Daily work", "Rules & access", "Money movement", "Records & issues"];
 
-function ShellStatus({ serviceState }: { serviceState: ServiceState }) {
-  const label = { checking: "Checking services", online: "All systems operational", offline: "Some services unavailable" }[serviceState];
-  return <span className={`shell-service shell-service-${serviceState}`} role="status" aria-live="polite"><span className="status-dot" />{label}</span>;
+function SystemStatus({
+  runtimeContext,
+  serviceState,
+  signedIn,
+}: {
+  runtimeContext: RuntimeContext;
+  serviceState: ServiceState;
+  signedIn: boolean;
+}) {
+  const issues = [
+    !runtimeContext.environment.configured,
+    !runtimeContext.network.configured,
+    serviceState === "offline",
+  ].filter(Boolean).length;
+  const summary = serviceState === "checking" ? "Checking" : issues === 0 ? "Ready" : "Needs attention";
+  const serviceLabel = { checking: "Checking services", online: "All systems operational", offline: "Some services unavailable" }[serviceState];
+  const statusClass = serviceState === "checking" ? "checking" : issues === 0 ? "ready" : "attention";
+
+  return <details className={`system-status system-status-${statusClass}`}>
+    <summary role="button" aria-label={`System status: ${summary}`}>
+      <span className="system-status-indicator" aria-hidden="true"><span className="status-dot" /></span>
+      <span>System status</span>
+      <strong>{summary}</strong>
+      {issues > 0 && <span className="system-status-count" aria-label={`${issues} items need attention`}>{issues}</span>}
+    </summary>
+    <div className="system-status-panel" aria-label="System status details">
+      <div className="system-status-heading"><strong>System status</strong><small>These details describe the current release and service state. They do not grant access.</small></div>
+      <div className="system-status-row">
+        <span>Deployment environment</span>
+        <strong>{runtimeContext.environment.label}</strong>
+        <small>{runtimeContext.environment.configured ? "Release context confirmed." : "Ask the release owner to configure this build."}</small>
+      </div>
+      <div className="system-status-row">
+        <span>Solana network</span>
+        <strong>{runtimeContext.network.label}</strong>
+        <small>{runtimeContext.network.configured ? "Network context confirmed." : "Ask the release owner to configure the target network."}</small>
+      </div>
+      <div className="system-status-row">
+        <span>API services</span>
+        <strong>{serviceLabel}</strong>
+        <small>{serviceState === "online" ? "The service responded to the latest check." : serviceState === "checking" ? "The service check is still running." : "Try again later; no client-side fallback is used."}</small>
+      </div>
+      <div className="system-status-row">
+        <span>Account session</span>
+        <strong>{signedIn ? "Signed in" : "Sign-in required"}</strong>
+        <small>{signedIn ? "Protected actions still receive a fresh server decision." : "Sign in to see account actions."}</small>
+      </div>
+      {runtimeContext.warnings.length > 0 && <p className="system-status-warning" role="alert">{runtimeContext.warnings.join(" ")}</p>}
+    </div>
+  </details>;
 }
 
 function navigationAccess(item: NavigationItem, snapshot: AuthorizationSnapshot): UiAccessDecision {
@@ -112,6 +160,7 @@ export default function ProductShell({
   children,
 }: ProductShellProps) {
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+  const [openNavigationGroups, setOpenNavigationGroups] = useState<Set<WorkspaceGroup>>(() => new Set(["Daily work"]));
   const direction = directionForLocale(locale);
   const current = NAVIGATION.find((item) => item.workspace === workspace) ?? NAVIGATION[0];
   const derivedSnapshot = useMemo(() => authorizationSnapshotForToken(accessToken), [accessToken]);
@@ -121,9 +170,17 @@ export default function ProductShell({
   const accountLabel = snapshot.state === "server-allowed" && snapshot.tenantId ? `Account ${snapshot.tenantId.slice(0, 8)}` : "Sign-in required";
   const accountSubtext = snapshot.state === "server-allowed" && snapshot.tenantId ? "Account confirmed by the service" : "Account context appears after sign-in";
   const subjectLabel = snapshot.subject ?? (accessToken ? "Identity not confirmed" : "Not signed in");
-  const contextWarning = runtimeContext.warnings.join(" ");
   const groupedItems = (group: WorkspaceGroup) => NAVIGATION.filter((item) => item.group === group);
   const effectiveTimeZone = isValidTimeZone(timeZone) ? timeZone : DEFAULT_TIME_ZONE;
+
+  useEffect(() => {
+    setOpenNavigationGroups((groups) => {
+      if (groups.has(current.group)) return groups;
+      const next = new Set(groups);
+      next.add(current.group);
+      return next;
+    });
+  }, [current.group]);
 
   function navigateToWorkspace(nextWorkspace: ProductWorkspace) {
     setMobileNavigationOpen(false);
@@ -156,9 +213,28 @@ export default function ProductShell({
         </div>
         <nav id="primary-navigation" className={`primary-nav ${mobileNavigationOpen ? "primary-nav-open" : ""}`} aria-label="Primary">
           {GROUPS.map((group) => (
-            <div className="nav-group" key={group}>
-              <p className="nav-group-label">{group}</p>
-              {groupedItems(group).map((item) => {
+            <details
+              className="nav-group-disclosure"
+              key={group}
+              open={current.group === group || openNavigationGroups.has(group)}
+              onToggle={(event) => {
+                if (event.currentTarget.open || current.group === group) {
+                  setOpenNavigationGroups((groups) => new Set(groups).add(group));
+                } else {
+                  setOpenNavigationGroups((groups) => {
+                    const next = new Set(groups);
+                    next.delete(group);
+                    return next;
+                  });
+                }
+              }}
+            >
+              <summary className="nav-group-summary">
+                <span className="nav-group-label">{group}</span>
+                <span className="nav-group-count" aria-label={`${groupedItems(group).length} workspaces`}>{groupedItems(group).length}</span>
+              </summary>
+              <div className="nav-group" role="group" aria-label={group}>
+                {groupedItems(group).map((item) => {
                 const decision = navigationAccess(item, snapshot);
                 const accessLabelForItem = navigationAccessLabel(decision, Boolean(accessToken));
                 return <button
@@ -167,16 +243,18 @@ export default function ProductShell({
                   className={`nav-item ${workspace === item.workspace ? "nav-item-active" : ""}`}
                   aria-current={workspace === item.workspace ? "page" : undefined}
                   aria-label={item.label}
+                  aria-describedby={`nav-${item.workspace}-context`}
                   title={`${item.description} ${accessLabelForItem}: ${decision.reason}`}
                   onClick={() => navigateToWorkspace(item.workspace)}
                 >
                   <span className="nav-item-icon" aria-hidden="true">{item.label.slice(0, 1)}</span>
-                  <span className="nav-item-copy"><strong>{item.label}</strong><small>{item.description}</small></span>
-                  <span className={`nav-policy-mark nav-policy-${decision.kind}`} aria-label={`${item.label}: ${accessLabelForItem}`} title={decision.reason}>{accessLabelForItem}</span>
-                  {item.risk !== "read" && <span className={`nav-risk nav-risk-${item.risk}`} title={item.risk === "financial" ? "Sensitive financial action" : item.risk === "governance" ? "Approval may be required" : "Change action"} aria-label={item.risk === "financial" ? "Sensitive financial action" : item.risk === "governance" ? "Approval may be required" : "Change action"}>•</span>}
+                  <span className="nav-item-copy"><strong>{item.label}</strong><span id={`nav-${item.workspace}-context`} className="nav-item-description sr-only">{item.description} Access: {accessLabelForItem}. {decision.reason}</span></span>
+                  <span className={`nav-policy-mark nav-policy-${decision.kind}`} aria-hidden="true" title={`${accessLabelForItem}: ${decision.reason}`}>{decision.kind === "allow" ? "✓" : decision.kind === "deny" ? "!" : "?"}</span>
+                  {item.risk !== "read" && <span className={`nav-risk nav-risk-${item.risk}`} title={item.risk === "financial" ? "Sensitive financial action" : item.risk === "governance" ? "Approval may be required" : "Change action"} aria-hidden="true">•</span>}
                 </button>;
-              })}
-            </div>
+                })}
+              </div>
+            </details>
           ))}
         </nav>
         <div className="sidebar-footer">
@@ -184,7 +262,7 @@ export default function ProductShell({
             <span className="identity-avatar" aria-hidden="true">{accessToken ? "✓" : "?"}</span>
             <span><strong>{accessLabel}</strong><small>{accessSubtext}</small></span>
           </div>
-          <small className="sidebar-legal">Tax withholding is not tax filing or legal advice.</small>
+          <small className="sidebar-legal">Automated withholding and evidence—not tax filing or legal advice.</small>
         </div>
       </aside>
 
@@ -192,9 +270,7 @@ export default function ProductShell({
         <header className="topbar product-topbar">
           <div className="breadcrumb" aria-label="Breadcrumb"><span>Operations</span><span aria-hidden="true">/</span><strong>{current.label}</strong></div>
           <div className="topbar-actions">
-            <span className={`environment-badge ${runtimeContext.environment.configured ? "" : "context-unconfigured"}`} title={runtimeContext.environment.configured ? undefined : contextWarning}><span className="environment-dot" />{runtimeContext.environment.label}</span>
-            <span className={`network-badge ${runtimeContext.network.configured ? "" : "context-unconfigured"}`} title={runtimeContext.network.configured ? undefined : contextWarning}>{runtimeContext.network.label}</span>
-            <ShellStatus serviceState={serviceState} />
+            <SystemStatus runtimeContext={runtimeContext} serviceState={serviceState} signedIn={Boolean(accessToken)} />
             <details className="display-settings">
               <summary role="button" aria-label="Open display settings">Display settings</summary>
               <div className="display-settings-menu">
@@ -256,15 +332,21 @@ export default function ProductShell({
         <main className="content product-content" id="main-content">
           <section className="page-heading" aria-labelledby="page-title">
             <div><p className="eyebrow">{current.group} / your work area</p><h1 id="page-title">{current.label}</h1><p className="page-description">{current.description}</p></div>
-            <div className="page-context-card"><span className="context-card-label">Your access</span><strong>{accessLabel}</strong><small>{authorizationError ?? "Protected actions may need review or approval."}</small></div>
+            <div className="page-context-card">
+              <span className="context-card-label">Your access</span>
+              <strong>{accessLabel}</strong>
+              <small>{authorizationError ?? "Protected actions may need review or approval."}</small>
+              <details className="protection-details">
+                <summary role="button" aria-label="Open protection details">Protection details</summary>
+                <div className="protection-details-panel" aria-label="Protection details">
+                  <div><strong>Account access</strong><small>{accessLabel}. {accessSubtext}.</small></div>
+                  <div><strong>Decision records</strong><small>Every decision has a record.</small></div>
+                  <div><strong>Sensitive actions</strong><small>Sensitive actions need approval.</small></div>
+                  <div><strong>Wallet custody</strong><small>Wallets stay with their owners.</small></div>
+                </div>
+              </details>
+            </div>
           </section>
-          <section className="security-strip" aria-label="Security context">
-            <span><i className="strip-icon">✓</i> Account access checked</span>
-            <span><i className="strip-icon">✓</i> Every decision has a record</span>
-            <span><i className="strip-icon">✓</i> Sensitive actions need approval</span>
-            <span><i className="strip-icon">✓</i> Wallets stay with their owners</span>
-          </section>
-          {contextWarning && <p className="context-warning" role="alert">{contextWarning} This display context cannot authorize actions.</p>}
           {children}
         </main>
         <footer className="footer"><span>Solana Tax Protocol · tax operations</span><span>Every important action has a traceable record.</span></footer>

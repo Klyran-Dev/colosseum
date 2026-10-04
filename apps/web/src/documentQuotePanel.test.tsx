@@ -144,7 +144,8 @@ describe("authenticated document quote workspace", () => {
 
     expect(screen.getByLabelText("Tax category")).toBeTruthy();
     expect(screen.getByLabelText("Approved tax rule")).toBeTruthy();
-    expect(screen.getByText("Location verification")).toBeTruthy();
+    const locationSummary = screen.getByText("Location verification");
+    expect(locationSummary.closest("details")?.hasAttribute("open")).toBe(false);
     expect(screen.getByRole("textbox", { name: /Provider-signed location record \(advanced\)/ })).toBeTruthy();
     expect(screen.queryByLabelText("Tax regime")).toBeNull();
     expect(screen.queryByLabelText("Published rule set ID")).toBeNull();

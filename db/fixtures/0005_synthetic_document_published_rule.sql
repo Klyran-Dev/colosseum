@@ -16,7 +16,7 @@ VALUES
       'published',
       decode('9364c26c91735950f09995028e11074006ea04d6493dfa6bfce1feb773c0f649', 'hex'),
       '{"schema":"solana-tax-protocol/tax-rule/v1","rule_set":{"id":"operator-document-flat-rate","version":1,"components":[{"id":"sales-tax","label":"Sales tax","base":{"sources":["Net"]},"rate":{"Flat":{"numerator":"10","denominator":"100"}},"price_mode":"Exclusive","credit_atomic":"0","floor_atomic":null,"cap_atomic":null,"rounding":{"mode":"HalfUp","scope":"Line"},"threshold":null,"exemption_codes":[]}]}}'::jsonb,
-      '{"source":"synthetic-local-fixture","owner":"development-only"}'::jsonb,
+      '{"schema":"tax-rule-provenance/v1","source_reference":"controlled-record://local/operator-document-flat-rate","source_digest_hex":"9364c26c91735950f09995028e11074006ea04d6493dfa6bfce1feb773c0f649","legal_tax_owner":"tax-owner:synthetic-local","jurisdiction_scope":"US-CA","reviewed_at_unix":1790000000,"review_reference":"review://local/operator-document-flat-rate"}'::jsonb,
       now() - interval '1 minute',
       'synthetic-document-rule-author',
       'synthetic-document-rule-reviewer',

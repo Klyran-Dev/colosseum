@@ -29,12 +29,34 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function fillAdjustmentProposalForm(): void {
+  fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "customer_refund" } });
+  fireEvent.change(screen.getByLabelText("Original payment reference"), { target: { value: record.original_settlement_id } });
+  fireEvent.change(screen.getByLabelText("Gross change"), { target: { value: "-250" } });
+  fireEvent.change(screen.getByLabelText("Tax change"), { target: { value: "-25" } });
+  fireEvent.change(screen.getByLabelText("Net change"), { target: { value: "-225" } });
+  fireEvent.change(screen.getByLabelText("Asset address"), { target: { value: JSON.stringify(record.asset_id) } });
+  fireEvent.change(screen.getByText("Supporting evidence").parentElement?.querySelector("textarea") as HTMLTextAreaElement, { target: { value: JSON.stringify(record.evidence_digest) } });
+  fireEvent.change(screen.getByLabelText("Source calculation reference"), { target: { value: record.source_calculation_id } });
+}
+
 describe("settlement adjustment operator workspace", () => {
+  it("does not invent settlement, financial, asset, or evidence inputs", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    render(<SettlementAdjustmentPanel apiBase="/api" serviceOnline accessToken="proposer-token" />);
+
+    expect((screen.getByLabelText("Original payment reference") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("Gross change") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("Asset address") as HTMLTextAreaElement).value).toBe("");
+    expect((screen.getByText("Supporting evidence").parentElement?.querySelector("textarea") as HTMLTextAreaElement).value).toBe("");
+  });
+
   it("submits exact signed strings and renders the server-owned proposal", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(record), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     render(<SettlementAdjustmentPanel apiBase="/api" serviceOnline accessToken="proposer-token" />);
 
+    fillAdjustmentProposalForm();
     fireEvent.click(screen.getByRole("button", { name: "Create adjustment request" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Record<string, unknown>;
@@ -58,11 +80,12 @@ describe("settlement adjustment operator workspace", () => {
     fireEvent.change(screen.getByLabelText("Adjustment reference"), { target: { value: record.id } });
     fireEvent.click(screen.getByRole("button", { name: "Load adjustment" }));
     await waitFor(() => expect(screen.getByText("proposed")).toBeTruthy());
+    fireEvent.change(screen.getByText("Decision evidence").parentElement?.querySelector("textarea") as HTMLTextAreaElement, { target: { value: '{"review_ticket":"review-1"}' } });
     fireEvent.click(screen.getByRole("button", { name: "Record approved decision" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(fetchMock.mock.calls[1][0]).toBe(`/api/v1/settlement/adjustments/${record.id}/transition`);
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body as string)).toEqual({ to_status: "approved", evidence: { review_ticket: "" } });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body as string)).toEqual({ to_status: "approved", evidence: { review_ticket: "review-1" } });
     expect(screen.getByText(/No token movement occurred/i)).toBeTruthy();
   });
 
@@ -72,6 +95,7 @@ describe("settlement adjustment operator workspace", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<SettlementAdjustmentPanel apiBase="/api" serviceOnline accessToken="proposer-token" />);
 
+    fillAdjustmentProposalForm();
     fireEvent.click(screen.getByRole("button", { name: "Create adjustment request" }));
     await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/adjustment rejected/));
     expect(screen.getByRole("alert").textContent).toContain(requestId);

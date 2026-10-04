@@ -297,7 +297,7 @@ docker compose -p "$project_name" exec -T postgres \
          merchant_account, mint, tax_vault, net_destination, token_program,
          mint_decimals,
          verification_digest, verification_slot, verification_commitment,
-         verification_evidence, verified_at)
+         verification_schema, verification_evidence, verified_at)
        VALUES
         ('01992f1b-4a70-7e30-8ea2-b6e37a9d9d13', '$other_merchant_id',
          'local-synthetic-stale-usd', 1, 'active',
@@ -307,7 +307,8 @@ docker compose -p "$project_name" exec -T postgres \
          'SysvarRecentB1ockHashes11111111111111111111',
          'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
          2, decode(repeat('08', 32), 'hex'), 0, 'local_synthetic',
-         '{\"source\":\"synthetic-local-fixture\",\"warning\":\"not chain verified\",\"mint_decimals\":2}'::jsonb,
+         'settlement-route-verification/v2',
+         '{\"source\":\"synthetic-local-fixture\",\"warning\":\"not chain verified\",\"verification_schema\":\"settlement-route-verification/v2\",\"asset_config\":\"AL5PDSRbT5yyhtjQrTmh11rTShZXS9x6QMo9YCMs499d\",\"accounts\":[{}, {}, {}, {}, {}],\"mint_decimals\":2}'::jsonb,
          now())
        ON CONFLICT (id) DO NOTHING"
 stale_reconciliation_target_id=$(docker compose -p "$project_name" exec -T postgres \
@@ -368,13 +369,18 @@ fi
 release_proposer_authorization="$(make_authorization release-proposer 'tax:vault:propose tax:vault:read' '["vault_release_proposer"]')"
 release_approver_authorization="$(make_authorization release-approver 'tax:vault:approve tax:vault:execute tax:vault:read' '["vault_release_approver"]')"
 release_operator_authorization="$(make_authorization release-operator 'tax:vault:record tax:vault:read' '["vault_release_operator"]')"
-release_claim_mint="So11111111111111111111111111111111111111112"
-release_claim_token_program="TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-release_claim_vault="11111111111111111111111111111111"
+release_routes_response=$(curl --fail --silent --show-error \
+    --header "authorization: $release_proposer_authorization" \
+    "$base_url/v1/vault/release-routes")
+release_route_id=$(printf '%s' "$release_routes_response" | sed -n 's/.*"id":"\([^\"]*\)".*/\1/p')
+if [ -z "$release_route_id" ]; then
+    echo "vault release route catalog did not return the authenticated active route" >&2
+    exit 1
+fi
 release_claim_destination="SysvarRent111111111111111111111111111111111"
 release_now_unix="$(date +%s)"
 release_reference_digest='[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32]'
-release_claim_request="{\"idempotency_key\":\"integration-release-01\",\"mint\":\"$release_claim_mint\",\"token_program\":\"$release_claim_token_program\",\"tax_vault\":\"$release_claim_vault\",\"destination\":\"$release_claim_destination\",\"nonce\":\"42\",\"amount_atomic\":\"250000\",\"reference_digest\":$release_reference_digest,\"execute_after_unix\":$((release_now_unix + 60)),\"expires_at_unix\":$((release_now_unix + 3600))}"
+release_claim_request="{\"idempotency_key\":\"integration-release-01\",\"route_id\":\"$release_route_id\",\"destination\":\"$release_claim_destination\",\"nonce\":\"42\",\"amount_atomic\":\"250000\",\"reference_digest\":$release_reference_digest,\"execute_after_unix\":$((release_now_unix + 60)),\"expires_at_unix\":$((release_now_unix + 3600))}"
 release_claim_response_file="$integration_dir/release-claim-response"
 release_claim_http_status=$(printf '%s' "$release_claim_request" | curl --silent --show-error \
     --output "$release_claim_response_file" --write-out '%{http_code}' \
@@ -398,6 +404,34 @@ release_claim_replay=$(printf '%s' "$release_claim_request" | curl --fail --sile
     --data-binary @- "$base_url/v1/vault/release-claims")
 if [ "$release_claim_response" != "$release_claim_replay" ]; then
     echo "vault release idempotent replay returned a different claim" >&2
+    exit 1
+fi
+suspended_replay_request="{\"idempotency_key\":\"integration-release-suspended-replay\",\"route_id\":\"$release_route_id\",\"destination\":\"$release_claim_destination\",\"nonce\":\"43\",\"amount_atomic\":\"250000\",\"reference_digest\":$release_reference_digest,\"execute_after_unix\":$((release_now_unix + 60)),\"expires_at_unix\":$((release_now_unix + 3600))}"
+suspended_replay_response_file="$integration_dir/release-suspended-replay-response"
+suspended_replay_create_status=$(printf '%s' "$suspended_replay_request" | curl --silent --show-error \
+    --output "$suspended_replay_response_file" --write-out '%{http_code}' \
+    --header 'content-type: application/json' \
+    --header "authorization: $release_proposer_authorization" \
+    --data-binary @- "$base_url/v1/vault/release-claims")
+if [ "$suspended_replay_create_status" -lt 200 ] || [ "$suspended_replay_create_status" -ge 300 ]; then
+    echo "vault release suspended-route replay fixture could not be created (HTTP $suspended_replay_create_status)" >&2
+    sed -n '1,160p' "$suspended_replay_response_file" >&2
+    exit 1
+fi
+suspended_replay_response=$(sed -n '1p' "$suspended_replay_response_file")
+docker compose -p "$project_name" exec -T postgres psql -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol -Atc \
+    "update settlement_routes set status = 'suspended' where id = '$release_route_id';" >/dev/null
+suspended_replay_http_status=$(printf '%s' "$suspended_replay_request" | curl --silent --show-error \
+    --output "$integration_dir/release-suspended-replay-retry-response" --write-out '%{http_code}' \
+    --header 'content-type: application/json' \
+    --header "authorization: $release_proposer_authorization" \
+    --data-binary @- "$base_url/v1/vault/release-claims")
+docker compose -p "$project_name" exec -T postgres psql -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol -Atc \
+    "update settlement_routes set status = 'active' where id = '$release_route_id';" >/dev/null
+if [ "$suspended_replay_http_status" != "200" ] || \
+    ! cmp -s "$suspended_replay_response_file" "$integration_dir/release-suspended-replay-retry-response"; then
+    echo "vault release idempotent replay failed while its route was suspended (HTTP $suspended_replay_http_status)" >&2
+    sed -n '1,160p' "$integration_dir/release-suspended-replay-retry-response" >&2
     exit 1
 fi
 release_conflict_status=$(printf '%s' "${release_claim_request/250000/250001}" | curl --silent --show-error \
@@ -528,7 +562,7 @@ fi
 other_rule_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d14"
 docker compose -p "$project_name" exec -T postgres \
     psql -U tax_protocol -d tax_protocol -v ON_ERROR_STOP=1 -Atc \
-    "insert into rule_sets (id, merchant_id, external_id, version, jurisdiction, regime, status, rule_digest, rule_document, provenance, effective_from) values ('$other_rule_id', '$other_merchant_id', 'operator-simulator-flat-rate', 1, 'US-CA', 'sales-tax', 'published', decode(repeat('0a', 32), 'hex'), '{}'::jsonb, '{}'::jsonb, now() - interval '30 seconds');" \
+    "insert into rule_sets (id, merchant_id, external_id, version, jurisdiction, regime, status, rule_digest, rule_document, provenance, effective_from) values ('$other_rule_id', '$other_merchant_id', 'operator-simulator-flat-rate', 1, 'US-CA', 'sales-tax', 'published', decode(repeat('0a', 32), 'hex'), '{}'::jsonb, '{\"schema\":\"tax-rule-provenance/v1\",\"source_reference\":\"controlled-record://integration/operator\",\"source_digest_hex\":\"abababababababababababababababababababababababababababababababab\",\"legal_tax_owner\":\"tax-owner:integration\",\"jurisdiction_scope\":\"US-CA\",\"reviewed_at_unix\":1790000000,\"review_reference\":\"review://integration/operator\"}'::jsonb, now() - interval '30 seconds');" \
     >/dev/null
 same_key_rule_count=$(docker compose -p "$project_name" exec -T postgres \
     psql -U tax_protocol -d tax_protocol -Atc \
@@ -995,6 +1029,15 @@ fi
 settlement_intent_id=$(printf '%s' "$compile_response" | sed -n 's/.*"intent_id":"\([^"]*\)".*/\1/p')
 if [ -z "$settlement_intent_id" ]; then
     echo "quote-bound settlement compilation did not return a durable intent ID" >&2
+    exit 1
+fi
+cross_tenant_compile_status=$(printf '%s' "$compile_request" | curl --silent --show-error \
+    --output /dev/null --write-out '%{http_code}' \
+    --header 'content-type: application/json' \
+    --header "authorization: $(make_authorization cross-tenant-settlement-compile 'tax:settlement:compile' '[]' "$other_merchant_id")" \
+    --data-binary @- "$base_url/v1/settlement/compile-from-quote")
+if [ "$cross_tenant_compile_status" != "404" ]; then
+    echo "expected cross-tenant aggregate settlement compilation to return HTTP 404, received $cross_tenant_compile_status" >&2
     exit 1
 fi
 cross_tenant_intent_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
@@ -1511,7 +1554,15 @@ fi
 
 if docker compose -p "$project_name" exec -T postgres \
     psql -U tax_protocol -d tax_protocol -v ON_ERROR_STOP=1 -Atc \
-    "insert into rule_sets (merchant_id, external_id, version, jurisdiction, regime, status, rule_digest, rule_document, provenance, effective_from) values ('$merchant_id', 'operator-simulator-flat-rate', 2, 'US-CA', 'sales-tax', 'published', decode(repeat('08', 32), 'hex'), '{}'::jsonb, '{}'::jsonb, now() - interval '30 seconds');" \
+    "insert into rule_sets (merchant_id, external_id, version, jurisdiction, regime, status, rule_digest, rule_document, provenance, effective_from) values ('$merchant_id', 'integration-invalid-provenance', 1, 'US-CA', 'sales-tax', 'published', decode(repeat('09', 32), 'hex'), '{}'::jsonb, '{}'::jsonb, now() - interval '30 seconds');" \
+    >/dev/null 2>&1; then
+    echo "database trigger unexpectedly allowed a published rule without release provenance" >&2
+    exit 1
+fi
+
+if docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -v ON_ERROR_STOP=1 -Atc \
+    "insert into rule_sets (merchant_id, external_id, version, jurisdiction, regime, status, rule_digest, rule_document, provenance, effective_from) values ('$merchant_id', 'operator-simulator-flat-rate', 2, 'US-CA', 'sales-tax', 'published', decode(repeat('08', 32), 'hex'), '{}'::jsonb, '{\"schema\":\"tax-rule-provenance/v1\",\"source_reference\":\"controlled-record://integration/operator-v2\",\"source_digest_hex\":\"0808080808080808080808080808080808080808080808080808080808080808\",\"legal_tax_owner\":\"tax-owner:integration\",\"jurisdiction_scope\":\"US-CA\",\"reviewed_at_unix\":1790000000,\"review_reference\":\"review://integration/operator-v2\"}'::jsonb, now() - interval '30 seconds');" \
     >/dev/null 2>&1; then
     echo "overlapping published rule window unexpectedly succeeded" >&2
     exit 1
@@ -1519,7 +1570,7 @@ fi
 
 draft_idempotency_key="integration-rule-draft-01"
 draft_effective_from="$(date +%s)"
-draft_body="{\"idempotency_key\":\"$draft_idempotency_key\",\"external_id\":\"integration-governed-rule\",\"version\":1,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"effective_from_unix\":$draft_effective_from,\"effective_until_unix\":null,\"rule_set\":{\"id\":\"integration-governed-rule\",\"version\":1,\"components\":[{\"id\":\"sales-tax\",\"label\":\"Sales tax\",\"base\":{\"sources\":[\"Net\"]},\"rate\":{\"Flat\":{\"numerator\":\"10\",\"denominator\":\"100\"}},\"price_mode\":\"Exclusive\",\"credit_atomic\":\"0\",\"floor_atomic\":null,\"cap_atomic\":null,\"rounding\":{\"mode\":\"HalfUp\"},\"threshold\":null,\"exemption_codes\":[]}]},\"provenance\":{\"source\":\"integration-test\",\"ticket\":\"RULE-001\"}}"
+draft_body="{\"idempotency_key\":\"$draft_idempotency_key\",\"external_id\":\"integration-governed-rule\",\"version\":1,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"effective_from_unix\":$draft_effective_from,\"effective_until_unix\":null,\"rule_set\":{\"id\":\"integration-governed-rule\",\"version\":1,\"components\":[{\"id\":\"sales-tax\",\"label\":\"Sales tax\",\"base\":{\"sources\":[\"Net\"]},\"rate\":{\"Flat\":{\"numerator\":\"10\",\"denominator\":\"100\"}},\"price_mode\":\"Exclusive\",\"credit_atomic\":\"0\",\"floor_atomic\":null,\"cap_atomic\":null,\"rounding\":{\"mode\":\"HalfUp\"},\"threshold\":null,\"exemption_codes\":[]}]},\"provenance\":{\"schema\":\"tax-rule-provenance/v1\",\"source_reference\":\"controlled-record://integration/rule-001\",\"source_digest_hex\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"legal_tax_owner\":\"tax-owner:integration\",\"jurisdiction_scope\":\"US-CA\",\"reviewed_at_unix\":1790000000,\"review_reference\":\"review://integration/rule-001\"}}"
 authorization="$(make_authorization integration-author 'tax:rule:author' '["tax_rule_author"]')"
 draft_response_file="$integration_dir/draft-response"
 draft_status=$(printf '%s' "$draft_body" | curl --silent --show-error --output "$draft_response_file" --write-out '%{http_code}' \
@@ -1706,6 +1757,36 @@ printf '%s' "$governance_body" | curl --fail --silent --show-error \
 
 governance_body='{"to_status":"published","evidence":{"source":"integration-test","release":"recorded"}}'
 authorization="$(make_authorization integration-approver 'tax:rule:publish' '["tax_rule_approver"]')"
+
+# Publication readiness is an API/storage boundary, not a browser convention:
+# an approved rule with incomplete provenance must remain approved and return a
+# typed validation error. Restore the exact envelope before the happy-path
+# publication below.
+docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -v ON_ERROR_STOP=1 -Atc \
+    "update rule_sets set provenance='{}'::jsonb where id = '$governed_rule_id';" \
+    >/dev/null
+invalid_publish_status=$(printf '%s' "$governance_body" | curl --silent --show-error \
+    --output /dev/null --write-out '%{http_code}' \
+    --header 'content-type: application/json' \
+    --header "authorization: $authorization" \
+    --data-binary @- "$base_url/v1/tax/rules/$governed_rule_id/transition")
+if [ "$invalid_publish_status" != "422" ]; then
+    echo "expected incomplete rule release provenance to return HTTP 422, received $invalid_publish_status" >&2
+    exit 1
+fi
+governed_status=$(docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -Atc \
+    "select status from rule_sets where id = '$governed_rule_id';")
+if [ "$governed_status" != "approved" ]; then
+    echo "invalid release provenance changed the governed rule status to $governed_status" >&2
+    exit 1
+fi
+docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -v ON_ERROR_STOP=1 -Atc \
+    "update rule_sets set provenance='{\"schema\":\"tax-rule-provenance/v1\",\"source_reference\":\"controlled-record://integration/rule-001\",\"source_digest_hex\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"legal_tax_owner\":\"tax-owner:integration\",\"jurisdiction_scope\":\"US-CA\",\"reviewed_at_unix\":1790000000,\"review_reference\":\"review://integration/rule-001\"}'::jsonb where id = '$governed_rule_id';" \
+    >/dev/null
+
 printf '%s' "$governance_body" | curl --fail --silent --show-error \
     --header 'content-type: application/json' \
     --header "authorization: $authorization" \
@@ -1914,7 +1995,7 @@ fi
 # edited in place. The bad release remains immutable/retired and a corrected
 # version must pass the complete four-eyes lifecycle before it can be used.
 rollback_effective_from="$(date +%s)"
-rollback_body="{\"idempotency_key\":\"integration-rule-rollback-01\",\"external_id\":\"integration-governed-rule\",\"version\":2,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"effective_from_unix\":$rollback_effective_from,\"effective_until_unix\":null,\"rule_set\":{\"id\":\"integration-governed-rule\",\"version\":2,\"components\":[{\"id\":\"sales-tax\",\"label\":\"Sales tax\",\"base\":{\"sources\":[\"Net\"]},\"rate\":{\"Flat\":{\"numerator\":\"12\",\"denominator\":\"100\"}},\"price_mode\":\"Exclusive\",\"credit_atomic\":\"0\",\"floor_atomic\":null,\"cap_atomic\":null,\"rounding\":{\"mode\":\"HalfUp\"},\"threshold\":null,\"exemption_codes\":[]}]},\"provenance\":{\"source\":\"integration-rollback\",\"ticket\":\"RULE-ROLLBACK-001\"}}"
+rollback_body="{\"idempotency_key\":\"integration-rule-rollback-01\",\"external_id\":\"integration-governed-rule\",\"version\":2,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"effective_from_unix\":$rollback_effective_from,\"effective_until_unix\":null,\"rule_set\":{\"id\":\"integration-governed-rule\",\"version\":2,\"components\":[{\"id\":\"sales-tax\",\"label\":\"Sales tax\",\"base\":{\"sources\":[\"Net\"]},\"rate\":{\"Flat\":{\"numerator\":\"12\",\"denominator\":\"100\"}},\"price_mode\":\"Exclusive\",\"credit_atomic\":\"0\",\"floor_atomic\":null,\"cap_atomic\":null,\"rounding\":{\"mode\":\"HalfUp\"},\"threshold\":null,\"exemption_codes\":[]}]},\"provenance\":{\"schema\":\"tax-rule-provenance/v1\",\"source_reference\":\"controlled-record://integration/rollback-001\",\"source_digest_hex\":\"0202020202020202020202020202020202020202020202020202020202020202\",\"legal_tax_owner\":\"tax-owner:integration\",\"jurisdiction_scope\":\"US-CA\",\"reviewed_at_unix\":1790000000,\"review_reference\":\"review://integration/rollback-001\"}}"
 rollback_response_file="$integration_dir/rule-rollback-response"
 rollback_status=$(printf '%s' "$rollback_body" | curl --silent --show-error \
     --output "$rollback_response_file" --write-out '%{http_code}' \

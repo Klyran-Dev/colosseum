@@ -40,6 +40,10 @@ pub const MIN_PROVIDER_HEALTH_SCORE: i32 = -8;
 pub const PROVIDER_COOLDOWN_BASE: Duration = Duration::from_millis(25);
 pub const MAX_PROVIDER_COOLDOWN: Duration = Duration::from_secs(5);
 pub const SETTLEMENT_PROGRAM_ID: &str = "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi";
+pub const STABLECOIN_ASSET_KIND: u8 = 1;
+pub const ASSET_CONFIG_ACCOUNT_DISCRIMINATOR: [u8; 8] = [0x39, 0x70, 0xf7, 0xa6, 0xf7, 0x40, 0x8c, 0x17];
+pub const ASSET_CONFIG_ACCOUNT_DATA_LEN: usize = 108;
+pub const SETTLEMENT_ROUTE_VERIFICATION_SCHEMA: &str = "settlement-route-verification/v2";
 pub const SETTLEMENT_EVENT_DISCRIMINATOR: [u8; 8] = [198, 221, 154, 28, 173, 8, 114, 6];
 pub const DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR: [u8; 8] = [101, 58, 10, 108, 29, 185, 246, 2];
 pub const SPLIT_SETTLEMENT_EVENT_DISCRIMINATOR: [u8; 8] = [50, 129, 102, 109, 249, 142, 125, 30];
@@ -1125,6 +1129,8 @@ pub struct SettlementRouteVerification {
     pub tax_vault: String,
     pub net_destination: String,
     pub token_program: String,
+    pub asset_config: String,
+    pub verification_schema: &'static str,
     pub verification_slot: u64,
     pub verification_commitment: &'static str,
     pub mint_decimals: u8,
@@ -1256,6 +1262,12 @@ pub enum RouteVerificationError {
     TokenAccountMintMismatch(&'static str),
     #[error("tax-vault token authority does not match the deterministic vault PDA")]
     VaultAuthorityMismatch,
+    #[error("asset admission configuration is disabled")]
+    AssetConfigDisabled,
+    #[error("asset admission configuration is not a stablecoin")]
+    AssetConfigNotStablecoin,
+    #[error("asset admission configuration does not match the route: {0}")]
+    AssetConfigMismatch(&'static str),
 }
 
 #[derive(Clone, Debug)]
@@ -1275,11 +1287,13 @@ pub async fn verify_settlement_route<T: JsonRpcTransport + ?Sized>(
     route: &SettlementRouteConfig,
 ) -> Result<SettlementRouteVerification, RouteVerificationError> {
     let keys = validate_route_config(route)?;
+    let asset_config_address = keys.asset_config.to_string();
     let addresses = [
         route.merchant_account.as_str(),
         route.mint.as_str(),
         route.tax_vault.as_str(),
         route.net_destination.as_str(),
+        asset_config_address.as_str(),
     ];
     let response = transport
         .call(
@@ -1350,11 +1364,20 @@ pub async fn verify_settlement_route<T: JsonRpcTransport + ?Sized>(
     verify_token_account_container(destination, &keys.token_program, "net_destination", 165)?;
     verify_token_mint(destination, &keys.mint, "net_destination")?;
 
+    let asset_config = &snapshots[4];
+    verify_asset_config(asset_config, &keys, mint_decimals)?;
+
     let accounts = snapshots
         .into_iter()
         .map(route_account_evidence)
         .collect::<Vec<_>>();
-    let verification_digest = route_verification_digest(route, slot, mint_decimals, &accounts);
+    let verification_digest = route_verification_digest(
+        route,
+        &keys.asset_config,
+        slot,
+        mint_decimals,
+        &accounts,
+    );
     Ok(SettlementRouteVerification {
         route_id: route.route_id,
         route_version: route.version,
@@ -1363,6 +1386,8 @@ pub async fn verify_settlement_route<T: JsonRpcTransport + ?Sized>(
         tax_vault: route.tax_vault.clone(),
         net_destination: route.net_destination.clone(),
         token_program: route.token_program.clone(),
+        asset_config: keys.asset_config.to_string(),
+        verification_schema: SETTLEMENT_ROUTE_VERIFICATION_SCHEMA,
         verification_slot: slot,
         verification_commitment: "finalized",
         mint_decimals,
@@ -3301,6 +3326,8 @@ struct ValidatedRouteKeys {
     mint: Pubkey,
     token_program: Pubkey,
     vault_authority: Pubkey,
+    asset_config: Pubkey,
+    asset_config_bump: u8,
 }
 
 struct ValidatedRefundFundingKeys {
@@ -3513,10 +3540,16 @@ fn validate_route_config(
         &[b"vault-authority", merchant.as_ref(), mint.as_ref()],
         &settlement_client::settlement_program_id(),
     );
+    let (asset_config, asset_config_bump) = Pubkey::find_program_address(
+        &[b"asset-config", mint.as_ref()],
+        &settlement_client::settlement_program_id(),
+    );
     Ok(ValidatedRouteKeys {
         mint,
         token_program,
         vault_authority,
+        asset_config,
+        asset_config_bump,
     })
 }
 
@@ -3620,6 +3653,45 @@ fn verify_token_mint(
     Ok(())
 }
 
+fn verify_asset_config(
+    account: &RouteAccountSnapshot,
+    keys: &ValidatedRouteKeys,
+    mint_decimals: u8,
+) -> Result<(), RouteVerificationError> {
+    if account.executable || account.owner != settlement_client::settlement_program_id().to_string()
+    {
+        return Err(RouteVerificationError::AccountOwnerMismatch("asset_config"));
+    }
+    if account.data.len() != ASSET_CONFIG_ACCOUNT_DATA_LEN {
+        return Err(RouteVerificationError::UnsupportedAccountLayout("asset_config"));
+    }
+    if account.data[..8] != ASSET_CONFIG_ACCOUNT_DISCRIMINATOR {
+        return Err(RouteVerificationError::UnsupportedAccountLayout("asset_config"));
+    }
+    if read_pubkey_field(account, 8, "asset_config")? != keys.mint {
+        return Err(RouteVerificationError::AssetConfigMismatch("mint"));
+    }
+    if read_pubkey_field(account, 40, "asset_config")? != keys.token_program {
+        return Err(RouteVerificationError::AssetConfigMismatch("token program"));
+    }
+    if account.data[72] != mint_decimals {
+        return Err(RouteVerificationError::AssetConfigMismatch("decimals"));
+    }
+    if account.data[73] != STABLECOIN_ASSET_KIND {
+        return Err(RouteVerificationError::AssetConfigNotStablecoin);
+    }
+    if account.data[106] == 0 {
+        return Err(RouteVerificationError::AssetConfigDisabled);
+    }
+    if account.data[107] != keys.asset_config_bump {
+        return Err(RouteVerificationError::AssetConfigMismatch("PDA bump"));
+    }
+    if account.address != keys.asset_config.to_string() {
+        return Err(RouteVerificationError::AssetConfigMismatch("PDA address"));
+    }
+    Ok(())
+}
+
 fn read_pubkey_field(
     account: &RouteAccountSnapshot,
     offset: usize,
@@ -3652,12 +3724,14 @@ fn route_account_evidence(account: RouteAccountSnapshot) -> VerifiedRouteAccount
 
 fn route_verification_digest(
     route: &SettlementRouteConfig,
+    asset_config: &Pubkey,
     slot: u64,
     mint_decimals: u8,
     accounts: &[VerifiedRouteAccount],
 ) -> [u8; 32] {
     let mut hasher = Sha256::new();
-    hasher.update(b"solana-tax-protocol/settlement-route-verification/v1");
+    hasher.update(b"solana-tax-protocol/settlement-route-verification/v2");
+    write_route_text(&mut hasher, SETTLEMENT_ROUTE_VERIFICATION_SCHEMA);
     hasher.update(route.route_id.as_bytes());
     hasher.update(route.version.to_le_bytes());
     write_route_text(&mut hasher, &route.merchant_account);
@@ -3665,6 +3739,7 @@ fn route_verification_digest(
     write_route_text(&mut hasher, &route.tax_vault);
     write_route_text(&mut hasher, &route.net_destination);
     write_route_text(&mut hasher, &route.token_program);
+    write_route_text(&mut hasher, &asset_config.to_string());
     hasher.update(slot.to_le_bytes());
     write_route_text(&mut hasher, "finalized");
     hasher.update([mint_decimals]);
@@ -3707,6 +3782,13 @@ fn map_destination_route_error(
         RouteVerificationError::VaultAuthorityMismatch => {
             RevenueStreamDestinationVerificationError::InvalidResponse(
                 "unexpected vault authority error while parsing destination route".to_string(),
+            )
+        }
+        RouteVerificationError::AssetConfigDisabled
+        | RouteVerificationError::AssetConfigNotStablecoin
+        | RouteVerificationError::AssetConfigMismatch(_) => {
+            RevenueStreamDestinationVerificationError::InvalidResponse(
+                "unexpected asset admission error while parsing destination route".to_string(),
             )
         }
     }
@@ -6691,6 +6773,10 @@ mod tests {
         let mint = Pubkey::new_from_array([2; 32]);
         let tax_vault = Pubkey::new_from_array([3; 32]);
         let destination = Pubkey::new_from_array([4; 32]);
+        let (asset_config, asset_config_bump) = Pubkey::find_program_address(
+            &[b"asset-config", mint.as_ref()],
+            &settlement_client::settlement_program_id(),
+        );
         let (vault_authority, _) = Pubkey::find_program_address(
             &[b"vault-authority", merchant.as_ref(), mint.as_ref()],
             &settlement_client::settlement_program_id(),
@@ -6703,6 +6789,20 @@ mod tests {
         let mut destination_data = vec![0; 165];
         destination_data[..32].copy_from_slice(mint.as_ref());
         destination_data[32..64].copy_from_slice(Pubkey::new_from_array([9; 32]).as_ref());
+        let mut asset_config_data = vec![0; ASSET_CONFIG_ACCOUNT_DATA_LEN];
+        asset_config_data[..8].copy_from_slice(&ASSET_CONFIG_ACCOUNT_DISCRIMINATOR);
+        asset_config_data[8..40].copy_from_slice(mint.as_ref());
+        asset_config_data[40..72].copy_from_slice(
+            settlement_client::SPL_TOKEN_PROGRAM_ID
+                .parse::<Pubkey>()
+                .expect("valid token program")
+                .as_ref(),
+        );
+        asset_config_data[72] = 6;
+        asset_config_data[73] = STABLECOIN_ASSET_KIND;
+        asset_config_data[74..106].copy_from_slice(Pubkey::new_from_array([9; 32]).as_ref());
+        asset_config_data[106] = 1;
+        asset_config_data[107] = asset_config_bump;
         let account = |address: &Pubkey, owner: &str, data: Vec<u8>| {
             json!({
                 "lamports": 1_000_000,
@@ -6727,7 +6827,12 @@ mod tests {
                 account(&merchant, settlement_client::SYSTEM_PROGRAM_ID, Vec::new()),
                 account(&mint, settlement_client::SPL_TOKEN_PROGRAM_ID, mint_data),
                 account(&tax_vault, settlement_client::SPL_TOKEN_PROGRAM_ID, tax_data),
-                account(&destination, settlement_client::SPL_TOKEN_PROGRAM_ID, destination_data)
+                account(&destination, settlement_client::SPL_TOKEN_PROGRAM_ID, destination_data),
+                account(
+                    &asset_config,
+                    settlement_client::settlement_program_id().to_string().as_str(),
+                    asset_config_data,
+                )
             ]
         });
         (route, response)
@@ -6864,14 +6969,31 @@ mod tests {
         let evidence = verify_settlement_route(&rpc, &route).await.unwrap();
         assert_eq!(evidence.verification_slot, 777);
         assert_eq!(evidence.mint_decimals, 6);
-        assert_eq!(evidence.accounts.len(), 4);
+        assert_eq!(evidence.accounts.len(), 5);
         assert_ne!(evidence.verification_digest, [0; 32]);
         let calls = rpc.calls.lock().unwrap();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].0, "getMultipleAccounts");
         assert_eq!(calls[0].1[1]["commitment"], "finalized");
         assert_eq!(calls[0].1[1]["encoding"], "base64");
-        assert_eq!(calls[0].1[0].as_array().unwrap().len(), 4);
+        assert_eq!(calls[0].1[0].as_array().unwrap().len(), 5);
+    }
+
+    #[tokio::test]
+    async fn route_verifier_rejects_disabled_asset_configuration() {
+        let (route, mut response) = verified_route_fixture();
+        let encoded = response["value"][4]["data"][0].as_str().unwrap();
+        let mut data = BASE64.decode(encoded).unwrap();
+        data[106] = 0;
+        response["value"][4]["data"][0] = Value::String(BASE64.encode(data));
+        let rpc = FakeRpc {
+            results: Mutex::new(VecDeque::from([response])),
+            calls: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            verify_settlement_route(&rpc, &route).await,
+            Err(RouteVerificationError::AssetConfigDisabled)
+        );
     }
 
     #[tokio::test]
