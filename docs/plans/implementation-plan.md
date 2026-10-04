@@ -47,13 +47,41 @@ pause, authorization, or evidence controls.
 - [x] Add the finalized signed-message verifier; it rejects extra instructions,
   lookup tables, account substitution, and signer/writable drift. The design is
   recorded in ADR-0293.
-- [ ] Add the server-owned revenue payout-destination registry, immutable
+- [x] Add the server-owned revenue payout-destination registry, immutable
   versions, tenant-scoped active resolution, and finalized chain verification;
   see ADR-0294. Browser requests must never supply destination token accounts.
-- [ ] Bind new plans to the resolved destination route version and evidence
+- [x] Bind new plans to the resolved destination route version and evidence
   digest; legacy plans remain readable but claim compilation stays blocked.
+- [x] Replace raw revenue-plan digest/topology inputs with the bounded
+  server-owned UUIDv7 reference catalog and selectable production UI; see
+  ADR-0295.
+- [x] Add the real-browser journey for authenticated reference loading,
+  business-record selection, ID-only proposal submission, technical-input
+  redaction, and browser axe validation; `make web-browser-check` now covers
+  the complete local flow.
 - [ ] Execute the Linux validator conformance matrix before enabling the
   revenue-stream movement path.
+
+### ADR-0297 — production account and session menu
+
+- [x] Replace the inert top-bar avatar with a server-context account/session
+  disclosure that exposes safe identity status, links to access review, and
+  signs out through the existing session boundary; see ADR-0297.
+- [x] Add anonymous, access-error, keyboard, accessibility, and real-browser
+  coverage without rendering credentials or raw identity-provider claims.
+
+### ADR-0298 — Material 3 Expressive visual system
+
+- [x] Define one semantic Material role palette for light, dark, and system
+  themes; remove ad-hoc component colors from the shell.
+- [x] Reduce navigation and top-bar repetition so task, state, and next action
+  have a clear visual hierarchy.
+- [x] Add theme preference controls that only change presentation state and
+  preserve authorization, wallet, and settlement behavior.
+- [x] Verify contrast, reduced motion, RTL, responsive layout, component tests,
+  real-browser accessibility, and public design documentation.
+- [x] Enforce the CSP, semantic color-role, and plain-language contracts in the
+  pull-request web CI job so visual and content regressions block review.
 
 ## ADR-0284 — zero-copy tax-fact normalization
 
@@ -1146,6 +1174,13 @@ release gates.
 - [x] Add a shared bounded `observe_or_log` adapter so fixed-operation metric
   registration failures are visible without making telemetry authoritative for
   financial or reconciliation work.
+- [x] Keep the API metric operation catalog single-sourced between production
+  bootstrap and test state so new endpoint observations cannot drift silently;
+  the authenticated revenue-reference integration flow exercises the new
+  operations.
+- [x] Add the static API metric registry contract to `make check`; it compares
+  every API `observe_or_log` call with the fixed operation catalog and rejects
+  both missing and stale registrations.
 - [x] Migrate API, worker, indexer, and route-verifier production call sites
   away from silently discarded metric-observation errors.
 - [ ] Retain production scrape, alert-delivery, and on-call response evidence;

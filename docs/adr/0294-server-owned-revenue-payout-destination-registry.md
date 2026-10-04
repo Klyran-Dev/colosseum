@@ -2,9 +2,9 @@
 
 ## Status
 
-Accepted — implementation in progress. Revenue-stream claim compilation and
-submission remain disabled until this boundary, finalized verifier evidence,
-and Linux validator conformance are complete.
+Accepted — registry and plan-binding implementation complete. Revenue-stream
+claim compilation and submission remain disabled until Linux validator
+conformance, signer controls, and production evidence are complete.
 
 ## Context
 

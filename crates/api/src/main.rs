@@ -4,7 +4,8 @@
 )]
 
 use api::{
-    AppState, JurisdictionProviderRegistry, JwtAuthenticator, TargetedRecoveryPorts, router,
+    API_METRIC_OPERATIONS, AppState, JurisdictionProviderRegistry, JwtAuthenticator,
+    TargetedRecoveryPorts, router,
 };
 use indexer::{MAX_RPC_RESPONSE_BYTES, ReqwestJsonRpcTransport};
 use indexer_service::{MAX_TARGETED_RECOVERY_PAGES, build_targeted_recovery_sources};
@@ -272,29 +273,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         fx_issuance,
         settlement_coordinator,
         targeted_recovery,
-        metrics: std::sync::Arc::new(ServiceMetrics::new(
-            "api",
-            &[
-                "authorization_capabilities",
-                "tax_calculate",
-                "tax_document_calculate",
-                "tax_quote",
-                "tax_replay",
-                "tax_rule_transition",
-                "tax_rule_governance_read",
-                "vault_release_claim_create",
-                "vault_release_claim_read",
-                "vault_release_claim_transition",
-                "adjustment_authority_challenge",
-                "adjustment_authority_bind",
-                "settlement_adjustment_compile",
-                "vault_reconciliation_read",
-                "indexer_replay_operator",
-                "indexer_targeted_recovery",
-                "settlement_compile",
-                "settlement_submit",
-            ],
-        )?),
+        metrics: std::sync::Arc::new(ServiceMetrics::new("api", API_METRIC_OPERATIONS)?),
     };
     let listener = TcpListener::bind(address).await?;
     info!(%address, "api listening");

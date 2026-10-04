@@ -10,7 +10,7 @@ import {
 } from "./formatters";
 import WorkspaceErrorBoundary from "./WorkspaceErrorBoundary";
 import { createClientUuid } from "./clientIdentity";
-import ProductShell, { ProductWorkspace } from "./ProductShell";
+import ProductShell, { ProductWorkspace, ThemePreference } from "./ProductShell";
 import { isAuthenticationCallback, pathForWorkspace, workspaceFromPath } from "./navigation";
 import AccessControlPanel from "./AccessControlPanel";
 import { authorizationSnapshotForToken, AuthorizationSnapshot, parseAuthorizationCapabilities } from "./authorization";
@@ -76,6 +76,14 @@ export default function App() {
   const [isReplaying, setIsReplaying] = useState(false);
   const [locale, setLocale] = useState<SupportedLocale>(DEFAULT_LOCALE);
   const [timeZone, setTimeZone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || DEFAULT_TIME_ZONE);
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() => {
+    try {
+      const stored = window.localStorage.getItem("solana-tax-protocol.theme");
+      return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+    } catch {
+      return "system";
+    }
+  });
 
   const effectiveTimeZone = isValidTimeZone(timeZone) ? timeZone : DEFAULT_TIME_ZONE;
   const direction = directionForLocale(locale);
@@ -140,6 +148,15 @@ export default function App() {
       root.dir = previousDirection;
     };
   }, [direction, locale]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = themePreference;
+    try {
+      window.localStorage.setItem("solana-tax-protocol.theme", themePreference);
+    } catch {
+      // Appearance remains usable when browser persistence is unavailable.
+    }
+  }, [themePreference]);
 
   useEffect(() => {
     if (BROWSER_AUTH_CONFIG.mode !== "oidc" || !BROWSER_AUTH_CONFIG.oidc) return;
@@ -389,6 +406,8 @@ export default function App() {
       timeZone={timeZone}
       onLocaleChange={setLocale}
       onTimeZoneChange={setTimeZone}
+      themePreference={themePreference}
+      onThemeChange={setThemePreference}
     >
         <div id="workspace-content" ref={workspaceContentRef} className="workspace-content" role="region" aria-label="Current tax workspace" tabIndex={-1}>
           <WorkspaceErrorBoundary key={workspace} workspace={workspace}>

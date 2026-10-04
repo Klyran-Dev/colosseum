@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import ProductShell from "./ProductShell";
 import { AuthorizationSnapshot } from "./authorization";
 import { parseRuntimeContext } from "./runtimeContext";
@@ -86,7 +86,7 @@ describe("operator-first product shell", () => {
       <div>Workspace content</div>
     </ProductShell>);
 
-    expect(screen.getByText("Account 01900000")).toBeTruthy();
+    expect(screen.getAllByText("Account 01900000").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("Staging")).toBeTruthy();
     expect(screen.getByText("Solana Devnet")).toBeTruthy();
     expect(screen.queryByText("Acme Treasury")).toBeNull();
@@ -169,5 +169,87 @@ describe("operator-first product shell", () => {
 
     expect(screen.getByRole("button", { name: "Tax simulator" }).getAttribute("title")).toMatch(/Available/);
     expect(screen.getByRole("button", { name: "Refund requests" }).getAttribute("title")).toMatch(/Not available/);
+  });
+
+  it("turns the account control into a safe session menu", () => {
+    const onSignOut = vi.fn();
+    const snapshot: AuthorizationSnapshot = {
+      state: "server-allowed",
+      subject: "operator-verified",
+      tenantId: "01900000-0000-4000-8000-000000000001",
+      roles: ["tax_rule_reviewer"],
+      scopes: ["audit:read"],
+      attributes: {},
+      capabilities: {},
+    };
+
+    render(<ProductShell
+      workspace="quote"
+      onNavigate={() => undefined}
+      serviceState="online"
+      accessToken="verified-session"
+      authorizationSnapshot={snapshot}
+      onSignOut={onSignOut}
+      locale="en-US"
+      timeZone="UTC"
+      onLocaleChange={() => undefined}
+      onTimeZoneChange={() => undefined}
+    >
+      <div>Workspace content</div>
+    </ProductShell>);
+
+    const accountMenu = screen.getByRole("button", { name: "Open account menu" });
+    expect(accountMenu).toBeTruthy();
+    expect(accountMenu.closest("details")?.hasAttribute("open")).toBe(false);
+
+    fireEvent.click(accountMenu);
+
+    expect(accountMenu.closest("details")?.hasAttribute("open")).toBe(true);
+    expect(screen.getAllByText("Account 01900000").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("operator-verified")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Review access & approvals" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeTruthy();
+    expect(accountMenu.closest("details")?.textContent).not.toContain("verified-session");
+
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    expect(onSignOut).toHaveBeenCalledOnce();
+  });
+
+  it("exposes a bounded theme preference without changing the shell authority boundary", () => {
+    const onThemeChange = vi.fn();
+    const snapshot: AuthorizationSnapshot = {
+      state: "server-allowed",
+      subject: "operator-verified",
+      tenantId: "01900000-0000-4000-8000-000000000001",
+      roles: [],
+      scopes: [],
+      attributes: {},
+      capabilities: {},
+    };
+
+    render(<ProductShell
+      workspace="quote"
+      onNavigate={() => undefined}
+      serviceState="online"
+      accessToken="verified-session"
+      authorizationSnapshot={snapshot}
+      themePreference="light"
+      onThemeChange={onThemeChange}
+      locale="en-US"
+      timeZone="UTC"
+      onLocaleChange={() => undefined}
+      onTimeZoneChange={() => undefined}
+    >
+      <div>Workspace content</div>
+    </ProductShell>);
+
+    const shell = document.querySelector(".product-shell");
+    expect(shell?.getAttribute("data-theme")).toBe("light");
+    fireEvent.click(screen.getByRole("button", { name: "Open display settings" }));
+    const theme = screen.getByRole("combobox", { name: "Theme" });
+    expect(theme).toBeTruthy();
+    fireEvent.change(theme, { target: { value: "dark" } });
+    expect(onThemeChange).toHaveBeenCalledWith("dark");
+    expect(screen.getByText("Theme changes appearance only.")).toBeTruthy();
   });
 });

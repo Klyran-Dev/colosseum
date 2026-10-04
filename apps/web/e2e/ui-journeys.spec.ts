@@ -94,6 +94,14 @@ test.describe("real-browser SPA journeys", () => {
     await expect(page.getByText("Acme Treasury", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Test network", { exact: true })).toHaveCount(0);
 
+    await page.getByRole("button", { name: "Open display settings" }).click();
+    await page.getByRole("combobox", { name: "Theme" }).selectOption("light");
+    await expect(page.locator(".product-shell")).toHaveAttribute("data-theme", "light");
+    await page.getByRole("combobox", { name: "Theme" }).selectOption("system");
+    await expect(page.locator(".product-shell")).toHaveAttribute("data-theme", "system");
+    await page.goto("/");
+    await expect(page.getByText("All systems operational")).toBeVisible();
+
     await page.keyboard.press("Tab");
     const skipLink = page.getByRole("link", { name: "Skip to workspace content" });
     await expect(skipLink).toBeFocused();
@@ -118,6 +126,42 @@ test.describe("real-browser SPA journeys", () => {
       await expect(page.getByRole("heading", { name: headingName, exact: true })).toBeVisible();
       await expect(page.locator("#workspace-content")).toBeFocused();
     }
+  });
+
+  test("provides account context and a safe sign-out path in the real shell", async ({ page }) => {
+    await page.route("**/api/v1/authorization/capabilities", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          schema: "authorization-capabilities/v1",
+          snapshot_id: "01900000-0000-7000-8000-000000000001",
+          subject: "operator-a",
+          tenant_id: "01900000-0000-4000-8000-000000000001",
+          expires_at_unix: Math.floor(Date.now() / 1000) + 30,
+          capabilities: completeCapabilityCatalog({
+            "access.control": { decision: "allow", reason_code: "scope_and_role_satisfied" },
+          }),
+        }),
+      });
+    });
+
+    await page.goto("/");
+    const credential = page.getByLabel("Sign-in credential (held in memory)");
+    await credential.fill("tenant-a-session");
+    const accountMenu = page.locator("details.account-menu");
+    await page.getByRole("button", { name: "Open account menu" }).click();
+    await expect(accountMenu.getByText("Account 01900000", { exact: true })).toBeVisible();
+    await expect(accountMenu.getByText("operator-a", { exact: true })).toBeVisible();
+    await expect(accountMenu.getByRole("link", { name: "Review access & approvals" })).toBeVisible();
+    await expect(accountMenu.getByRole("button", { name: "Sign out" })).toBeVisible();
+
+    await accountMenu.getByRole("button", { name: "Sign out" }).click();
+    await expect(credential).toHaveValue("");
+    await page.getByRole("button", { name: "Open account menu" }).click();
+    await expect(accountMenu.getByText("Sign in to manage this account.", { exact: true })).toBeVisible();
+    await expect(accountMenu.getByRole("button", { name: "Sign out" })).toHaveCount(0);
+    await expectNoBrowserAxeViolations(page, "account and session menu");
   });
 
   test("replaces the verified tenant context when the opaque session changes", async ({ page }) => {
@@ -162,16 +206,18 @@ test.describe("real-browser SPA journeys", () => {
     await expect(page.getByText("All systems operational")).toBeVisible();
     const credential = page.getByLabel("Sign-in credential (held in memory)");
     await credential.fill(tenantA.token);
-    await expect(page.getByText("Account 01900000", { exact: true })).toBeVisible();
+    const productNavigation = page.getByRole("complementary", { name: "Product navigation" });
+    await expect(productNavigation.getByText("Account 01900000", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Access & approvals", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Who can do what", exact: true })).toBeVisible();
-    await expect(page.getByText("operator-a", { exact: true })).toBeVisible();
-    await expect(page.getByText("Available", { exact: true }).first()).toBeVisible();
+    const workspaceContent = page.getByRole("region", { name: "Current tax workspace" });
+    await expect(workspaceContent.getByText("operator-a", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Tax simulator", exact: true })).toHaveAttribute("title", /Available/);
 
     await credential.fill(tenantB.token);
-    await expect(page.getByText("Account 02900000", { exact: true })).toBeVisible();
-    await expect(page.getByText("Account 01900000", { exact: true })).toHaveCount(0);
-    await expect(page.getByText("operator-b", { exact: true })).toBeVisible();
+    await expect(productNavigation.getByText("Account 02900000", { exact: true })).toBeVisible();
+    await expect(productNavigation.getByText("Account 01900000", { exact: true })).toHaveCount(0);
+    await expect(workspaceContent.getByText("operator-b", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Tax simulator", exact: true })).toHaveAttribute("title", /Not available/);
     await expectNoBrowserAxeViolations(page, "multi-tenant capability session reset");
   });
@@ -235,6 +281,119 @@ test.describe("real-browser SPA journeys", () => {
     await expect(page.getByText(/does not move money/i)).toBeVisible();
     await expect(page.getByText(/finalized Solana evidence/i)).toBeVisible();
     await expectNoBrowserAxeViolations(page, "partner payout review flow");
+  });
+
+  test("creates a partner payout plan from server-owned references", async ({ page }) => {
+    const destinationId = "01992f1b-4a70-7e30-8ea2-b6e37a9d9d31";
+    const splitPlanId = "01992f1b-4a70-7e30-8ea2-b6e37a9d9d32";
+    const policyId = "01992f1b-4a70-7e30-8ea2-b6e37a9d9d33";
+    const publicKey = "11111111111111111111111111111111";
+    let proposalBody: Record<string, unknown> | null = null;
+    const capabilities = completeCapabilityCatalog({
+      "revenue_stream.read": { decision: "allow", reason_code: "scope_and_role_satisfied" },
+      "revenue_stream.propose": { decision: "allow", reason_code: "scope_and_role_satisfied" },
+    });
+
+    await page.route("**/api/v1/authorization/capabilities", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        schema: "authorization-capabilities/v1",
+        snapshot_id: "01992f1b-0000-7000-8000-000000000031",
+        subject: "payout-proposer",
+        tenant_id: "01992f1b-0000-4000-8000-000000000031",
+        expires_at_unix: Math.floor(Date.now() / 1000) + 30,
+        capabilities,
+      }),
+    }));
+    await page.route("**/api/v1/revenue-streaming/references", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        destinations: [{
+          id: destinationId,
+          route_key: "partner-primary",
+          version: 1,
+          recipient_owner: publicKey,
+          mint: publicKey,
+          token_program: publicKey,
+          verification_slot: "42",
+        }],
+        split_plans: [{ id: splitPlanId, plan_key: "partner-share", version: 2, mint: publicKey }],
+        policies: [{
+          id: policyId,
+          rule_set_id: "01992f1b-0000-7000-8000-000000000034",
+          rule_external_id: "india-goods",
+          rule_version: 4,
+          jurisdiction: "IN",
+          regime: "GST",
+          effective_from: "2026-01-01T00:00:00.000Z",
+          effective_until: null,
+        }],
+      }),
+    }));
+    await page.route("**/api/v1/revenue-streaming/plans", async (route) => {
+      if (route.request().method() === "GET") {
+        await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+        return;
+      }
+      proposalBody = JSON.parse(route.request().postData() ?? "{}") as Record<string, unknown>;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d34",
+          status: "proposed",
+          proposer_subject: "payout-proposer",
+          approver_subject: null,
+          accrued_total_atomic: "0",
+          released_total_atomic: "0",
+          next_nonce: "1",
+          destination_route_id: destinationId,
+          spec: {
+            operator_subject: "payout-operator",
+            start_slot: "100",
+            end_slot: null,
+            max_total_atomic: "1000",
+            max_claim_atomic: "100",
+            settlement_route_id: "01992f1b-0000-7000-8000-000000000035",
+            asset: Array(32).fill(3),
+            recipient: Array(32).fill(4),
+            plan_digest: Array(32).fill(1),
+            policy_digest: Array(32).fill(2),
+          },
+        }),
+      });
+    });
+
+    await page.goto("/money/partner-payouts");
+    await page.getByLabel("Sign-in credential (held in memory)").fill("partner-proposer-session");
+    await expect(page.getByRole("heading", { name: "Create a payout plan", exact: true })).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Verified payout destination" })).toBeVisible();
+    await page.getByRole("combobox", { name: "Verified payout destination" }).selectOption(destinationId);
+    await page.getByRole("combobox", { name: "Settlement split" }).selectOption(splitPlanId);
+    await page.getByRole("combobox", { name: "Published tax policy" }).selectOption(policyId);
+    await page.getByLabel("Who prepares payouts?").fill("payout-operator");
+    await page.getByLabel("Start after settlement").fill("100");
+    await page.getByLabel("Maximum lifetime payout").fill("1000");
+    await page.getByLabel("Maximum payout at one time").fill("100");
+    await expect(page.getByLabel(/plan fingerprint|policy fingerprint|destination token account/i)).toHaveCount(0);
+    await page.getByRole("button", { name: "Create plan for review", exact: true }).click();
+    await expect(page.getByText("The payout plan is recorded and waiting for its required review.", { exact: true })).toBeVisible();
+    expect(proposalBody).toMatchObject({
+      destination_route_id: destinationId,
+      split_plan_id: splitPlanId,
+      policy_id: policyId,
+      operator_subject: "payout-operator",
+      start_slot: "100",
+      max_total_atomic: "1000",
+      max_claim_atomic: "100",
+    });
+    expect(proposalBody).not.toHaveProperty("plan_digest");
+    expect(proposalBody).not.toHaveProperty("policy_digest");
+    expect(proposalBody).not.toHaveProperty("recipient");
+    expect(proposalBody).not.toHaveProperty("token_program");
+    await expectNoBrowserAxeViolations(page, "partner payout reference selection flow");
   });
 
   test("fails closed for partner payouts when the server denies the capability", async ({ page }) => {

@@ -1484,6 +1484,50 @@ pub struct RevenueStreamDestinationRoute {
     pub verification_evidence: Value,
 }
 
+/// A bounded, business-facing selector for a finalized payout destination.
+/// It intentionally omits mutable or unnecessary account topology from the
+/// selection contract; the server resolves the complete route by `id`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RevenueStreamDestinationReference {
+    pub id: Uuid,
+    pub route_key: String,
+    pub version: i32,
+    pub recipient_owner: String,
+    pub mint: String,
+    pub token_program: String,
+    #[serde(with = "policy::serde_u64_string")]
+    pub verification_slot: u64,
+}
+
+/// A published, effective, canonical-validated tax policy available to a
+/// revenue-plan proposer. The policy document remains server-owned.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RevenueStreamPolicyReference {
+    pub id: Uuid,
+    pub rule_set_id: Uuid,
+    pub rule_external_id: String,
+    pub rule_version: i32,
+    pub jurisdiction: String,
+    pub regime: String,
+    #[serde(skip_serializing)]
+    pub policy_digest: Digest32,
+    pub effective_from: String,
+    pub effective_until: Option<String>,
+}
+
+/// A bounded selector for an active settlement split. Recipient account
+/// topology is intentionally kept out of the revenue-plan catalog response;
+/// the API re-loads and validates the complete split by `id`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RevenueStreamSplitPlanReference {
+    pub id: Uuid,
+    pub plan_key: String,
+    pub version: i32,
+    pub mint: String,
+    #[serde(skip_serializing)]
+    pub plan_digest: Digest32,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RefundFundingConfiguration {
     pub id: Uuid,
@@ -12922,6 +12966,95 @@ impl PgStore {
         }
     }
 
+    /// Resolves one active destination by its server-issued reference. This
+    /// is the only destination lookup used by revenue-plan creation; the
+    /// caller never supplies the recipient token account or token program.
+    pub async fn load_active_revenue_stream_destination_route_by_id(
+        &self,
+        merchant_id: Uuid,
+        route_id: Uuid,
+    ) -> Result<RevenueStreamDestinationRoute, StorageError> {
+        if merchant_id.get_version_num() != 7 || route_id.get_version_num() != 7 {
+            return Err(StorageError::RevenueStreamDestinationRouteUnavailable);
+        }
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let row = client
+            .query_opt(
+                "SELECT id, merchant_id, route_key, version, recipient_owner,
+                        mint, destination_token_account, token_program,
+                        verification_digest, verification_slot::text,
+                        verification_commitment, verification_evidence
+                 FROM revenue_stream_destination_routes
+                 WHERE id = $1 AND merchant_id = $2
+                   AND status = 'active'
+                   AND verification_commitment = 'finalized'
+                   AND effective_from <= now()
+                   AND (effective_until IS NULL OR now() < effective_until)",
+                &[&route_id, &merchant_id],
+            )
+            .await?
+            .ok_or(StorageError::RevenueStreamDestinationRouteNotFound)?;
+        parse_revenue_stream_destination_route_row(row)
+    }
+
+    /// Lists only selectable payout destinations for the authenticated
+    /// merchant. The result is bounded and contains no inactive or
+    /// unverified topology.
+    pub async fn list_active_revenue_stream_destination_references(
+        &self,
+        merchant_id: Uuid,
+        limit: usize,
+    ) -> Result<Vec<RevenueStreamDestinationReference>, StorageError> {
+        if merchant_id.get_version_num() != 7 || !(1..=64).contains(&limit) {
+            return Err(StorageError::InvalidConfiguration(
+                "revenue destination reference limit is invalid".to_string(),
+            ));
+        }
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let rows = client
+            .query(
+                "SELECT id, route_key, version, recipient_owner, mint,
+                        token_program, verification_slot::text
+                 FROM revenue_stream_destination_routes
+                 WHERE merchant_id = $1
+                   AND status = 'active'
+                   AND verification_commitment = 'finalized'
+                   AND effective_from <= now()
+                   AND (effective_until IS NULL OR now() < effective_until)
+                 ORDER BY route_key, version DESC, id
+                 LIMIT $2",
+                &[&merchant_id, &(limit as i64)],
+            )
+            .await?;
+        rows.into_iter()
+            .map(|row| {
+                let id: Uuid = row.get(0);
+                if id.get_version_num() != 7 {
+                    return Err(StorageError::InvalidRevenueStream(
+                        "stored destination reference identity must be UUIDv7".into(),
+                    ));
+                }
+                Ok(RevenueStreamDestinationReference {
+                    id,
+                    route_key: row.get(1),
+                    version: row.get(2),
+                    recipient_owner: row.get(3),
+                    mint: row.get(4),
+                    token_program: row.get(5),
+                    verification_slot: parse_u64(row.get(6), "destination verification slot")?,
+                })
+            })
+            .collect()
+    }
+
     /// Lists only currently active routes for the authenticated merchant.
     /// This is a bounded read for UI selection and does not expose inactive
     /// configuration as a possible checkout option.
@@ -13142,6 +13275,94 @@ impl PgStore {
                     row.get(1),
                 )
             })
+            .collect()
+    }
+
+    /// Loads one published, effective, canonical-validated policy by its
+    /// server-issued reference. The policy document is never accepted from a
+    /// revenue-plan browser request.
+    pub async fn load_active_revenue_stream_policy_reference(
+        &self,
+        merchant_id: Uuid,
+        policy_id: Uuid,
+    ) -> Result<RevenueStreamPolicyReference, StorageError> {
+        if merchant_id.get_version_num() != 7 || policy_id.get_version_num() != 7 {
+            return Err(StorageError::JurisdictionPolicyNotFound);
+        }
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let row = client
+            .query_opt(
+                "SELECT jp.id, jp.rule_set_id, r.external_id, r.version,
+                        r.jurisdiction, r.regime, jp.policy_digest,
+                        jp.policy_document,
+                        to_char(jp.effective_from AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),
+                        to_char(jp.effective_until AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')
+                 FROM jurisdiction_policies jp
+                 JOIN rule_sets r
+                   ON r.id = jp.rule_set_id
+                  AND r.merchant_id = jp.merchant_id
+                 WHERE jp.id = $1
+                   AND jp.merchant_id = $2
+                   AND jp.status = 'published'
+                   AND jp.effective_from <= now()
+                   AND (jp.effective_until IS NULL OR now() < jp.effective_until)
+                   AND r.status = 'published'
+                   AND r.effective_from <= now()
+                   AND (r.effective_until IS NULL OR now() < r.effective_until)",
+                &[&policy_id, &merchant_id],
+            )
+            .await?
+            .ok_or(StorageError::JurisdictionPolicyNotFound)?;
+        parse_revenue_stream_policy_reference(row)
+    }
+
+    /// Lists only published, effective, canonical-validated policies for the
+    /// revenue-plan selector. Both the policy and its published rule release
+    /// must be current; the result is deliberately bounded.
+    pub async fn list_active_revenue_stream_policy_references(
+        &self,
+        merchant_id: Uuid,
+        limit: usize,
+    ) -> Result<Vec<RevenueStreamPolicyReference>, StorageError> {
+        if merchant_id.get_version_num() != 7 || !(1..=64).contains(&limit) {
+            return Err(StorageError::InvalidConfiguration(
+                "revenue policy reference limit is invalid".to_string(),
+            ));
+        }
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let rows = client
+            .query(
+                "SELECT jp.id, jp.rule_set_id, r.external_id, r.version,
+                        r.jurisdiction, r.regime, jp.policy_digest,
+                        jp.policy_document,
+                        to_char(jp.effective_from AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),
+                        to_char(jp.effective_until AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"')
+                 FROM jurisdiction_policies jp
+                 JOIN rule_sets r
+                   ON r.id = jp.rule_set_id
+                  AND r.merchant_id = jp.merchant_id
+                 WHERE jp.merchant_id = $1
+                   AND jp.status = 'published'
+                   AND jp.effective_from <= now()
+                   AND (jp.effective_until IS NULL OR now() < jp.effective_until)
+                   AND r.status = 'published'
+                   AND r.effective_from <= now()
+                   AND (r.effective_until IS NULL OR now() < r.effective_until)
+                 ORDER BY r.jurisdiction, r.regime, r.version DESC, jp.id
+                 LIMIT $2",
+                &[&merchant_id, &(limit as i64)],
+            )
+            .await?;
+        rows.into_iter()
+            .map(parse_revenue_stream_policy_reference)
             .collect()
     }
 }
@@ -15534,6 +15755,46 @@ fn parse_revenue_stream_destination_route_row(
         verification_slot: parse_u64(row.get(9), "revenue destination verification slot")?,
         verification_commitment,
         verification_evidence,
+    })
+}
+
+fn parse_revenue_stream_policy_reference(
+    row: deadpool_postgres::tokio_postgres::Row,
+) -> Result<RevenueStreamPolicyReference, StorageError> {
+    let id: Uuid = row.get(0);
+    let rule_set_id: Uuid = row.get(1);
+    if id.get_version_num() != 7 || rule_set_id.get_version_num() != 7 {
+        return Err(StorageError::InvalidRevenueStream(
+            "stored revenue policy reference identities must be UUIDv7".into(),
+        ));
+    }
+    let policy_digest: Digest32 = row
+        .get::<_, Vec<u8>>(6)
+        .try_into()
+        .map_err(|_| StorageError::JurisdictionPolicyDigestMismatch)?;
+    let policy: ResolutionPolicy = serde_json::from_value(row.get(7)).map_err(|error| {
+        StorageError::ReplayEvidenceIntegrity(format!(
+            "revenue policy reference document is invalid: {error}"
+        ))
+    })?;
+    let computed_digest = policy.canonical_digest().map_err(|error| {
+        StorageError::ReplayEvidenceIntegrity(format!(
+            "revenue policy reference canonicalization failed: {error}"
+        ))
+    })?;
+    if computed_digest != policy_digest {
+        return Err(StorageError::JurisdictionPolicyDigestMismatch);
+    }
+    Ok(RevenueStreamPolicyReference {
+        id,
+        rule_set_id,
+        rule_external_id: row.get(2),
+        rule_version: row.get(3),
+        jurisdiction: row.get(4),
+        regime: row.get(5),
+        policy_digest,
+        effective_from: row.get(8),
+        effective_until: row.get(9),
     })
 }
 

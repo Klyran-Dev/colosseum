@@ -106,7 +106,7 @@ describe("settlement adjustment operator workspace", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls[1][0]).toBe(`/api/v1/settlement/adjustments/${record.id}/compile`);
     expect(JSON.parse(fetchMock.mock.calls[1][1].body as string)).toEqual({ confirm: true });
-    expect(screen.getByText(/ready for wallet signing/i)).toBeTruthy();
+    await waitFor(() => expect(screen.getByText(/ready for wallet signing/i)).toBeTruthy());
     expect(screen.queryByText(/payment succeeded/i)).toBeNull();
   });
 });

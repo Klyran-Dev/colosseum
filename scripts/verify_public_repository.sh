@@ -96,6 +96,7 @@ for file in \
   docs/adr/0276-multi-tenant-capability-session-reset.md \
   docs/adr/0277-complete-workspace-capability-catalog.md \
   docs/adr/0278-addressable-workspace-navigation.md \
+  docs/adr/0298-material-3-expressive-visual-system.md \
   docs/adr/0248-registry-bound-fx-issuance.md \
   docs/adr/0234-api-jwks-atomic-reload.md \
   docs/adr/0235-jurisdiction-provider-key-atomic-reload.md \
@@ -160,6 +161,7 @@ for file in \
   scripts/verify_deployment_config_contract.sh \
   scripts/verify_service_lifecycle_contract.sh \
   scripts/verify_tax_engine_runtime_contract.sh \
+  scripts/verify_api_metric_registry_contract.sh \
   scripts/verify_rust_panic_safety_contract.sh \
   scripts/verify_container_pinning_contract.sh \
   scripts/verify_refund_claim_cancellation_reconciliation_contract.sh \
@@ -220,6 +222,7 @@ require_text docs/plans/production-readiness.md 'SLOs, error budgets, RTO/RPO, s
 require_text Makefile 'public-docs-check'
 require_text Makefile 'rust-panic-safety-contract'
 require_text Makefile 'container-pinning-contract'
+require_text Makefile 'api-metric-registry-contract'
 require_text Makefile 'solana-conformance-workflow-contract'
 require_text Makefile 'program-pause-coverage-contract'
 require_text Makefile 'refund-cancellation-reconciliation-drill'
@@ -245,6 +248,8 @@ require_text docs/adr/README.md '0268-browser-oidc-pkce-session-boundary.md'
 require_text docs/adr/README.md '0269-oidc-origin-csp-allowlist.md'
 require_text docs/adr/README.md '0271-executable-ui-language-contract.md'
 require_text Makefile 'ui-language-contract'
+require_text Makefile 'web-color-contract'
+require_file scripts/verify_web_color_contract.sh
 require_text docs/adr/0271-executable-ui-language-contract.md 'progressive disclosure'
 require_text docs/adr/0272-payment-review-progressive-disclosure.md 'Technical payment details'
 require_text docs/adr/0273-explicit-financial-inputs.md 'Start financial fields empty'
@@ -253,6 +258,9 @@ require_text docs/adr/0275-capability-snapshot-latency-evidence.md 'two API repl
 require_text docs/adr/0276-multi-tenant-capability-session-reset.md 'tenant A'
 require_text docs/adr/0277-complete-workspace-capability-catalog.md 'refund.payment.release'
 require_text docs/adr/0278-addressable-workspace-navigation.md 'history.pushState'
+require_text docs/adr/README.md '0298-material-3-expressive-visual-system.md'
+require_text docs/adr/0298-material-3-expressive-visual-system.md 'Material 3 Expressive'
+require_text docs/plans/implementation-plan.md 'ADR-0298'
 require_text CHANGELOG.md 'executable UI language contract'
 require_text CHANGELOG.md 'container and workflow pinning contract'
 require_text CHANGELOG.md 'conformance workflow contract'

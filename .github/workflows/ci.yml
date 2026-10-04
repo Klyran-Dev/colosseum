@@ -49,6 +49,11 @@ jobs:
         run: corepack enable && corepack prepare pnpm@12.3.4 --activate
       - name: Install locked dependencies
         run: pnpm --dir apps/web install --frozen-lockfile
+      - name: Verify UI contracts
+        run: |
+          make web-csp-contract
+          make web-color-contract
+          make ui-language-contract
       - name: Test
         run: pnpm --dir apps/web test
       - name: Accessibility contract

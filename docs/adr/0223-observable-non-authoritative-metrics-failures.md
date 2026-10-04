@@ -26,6 +26,13 @@ queue, block on an external system, or return an error to the money-moving
 path. `observe` remains available for tests and code that needs explicit
 validation.
 
+The API operation catalog is defined once as the public
+`API_METRIC_OPERATIONS` constant in the API crate. Both the production
+bootstrap and test application state pass that same bounded slice to
+`ServiceMetrics::new`. Adding a handler observation without adding its fixed
+operation to this catalog fails closed at runtime rather than relying on a
+second runtime/test registry that can drift.
+
 ## Alternatives considered
 
 | Alternative | Decision | Reason |
@@ -49,5 +56,12 @@ validation.
   non-panicking adapter path.
 - Source audits require production call sites to use `observe_or_log` rather
   than silently discard `observe` results.
+- API runtime and test construction share one fixed operation catalog, and the
+  local integration gate exercises the revenue-stream operations through the
+  authenticated reference and proposal flow.
+- `scripts/verify_api_metric_registry_contract.sh` extracts every API
+  `observe_or_log` operation and compares it with the fixed catalog; the
+  contract runs as part of `make check` and fails on either omission or stale
+  unused registration.
 - Metric export, scrape, and alert delivery remain separate production
   operations gates.

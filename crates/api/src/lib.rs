@@ -91,6 +91,54 @@ use uuid::Uuid;
 
 const SPL_TOKEN_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 
+/// Every bounded request operation emitted by the API telemetry plane.
+///
+/// This is deliberately defined beside the handlers and shared by the
+/// production bootstrap and unit-test application state. A new
+/// `observe_or_log` operation must be added here before it can be emitted;
+/// otherwise the metric layer fails closed and the request loses its latency
+/// evidence. Keeping one slice removes runtime/test registry drift.
+pub const API_METRIC_OPERATIONS: &[&str] = &[
+    "authorization_capabilities",
+    "tax_calculate",
+    "tax_document_calculate",
+    "tax_quote",
+    "tax_replay",
+    "tax_document_quote",
+    "tax_document_replay",
+    "tax_rule_draft_create",
+    "tax_rule_transition",
+    "tax_rule_governance_read",
+    "jurisdiction_policy_draft_create",
+    "jurisdiction_policy_transition",
+    "jurisdiction_policy_governance_read",
+    "tax_rule_simulation",
+    "vault_release_claim_create",
+    "vault_release_claim_read",
+    "vault_release_claim_transition",
+    "settlement_adjustment_create",
+    "adjustment_authority_challenge",
+    "adjustment_authority_bind",
+    "settlement_adjustment_compile",
+    "refund_funding_configuration_create",
+    "refund_funding_configuration_read",
+    "refund_funding_configuration_transition",
+    "refund_claim_prepare",
+    "vault_reconciliation_read",
+    "indexer_replay_operator",
+    "indexer_targeted_recovery",
+    "settlement_compile",
+    "settlement_document_compile",
+    "settlement_split_compile",
+    "settlement_submit",
+    "revenue_stream_plan_create",
+    "revenue_stream_reference_list",
+    "revenue_stream_plan_list",
+    "revenue_stream_plan_read",
+    "revenue_stream_plan_transition",
+    "revenue_stream_claim_prepare",
+];
+
 #[derive(Clone)]
 pub struct AppState {
     pub ready: bool,
@@ -392,14 +440,9 @@ pub struct VaultReleaseClaimTransitionRequest {
 pub struct RevenueStreamPlanCreateRequest {
     pub idempotency_key: String,
     pub operator_subject: String,
-    #[serde(deserialize_with = "deserialize_digest")]
-    pub asset: [u8; 32],
-    #[serde(deserialize_with = "deserialize_digest")]
-    pub recipient: [u8; 32],
-    #[serde(deserialize_with = "deserialize_digest")]
-    pub plan_digest: [u8; 32],
-    #[serde(deserialize_with = "deserialize_digest")]
-    pub policy_digest: [u8; 32],
+    pub destination_route_id: Uuid,
+    pub split_plan_id: Uuid,
+    pub policy_id: Uuid,
     #[serde(with = "policy::serde_u64_string")]
     pub start_slot: u64,
     #[serde(default, with = "policy::serde_optional_u64_string")]
@@ -408,6 +451,13 @@ pub struct RevenueStreamPlanCreateRequest {
     pub max_total_atomic: u64,
     #[serde(with = "policy::serde_u64_string")]
     pub max_claim_atomic: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RevenueStreamReferenceCatalog {
+    pub destinations: Vec<storage::RevenueStreamDestinationReference>,
+    pub split_plans: Vec<storage::RevenueStreamSplitPlanReference>,
+    pub policies: Vec<storage::RevenueStreamPolicyReference>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -2185,6 +2235,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/v1/revenue-streaming/plans",
             get(list_revenue_stream_plans).post(create_revenue_stream_plan),
+        )
+        .route(
+            "/v1/revenue-streaming/references",
+            get(list_revenue_stream_references),
         )
         .route(
             "/v1/revenue-streaming/plans/{plan_id}",
@@ -4507,6 +4561,59 @@ async fn create_revenue_stream_plan(
     result
 }
 
+async fn list_revenue_stream_references(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<RevenueStreamReferenceCatalog>, ApiError> {
+    let metrics = Arc::clone(&state.metrics);
+    let started = Instant::now();
+    let result = list_revenue_stream_references_inner(state, headers).await;
+    metrics.observe_or_log(
+        "revenue_stream_reference_list",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+async fn list_revenue_stream_references_inner(
+    state: AppState,
+    headers: HeaderMap,
+) -> Result<Json<RevenueStreamReferenceCatalog>, ApiError> {
+    let principal = authenticate_scope_role(
+        &state,
+        &headers,
+        "tax:stream:propose",
+        "revenue_stream_proposer",
+    )?;
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "REVENUE_STREAM_STORAGE_UNAVAILABLE",
+        message: "revenue streaming storage is not configured".to_string(),
+    })?;
+    let (destinations, split_plans, policies) = tokio::try_join!(
+        store.list_active_revenue_stream_destination_references(principal.merchant_id, 64),
+        store.list_active_settlement_split_plans(principal.merchant_id),
+        store.list_active_revenue_stream_policy_references(principal.merchant_id, 64),
+    )
+    .map_err(ApiError::from)?;
+    let split_plans = split_plans
+        .into_iter()
+        .map(|split_plan| storage::RevenueStreamSplitPlanReference {
+            id: split_plan.id,
+            plan_key: split_plan.plan_key,
+            version: split_plan.version,
+            mint: split_plan.mint,
+            plan_digest: split_plan.plan_digest,
+        })
+        .collect();
+    Ok(Json(RevenueStreamReferenceCatalog {
+        destinations,
+        split_plans,
+        policies,
+    }))
+}
+
 async fn create_revenue_stream_plan_inner(
     state: AppState,
     headers: HeaderMap,
@@ -4528,7 +4635,45 @@ async fn create_revenue_stream_plan_inner(
         code: "REVENUE_STREAM_STORAGE_UNAVAILABLE",
         message: "revenue streaming storage is not configured".to_string(),
     })?;
-    let asset = Pubkey::new_from_array(request.asset).to_string();
+    let destination_route = store
+        .load_active_revenue_stream_destination_route_by_id(
+            principal.merchant_id,
+            request.destination_route_id,
+        )
+        .await
+        .map_err(ApiError::from)?;
+    let split_plan = store
+        .load_active_settlement_split_plan(principal.merchant_id, request.split_plan_id)
+        .await
+        .map_err(ApiError::from)?;
+    let policy = store
+        .load_active_revenue_stream_policy_reference(principal.merchant_id, request.policy_id)
+        .await
+        .map_err(ApiError::from)?;
+    if split_plan.mint != destination_route.mint {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REVENUE_STREAM_REFERENCE_ASSET_MISMATCH",
+            message:
+                "the selected payout destination and settlement split use different payment assets"
+                    .to_string(),
+        });
+    }
+    let asset_pubkey = split_plan.mint.parse::<Pubkey>().map_err(|_| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        code: "REVENUE_STREAM_REFERENCE_INTEGRITY_FAILURE",
+        message: "the selected settlement split contains an invalid payment asset".to_string(),
+    })?;
+    let recipient_pubkey = destination_route
+        .recipient_owner
+        .parse::<Pubkey>()
+        .map_err(|_| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "REVENUE_STREAM_REFERENCE_INTEGRITY_FAILURE",
+            message: "the selected payout destination contains an invalid partner owner"
+                .to_string(),
+        })?;
+    let asset = asset_pubkey.to_string();
     let route = store
         .load_active_settlement_route_for_mint(principal.merchant_id, &asset)
         .await
@@ -4541,23 +4686,15 @@ async fn create_revenue_stream_plan_inner(
                     .into(),
             }
         })?;
-    let recipient_owner = Pubkey::new_from_array(request.recipient).to_string();
-    let destination_route = store
-        .load_active_revenue_stream_destination_route(
-            principal.merchant_id,
-            &recipient_owner,
-            &asset,
-        )
-        .await
-        .map_err(|error| {
-            tracing::warn!(error = ?error, "no active verified revenue payout destination");
-            ApiError {
-                status: StatusCode::CONFLICT,
-                code: "REVENUE_STREAM_DESTINATION_UNAVAILABLE",
-                message: "an active verified payout destination is required for this recipient"
-                    .into(),
-            }
-        })?;
+    if destination_route.token_program != route.token_program {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REVENUE_STREAM_REFERENCE_TOKEN_PROGRAM_MISMATCH",
+            message:
+                "the selected payout destination is not compatible with the active settlement route"
+                    .to_string(),
+        });
+    }
     let outcome = store
         .create_revenue_stream_plan(CreateRevenueStreamPlanCommand {
             merchant_id: principal.merchant_id,
@@ -4569,10 +4706,10 @@ async fn create_revenue_stream_plan_inner(
                 merchant_id: principal.merchant_id,
                 settlement_route_id: route.id,
                 operator_subject: Some(request.operator_subject),
-                asset: AssetId(request.asset),
-                recipient: RecipientId(request.recipient),
-                plan_digest: revenue_streaming::Digest(request.plan_digest),
-                policy_digest: revenue_streaming::Digest(request.policy_digest),
+                asset: AssetId(asset_pubkey.to_bytes()),
+                recipient: RecipientId(recipient_pubkey.to_bytes()),
+                plan_digest: revenue_streaming::Digest(split_plan.plan_digest),
+                policy_digest: revenue_streaming::Digest(policy.policy_digest),
                 start_slot: request.start_slot,
                 end_slot: request.end_slot,
                 max_total_atomic: request.max_total_atomic,
@@ -8884,44 +9021,48 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_metrics() -> Arc<ServiceMetrics> {
-        Arc::new(
-            ServiceMetrics::new(
-                "api",
-                &[
-                    "authorization_capabilities",
-                    "tax_calculate",
-                    "tax_document_calculate",
-                    "tax_quote",
-                    "tax_document_quote",
-                    "tax_replay",
-                    "tax_document_replay",
-                    "tax_rule_draft_create",
-                    "tax_rule_transition",
-                    "tax_rule_governance_read",
-                    "jurisdiction_policy_draft_create",
-                    "jurisdiction_policy_transition",
-                    "jurisdiction_policy_governance_read",
-                    "vault_release_claim_create",
-                    "vault_release_claim_read",
-                    "vault_release_claim_transition",
-                    "settlement_adjustment_create",
-                    "settlement_adjustment_read",
-                    "settlement_adjustment_transition",
-                    "adjustment_authority_challenge",
-                    "adjustment_authority_bind",
-                    "settlement_adjustment_compile",
-                    "refund_funding_configuration_create",
-                    "refund_funding_configuration_read",
-                    "refund_funding_configuration_transition",
-                    "vault_reconciliation_read",
-                    "indexer_replay_operator",
-                    "indexer_targeted_recovery",
-                    "settlement_compile",
-                    "settlement_submit",
-                ],
-            )
-            .unwrap(),
-        )
+        Arc::new(ServiceMetrics::new("api", API_METRIC_OPERATIONS).unwrap())
+    }
+
+    #[test]
+    fn revenue_reference_catalog_does_not_publish_authority_digests_or_topology() {
+        let catalog = RevenueStreamReferenceCatalog {
+            destinations: vec![storage::RevenueStreamDestinationReference {
+                id: Uuid::now_v7(),
+                route_key: "partner-primary".to_string(),
+                version: 1,
+                recipient_owner: "11111111111111111111111111111111".to_string(),
+                mint: "11111111111111111111111111111111".to_string(),
+                token_program: "11111111111111111111111111111111".to_string(),
+                verification_slot: 42,
+            }],
+            split_plans: vec![storage::RevenueStreamSplitPlanReference {
+                id: Uuid::now_v7(),
+                plan_key: "partner-share".to_string(),
+                version: 1,
+                mint: "11111111111111111111111111111111".to_string(),
+                plan_digest: [1; 32],
+            }],
+            policies: vec![storage::RevenueStreamPolicyReference {
+                id: Uuid::now_v7(),
+                rule_set_id: Uuid::now_v7(),
+                rule_external_id: "goods".to_string(),
+                rule_version: 1,
+                jurisdiction: "IN".to_string(),
+                regime: "GST".to_string(),
+                policy_digest: [2; 32],
+                effective_from: "2026-01-01T00:00:00.000Z".to_string(),
+                effective_until: None,
+            }],
+        };
+        let json = serde_json::to_value(catalog).expect("catalog JSON");
+        assert!(json["split_plans"][0].get("plan_digest").is_none());
+        assert!(json["policies"][0].get("policy_digest").is_none());
+        assert!(
+            json["destinations"][0]
+                .get("destination_token_account")
+                .is_none()
+        );
     }
 
     fn client_fx_evidence_json() -> serde_json::Value {
@@ -9310,6 +9451,56 @@ mod tests {
             .await
             .expect("response");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn revenue_plan_rejects_browser_owned_digest_and_topology_fields() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("test clock")
+            .as_secs() as i64;
+        let (token, _) = auth::test_token_with_scope_and_roles(
+            now,
+            "tax:stream:propose",
+            "revenue-proposer",
+            &["revenue_stream_proposer"],
+        );
+        let body = serde_json::json!({
+            "idempotency_key": "legacy-browser-input",
+            "operator_subject": "payout-operator",
+            "asset": vec![1; 32],
+            "recipient": vec![2; 32],
+            "plan_digest": vec![3; 32],
+            "policy_digest": vec![4; 32],
+            "start_slot": "1",
+            "end_slot": null,
+            "max_total_atomic": "100",
+            "max_claim_atomic": "10"
+        });
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: true,
+                storage: None,
+                authenticator: Some(auth::test_authenticator()),
+                jurisdiction_provider_registry: None,
+                fx_issuance: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/revenue-streaming/plans")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).expect("request JSON")))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

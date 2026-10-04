@@ -230,6 +230,11 @@ Compose profile: `make solana-up`. It uses a pinned Agave 4.3.0 release
 installer and synthetic local state; it is not a testnet or mainnet node. The
 profile requires a Linux runtime exposing the `io_uring` capabilities required
 by Agave 4.3.0; image build success alone does not prove validator start-up.
+The indexer now waits for validator health through a bounded startup probe;
+the route verifier leaves routes inactive when its provider is unavailable.
+Docker Desktop environments that report `io_uring NOT supported` must run the
+validator on Linux/amd64 or use the explicit synthetic RPC-fixture drills for
+non-validator development.
 
 The executable foundation also includes the deterministic raw-evidence
 projection rebuild primitive defined by ADR-0088. Its clean-database digest
@@ -291,7 +296,9 @@ image. It proves quote-bound attestation ingestion, exact replay, conflict and
 tenant rejection, non-simulation single/Split Plan compilation, the governed
 vault-release lifecycle and database immutability guards, and that the outbox
 worker publishes transactional events only after PostgreSQL commit.
-It also runs the rollback-only PostgreSQL 18 refund-proof backlog contract.
+It also proves the server-owned revenue reference catalog redacts technical
+topology and authority digests, accepts ID-only revenue-plan proposals, and
+runs the rollback-only PostgreSQL 18 refund-proof backlog contract.
 
 Run `make refund-funding-verifier-drill` for the isolated lease-fenced
 two-replica verifier contention/crash drill described by

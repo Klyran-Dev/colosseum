@@ -2,6 +2,18 @@
 
 ## 2026-10-04
 
+- Added ADR-0298 and a final Material 3 Expressive precedence layer for the
+  operational shell. Light, dark, and system themes now consume semantic roles
+  for action, surface, status, risk, and navigation states; the color, CSP, and
+  plain-language contracts also run in the pull-request web CI job.
+- Added ADR-0297 for a production account/session menu with safe identity
+  disclosure, access-review navigation, and a real sign-out boundary.
+- Added ADR-0295 and server-owned UUIDv7 revenue-plan reference selection so
+  the browser cannot submit payout topology or authority digests.
+- Added ADR-0296 to gate indexer chain readers on bounded validator health and
+  updated the local/bootstrap documentation for the fail-closed startup path.
+- Added a static API metric-registry contract that prevents endpoint
+  observations from drifting from the fixed-cardinality production catalog.
 - Added ADR-0285 and the pure `revenue-streaming` domain slice: finalized
   settlement accruals, four-eyes stream lifecycle, bounded single-use release
   claims, replay/conflict rejection, cap/conservation checks, corrections, and

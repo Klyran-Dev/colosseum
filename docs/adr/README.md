@@ -295,3 +295,7 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0292](0292-durable-revenue-accrual-reconciliation-jobs.md) — Durable revenue-accrual reconciliation jobs
 - [ADR-0293](0293-revenue-stream-signed-message-verification.md) — Revenue-stream signed-message verification boundary
 - [ADR-0294](0294-server-owned-revenue-payout-destination-registry.md) — Server-owned revenue payout-destination registry
+- [ADR-0295](0295-server-owned-revenue-plan-reference-selection.md) — Server-owned reference selection for revenue plans
+- [ADR-0296](0296-validator-health-gates-chain-readers.md) — Gate the indexer on validator health
+- [ADR-0297](0297-production-account-session-menu.md) — Production account and session menu
+- [ADR-0298](0298-material-3-expressive-visual-system.md) — Material 3 Expressive visual system for the operational SaaS shell

@@ -12,9 +12,10 @@ import { DEFAULT_TIME_ZONE, directionForLocale, isValidTimeZone, SUPPORTED_LOCAL
 import { BROWSER_RUNTIME_CONTEXT, RuntimeContext } from "./runtimeContext";
 import AuthSessionControl, { AuthSessionStatus } from "./AuthSessionControl";
 import { BROWSER_AUTH_CONFIG, BrowserAuthConfig } from "./authConfig";
-import { ProductWorkspace } from "./navigation";
+import { pathForWorkspace, ProductWorkspace } from "./navigation";
 
 export type { ProductWorkspace } from "./navigation";
+export type ThemePreference = "system" | "light" | "dark";
 
 type ServiceState = "checking" | "online" | "offline";
 
@@ -45,6 +46,8 @@ export interface ProductShellProps {
   timeZone: string;
   onLocaleChange: (locale: SupportedLocale) => void;
   onTimeZoneChange: (timeZone: string) => void;
+  themePreference?: ThemePreference;
+  onThemeChange?: (theme: ThemePreference) => void;
   children: ReactNode;
 }
 
@@ -104,6 +107,8 @@ export default function ProductShell({
   timeZone,
   onLocaleChange,
   onTimeZoneChange,
+  themePreference = "system",
+  onThemeChange = () => undefined,
   children,
 }: ProductShellProps) {
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
@@ -115,6 +120,7 @@ export default function ProductShell({
   const accessSubtext = !accessToken ? "Sign in to continue" : authorizationError ? "Protected actions stay unavailable" : snapshot.state === "server-allowed" ? "Confirmed by the service" : "Waiting for the service";
   const accountLabel = snapshot.state === "server-allowed" && snapshot.tenantId ? `Account ${snapshot.tenantId.slice(0, 8)}` : "Sign-in required";
   const accountSubtext = snapshot.state === "server-allowed" && snapshot.tenantId ? "Account confirmed by the service" : "Account context appears after sign-in";
+  const subjectLabel = snapshot.subject ?? (accessToken ? "Identity not confirmed" : "Not signed in");
   const contextWarning = runtimeContext.warnings.join(" ");
   const groupedItems = (group: WorkspaceGroup) => NAVIGATION.filter((item) => item.group === group);
   const effectiveTimeZone = isValidTimeZone(timeZone) ? timeZone : DEFAULT_TIME_ZONE;
@@ -125,7 +131,7 @@ export default function ProductShell({
   }
 
   return (
-    <div className="app-shell product-shell" dir={direction}>
+    <div className="app-shell product-shell" data-theme={themePreference} dir={direction}>
       <a className="skip-link" href="#workspace-content">Skip to workspace content</a>
       <aside className="app-sidebar" aria-label="Product navigation">
         <div className="sidebar-header">
@@ -190,11 +196,13 @@ export default function ProductShell({
             <span className={`network-badge ${runtimeContext.network.configured ? "" : "context-unconfigured"}`} title={runtimeContext.network.configured ? undefined : contextWarning}>{runtimeContext.network.label}</span>
             <ShellStatus serviceState={serviceState} />
             <details className="display-settings">
-              <summary aria-label="Open display settings">Display settings</summary>
+              <summary role="button" aria-label="Open display settings">Display settings</summary>
               <div className="display-settings-menu">
                 <label><span>Language</span><select value={locale} onChange={(event) => onLocaleChange(event.target.value as SupportedLocale)}>{SUPPORTED_LOCALES.map((option) => <option value={option} key={option}>{option}</option>)}</select></label>
                 <label><span>Time zone</span><input value={timeZone} onChange={(event) => onTimeZoneChange(event.target.value)} list="supported-time-zones" aria-invalid={!isValidTimeZone(timeZone)} /></label>
+                <label><span>Theme</span><select aria-label="Theme" value={themePreference} onChange={(event) => onThemeChange(event.target.value as ThemePreference)}><option value="system">System default</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
                 <small className="field-help">Dates and times are shown in {effectiveTimeZone}. Currency values follow the selected language and account settings.</small>
+                <small className="field-help">Theme changes appearance only.</small>
                 <datalist id="supported-time-zones"><option value="UTC" /><option value="Asia/Kolkata" /><option value="America/Los_Angeles" /><option value="Europe/Berlin" /></datalist>
                 {!isValidTimeZone(timeZone) && <small className="inline-warning">Unknown time zone; UTC is used for rendering.</small>}
               </div>
@@ -208,7 +216,40 @@ export default function ProductShell({
               onSignIn={onSignIn}
               onSignOut={onSignOut}
             />
-            <button type="button" className="avatar-button" aria-label="Open signed-in account menu">{snapshot.state === "server-allowed" ? "✓" : "?"}</button>
+            <details className="account-menu">
+              <summary className="account-menu-trigger" role="button" aria-label="Open account menu">
+                <span className="avatar-button" aria-hidden="true">{snapshot.state === "server-allowed" ? "✓" : "?"}</span>
+              </summary>
+              <div className="account-menu-panel">
+                <div className="account-menu-heading">
+                  <div><span className="account-menu-label">Account</span><strong>{accountLabel}</strong></div>
+                  <span className={`status-pill ${snapshot.state === "server-allowed" ? "" : "status-pill-warning"}`}>{accessLabel}</span>
+                </div>
+                <p className="account-menu-copy">{accountSubtext}. This menu shows session context; it cannot grant access or approve an action.</p>
+                <dl className="account-menu-facts">
+                  <div><dt>Signed in as</dt><dd>{subjectLabel}</dd></div>
+                  <div><dt>Access check</dt><dd>{accessSubtext}</dd></div>
+                </dl>
+                <div className="account-menu-actions">
+                  <a
+                    href={pathForWorkspace("access-control")}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.currentTarget.closest("details")?.removeAttribute("open");
+                      navigateToWorkspace("access-control");
+                    }}
+                  >Review access &amp; approvals</a>
+                  {accessToken ? <button
+                    type="button"
+                    className="secondary-button account-menu-signout"
+                    onClick={(event) => {
+                      event.currentTarget.closest("details")?.removeAttribute("open");
+                      onSignOut();
+                    }}
+                  >Sign out</button> : <small className="account-menu-note">Sign in to manage this account.</small>}
+                </div>
+              </div>
+            </details>
           </div>
         </header>
 

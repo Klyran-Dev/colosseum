@@ -15,6 +15,28 @@ the system operator role controls replay actions.
 3. Acknowledge a dead letter only after an operator has reviewed the evidence;
    acknowledgement is not repair completion.
 
+## Docker RPC startup failure
+
+If the indexer repeatedly reports transport failures for
+`http://validator:8899/`, inspect the validator first:
+
+```sh
+docker compose --profile solana ps -a validator
+docker compose --profile solana logs --no-color --tail=160 validator
+```
+
+Agave 4.3.0 requires an io_uring-capable Linux runtime. A Docker Desktop
+validator log containing `io_uring NOT supported` followed by
+`assertion failed: io_uring_supported()` means the validator exited before RPC
+was available; it is not an indexer decoding defect. The indexer now performs
+a bounded startup probe and exits with the provider error instead of creating
+an unbounded replay-gap loop.
+
+Run the pinned validator on a supported Linux/amd64 runtime for validator-backed
+development and conformance. For non-validator development, use the explicit
+synthetic RPC-fixture drills, which set `INDEXER_RPC_ENDPOINTS` themselves;
+never point a production or staging indexer at a fixture.
+
 ## Repair
 
 - Verify the range against at least the approved finalized provider policy.

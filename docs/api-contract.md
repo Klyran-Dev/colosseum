@@ -994,6 +994,54 @@ program validates the claim PDA, registry, token accounts, time window, vault
 balance, approver, and PDA-signed checked CPI atomically. Finalized chain state
 is the authority for whether funds moved.
 
+## Revenue-stream plan selection and governance boundary
+
+The partner-payout workspace is a server-owned reference-selection boundary.
+It does not accept merchant-side account topology, raw settlement split or tax
+policy digests, token-program choices, or a caller-supplied asset/recipient
+pair.
+
+`GET /v1/revenue-streaming/references` requires `tax:stream:propose` and the
+`revenue_stream_proposer` role. It returns at most 64 active finalized-verified
+payout destinations, 64 active effective settlement split references, and 64
+published effective jurisdiction-policy references. The response contains
+only selection metadata and opaque UUIDv7 references; inactive, expired,
+cross-tenant, ambiguous, or integrity-failing records are omitted or fail the
+request. It performs no Solana RPC.
+
+`POST /v1/revenue-streaming/plans` accepts the following production request:
+
+```json
+{
+  "idempotency_key": "payout-plan-request-01",
+  "operator_subject": "payout-preparer-subject",
+  "destination_route_id": "01992f1b-4a70-7e30-8ea2-b6e37a9d9d21",
+  "split_plan_id": "01992f1b-4a70-7e30-8ea2-b6e37a9d9d22",
+  "policy_id": "01992f1b-4a70-7e30-8ea2-b6e37a9d9d23",
+  "start_slot": "100",
+  "end_slot": null,
+  "max_total_atomic": "1000000",
+  "max_claim_atomic": "100000"
+}
+```
+
+The API resolves every selected UUID under the authenticated merchant,
+revalidates canonical split/policy evidence, checks that the destination and
+split use the same asset and compatible token program, and derives recipient,
+asset, route bindings, plan digest, and policy digest on the server. A raw
+digest/topology request is rejected rather than interpreted as a legacy
+fallback. The persisted plan and first outbox event are written atomically;
+replays must use the same idempotency key and resolved inputs.
+
+`GET /v1/revenue-streaming/plans` returns tenant-scoped plans. Their
+`destination_route_id`, immutable digests, accrued/released amounts, and
+UUIDv7 identities are evidence fields; they do not authorize token movement.
+`POST /v1/revenue-streaming/plans/{plan_id}/transition` applies the bounded
+four-eyes lifecycle, and `POST /v1/revenue-streaming/plans/{plan_id}/claims`
+reserves a bounded release only. A prepared claim is not a transfer or legal
+tax filing. Wallet signing, exact-message verification, finalized evidence,
+and Linux validator conformance remain separate release gates.
+
 ## Settlement-adjustment proposal and governance boundary
 
 The settlement-adjustment bounded context records immutable refund, reversal,

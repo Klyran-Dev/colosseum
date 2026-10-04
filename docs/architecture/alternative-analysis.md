@@ -253,6 +253,7 @@ This document records the comparison baseline required before implementation. It
 | PostgreSQL recovery evidence | Docker-isolated `pg_dump`/`pg_restore` drill plus production PITR | Filesystem snapshot only, application row copier | Portable logical restore validates the schema/evidence contract; production still requires encrypted off-site backups and PITR |
 | Tenant settlement account configuration | PostgreSQL tenant-scoped immutable route registry plus deterministic payer ATA derivation | Caller-supplied account tuples, RPC discovery in compile path, environment-only route | Removes account substitution while keeping the compile path bounded and avoiding RPC/ATA creation in the settlement hot path |
 | Route activation verification | Dedicated bounded verifier with finalized `getMultipleAccounts`, provider failover, and append-only evidence | Verify on checkout, trust database rows, single-provider confirmed reads, on-chain registry reads | Keeps RPC and account parsing off the hot path while proving account topology at finalized commitment before activation |
+| Revenue-plan reference input | Server-owned bounded UUIDv7 catalog for verified destinations, active split plans, and published policies | Browser-supplied digests/keys, client-side digest selection, generic search service | Keeps the API authoritative for tenant scope, lifecycle, effective windows, canonical digests, and payout topology while giving operators a business-readable selection flow |
 | Disposable cache/leases | Redis | Memcached, cache-only in-process | Shared low-latency cache with explicit non-authority |
 | Async delivery | Outbox + NATS JetStream when required | Kafka by default, direct fan-out | Keep broker off hot path; reduce operational weight while preserving replayable async work |
 | Chain truth | Solana finalized state + receipt evidence | API database, WebSocket notification alone | Correctness and auditability |
@@ -2416,3 +2417,35 @@ The selected boundary is recorded in ADR-0293.
 | Replayable operational evidence | Weak | Weak | Partial | Fail | Pass |
 | Token-2022 compatibility boundary | Weak | Weak | Partial | Fail | Pass |
 | Selected | No | No | No | No | **Yes; see ADR-0294** |
+
+### Server-owned revenue-plan reference selection (ADR-0295)
+
+| Criterion | Raw browser digests/keys | Client-side digest selection | Generic search service | Server-owned UUIDv7 catalog |
+| --- | --- | --- | --- | --- |
+| Business-readable operator workflow | Fail | Partial | Pass | **Pass** |
+| Tenant/lifecycle authority | Weak | Weak | Partial | **Pass** |
+| Canonical digest derivation | Fail | Fail | Partial | **Pass** |
+| No chain RPC in create path | Pass | Pass | Partial | **Pass** |
+| Bounded latency and failure surface | Pass | Pass | Weak | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0295** |
+
+### Production account and session menu (ADR-0297)
+
+| Criterion | Inert avatar | Modal dialog | Dedicated account route | Native disclosure menu |
+| --- | --- | --- | --- | --- |
+| No false affordance | Fail | Pass | Pass | **Pass** |
+| Keyboard and screen-reader behavior | Fail | Partial | Pass | **Pass** |
+| Small failure surface | Pass | Partial | Weak | **Pass** |
+| Does not create a client authority boundary | Pass | Pass | Pass | **Pass** |
+| Selected | No | No | Deferred | **Yes; see ADR-0297** |
+
+### Material 3 Expressive visual system (ADR-0298)
+
+| Criterion | Literal component colors | Arbitrary third-party theme | Repository Material roles | Full UI framework |
+| --- | --- | --- | --- | --- |
+| Semantic state meaning | Fail | Partial | **Pass** | Partial |
+| Light/dark accessibility review | Weak | Partial | **Pass** | Partial |
+| Visual density and hierarchy control | Partial | Partial | **Pass** | Partial |
+| Runtime and dependency cost | Pass | Partial | **Pass** | Fail |
+| Wallet/failure UX ownership | Pass | Weak | **Pass** | Partial |
+| Selected | No | No | **Yes; see ADR-0298** | Deferred |

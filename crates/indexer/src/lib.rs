@@ -364,6 +364,48 @@ impl FailoverPageSource {
             .collect()
     }
 
+    /// Probe the provider pool without requiring the configured start slot to
+    /// be finalized yet. A reachable provider may legitimately report
+    /// `NonFinalized` when a fresh local validator has not produced the start
+    /// slot; transport and malformed-response failures remain failures.
+    pub async fn probe(&self, start_slot: u64) -> Result<(), ProviderError> {
+        let range = ScanRange {
+            start_slot,
+            end_slot: start_slot,
+        };
+        let mut last_error = None;
+        for provider_index in self.provider_order() {
+            let provider = &self.providers[provider_index];
+            match tokio::time::timeout(
+                self.attempt_timeout,
+                provider.source.fetch_finalized_page(range),
+            )
+            .await
+            {
+                Ok(Ok(_)) | Ok(Err(ProviderError::NonFinalized)) => {
+                    self.record_success(provider_index);
+                    return Ok(());
+                }
+                Ok(Err(error)) => {
+                    self.record_failure(provider_index);
+                    last_error = Some(error);
+                }
+                Err(_) => {
+                    self.record_failure(provider_index);
+                    last_error = Some(ProviderError::Transport(
+                        "provider attempt deadline exceeded".to_string(),
+                    ));
+                }
+            }
+        }
+        match last_error {
+            Some(error) => Err(error),
+            None => Err(ProviderError::Transport(
+                "provider probe produced no result".to_string(),
+            )),
+        }
+    }
+
     fn provider_order(&self) -> Vec<usize> {
         let mut available = self
             .providers
@@ -6156,6 +6198,18 @@ mod tests {
         }
     }
 
+    struct NonFinalizedSource;
+
+    #[async_trait]
+    impl FinalizedPageSource for NonFinalizedSource {
+        async fn fetch_finalized_page(
+            &self,
+            _range: ScanRange,
+        ) -> Result<FinalizedPage, ProviderError> {
+            Err(ProviderError::NonFinalized)
+        }
+    }
+
     struct StaticRefundSource {
         balance: FinalizedRefundBalances,
         failing: bool,
@@ -8408,6 +8462,18 @@ mod tests {
         let page = pool.fetch_finalized_page(planned.range).await.unwrap();
         assert_eq!(page.range, planned.range);
         assert_eq!(page.observed_finalized_slot, 120);
+    }
+
+    #[tokio::test]
+    async fn provider_probe_accepts_reachable_but_not_yet_finalized_start_slot() {
+        let pool = FailoverPageSource::new(
+            vec![Arc::new(NonFinalizedSource)],
+            Duration::from_millis(100),
+        )
+        .unwrap();
+
+        assert!(pool.probe(100).await.is_ok());
+        assert_eq!(pool.health_snapshot()[0].consecutive_failures, 0);
     }
 
     #[tokio::test]

@@ -25,14 +25,16 @@ chain verifies the exact instruction and finalized evidence is recorded.
 ### Stream plan
 
 A stream plan is immutable after activation and contains tenant and merchant
-identity, the UUIDv7 of the server-resolved active settlement route, asset and
-recipient identity, named payout-preparer subject, source split-plan digest,
+identity, the UUIDv7 of the server-resolved active settlement route and the
+UUIDv7 of the server-owned payout-destination route, asset and recipient
+identity, named payout-preparer subject, source split-plan digest,
 tax-policy/rule digest, start and optional end slot, maximum lifetime and
 claim amounts, cadence/window bounds, and four-eyes governance evidence. The
-browser supplies the asset identity and tenant-scoped payout-preparer subject
-only; it cannot choose the merchant account, tax vault, token program, route
-version, or wallet public key. The preparer's wallet is attached later through
-the shared one-time, role-qualified wallet-proof flow.
+browser supplies only the three tenant-scoped reference IDs, business limits,
+and named payout-preparer subject; it cannot choose the asset, merchant
+account, tax vault, token program, route version, or wallet public key. The
+preparer's wallet is attached later through the shared one-time, role-qualified
+wallet-proof flow.
 
 One plan has one recipient and one asset. A multi-recipient product creates
 separate plans from the same immutable Split Plan; it does not create an
@@ -113,6 +115,9 @@ transfer.
 
 The authenticated API surface is:
 
+- `GET /v1/revenue-streaming/references` for a bounded, tenant-scoped catalog
+  of finalized payout destinations, active settlement splits, and published
+  tax policies;
 - `GET/POST /v1/revenue-streaming/plans` for scoped plan list and proposal;
 - `GET /v1/revenue-streaming/plans/{plan_id}` for tenant-scoped detail;
 - `POST /v1/revenue-streaming/plans/{plan_id}/transition` for four-eyes
@@ -125,9 +130,28 @@ The authenticated API surface is:
   proof; they do not make a browser-supplied wallet key authoritative.
 
 Plan creation resolves exactly one active, effective, finalized settlement
-route for the tenant and asset and persists that route identity atomically
-with the plan. Zero or multiple active routes are unavailable states; no
-fallback route or caller-supplied account topology is accepted.
+route for the tenant and asset and exactly one active, effective,
+finalized-verified payout-destination route for the tenant, recipient owner,
+and asset. The proposal selects only the UUIDv7 references for the destination
+route, settlement split, and published tax policy; the API derives the asset,
+recipient, route binding, and immutable digests from those server-owned
+records. Both route identities and both evidence digests are persisted
+atomically with the plan. Zero or multiple active routes are unavailable
+states; no fallback route, raw digest, or caller-supplied account topology is
+accepted. A legacy plan without a payout destination binding remains readable
+but cannot compile a claim.
+
+The reference catalog is bounded to 64 entries per type, returns no inactive,
+expired, unverified, cross-tenant, or integrity-failing record, and performs
+no Solana RPC. If the catalog is empty or stale, the UI explains the required
+setup action instead of exposing a raw-address or raw-fingerprint form.
+
+The payout-destination registry is a separate provisioning boundary. It owns
+the exact recipient token account and token program, and its verifier proves
+the destination account's mint and token authority at finalized commitment.
+The browser never supplies or derives this account during signing. A route
+change is a new immutable version and requires fresh evidence; it cannot
+silently redirect an existing plan.
 
 Every endpoint derives tenant and actor identity from the verified OIDC
 principal, evaluates scope and role policy, and returns explicit conflict or

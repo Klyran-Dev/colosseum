@@ -615,6 +615,78 @@ if ! printf '%s' "$route_response" | grep -q '"mint_decimals":2'; then
     exit 1
 fi
 
+# Exercise the production-shaped revenue-plan selection boundary. The
+# destination row is deliberately synthetic test evidence, but it uses the
+# same finalized-only contract as a real verified route. The browser/API
+# request below supplies only UUIDv7 references; all payout topology and
+# cryptographic digests must be resolved from PostgreSQL server-side.
+revenue_destination_route_id="01992f1b-4a70-7e30-8ea2-b6e37a9d9d14"
+revenue_policy_id=$(docker compose -p "$project_name" exec -T postgres \
+    psql -qAt -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
+    -c "SELECT id FROM jurisdiction_policies
+        WHERE merchant_id = '$merchant_id'
+          AND status = 'published'
+        ORDER BY effective_from DESC, id
+        LIMIT 1;" | tr -d '[:space:]')
+if [ -z "$revenue_policy_id" ]; then
+    echo "synthetic published jurisdiction policy was not available for revenue selection" >&2
+    exit 1
+fi
+docker compose -p "$project_name" exec -T postgres \
+    psql -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
+    -c "INSERT INTO revenue_stream_destination_routes
+        (id, merchant_id, route_key, version, status, recipient_owner, mint,
+         destination_token_account, token_program, verification_digest,
+         verification_slot, verification_commitment, verification_evidence,
+         verifier_version, verified_at, effective_from)
+       VALUES
+        ('$revenue_destination_route_id', '$merchant_id',
+         'local-synthetic-finalized-partner-usd', 1, 'active',
+         'SysvarRent111111111111111111111111111111111',
+         'SysvarC1ock11111111111111111111111111111111',
+         'ComputeBudget111111111111111111111111111111',
+         'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+         decode(repeat('0c', 32), 'hex'), 778, 'finalized',
+         '{\"source\":\"synthetic-local-finalized-fixture\",\"warning\":\"not chain verified\"}'::jsonb,
+         'integration-fixture-v1', now(), now() - interval '1 minute')
+       ON CONFLICT (id) DO NOTHING"
+revenue_authorization="$(make_authorization revenue-proposer 'tax:stream:propose' '["revenue_stream_proposer"]')"
+revenue_references_response_file="$integration_dir/revenue-references-response.json"
+revenue_references_http_status=$(curl --silent --show-error \
+    --output "$revenue_references_response_file" --write-out '%{http_code}' \
+    --header "authorization: $revenue_authorization" \
+    "$base_url/v1/revenue-streaming/references")
+revenue_references_response=$(sed -n '1p' "$revenue_references_response_file")
+if [ "$revenue_references_http_status" != "200" ] || \
+    ! printf '%s' "$revenue_references_response" | grep -q "\"id\":\"$revenue_destination_route_id\"" || \
+    ! printf '%s' "$revenue_references_response" | grep -q '"plan_key":"local-synthetic-split"' || \
+    ! printf '%s' "$revenue_references_response" | grep -q "\"id\":\"$revenue_policy_id\""; then
+    echo "revenue reference catalog failed (HTTP $revenue_references_http_status): $revenue_references_response" >&2
+    exit 1
+fi
+case "$revenue_references_response" in
+    *destination_token_account*|*plan_digest*|*policy_digest*)
+        echo "revenue reference catalog exposed server-owned topology or authority digests" >&2
+        exit 1
+        ;;
+esac
+
+revenue_plan_request="{\"idempotency_key\":\"integration-revenue-plan-01\",\"operator_subject\":\"payout-operator\",\"destination_route_id\":\"$revenue_destination_route_id\",\"split_plan_id\":\"01992f1b-4a70-7e30-8ea2-b6e37a9d9d13\",\"policy_id\":\"$revenue_policy_id\",\"start_slot\":\"1\",\"end_slot\":null,\"max_total_atomic\":\"100000\",\"max_claim_atomic\":\"10000\"}"
+revenue_plan_response_file="$integration_dir/revenue-plan-response.json"
+revenue_plan_http_status=$(printf '%s' "$revenue_plan_request" | curl --silent --show-error \
+    --output "$revenue_plan_response_file" --write-out '%{http_code}' \
+    --header 'content-type: application/json' \
+    --header "authorization: $revenue_authorization" \
+    --data-binary @- "$base_url/v1/revenue-streaming/plans")
+revenue_plan_response=$(sed -n '1p' "$revenue_plan_response_file")
+if [ "$revenue_plan_http_status" -lt 200 ] || [ "$revenue_plan_http_status" -ge 300 ] || \
+    ! printf '%s' "$revenue_plan_response" | grep -q "\"destination_route_id\":\"$revenue_destination_route_id\"" || \
+    ! printf '%s' "$revenue_plan_response" | grep -q '"asset":\[' || \
+    ! printf '%s' "$revenue_plan_response" | grep -q '"status":"proposed"'; then
+    echo "server-owned revenue plan creation failed (HTTP $revenue_plan_http_status): $revenue_plan_response" >&2
+    exit 1
+fi
+
 settlement_payer="cGfHiC6Kgg3FpFZvgwGcswsCRtp4aBP2fzuXRQPizuN"
 
 pre_attestation_compile_request="{\"calculation_id\":\"$calculation_id\",\"route_id\":\"$route_id\",\"payer\":\"$settlement_payer\",\"nonce\":\"9\"}"

@@ -10,6 +10,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use indexer::{FailoverPageSource, ProviderError};
 use indexer_service::{
     IndexerConfig, IndexerServiceError, MAX_TARGETED_RECOVERY_PAGES, ReplayMetrics, ReplayOutcome,
     prove_one_refund_balance_once, provider_health, reconcile_one_refund_claim_cancellation_once,
@@ -28,6 +29,9 @@ use std::{
 use storage::PgStore;
 use tokio::time::interval;
 use tracing::{info, warn};
+
+const STARTUP_PROVIDER_ATTEMPTS: usize = 30;
+const STARTUP_PROVIDER_RETRY: std::time::Duration = std::time::Duration::from_secs(1);
 
 #[derive(Clone)]
 struct HealthState {
@@ -48,6 +52,31 @@ async fn readyz(State(state): State<HealthState>) -> StatusCode {
     }
 }
 
+async fn wait_for_provider(
+    source: &FailoverPageSource,
+    start_slot: u64,
+) -> Result<(), ProviderError> {
+    let mut last_error = None;
+    for attempt in 1..=STARTUP_PROVIDER_ATTEMPTS {
+        match source.probe(start_slot).await {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                warn!(attempt, max_attempts = STARTUP_PROVIDER_ATTEMPTS, %error, "indexer RPC provider is not ready");
+                last_error = Some(error);
+                if attempt < STARTUP_PROVIDER_ATTEMPTS {
+                    tokio::time::sleep(STARTUP_PROVIDER_RETRY).await;
+                }
+            }
+        }
+    }
+    match last_error {
+        Some(error) => Err(error),
+        None => Err(ProviderError::Transport(
+            "indexer RPC readiness probe produced no result".to_string(),
+        )),
+    }
+}
+
 async fn metrics(State(state): State<HealthState>) -> Response {
     let mut rendered = state.metrics.render_prometheus();
     rendered.push_str(&state.replay_metrics.render_prometheus());
@@ -64,6 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let config = IndexerConfig::from_env()?;
     let source = config.build_source()?;
+    wait_for_provider(&source, config.start_slot).await?;
     let (refund_claim_signature_source, refund_claim_transaction_source) =
         config.build_targeted_recovery_sources()?;
     let vault_source = config.build_vault_balance_source()?;

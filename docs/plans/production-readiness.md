@@ -21,12 +21,13 @@ rule rollback, and finalized adjustment evidence. These are local Docker
 evidence gates only; they do not close the Linux validator, live provider,
 staging identity, HSM/KMS, legal, or regional SLO gates.
 
-The final production UI language and location-verification disclosure changes
-also passed `make web-browser-check`: all 17 real-browser journeys passed,
-including the WCAG A/AA audit workspaces, keyboard and responsive behavior,
-wallet rejection, expired-quote, evidence handoff, and fail-closed API states.
-This automated browser evidence does not replace manual assistive-technology,
-legal/tax, live-wallet, or staging identity review.
+The final production UI language, location-verification disclosure, and
+server-owned payout-reference selection changes also passed
+`make web-browser-check`: all 21 real-browser journeys passed, including the
+WCAG A/AA audit workspaces, keyboard and responsive behavior, wallet rejection,
+expired-quote, evidence handoff, fail-closed API states, and ID-only payout
+plan proposal. This automated browser evidence does not replace manual
+assistive-technology, legal/tax, live-wallet, or staging identity review.
 
 The 2026-10-03 native arm64 tax-engine benchmark after ADR-0284 measured
 uncached calculation at 1.4336–1.4431 microseconds, compiled calculation at

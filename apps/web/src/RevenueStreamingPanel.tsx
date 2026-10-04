@@ -23,6 +23,7 @@ interface Plan {
   releasedTotalAtomic: string;
   nextNonce: string;
   settlementRouteId: string;
+  destinationRouteId: string | null;
   asset: number[];
   recipient: number[];
   planDigest: number[];
@@ -33,6 +34,40 @@ interface Props {
   accessToken: string;
   authorizationSnapshot: AuthorizationSnapshot;
   authorizationError: string | null;
+}
+
+interface DestinationReference {
+  id: string;
+  routeKey: string;
+  version: number;
+  recipientOwner: string;
+  mint: string;
+  tokenProgram: string;
+  verificationSlot: string;
+}
+
+interface SplitPlanReference {
+  id: string;
+  planKey: string;
+  version: number;
+  mint: string;
+}
+
+interface PolicyReference {
+  id: string;
+  ruleSetId: string;
+  ruleExternalId: string;
+  ruleVersion: number;
+  jurisdiction: string;
+  regime: string;
+  effectiveFrom: string;
+  effectiveUntil: string | null;
+}
+
+interface ReferenceCatalog {
+  destinations: DestinationReference[];
+  splitPlans: SplitPlanReference[];
+  policies: PolicyReference[];
 }
 
 function objectValue(value: unknown, message: string): Record<string, unknown> {
@@ -87,6 +122,7 @@ function parsePlan(value: unknown): Plan {
     releasedTotalAtomic: atomicValue(record.released_total_atomic, "The released balance is invalid."),
     nextNonce: atomicValue(record.next_nonce, "The next payout reference is invalid."),
     settlementRouteId: textValue(spec.settlement_route_id, "The payout route binding is invalid."),
+    destinationRouteId: record.destination_route_id == null ? null : textValue(record.destination_route_id, "The payout destination verification is invalid."),
     asset: bytesValue(spec.asset, "The payout asset is invalid."),
     recipient: bytesValue(spec.recipient, "The partner destination is invalid."),
     planDigest: bytesValue(spec.plan_digest, "The payout plan fingerprint is invalid."),
@@ -99,6 +135,60 @@ function parsePlans(value: unknown): Plan[] {
   return value.map(parsePlan);
 }
 
+function integerValue(value: unknown, message: string): number {
+  if (!Number.isInteger(value) || (value as number) <= 0) throw new Error(message);
+  return value as number;
+}
+
+function parseDestinationReference(value: unknown): DestinationReference {
+  const record = objectValue(value, "The service returned an invalid payout destination.");
+  return {
+    id: textValue(record.id, "The payout destination reference is invalid."),
+    routeKey: textValue(record.route_key, "The payout destination label is invalid."),
+    version: integerValue(record.version, "The payout destination version is invalid."),
+    recipientOwner: textValue(record.recipient_owner, "The payout partner identity is invalid."),
+    mint: textValue(record.mint, "The payout asset reference is invalid."),
+    tokenProgram: textValue(record.token_program, "The payout token interface is invalid."),
+    verificationSlot: atomicValue(record.verification_slot, "The payout verification position is invalid."),
+  };
+}
+
+function parseSplitPlanReference(value: unknown): SplitPlanReference {
+  const record = objectValue(value, "The service returned an invalid settlement split.");
+  return {
+    id: textValue(record.id, "The settlement split reference is invalid."),
+    planKey: textValue(record.plan_key, "The settlement split name is invalid."),
+    version: integerValue(record.version, "The settlement split version is invalid."),
+    mint: textValue(record.mint, "The settlement split asset is invalid."),
+  };
+}
+
+function parsePolicyReference(value: unknown): PolicyReference {
+  const record = objectValue(value, "The service returned an invalid tax policy.");
+  return {
+    id: textValue(record.id, "The tax policy reference is invalid."),
+    ruleSetId: textValue(record.rule_set_id, "The tax rule reference is invalid."),
+    ruleExternalId: textValue(record.rule_external_id, "The tax rule name is invalid."),
+    ruleVersion: integerValue(record.rule_version, "The tax rule version is invalid."),
+    jurisdiction: textValue(record.jurisdiction, "The tax jurisdiction is invalid."),
+    regime: textValue(record.regime, "The tax regime is invalid."),
+    effectiveFrom: textValue(record.effective_from, "The tax policy effective date is invalid."),
+    effectiveUntil: record.effective_until === null ? null : textValue(record.effective_until, "The tax policy end date is invalid."),
+  };
+}
+
+function parseReferenceCatalog(value: unknown): ReferenceCatalog {
+  const record = objectValue(value, "The service returned an invalid payout setup catalog.");
+  if (!Array.isArray(record.destinations) || !Array.isArray(record.split_plans) || !Array.isArray(record.policies)) {
+    throw new Error("The payout setup catalog is incomplete.");
+  }
+  return {
+    destinations: record.destinations.map(parseDestinationReference),
+    splitPlans: record.split_plans.map(parseSplitPlanReference),
+    policies: record.policies.map(parsePolicyReference),
+  };
+}
+
 function shortAddress(bytes: number[]): string {
   try {
     const address = new PublicKey(Uint8Array.from(bytes)).toBase58();
@@ -108,17 +198,12 @@ function shortAddress(bytes: number[]): string {
   }
 }
 
-function hexBytes(value: string, label: string): number[] {
-  const normalized = value.trim().replace(/^0x/, "");
-  if (!/^[0-9a-f]{64}$/i.test(normalized)) throw new Error(`${label} must be exactly 64 hexadecimal characters.`);
-  return Array.from({ length: 32 }, (_, index) => Number.parseInt(normalized.slice(index * 2, index * 2 + 2), 16));
-}
-
-function publicKeyBytes(value: string, label: string): number[] {
+function shortPublicKey(value: string): string {
   try {
-    return Array.from(new PublicKey(value.trim()).toBytes());
+    const address = new PublicKey(value).toBase58();
+    return `${address.slice(0, 6)}…${address.slice(-6)}`;
   } catch {
-    throw new Error(`${label} must be a valid Solana address.`);
+    return "Unavailable";
   }
 }
 
@@ -140,15 +225,17 @@ function available(plan: Plan): string {
 
 export default function RevenueStreamingPanel({ accessToken, authorizationSnapshot, authorizationError }: Props) {
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [references, setReferences] = useState<ReferenceCatalog | null>(null);
+  const [referenceState, setReferenceState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [referenceError, setReferenceError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(authorizationError);
   const [notice, setNotice] = useState<string | null>(null);
-  const [asset, setAsset] = useState("");
-  const [recipient, setRecipient] = useState("");
+  const [destinationRouteId, setDestinationRouteId] = useState("");
+  const [splitPlanId, setSplitPlanId] = useState("");
+  const [policyId, setPolicyId] = useState("");
   const [operatorSubject, setOperatorSubject] = useState("");
-  const [planDigest, setPlanDigest] = useState("");
-  const [policyDigest, setPolicyDigest] = useState("");
   const [startSlot, setStartSlot] = useState("");
   const [endSlot, setEndSlot] = useState("");
   const [maxTotal, setMaxTotal] = useState("");
@@ -163,6 +250,13 @@ export default function RevenueStreamingPanel({ accessToken, authorizationSnapsh
   const canClaim = allowed(authorizationSnapshot, "revenue_stream.claim.prepare");
   const activeCount = useMemo(() => plans.filter((plan) => plan.status === "active").length, [plans]);
   const totalAvailable = useMemo(() => plans.reduce((total, plan) => total + BigInt(available(plan)), 0n).toString(), [plans]);
+  const selectedDestination = useMemo(() => references?.destinations.find((destination) => destination.id === destinationRouteId) ?? null, [references, destinationRouteId]);
+  const compatibleSplitPlans = useMemo(() => references?.splitPlans.filter((splitPlan) => !selectedDestination || splitPlan.mint === selectedDestination.mint) ?? [], [references, selectedDestination]);
+
+  useEffect(() => {
+    if (!selectedDestination || !references) return;
+    if (!compatibleSplitPlans.some((splitPlan) => splitPlan.id === splitPlanId)) setSplitPlanId(compatibleSplitPlans[0]?.id ?? "");
+  }, [selectedDestination, references, compatibleSplitPlans, splitPlanId]);
 
   async function loadPlans(signal?: AbortSignal) {
     if (!accessToken.trim() || !canRead) return;
@@ -180,11 +274,42 @@ export default function RevenueStreamingPanel({ accessToken, authorizationSnapsh
     }
   }
 
+  async function loadReferences(signal?: AbortSignal) {
+    if (!accessToken.trim() || !canPropose) return;
+    setReferenceState("loading");
+    setReferenceError(null);
+    setReferences(null);
+    setDestinationRouteId("");
+    setSplitPlanId("");
+    setPolicyId("");
+    try {
+      const response = await fetchWithTimeout(`${API_BASE}/v1/revenue-streaming/references`, { headers: { authorization: `Bearer ${accessToken.trim()}` }, signal }, REQUEST_TIMEOUT_MS.default);
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(responseError(response, payload, "Approved payout setup options could not be loaded."));
+      const catalog = parseReferenceCatalog(payload);
+      setReferences(catalog);
+      setDestinationRouteId((current) => catalog.destinations.some((destination) => destination.id === current) ? current : catalog.destinations[0]?.id || "");
+      setSplitPlanId((current) => catalog.splitPlans.some((splitPlan) => splitPlan.id === current) ? current : catalog.splitPlans[0]?.id || "");
+      setPolicyId((current) => catalog.policies.some((policy) => policy.id === current) ? current : catalog.policies[0]?.id || "");
+      setReferenceState("ready");
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === "AbortError") return;
+      setReferenceState("error");
+      setReferenceError(cause instanceof Error ? cause.message : "Approved payout setup options could not be loaded.");
+    }
+  }
+
   useEffect(() => {
     const controller = new AbortController();
     void loadPlans(controller.signal);
     return () => controller.abort();
   }, [accessToken, canRead]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadReferences(controller.signal);
+    return () => controller.abort();
+  }, [accessToken, canPropose]);
 
   async function submitPlan(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -198,10 +323,9 @@ export default function RevenueStreamingPanel({ accessToken, authorizationSnapsh
         body: JSON.stringify({
           idempotency_key: createClientUuid(),
           operator_subject: operatorSubject.trim(),
-          asset: publicKeyBytes(asset, "The payment asset is not recognized."),
-          recipient: publicKeyBytes(recipient, "The partner payment account is not recognized."),
-          plan_digest: hexBytes(planDigest, "The payout plan fingerprint"),
-          policy_digest: hexBytes(policyDigest, "The policy fingerprint"),
+          destination_route_id: destinationRouteId,
+          split_plan_id: splitPlanId,
+          policy_id: policyId,
           start_slot: startSlot.trim(),
           end_slot: endSlot.trim() || null,
           max_total_atomic: maxTotal.trim(),
@@ -213,7 +337,7 @@ export default function RevenueStreamingPanel({ accessToken, authorizationSnapsh
       const plan = parsePlan(payload);
       setPlans((current) => [plan, ...current.filter((item) => item.id !== plan.id)]);
       setNotice("The payout plan is recorded and waiting for its required review.");
-      setAsset(""); setRecipient(""); setOperatorSubject(""); setPlanDigest(""); setPolicyDigest(""); setStartSlot(""); setEndSlot(""); setMaxTotal(""); setMaxClaim("");
+      setDestinationRouteId(""); setSplitPlanId(""); setPolicyId(""); setOperatorSubject(""); setStartSlot(""); setEndSlot(""); setMaxTotal(""); setMaxClaim("");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The payout plan could not be saved.");
     } finally {
@@ -283,7 +407,7 @@ export default function RevenueStreamingPanel({ accessToken, authorizationSnapsh
         {plans.length === 0 && !isLoading ? <div className="empty-state"><div className="empty-icon" aria-hidden="true">＋</div><strong>No payout plans yet</strong><p>Create a plan when a partner should receive a governed share of finalized settlements.</p></div> : <div className="revenue-plan-list">
           {plans.map((plan) => <article className="revenue-plan-card" key={plan.id}>
             <div className="revenue-plan-topline"><div><strong>Partner payout</strong><small>Destination {shortAddress(plan.recipient)} · asset {shortAddress(plan.asset)}</small></div><span className={`status-pill ${plan.status === "cancelled" ? "status-pill-danger" : plan.status === "proposed" ? "status-pill-warning" : ""}`}>{friendlyStatus(plan.status)}</span></div>
-            <dl className="summary-list"><div><dt>Ready to pay</dt><dd>{formatInteger(available(plan))}</dd></div><div><dt>Total payout limit</dt><dd>{formatInteger(plan.maxTotalAtomic)}</dd></div><div><dt>Maximum single payout</dt><dd>{formatInteger(plan.maxClaimAtomic)}</dd></div><div><dt>Earned / paid</dt><dd>{formatInteger(plan.accruedTotalAtomic)} / {formatInteger(plan.releasedTotalAtomic)}</dd></div><div><dt>Payout preparer</dt><dd>{plan.operatorSubject ?? "Needs assignment"}</dd></div></dl>
+            <dl className="summary-list"><div><dt>Ready to pay</dt><dd>{formatInteger(available(plan))}</dd></div><div><dt>Total payout limit</dt><dd>{formatInteger(plan.maxTotalAtomic)}</dd></div><div><dt>Maximum single payout</dt><dd>{formatInteger(plan.maxClaimAtomic)}</dd></div><div><dt>Earned / paid</dt><dd>{formatInteger(plan.accruedTotalAtomic)} / {formatInteger(plan.releasedTotalAtomic)}</dd></div><div><dt>Payout preparer</dt><dd>{plan.operatorSubject ?? "Needs assignment"}</dd></div><div><dt>Destination check</dt><dd><span className={`status-pill ${plan.destinationRouteId ? "" : "status-pill-warning"}`}>{plan.destinationRouteId ? "Verified" : "Setup required"}</span></dd></div></dl>
             {canGovern && <div className="status-actions" aria-label={`Actions for payout plan ${plan.id}`}>
               {plan.status === "proposed" && <button type="button" disabled={isSaving} onClick={() => void transition(plan, "approved")}>Approve plan</button>}
               {plan.status === "approved" && <button type="button" disabled={isSaving} onClick={() => void transition(plan, "active")}>Start accruals</button>}
@@ -292,11 +416,29 @@ export default function RevenueStreamingPanel({ accessToken, authorizationSnapsh
               {(plan.status === "active" || plan.status === "paused") && <><label className="revenue-inline-field"><span>Finalized position to close the plan</span><input value={completeSlot[plan.id] ?? ""} onChange={(event) => setCompleteSlot((current) => ({ ...current, [plan.id]: event.target.value }))} inputMode="numeric" placeholder="Required to complete" /></label><button type="button" disabled={isSaving || !completeSlot[plan.id]?.trim()} onClick={() => void transition(plan, "completed")}>Complete plan</button></>}
             </div>}
             {canClaim && plan.status === "active" && <form className="revenue-claim-form" onSubmit={(event) => { event.preventDefault(); void prepareClaim(plan); }}><div><strong>Prepare a payout</strong><small>Sets aside the amount for review. It does not move money.</small></div><label><span>Payout amount</span><input required value={claimAmount[plan.id] ?? ""} onChange={(event) => setClaimAmount((current) => ({ ...current, [plan.id]: event.target.value }))} inputMode="numeric" placeholder={`Up to ${plan.maxClaimAtomic}`} /><small>Enter the exact amount used by this payment asset.</small></label><button type="submit" disabled={isSaving}>Prepare payout for review</button></form>}
-            <details className="technical-details"><summary>View plan evidence</summary><p>Partner address: <code>{shortAddress(plan.recipient)}</code>. Asset: <code>{shortAddress(plan.asset)}</code>. Route binding: <code>{plan.settlementRouteId}</code>. Next release reference: <code>{plan.nextNonce}</code>.</p></details>
+            <details className="technical-details"><summary>View plan evidence</summary><p>Partner address: <code>{shortAddress(plan.recipient)}</code>. Asset: <code>{shortAddress(plan.asset)}</code>. Settlement route: <code>{plan.settlementRouteId}</code>. Payout destination: <code>{plan.destinationRouteId ?? "not bound"}</code>. Next release reference: <code>{plan.nextNonce}</code>.</p></details>
           </article>)}
         </div>}
       </section>
-      {canPropose ? <section className="panel" aria-labelledby="create-payout-title"><div className="panel-heading"><div><p className="eyebrow">Controlled setup</p><h2 id="create-payout-title">Create a payout plan</h2></div><span className="status-pill status-pill-warning">Review required</span></div><p className="panel-copy">Set a clear destination, spending boundary, and named payout preparer. The plan becomes active only after another authorized person reviews it.</p><form className="form-grid" onSubmit={(event) => void submitPlan(event)}><label><span>Partner payment account</span><input required value={recipient} onChange={(event) => setRecipient(event.target.value)} placeholder="Paste the verified partner account" autoComplete="off" /><small className="field-help">The account is checked before it is saved.</small></label><label><span>Payment asset</span><input required value={asset} onChange={(event) => setAsset(event.target.value)} placeholder="Enter the supported payment asset" autoComplete="off" /></label><label><span>Who prepares payouts?</span><input required value={operatorSubject} onChange={(event) => setOperatorSubject(event.target.value)} placeholder="Their sign-in identity" autoComplete="off" /><small className="field-help">They will later connect an approved wallet. This plan never accepts a wallet address here.</small></label><label><span>Start after settlement</span><input required value={startSlot} onChange={(event) => setStartSlot(event.target.value)} inputMode="numeric" placeholder="Finalized settlement position" /></label><label><span>Stop after settlement</span><input value={endSlot} onChange={(event) => setEndSlot(event.target.value)} inputMode="numeric" placeholder="Leave open-ended if allowed" /></label><label><span>Maximum lifetime payout</span><input required value={maxTotal} onChange={(event) => setMaxTotal(event.target.value)} inputMode="numeric" placeholder="Exact payment-asset amount" /><small className="field-help">This cannot be exceeded by earnings or corrections.</small></label><label><span>Maximum payout at one time</span><input required value={maxClaim} onChange={(event) => setMaxClaim(event.target.value)} inputMode="numeric" placeholder="Exact payment-asset amount" /></label><details className="technical-details full-field"><summary>Advanced rule references</summary><p>These fingerprints bind the plan to the approved split and tax policy. Copy them from the published rule and settlement records; do not invent values.</p><label><span>Settlement split fingerprint</span><input required value={planDigest} onChange={(event) => setPlanDigest(event.target.value)} placeholder="64 hexadecimal characters" spellCheck={false} /></label><label><span>Tax policy fingerprint</span><input required value={policyDigest} onChange={(event) => setPolicyDigest(event.target.value)} placeholder="64 hexadecimal characters" spellCheck={false} /></label></details><button type="submit" disabled={isSaving}>{isSaving ? "Saving securely…" : "Create plan for review"}</button></form></section> : <section className="panel empty-state"><div className="empty-icon" aria-hidden="true">i</div><strong>Plan creation needs a specific responsibility</strong><p>Your account can review payout plans, but it cannot propose new ones.</p></section>}
+      {canPropose ? <section className="panel" aria-labelledby="create-payout-title">
+        <div className="panel-heading"><div><p className="eyebrow">Controlled setup</p><h2 id="create-payout-title">Create a payout plan</h2></div><span className="status-pill status-pill-warning">Review required</span></div>
+        <p className="panel-copy">Choose records that have already been approved and verified. The plan becomes active only after another authorized person reviews it.</p>
+        {referenceState === "loading" && <p className="field-help" role="status">Loading approved payout setup options…</p>}
+        {referenceError && <p className="inline-error" role="alert">{referenceError}</p>}
+        {referenceState === "ready" && references && (references.destinations.length === 0 || references.splitPlans.length === 0 || references.policies.length === 0) && <div className="empty-state"><div className="empty-icon" aria-hidden="true">i</div><strong>Approved setup is not ready</strong><p>Ask an administrator to verify a payout destination, activate a settlement split, and publish a tax policy before creating this plan.</p></div>}
+        {referenceState === "ready" && references && references.destinations.length > 0 && references.splitPlans.length > 0 && references.policies.length > 0 && <form className="form-grid" onSubmit={(event) => void submitPlan(event)}>
+          <label><span>Verified payout destination</span><select required value={destinationRouteId} onChange={(event) => setDestinationRouteId(event.target.value)}><option value="">Choose a verified partner destination</option>{references.destinations.map((destination) => <option key={destination.id} value={destination.id}>{destination.routeKey} · partner {shortPublicKey(destination.recipientOwner)} · asset {shortPublicKey(destination.mint)}</option>)}</select><small className="field-help">Only finalized-verified destinations are offered. The receiving token account is controlled by the service record.</small></label>
+          <label><span>Settlement split</span><select required value={splitPlanId} onChange={(event) => setSplitPlanId(event.target.value)}><option value="">Choose an active settlement split</option>{compatibleSplitPlans.map((splitPlan) => <option key={splitPlan.id} value={splitPlan.id}>{splitPlan.planKey} · version {splitPlan.version} · asset {shortPublicKey(splitPlan.mint)}</option>)}</select><small className="field-help">The service records the exact approved split and checks that its asset matches the destination.</small></label>
+          <label><span>Published tax policy</span><select required value={policyId} onChange={(event) => setPolicyId(event.target.value)}><option value="">Choose a published tax policy</option>{references.policies.map((policy) => <option key={policy.id} value={policy.id}>{policy.jurisdiction} · {policy.regime} · {policy.ruleExternalId} v{policy.ruleVersion}</option>)}</select><small className="field-help">Only an effective, published policy can be attached to a new plan.</small></label>
+          <label><span>Who prepares payouts?</span><input required value={operatorSubject} onChange={(event) => setOperatorSubject(event.target.value)} placeholder="Their sign-in identity" autoComplete="off" /><small className="field-help">They will later connect an approved wallet. This plan never accepts a wallet address here.</small></label>
+          <label><span>Start after settlement</span><input required value={startSlot} onChange={(event) => setStartSlot(event.target.value)} inputMode="numeric" placeholder="Finalized settlement position" /></label>
+          <label><span>Stop after settlement</span><input value={endSlot} onChange={(event) => setEndSlot(event.target.value)} inputMode="numeric" placeholder="Leave open-ended if allowed" /></label>
+          <label><span>Maximum lifetime payout</span><input required value={maxTotal} onChange={(event) => setMaxTotal(event.target.value)} inputMode="numeric" placeholder="Exact payment-asset amount" /><small className="field-help">This cannot be exceeded by earnings or corrections.</small></label>
+          <label><span>Maximum payout at one time</span><input required value={maxClaim} onChange={(event) => setMaxClaim(event.target.value)} inputMode="numeric" placeholder="Exact payment-asset amount" /></label>
+          <details className="technical-details full-field"><summary>View selected record evidence</summary><p>Destination reference: <code>{destinationRouteId || "not selected"}</code>. Settlement split reference: <code>{splitPlanId || "not selected"}</code>. Tax policy reference: <code>{policyId || "not selected"}</code>.</p></details>
+          <button type="submit" disabled={isSaving || !destinationRouteId || !splitPlanId || !policyId}>{isSaving ? "Saving securely…" : "Create plan for review"}</button>
+        </form>}
+      </section> : <section className="panel empty-state"><div className="empty-icon" aria-hidden="true">i</div><strong>Plan creation needs a specific responsibility</strong><p>Your account can review payout plans, but it cannot propose new ones.</p></section>}
     </div>
     <p className="revenue-disclaimer">A prepared release is not a transfer. A wallet or governed signer must approve the exact instruction, and the service must observe finalized Solana evidence before the release is shown as paid.</p>
   </div>;
