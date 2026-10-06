@@ -1,5 +1,10 @@
 # Changelog
 
+- Added ADR-0426: form fields are M3 outlined text fields with hover, invalid
+  and disabled states; labels, supporting text, notices and legends use the
+  type scale, so form text no longer falls below 11px. A test rejects `rem`
+  font sizes and radii on form surfaces.
+
 - Added ADR-0425: the active navigation item is a vivid primary-container
   pill; the topbar status controls are M3 chips with tonal states; menus are
   elevated borderless surfaces; status pills use sentence-case labels. Fixed

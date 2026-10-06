@@ -3573,3 +3573,15 @@ token-first rewrite becomes cheaper.
 
 Chosen: primary-container, no bar. Revisit if tenants need distinct brand
 accents for the active item.
+
+### Canonical form controls and supporting text (ADR-0426)
+
+| Criterion | Filled fields (surface-container-highest) | **Outlined fields (transparent)** | Keep per-surface styles |
+| --- | --- | --- | --- |
+| Works on tonal panels and elevated menus | Poor (fill blends with menu tone) | **Good (outline carries the shape)** | Inconsistent |
+| M3 invalid and disabled semantics | Yes | **Yes** | Missing |
+| Single definition for shell and workspaces | Yes | **Yes** | No |
+| Visual density | Heavier | **Lighter** | Mixed |
+
+Chosen: outlined fields. Revisit if usability testing shows filled fields are
+easier to locate in dense forms.

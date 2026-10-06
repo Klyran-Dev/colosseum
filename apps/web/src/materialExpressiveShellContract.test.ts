@@ -214,4 +214,52 @@ describe("Material 3 Expressive shell contract", () => {
     }
     expect([...unresolved.entries()], "undefined custom properties make declarations invalid at computed-value time").toEqual([]);
   });
+
+  describe("canonical form controls, supporting text, and notices (ADR-0426)", () => {
+    const canonical = () => stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0426:"), stylesheet.lastIndexOf("/* Forced-colors must remain"));
+
+    it("renders outlined text fields with M3 shape, type, and states", () => {
+      const layer = canonical();
+      expect(layer).toContain(".product-shell input,\n.product-shell textarea,\n.product-shell select {");
+      expect(layer).toContain("border-radius: var(--md-sys-shape-corner-extra-small);");
+      expect(layer).toContain("font-size: var(--md-sys-typescale-body-large-size);");
+      expect(layer).toContain("background: transparent;");
+      expect(layer).toContain("border-color: var(--app-on-surface);");
+      expect(layer).toContain("border-color: var(--app-primary);");
+    });
+
+    it("styles invalid and disabled fields without relying on colour alone", () => {
+      const layer = canonical();
+      expect(layer).toContain('[aria-invalid="true"]');
+      expect(layer).toContain("border-color: var(--app-error);");
+      expect(layer).toContain("box-shadow: 0 0 0 1px var(--app-error);");
+      expect(layer).toContain(":disabled");
+      expect(layer).toContain("color: color-mix(in srgb, var(--app-on-surface) 38%, transparent);");
+      expect(layer).toContain("border-color: color-mix(in srgb, var(--app-on-surface) 12%, transparent);");
+    });
+
+    it("uses the type scale for labels, supporting text, legends, and notices", () => {
+      const layer = canonical();
+      expect(layer).toContain("var(--md-sys-typescale-label-medium-size)");
+      expect(layer).toContain("var(--md-sys-typescale-body-small-size)");
+      expect(layer).toContain("var(--md-sys-typescale-body-medium-size)");
+      expect(layer).toContain("var(--md-sys-typescale-title-small-size)");
+      expect(layer).toContain("border-radius: var(--md-sys-shape-corner-medium);");
+      expect(layer).not.toMatch(/font-size: [0-9.]+rem|border-radius: [0-9.]+rem/);
+      expect(layer).not.toMatch(/#[0-9a-f]{3,8}|rgba?\(|gradient\(|backdrop-filter/i);
+    });
+
+    it("keeps form-surface text and corners off rem literals", () => {
+      const css = stylesheet.replace(/@media \(forced-colors: active\) \{[\s\S]*?\n\}\n/g, "");
+      const surfaces = /^(?:\.product-shell )?(?:\.field-help|\.evidence-note|\.inline-(?:warning|error|success)|\.route-evidence|label span|input, textarea, select|\.[\w-]+ legend|\.bracket-row label span|\.revenue-claim-form small|\.revenue-inline-field span|\.session-control-local[^{]*)\b[^{]*\{[^}]*\}/gm;
+      const offenders = (css.match(surfaces) ?? []).filter((rule) => /font-size: [0-9.]+rem|border-radius: [0-9.]+rem/.test(rule));
+      expect(offenders).toEqual([]);
+    });
+
+    it("defines the field skin once (no content-only duplicate)", () => {
+      const css = stylesheet.replace(/@media \(forced-colors: active\) \{[\s\S]*?\n\}\n/g, "");
+      expect(css).not.toMatch(/^\.product-shell \.product-content input/m);
+      expect((css.match(/^\.product-shell input,$/gm) ?? []).length).toBe(1);
+    });
+  });
 });
