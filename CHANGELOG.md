@@ -1,5 +1,10 @@
 # Changelog
 
+- Added ADR-0424: removed 341 provably dead CSS declarations (same-selector
+  and `.product-shell`-prefixed overrides). A before/after computed-style
+  snapshot of all 16 routes in both themes shows no visual change. The colour
+  contract now checks the supporting-role aliases instead of a dead rule.
+
 - Added ADR-0423: navigation and panels now use one canonical M3 skin (pill
   items, secondary-container active indicator, plain icons, tonal cards)
   instead of about eight repeated override layers. The forced-colors block is

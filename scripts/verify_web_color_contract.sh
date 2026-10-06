@@ -58,9 +58,20 @@ for source_file in $production_source_files; do
   fi
 done
 
-for role in --app-primary --app-on-surface --app-on-variant --app-surface-container --app-outline-variant --app-error --app-warning --app-success --app-attention --app-blocked --app-supporting; do
+for role in --app-primary --app-on-surface --app-on-variant --app-surface-container --app-outline-variant --app-error --app-warning --app-success --app-attention --app-blocked; do
   if ! printf '%s\n' "$application_layer" | grep -Fq "var($role)"; then
     echo "Material 3 final precedence layer does not consume required semantic role: $role" >&2
+    exit 1
+  fi
+done
+
+# The supporting-state alias is part of the semantic map but currently has no
+# live component consumer (ADR-0419 made risk chips neutral; ADR-0424 removed
+# the dead declaration that used to satisfy a final-layer text check). Require
+# the alias to stay defined so a future informational state can use it.
+for alias in --app-supporting --app-supporting-container --app-on-supporting-container; do
+  if ! grep -Fq "  $alias:" "$styles"; then
+    echo "semantic alias missing from the token block: $alias" >&2
     exit 1
   fi
 done
