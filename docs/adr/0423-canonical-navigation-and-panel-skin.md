@@ -1,6 +1,6 @@
 # ADR-0423 — Canonical navigation and panel skin
 
-- Status: Accepted
+- Status: Accepted. Active navigation fill amended by ADR-0425 (primary-container).
 - Date: 2026-10-06
 - Decision owners: Product Design, Principal UI Architecture
 

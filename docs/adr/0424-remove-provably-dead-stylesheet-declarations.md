@@ -30,7 +30,8 @@ selector list's every component is dominated.
 
 - 341 declarations removed across 218 rules (1,572 to 1,473 lines).
 - A computed-style and geometry snapshot of every element on all 16 routes in
-  dark and light themes, taken before and after, shows **0 differences**
+  real dark and light themes (transitions disabled; re-run after fixing two
+  harness defects, see ADR-0425), taken before and after, shows **0 differences**
   (about 11,000 elements). Hover, focus, open-menu and media-query states are
   not part of that snapshot; the removal argument is order-independent for
   them, but they are not empirically covered.

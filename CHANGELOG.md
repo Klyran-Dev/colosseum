@@ -1,5 +1,12 @@
 # Changelog
 
+- Added ADR-0425: the active navigation item is a vivid primary-container
+  pill; the topbar status controls are M3 chips with tonal states; menus are
+  elevated borderless surfaces; status pills use sentence-case labels. Fixed
+  seven undefined `--app-*` aliases that left panel, card, sidebar and menu
+  backgrounds transparent, and added a test that rejects unresolved `var()`
+  references.
+
 - Added ADR-0424: removed 341 provably dead CSS declarations (same-selector
   and `.product-shell`-prefixed overrides). A before/after computed-style
   snapshot of all 16 routes in both themes shows no visual change. The colour

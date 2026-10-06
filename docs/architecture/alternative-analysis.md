@@ -3561,3 +3561,15 @@ Revisit if the library drops TonalSpot, or if tenants require brand theming.
 
 Revisit when the remaining legacy surfaces are migrated, at which point a full
 token-first rewrite becomes cheaper.
+
+### Canonical topbar and active navigation (ADR-0425)
+
+| Criterion | Keep secondary-container indicator | Primary-container, no bar | Keep inset bar (ADR-0419) |
+| --- | --- | --- | --- |
+| Reads as "current page" | Weak | **Strong** | Strong |
+| Uses a Material role | Yes | **Yes** | Yes, plus a non-M3 bar |
+| Consistent in light and dark | Yes | **Yes** | Yes |
+| Extra decoration | None | **None** | Inset bar |
+
+Chosen: primary-container, no bar. Revisit if tenants need distinct brand
+accents for the active item.

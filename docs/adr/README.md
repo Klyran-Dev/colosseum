@@ -425,3 +425,4 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0422](0422-material-baseline-palette-and-expressive-tokens.md) — Material baseline palette and full Expressive token families
 - [ADR-0423](0423-canonical-navigation-and-panel-skin.md) — Canonical navigation and panel skin
 - [ADR-0424](0424-remove-provably-dead-stylesheet-declarations.md) — Remove provably dead stylesheet declarations
+- [ADR-0425](0425-canonical-topbar-and-active-navigation.md) — Canonical topbar, status chips, menus, and active navigation

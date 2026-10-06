@@ -29,20 +29,20 @@ describe("Material 3 Expressive shell contract", () => {
     expect(finalLayer).not.toMatch(/gradient\(/i);
     expect(finalLayer).toContain("background: var(--app-secondary-container);");
     expect(finalLayer).toContain("background: var(--app-surface-container-low);");
-    expect(finalLayer).toContain("background: var(--app-warning-container);");
+    expect(finalLayer).toContain("background: var(--app-attention-container);");
   });
 
   it("keeps the expressive shell quiet through tonal layering instead of stacked chrome", () => {
     const finalLayer = stylesheet.slice(stylesheet.lastIndexOf("/* Material 3 Expressive final precedence layer."));
-    expect(finalLayer).toContain(".product-shell .product-topbar { background: var(--app-surface-container); }");
+    expect(finalLayer).toContain(".product-shell .product-topbar { border-color: var(--app-outline-variant); background: var(--app-surface-container); }");
     expect(finalLayer).toContain(".product-shell .product-content { width: min(1200px, calc(100% - 3rem)); }");
-    expect(finalLayer).toContain(".product-shell .system-status > summary { background: var(--app-surface-container-low); }");
+    expect(finalLayer).toContain(".product-shell .system-status > summary,\n.product-shell .display-settings summary,");
     expect(finalLayer).not.toContain("backdrop-filter");
   });
 
   it("reserves filled state roles for actual state and keeps neutral badges quiet", () => {
     const finalLayer = stylesheet.slice(stylesheet.lastIndexOf("/* Material 3 Expressive final precedence layer."));
-    expect(finalLayer).toContain(".product-shell .status-pill { color: var(--app-on-variant); background: var(--app-surface-container); }");
+    expect(finalLayer).toContain(".product-shell .status-pill {\n  color: var(--app-on-variant);\n  background: var(--app-surface-container);");
     expect(finalLayer).toContain(".product-shell .status-pill-success { color: var(--app-on-success-container); background: var(--app-success-container); }");
     expect(finalLayer).toContain(".product-shell .status-pill-danger { color: var(--app-on-blocked-container); background: var(--app-blocked-container); }");
   });
@@ -106,9 +106,9 @@ describe("Material 3 Expressive shell contract", () => {
     const canonical = () => stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0423:"));
     const outsideForcedColors = () => stylesheet.replace(/@media \(forced-colors: active\) \{[\s\S]*?\n\}\n/g, "");
 
-    it("uses the M3 navigation drawer item: pill, secondary-container indicator, plain icon", () => {
+    it("uses a pill active indicator in primary-container with plain icons (ADR-0425)", () => {
       const layer = canonical();
-      expect(layer).toContain(".product-shell .nav-item-active {\n  color: var(--app-on-secondary-container);\n  background: var(--app-secondary-container);");
+      expect(layer).toContain(".product-shell .nav-item-active {\n  color: var(--app-on-primary-container);\n  background: var(--app-primary-container);");
       expect(layer).toContain("border-radius: var(--md-sys-shape-corner-full);");
       expect(layer).toContain("min-height: 3.5rem;");
       expect(layer).toContain("calc(var(--md-sys-state-hover-opacity) * 100%), transparent)");
@@ -157,5 +157,61 @@ describe("Material 3 Expressive shell contract", () => {
     for (const rule of buttonRules) {
       expect(rule, "chrome toggle must stay out of the content-button rules").toContain(":not(.navigation-compact-toggle)");
     }
+  });
+
+  describe("canonical topbar, status chips and menus (ADR-0425)", () => {
+    const canonical = () => stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0425:"), stylesheet.lastIndexOf("/* Forced-colors must remain"));
+
+    it("renders status controls as M3 chips with tonal state containers", () => {
+      const layer = canonical();
+      expect(layer).toContain("min-height: 2rem;");
+      expect(layer).toContain("border-radius: var(--md-sys-shape-corner-small);");
+      expect(layer).toContain(".product-shell .system-status-attention > summary");
+      expect(layer).toContain("color: var(--app-on-attention-container);\n  background: var(--app-attention-container);");
+      expect(layer).toContain("color: var(--app-on-success-container);\n  background: var(--app-success-container);");
+      expect(layer).toContain("calc(var(--md-sys-state-hover-opacity) * 100%), transparent)");
+      expect(layer).toContain("var(--md-sys-typescale-label-medium-size)");
+    });
+
+    it("renders menus as elevated tonal surfaces without borders", () => {
+      const layer = canonical();
+      expect(layer).toContain("background: var(--app-surface-container-high);");
+      expect(layer).toContain("box-shadow: var(--md-elevation-2);");
+      expect(layer).toContain("border-color: transparent;");
+      expect(layer).toContain("border-radius: var(--md-sys-shape-corner-large);");
+    });
+
+    it("keeps the account trigger a filled full-radius avatar", () => {
+      const layer = canonical();
+      expect(layer).toContain(".product-shell .account-menu-trigger {");
+      expect(layer).toContain("background: var(--app-primary-container);");
+    });
+
+    it("uses sentence-case label typography for status pills", () => {
+      const layer = canonical();
+      expect(layer).toContain("text-transform: none;");
+      expect(layer).not.toMatch(/text-transform: uppercase/);
+      expect(layer).not.toMatch(/#[0-9a-f]{3,8}|rgba?\(|gradient\(|backdrop-filter/i);
+    });
+
+    it("keeps each topbar chip and menu skin declared once", () => {
+      const css = stylesheet.replace(/@media \(forced-colors: active\) \{[\s\S]*?\n\}\n/g, "");
+      const count = (pattern: RegExp) => (css.match(pattern) ?? []).length;
+      expect(count(/^\.product-shell \.system-status-attention > summary(?:,| \{)/gm)).toBe(1);
+      expect(count(/^\.product-shell \.system-status-ready > summary(?:,| \{)/gm)).toBe(1);
+      expect(count(/^\.product-shell \.account-menu-trigger \{/gm)).toBe(1);
+    });
+  });
+
+  it("resolves every custom property the stylesheet references (no silently invalid var())", () => {
+    const declared = new Set([...stylesheet.matchAll(/(--[\w-]+)\s*:/g)].map((match) => match[1]));
+    const unresolved = new Map<string, number>();
+    for (const match of stylesheet.matchAll(/var\((--[\w-]+)\s*([,)])/g)) {
+      const [, name, terminator] = match;
+      // A fallback (`var(--x, value)`) is an explicit, valid contract.
+      if (terminator === "," || declared.has(name)) continue;
+      unresolved.set(name, (unresolved.get(name) ?? 0) + 1);
+    }
+    expect([...unresolved.entries()], "undefined custom properties make declarations invalid at computed-value time").toEqual([]);
   });
 });
