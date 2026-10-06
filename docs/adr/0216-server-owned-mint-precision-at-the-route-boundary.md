@@ -38,10 +38,10 @@ values.
 
 The formatter accepts an explicit bounded decimal count and uses `BigInt`
 scaling without converting atomic amounts through a JavaScript `number`.
-Legacy tax-only and document-only views retain their explicit two-decimal
-display default until those facts carry a server-owned asset scale; checkout
-uses the selected verified route scale and labels the asset mint/precision in
-the authorization review.
+Aggregate and document quote results now carry the required server-returned
+`atomic_decimals` metadata under ADR-0384; checkout continues to use the
+selected verified route scale and labels the asset mint/precision in the
+authorization review.
 
 ## Alternatives considered
 

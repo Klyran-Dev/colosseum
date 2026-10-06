@@ -45,8 +45,8 @@ rule without that snapshot fails closed.
 The snapshot is input evidence, not mutable engine state. The caller must
 obtain and authorize it outside the pure engine; its digest is included in the
 facts digest and therefore in any calculation attestation. Inclusive tax with
-a threshold is rejected until a separate equation/rounding ADR defines its
-legal semantics; an exemption remains valid for inclusive tax and yields zero.
+a threshold is rejected unless the separate explicit equation in ADR-0362 is
+declared; an exemption remains valid for inclusive tax and yields zero.
 
 The calculation trace records raw base, effective threshold-adjusted base,
 threshold, exemption match, raw tax, clamp result, and final rounded tax.

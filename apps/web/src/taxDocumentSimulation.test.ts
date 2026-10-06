@@ -14,9 +14,10 @@ describe("versioned document simulation browser boundary", () => {
   it("builds bounded facts without changing caller line identity", () => {
     const lines = defaultDocumentLines().reverse();
     expect(validateTaxDocumentLines(lines)).toEqual([]);
-    expect(buildTaxDocumentFacts("invoice-1", "usd", "US-CA", lines)).toEqual({
+    expect(buildTaxDocumentFacts("invoice-1", 2, "usd", "US-CA", lines)).toEqual({
       id: "invoice-1",
       currency: "USD",
+      atomic_decimals: 2,
       jurisdiction: "US-CA",
       jurisdiction_resolution: null,
       cumulative_period: null,
@@ -48,6 +49,7 @@ describe("versioned document simulation browser boundary", () => {
         rule_set_id: "rule-1",
         rule_version: 1,
         engine_version: "tax-engine-v1",
+        atomic_decimals: 2,
         currency: "USD",
         jurisdiction: "US-CA",
         facts_digest: digest,
@@ -55,6 +57,14 @@ describe("versioned document simulation browser boundary", () => {
         gross_atomic: "3000",
         total_tax_atomic: "247",
         total_net_atomic: "2753",
+        treatment_outcome: {
+          treatment: "Withholding",
+          arithmetic_tax_atomic: "247",
+          collected_tax_atomic: "247",
+          self_assessed_tax_atomic: "0",
+          withheld_tax_atomic: "247",
+          taxable_base_atomic: "3000",
+        },
         lines: [{
           id: "line-a",
           gross_atomic: "1000",
@@ -65,6 +75,7 @@ describe("versioned document simulation browser boundary", () => {
       },
     });
     expect(response.result.lines[0].id).toBe("line-a");
+    expect(response.result.treatment_outcome?.withheld_tax_atomic).toBe("247");
     expect(() => parseTaxDocumentSimulation({
       calculation_id: calculationId,
       status: "simulated_unattested",
@@ -83,6 +94,7 @@ describe("versioned document simulation browser boundary", () => {
         rule_set_id: "rule-1",
         rule_version: 1,
         engine_version: "tax-engine-v1",
+        atomic_decimals: 2,
         currency: "USD",
         jurisdiction: "US-CA",
         facts_digest: digest,

@@ -1,6 +1,5 @@
 export const DEFAULT_LOCALE = "en-US";
 export const DEFAULT_TIME_ZONE = "UTC";
-
 export const SUPPORTED_LOCALES = ["en-US", "de-DE", "ar-EG", "ja-JP"] as const;
 export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
 
@@ -50,7 +49,7 @@ export function formatAtomic(
   value: string,
   currency: string,
   locale = DEFAULT_LOCALE,
-  atomicDecimals = 2,
+  atomicDecimals: number,
 ): string {
   let atomic: bigint;
   try {
@@ -59,6 +58,7 @@ export function formatAtomic(
     throw new Error("atomic amount is not an integer");
   }
   if (!currency.trim()) throw new Error("currency is required");
+  if (atomicDecimals === undefined) throw new Error("atomic display scale is required");
   const decimals = boundedAtomicDecimals(atomicDecimals);
 
   const negative = atomic < 0n;

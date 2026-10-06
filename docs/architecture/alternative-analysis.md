@@ -15,6 +15,33 @@ This document records the comparison baseline required before implementation. It
 - accessibility and product-quality UX;
 - support lifecycle and supply-chain reproducibility.
 
+### Quiet tonal Material 3 Expressive shell (ADR-0408)
+
+| Alternative | Hierarchy clarity | Palette auditability | Accessibility/operations | Decision |
+| --- | --- | --- | --- | --- |
+| Preserve stacked historical shell layers | Weak; every state competes for attention | Weak; precedence is difficult to reason about | Partial; diagnostics are always visually loud | Rejected |
+| Assign a unique accent per bounded context | Weak; color becomes a second navigation taxonomy | Weak; context colors drift into state colors | Partial; more hues increase cognitive load | Rejected |
+| Use a flat neutral shell | Pass for calmness | Pass | Weak; selection, risk, and primary actions lose emphasis | Rejected |
+| **Use M3 semantic roles with quiet tonal layering and progressive disclosure** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0408** |
+
+### Explicit fee-payer binding (ADR-0359)
+
+| Alternative | Authority clarity | Regression resistance | Hot-path cost | Decision |
+| --- | --- | --- | --- | --- |
+| Rely on indirect account-count and privilege rejection | Partial | Weak | Low | Rejected as the sole contract |
+| Permit sponsored fee payers in the existing artifact | Ambiguous | Weak | Low | Rejected |
+| Reconstruct or re-sign at the API | Fails non-custody | Partial | Higher | Rejected |
+| **Compare the first compiled account with the signed message fee payer** | **Pass** | **Pass** | **Bounded in-memory check** | **Selected; see ADR-0359** |
+
+### Document-simulation localization (ADR-0360)
+
+| Alternative | Operator clarity | Protocol/value safety | Determinism | Decision |
+| --- | --- | --- | --- | --- |
+| Leave the subsection in English | Fails multilingual workflow consistency | Pass | Pass | Rejected |
+| Runtime machine translation | Partial | Partial | Fail | Rejected |
+| Translate protocol and server-owned values | Partial | Fail; breaks audit/replay identity | Fail | Rejected |
+| **Typed document-simulation presentation catalog** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0360** |
+
 ## Decisions
 
 ### Responsive product navigation
@@ -52,6 +79,24 @@ This document records the comparison baseline required before implementation. It
 | Keep deployment, network, service, and sign-in warnings persistent | Immediate visibility | Repetition makes the primary operator task harder to scan and visually overweights failures | Rejected |
 | Hide degraded state behind a generic error page | Minimal chrome | Conceals the exact support and recovery context | Rejected |
 | **One system-status disclosure with separate session disclosure** | Preserves every diagnostic, improves hierarchy, native accessibility, and no hot-path cost | Requires an intentional inspection action | **Selected; ADR-0309** |
+
+### Material shell landmark and role boundary (ADR-0398)
+
+| Alternative | Accessibility and hierarchy | Palette reproducibility | Decision |
+| --- | --- | --- | --- |
+| Retain the stale `workspace-content` skip target | Fails when the target is absent and weakens keyboard bypass | Pass | Rejected |
+| Remove the skip link | Removes a required bypass around persistent navigation | Pass | Rejected |
+| Keep multiple component-local color layers | Hard to audit across themes and states | Weak | Rejected |
+| **Point the skip link at the stable main landmark and apply one semantic role boundary** | **Deterministic keyboard entry, explicit surface hierarchy, and auditable state pairing** | **Pass** | **Selected; ADR-0398** |
+
+### Versioned navigation access language (ADR-0399)
+
+| Alternative | Locale consistency | Authority/evidence safety | Decision |
+| --- | --- | --- | --- |
+| Keep English access labels in every shell | Fails multilingual UX | Pass | Rejected |
+| Translate server-owned decision reasons in the browser | Partial | Fails exact authorization evidence semantics | Rejected |
+| Remove access status from navigation descriptions | Consistent but hides the reason a protected workspace is unavailable | Weak | Rejected |
+| **Catalog only presentation labels and preserve server-owned reasons exactly** | **Pass across supported locales** | **Pass; no authority or evidence mutation** | **Selected; ADR-0399** |
 
 ### Browser authentication and session handling
 
@@ -199,6 +244,34 @@ This document records the comparison baseline required before implementation. It
 | Endpoint URL metric labels | Easy provider identification | Sensitive topology and unstable cardinality | Rejected |
 | Durable health state | Shared across replicas | Hot-path coordination and stale state | Rejected |
 | **Fixed provider-index gauges from process-local snapshots** | Bounded, redacted, low overhead, alertable | Requires deployment-level provider-index mapping | **Selected in ADR-0117** |
+
+### Tenant-scoped evidence-access explorer (ADR-0373)
+
+| Alternative | Strengths | Risks/trade-offs | Decision |
+| --- | --- | --- | --- |
+| Reuse replay operations | No new route or navigation item | Mixes recovery actions with audit history and authorization semantics | Rejected |
+| Generic JSON audit browser | Broad apparent coverage | Unbounded disclosure, weak tenant boundary, unstable payload/cardinality contract | Rejected |
+| Separate warehouse/event projection | Scales long retention and analytics | Adds asynchronous freshness and another operational authority | Rejected for this slice |
+| **Tenant-scoped bounded PostgreSQL read model over the existing ledger** | **Indexed, deterministic, low-latency, read-only, and privacy-bounded** | **Latest-N view is not a historical export** | **Selected** |
+
+### Collapsible Material 3 navigation rail (ADR-0374)
+
+| Option | Discoverability | Workspace space | Accessibility | Decision |
+| --- | --- | --- | --- | --- |
+| Permanent expanded sidebar | High | Low | Pass | Rejected: persistent density overwhelms evidence workflows |
+| Icon-only rail | Low | High | Risk | Rejected: labels become tooltip-dependent |
+| Responsive breakpoint-only collapse | Medium | High | Risk | Rejected: viewport is not a user preference |
+| **User-controlled compact rail with semantic labels** | **High** | **High** | **Pass** | **Selected; see ADR-0374** |
+
+### Bounded linear tax-base operations (ADR-0375)
+
+| Option | Global semantic coverage | Determinism/replay | Bounded latency and review | Decision |
+| --- | --- | --- | --- | --- |
+| Continue additive-only sources | Low | High | High | Rejected: cannot represent common weighted/deduction bases |
+| Repeated source identifiers as weights | Medium | Low | Medium | Rejected: ambiguous authoring and serialization |
+| General expression AST | High | Medium | Low | Rejected: unbounded operator and legal-review surface |
+| Floating-point or implicit rounding | Medium | Low | Medium | Rejected: non-replayable financial semantics |
+| **Versioned linear terms with exact rationals and integral-atomic admission** | **High for linear regimes** | **High** | **High** | **Selected; see ADR-0375** |
 
 ### Settlement submission concurrency fence
 
@@ -1214,6 +1287,15 @@ for the off-chain projection.
 | Full API quote benchmark | Exercises durable storage and tenant paths | Does not isolate the warm Tax Engine adapter | Rejected for this boundary |
 | Unbounded external load generator | Broad traffic shapes | Non-reproducible, resource-heavy, and difficult to keep synthetic | Rejected |
 | **Bounded local Docker concurrency contract** | Measures the real image with explicit workload and cleanup | Local-only evidence and Docker dependency | **Selected in ADR-0232** |
+
+### Warm Tax Engine cache-miss coalescing
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Compile under the LRU mutex | Simple and naturally coalesces misses | Blocks unrelated hits and distinct-rule compiles behind compilation | Rejected |
+| Allow duplicate compilation | Minimal implementation | CPU stampede and avoidable p95/p99 inflation during rule bursts | Rejected |
+| Distributed Redis/lock service | Cross-replica coalescing | Adds network failure, latency, and a non-authoritative dependency | Rejected |
+| **Bounded process-local single-flight keyed by digest** | Coalesces identical misses without blocking unrelated cache work | Coalescing is per replica and cleanup must remain bounded | **Selected in ADR-0381** |
 
 ### Real-container Tax Engine mTLS
 
@@ -2682,6 +2764,17 @@ The selected boundary is recorded in ADR-0293.
 | Recovery/rollback safety | Partial | Fail | Fail | **Pass** |
 | Selected | No | No | No | **Yes; see ADR-0322** |
 
+### Typed asset-admission projection (ADR-0325)
+
+| Criterion | JSON evidence only | Separate asset table | Raw account bytes | **Typed route columns plus evidence** |
+| --- | --- | --- | --- | --- |
+| Direct SQL invariant strength | Weak | Pass | Partial | **Pass** |
+| Authority and tenant/version binding | Pass | Partial | Partial | **Pass** |
+| Forensic replay fidelity | Pass | Partial | **Pass** | **Pass** |
+| Hot-path latency and dependency cost | Pass | Partial | Pass | **Pass** |
+| Rolling migration safety | Pass | Weak | Partial | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0325** |
+
 ### Material 3 Expressive operational workspace composition (ADR-0323)
 
 | Criterion | Everything expanded | Search-only navigation | Colored per-item badges | **Grouped native disclosure and active-workspace hierarchy** |
@@ -2693,3 +2786,766 @@ The selected boundary is recorded in ADR-0293.
 | Keyboard and assistive technology support | Pass | Partial | Partial | **Pass** |
 | Runtime and bundle cost | Pass | Partial | Pass | **Pass** |
 | Selected | No | No | No | **Yes; see ADR-0323** |
+
+### Material 3 Expressive semantic state hierarchy (ADR-0326)
+
+| Criterion | Per-row badges | Repeated availability text | Hide state entirely | **Accessible row context plus active-route emphasis** |
+| --- | --- | --- | --- | --- |
+| Calm navigation scan path | Fail | Fail | Pass | **Pass** |
+| RBAC/PBAC/ABAC explanation | Partial | Pass | Fail | **Pass** |
+| Stale-state and false-approval risk | Weak | Partial | Pass | **Pass** |
+| Light/dark palette discipline | Weak | Partial | Pass | **Pass** |
+| Keyboard and screen-reader support | Partial | Pass | Fail | **Pass** |
+| Runtime and bundle cost | Pass | Pass | Pass | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0326** |
+
+### Single-open Material 3 navigation group (ADR-0337)
+
+| Criterion | Accumulating groups | Close every group | Search-only palette | **One current-workspace group** |
+| --- | --- | --- | --- | --- |
+| Calm navigation scan path | Fail over time | Pass | Pass | **Pass** |
+| Current route context | Pass | Fail | Partial | **Pass** |
+| Route discoverability | Pass | Pass | Partial | **Pass** |
+| Keyboard and native disclosure support | Pass | Pass | Partial | **Pass** |
+| Authorization/presentation separation | Pass | Pass | Partial | **Pass** |
+| Runtime and bundle cost | Pass | Pass | Partial | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0337** |
+
+### Forced-colors accessibility layer (ADR-0338)
+
+| Criterion | Aurora palette only | Manual high-contrast product theme | Disable forced colors | **OS system-color role mapping** |
+| --- | --- | --- | --- | --- |
+| Honors user accessibility settings | Weak | Partial | Fail | **Pass** |
+| Single audited application palette | Pass | Fail | Pass | **Pass** |
+| Focus/error/disabled state visibility | Partial | Pass | Weak | **Pass** |
+| Runtime and bundle cost | Pass | Partial | Pass | **Pass** |
+| Authorization and financial-path isolation | Pass | Pass | Pass | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0338** |
+
+### Polite workspace navigation announcement (ADR-0339)
+
+| Criterion | Heading/focus only | Assertive full-state region | Browser title mutation | **Polite bounded workspace status** |
+| --- | --- | --- | --- | --- |
+| Screen-reader context reliability | Partial | Pass | Partial | **Pass** |
+| Interruption/noise control | Pass | Fail | Partial | **Pass** |
+| Sensitive/financial data isolation | Pass | Fail | Partial | **Pass** |
+| Runtime and bundle cost | Pass | Pass | Pass | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0339** |
+
+### Versioned shell and navigation localization (ADR-0340)
+
+| Criterion | English plus formatting | Runtime machine translation | Ad-hoc component strings | **Typed versioned shell catalog** |
+| --- | --- | --- | --- | --- |
+| Deterministic terminology | Partial | Fail | Partial | **Pass** |
+| Locale coverage and fallback | Partial | Pass | Fail | **Pass** |
+| Runtime/privacy/latency cost | Pass | Fail | Pass | **Pass** |
+| Financial and authorization isolation | Pass | Partial | Partial | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0340** |
+
+### Versioned shell chrome and session localization (ADR-0341)
+
+| Criterion | English shell controls | Runtime machine translation | Ad-hoc component strings | **Typed versioned chrome/session catalog** |
+| --- | --- | --- | --- | --- |
+| Consistent operator language | Partial | Partial | Fail | **Pass** |
+| Credential and identity isolation | Pass | Partial | Partial | **Pass** |
+| Deterministic runtime/latency cost | Pass | Fail | Pass | **Pass** |
+| Locale fallback and bounded keys | Pass | Partial | Fail | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0341** |
+
+### Versioned quote workspace localization (ADR-0342)
+
+| Criterion | English-only workspace | Runtime machine translation | Independent component strings | **Typed versioned quote catalog** |
+| --- | --- | --- | --- | --- |
+| Deterministic financial terminology | Partial | Fail | Partial | **Pass** |
+| Financial/rule/evidence value isolation | Pass | Partial | Partial | **Pass** |
+| Locale fallback and testability | Partial | Partial | Fail | **Pass** |
+| Hot-path runtime and bundle cost | Pass | Fail | Pass | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0342** |
+
+### Versioned document-quote localization (ADR-0343)
+
+| Criterion | English-only invoice flow | Runtime machine translation | Aggregate catalog reuse | **Typed document-quote catalog** |
+| --- | --- | --- | --- | --- |
+| Deterministic tax/legal terminology | Partial | Fail | Partial | **Pass** |
+| Invoice-line and evidence semantics | Pass | Partial | Fail | **Pass** |
+| Financial/document value isolation | Pass | Partial | Partial | **Pass** |
+| Locale fallback and testability | Partial | Partial | Partial | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0343** |
+
+### Versioned document-checkout localization (ADR-0344)
+
+| Option | Signing ambiguity | Authority/value isolation | Reusable wallet consistency | Offline determinism | Decision |
+| --- | --- | --- | --- | --- | --- |
+| Keep checkout in English | Fail | Pass | Partial | Pass | Rejected |
+| Runtime machine translation | Fail | Partial | Partial | Fail | Rejected |
+| Reuse the document-quote catalog | Partial | Partial | Fail | Pass | Rejected |
+| **Typed checkout catalog plus reusable wallet catalog** | **Pass** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0344** |
+
+### Versioned aggregate-checkout localization (ADR-0345)
+
+| Option | Signing clarity | Authority/value isolation | Determinism | Decision |
+| --- | --- | --- | --- | --- |
+| Keep aggregate checkout in English | Fail for localized operators | Pass | Pass | Rejected |
+| Runtime machine translation | Fail | Partial | Fail | Rejected |
+| Reuse the document-checkout catalog | Partial | Partial | Pass | Rejected |
+| **Typed aggregate-checkout catalog** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0345** |
+
+### Versioned Treasury and vault-release localization (ADR-0346)
+
+| Option | Operator clarity | Authority/value isolation | Determinism | Decision |
+| --- | --- | --- | --- | --- |
+| Keep Treasury in English | Fails at a governed money-movement boundary | Pass | Pass | Rejected |
+| Runtime machine translation | Unstable operational terminology | Partial | Fail | Rejected |
+| Reuse aggregate checkout catalog | Partial; lifecycle and evidence semantics differ | Partial | Pass | Rejected |
+| **Typed Treasury-specific catalog** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0346** |
+
+### Versioned refund-claim localization at the wallet boundary (ADR-0347)
+
+| Option | Signing clarity | Authority/value isolation | Determinism | Decision |
+| --- | --- | --- | --- | --- |
+| Keep refund claims in English | Fails at a two-signature money boundary | Pass | Pass | Rejected |
+| Runtime machine translation | Unstable custody and recovery wording | Partial | Fail | Rejected |
+| Reuse checkout catalog | Partial; refund roles and proof differ | Partial | Pass | Rejected |
+| **Typed refund-claim catalog** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0347** |
+
+### Versioned refund-execution localization at the final release boundary (ADR-0348)
+
+| Option | Signing clarity | Authority/value isolation | Determinism | Decision |
+| --- | --- | --- | --- | --- |
+| Keep final release in English | Fails at an irreversible release boundary | Pass | Pass | Rejected |
+| Runtime machine translation | Unstable signing and recovery wording | Partial | Fail | Rejected |
+| Reuse the refund-claim catalog | Partial; final-approver semantics differ | Partial | Pass | Rejected |
+| **Typed refund-execution catalog** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0348** |
+
+### Versioned refund-cancellation localization at the governance boundary (ADR-0349)
+
+| Option | Governance clarity | Authority/value isolation | Determinism | Decision |
+| --- | --- | --- | --- | --- |
+| Keep cancellation in English | Fails for localized operators at an approval boundary | Pass | Pass | Rejected |
+| Runtime machine translation | Unstable authorization and recovery wording | Partial | Fail | Rejected |
+| Reuse refund-claim catalog | Partial; cancellation authority and evidence semantics differ | Partial | Pass | Rejected |
+| **Typed refund-cancellation catalog** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0349** |
+
+### Stable semantic navigation glyphs (ADR-0326)
+
+| Criterion | First-letter avatars | Per-item colored illustrations | Icon font dependency | **Fixed monochrome inline SVG glyphs** |
+| --- | --- | --- | --- | --- |
+| Task recognition | Partial | Pass | Pass | **Pass** |
+| Status/color confusion risk | Partial | Fail | Partial | **Pass** |
+| Accessibility and DOM stability | Pass | Partial | Partial | **Pass** |
+| Offline/static SPA portability | Pass | Pass | Partial | **Pass** |
+| Dependency and runtime cost | Pass | Partial | Partial | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0326** |
+
+### Fail-closed public release claims (ADR-0327)
+
+| Criterion | Reviewer-only prose | Block all release-candidate evidence | Automatic license choice | **Executable negative contract with mutation tests** |
+| --- | --- | --- | --- | --- |
+| Prevents unsupported production claims | Weak | Pass | Partial | **Pass** |
+| Preserves useful local/release evidence | Pass | Fail | Pass | **Pass** |
+| Avoids unauthorized legal decisions | Pass | Pass | Fail | **Pass** |
+| Detects workflow deployment authority drift | Weak | Pass | Weak | **Pass** |
+| Reproducible in clean checkout | Partial | Partial | Pass | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0327** |
+
+### Durable route-verification run evidence (ADR-0328)
+
+| Criterion | Logs and metrics only | Mutable singleton row | Per-route audit row | **Bounded append-only run ledger** |
+| --- | --- | --- | --- | --- |
+| Durable restart evidence | Weak | Partial | Pass | **Pass** |
+| Write amplification | Pass | Pass | Fail | **Pass** |
+| Backfill count accuracy | Weak | Partial | Pass | **Pass** |
+| Avoids becoming chain authority | Pass | Pass | Partial | **Pass** |
+| Bounded retention and review | Partial | Pass | Weak | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0328** |
+
+### Approval-bound route-verification backfill mode (ADR-0329)
+
+| Criterion | Daemon timing | Unauthenticated run-once flag | Separate backfill service | **Approval-bound one-shot mode** |
+| --- | --- | --- | --- | --- |
+| Explicit operator intent | Weak | Partial | Pass | **Pass** |
+| Durable approval evidence | Fail | Fail | Partial | **Pass** |
+| Reuses verified route path | Pass | Pass | Weak | **Pass** |
+| Scope isolation from unrelated verifiers | Fail | Partial | Pass | **Pass** |
+| Hot-path impact | Pass | Pass | Pass | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0329** |
+
+### Route-verification operator evidence view (ADR-0336)
+
+| Option | Benefit | Risk / trade-off | Decision |
+| --- | --- | --- | --- |
+| Direct SQL/runbook only | No application work | Requires database access and is not a supportable SaaS workflow | Rejected |
+| New route-management workspace | Discoverable | Adds navigation clutter and mixes provisioning with merchant workflows | Rejected |
+| Merchant-scoped route list | Familiar | Leaks system-wide operational evidence across tenant boundaries | Rejected |
+| **Bounded disclosure in the existing system-operator workspace** | Reuses operator authority, explicit read-only boundary, no new nav item | Adds a bounded read endpoint and evidence parser | **Selected in ADR-0336** |
+| Live polling dashboard | Freshness | Adds load and can imply finality | Rejected |
+
+### Server-owned document evidence status for checkout (ADR-0330)
+
+| Option | Protocol clutter | Browser evidence authority | Tenant/route binding | Decision |
+| --- | --- | --- | --- | --- |
+| Manual raw JSON paste | High | Ambiguous | Repeated manually | Rejected |
+| Raw attestation read endpoint | High | Encourages client parsing | Server-selected record | Rejected |
+| Browser-selected stored evidence | Medium | Client selects evidence | Ambiguous route binding | Rejected |
+| **Server-owned route-bound status read** | **Low** | **No** | **Explicit** | **Selected; see ADR-0330** |
+
+### Canonical authorization policy catalog (ADR-0331)
+
+| Option | Drift risk | Runtime dependency | Build determinism | Decision |
+| --- | --- | --- | --- | --- |
+| Independent Rust and TypeScript lists | High | Low | Pass | Rejected |
+| Browser-fetched policy metadata | Medium | High | Partial | Rejected |
+| TypeScript generated only from Rust | Medium | Low | Pass | Rejected |
+| **Versioned JSON contract consumed by API and browser** | **Low** | **None on request path** | **Pass** | **Selected; see ADR-0331** |
+
+### Server-decision-only browser authorization affordances (ADR-0332)
+
+| Option | Authority duplication | Missing-decision behavior | UI clarity | Decision |
+| --- | --- | --- | --- | --- |
+| Reconstruct authorization from browser role/scope/attribute fields | High | Optimistic or locally inferred | Misleading under stale context | Rejected |
+| Hide every protected workspace until all data is present | None | Always unavailable | Loses denied versus pending distinction | Rejected |
+| **Render the exact server decision; otherwise remain indeterminate** | **None** | **Fail closed with recovery state** | **Explicit and honest** | **Selected; see ADR-0332** |
+
+### Capability decision and reason consistency (ADR-0333)
+
+| Option | Contract safety | Browser authority | Failure behavior | Decision |
+| --- | --- | --- | --- | --- |
+| Accept any individually known decision/reason pair | Weak | Can render contradictory state | Ambiguous | Rejected |
+| Normalize contradictory pairs in the browser | Partial | Browser repairs policy semantics | Hides server defect | Rejected |
+| **Reject unknown and contradictory pairs before state creation** | **Strong** | **No inference** | **Fail closed** | **Selected; see ADR-0333** |
+
+### Capability snapshot expiry boundary (ADR-0334)
+
+| Option | Stale-affordance risk | Request-path cost | Recovery behavior | Decision |
+| --- | --- | --- | --- | --- |
+| No client expiry enforcement | High | None | None | Rejected |
+| Render-time check only | Low | None | Requires a later render to refresh | Rejected |
+| Fixed-interval polling | Partial | Unbounded repeated requests | Eventually refreshes independently of TTL | Rejected |
+| **Server TTL boundary with one bounded refresh and render-time check** | **Low** | **One request per snapshot** | **Immediate indeterminate state, then refresh** | **Selected; see ADR-0334** |
+
+### Material 3 Expressive quiet state hierarchy (ADR-0335)
+
+| Criterion | Strong filled badges | Per-workspace accent colors | Hide configuration failures | **Semantic aliases with tonal hierarchy** |
+| --- | --- | --- | --- | --- |
+| Calm operator scan path | Fail | Partial | Pass | **Pass** |
+| No random palette drift | Partial | Fail | Pass | **Pass** |
+| Failure visibility and supportability | Pass | Partial | Fail | **Pass** |
+| Light/dark/system determinism | Partial | Fail | Pass | **Pass** |
+| Accessibility and progressive disclosure | Partial | Partial | Fail | **Pass** |
+| Authority boundary unchanged | Pass | Pass | Partial | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0335** |
+
+### Material 3 Expressive Aurora v2 shell (ADR-0353)
+
+| Criterion | Keep blue-heavy v1 | Per-workspace/status hues | Third-party theme | **Seed-derived role matrix with neutral tonal surfaces** |
+| --- | --- | --- | --- | --- |
+| Calm operator scan path | Partial | Fail | Partial | **Pass** |
+| No random palette drift | Partial | Fail | Partial | **Pass** |
+| Light/dark/system determinism | Pass | Partial | Partial | **Pass** |
+| WCAG and forced-colors ownership | Pass | Weak | Partial | **Pass** |
+| Runtime/dependency cost | Pass | Pass | Weak | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0353** |
+
+### Distinct tax-base sources (ADR-0361)
+
+| Criterion | Permit repeated sources | Silently deduplicate | General expression language | **Reject duplicates; retain explicit additive sources** |
+| --- | --- | --- | --- | --- |
+| Deterministic meaning | Partial | Partial | Depends on new DSL | **Pass** |
+| Fail-closed authoring | Fail | Fail | Partial | **Pass** |
+| Tax-on-tax expressiveness | Pass | Partial | Pass | **Pass for bounded additive cases** |
+| Validation and audit surface | Pass | Partial | Fail | **Pass** |
+| Hot-path cost | Pass | Pass | Partial | **Pass; compile-time only** |
+| Selected | No | No | No | **Yes; see ADR-0361** |
+
+### Explicit inclusive threshold equation (ADR-0362)
+
+| Criterion | Infer from price mode | Reject all inclusive thresholds | **Versioned `GrossExcess` equation** | Unbounded jurisdiction enum |
+| --- | --- | --- | --- | --- |
+| Legal meaning is explicit | Fail | Pass | **Pass** | Partial |
+| Deterministic exact arithmetic | Partial | Pass | **Pass** | Partial |
+| Global engine extensibility | Partial | Fail | **Pass through separately approved equations** | Partial |
+| Fail-closed unsupported cases | Fail | **Pass** | **Pass** | Partial |
+| Selected | No | No | **Yes; see ADR-0362** | No |
+
+### Responsive shell popover boundary (ADR-0363)
+
+| Criterion | Inline flex disclosure | Modal dialog | Multiple z-indexed popovers | **Bounded anchored popover with one open shell disclosure** |
+| --- | --- | --- | --- | --- |
+| Desktop workspace geometry | Fail; expanded forms widen the row | Pass | Partial | **Pass** |
+| Narrow-screen clarity | Partial | Pass | Fail; panels overlap | **Pass** |
+| Native keyboard semantics | Pass | Partial; requires focus management | Pass | **Pass** |
+| Authentication and authority isolation | Pass | Pass | Pass | **Pass** |
+| Implementation and runtime cost | Pass | Partial | Pass | **Pass** |
+| Selected | No | No | No | **Yes; see ADR-0363** |
+
+### Settlement-adjustment localization (ADR-0350)
+
+| Option | Correction-review clarity | Value/authority isolation | Determinism | Decision |
+| --- | --- | --- | --- | --- |
+| Keep the correction workspace in English | Fails for localized finance operators | Pass | Pass | Rejected |
+| Runtime machine translation | Unstable financial and recovery wording | Partial | Fail | Rejected |
+| Reuse refund or checkout catalogs | Mismatched adjustment lifecycle and evidence semantics | Partial | Pass | Rejected |
+| **Typed immutable settlement-adjustment catalog** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0350** |
+
+### Replay-operations localization (ADR-0351)
+
+| Option | Recovery decision clarity | Authority/value isolation | Determinism | Decision |
+| --- | --- | --- | --- | --- |
+| Keep recovery controls in English | Fails for localized operators | Pass | Pass | Rejected |
+| Runtime machine translation | Unstable incident and retry semantics | Partial | Fail | Rejected |
+| Reuse refund or settlement catalogs | Wrong lifecycle and evidence vocabulary | Partial | Pass | Rejected |
+| **Typed immutable replay-operations catalog** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0351** |
+
+### Vault-reconciliation localization (ADR-0352)
+
+| Option | Release-stop clarity | Authority/value isolation | Determinism | Decision |
+| --- | --- | --- | --- | --- |
+| Keep reconciliation in English | Fails for localized treasury operators | Pass | Pass | Rejected |
+| Runtime machine translation | Unstable incident and release-stop semantics | Partial | Fail | Rejected |
+| Reuse replay or settlement catalogs | Wrong balance and reconciliation vocabulary | Partial | Pass | Rejected |
+| **Typed immutable vault-reconciliation catalog** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0352** |
+
+### Rule-governance and structured authoring localization (ADR-0354)
+
+| Option | Review clarity | Protocol safety | Determinism | Decision |
+| --- | --- | --- | --- | --- |
+| Keep rule governance in English | Fails for localized operators | Pass | Pass | Rejected |
+| Runtime machine translation | Unstable tax/legal wording | Partial | Fail | Rejected |
+| Translate rule JSON keys and enum values | Visually uniform | Fail; mutates canonical contracts | Partial | Rejected |
+| **Typed immutable presentation catalogs** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0354** |
+
+### Revenue-streaming operator localization (ADR-0355)
+
+| Option | Operator clarity | Protocol safety | Determinism | Decision |
+| --- | --- | --- | --- | --- |
+| Keep partner payouts in English | Fails for localized operators | Pass | Pass | Rejected |
+| Runtime machine translation | Unstable governance and release wording | Partial | Fail | Rejected |
+| Translate statuses, IDs, or request values | Superficially uniform | Fail; mutates authority inputs | Fail | Rejected |
+| **Typed presentation-only catalogs** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0355** |
+
+### Access-control workspace localization (ADR-0356)
+
+| Option | Authorization clarity | Protocol safety | Determinism | Decision |
+| --- | --- | --- | --- | --- |
+| Keep access explanations in English | Fails for localized security operators | Pass | Pass | Rejected |
+| Runtime machine translation | Unstable security terminology | Partial | Fail | Rejected |
+| Translate policy IDs, scopes, or reason codes | Visually uniform | Fail; breaks audit and contract correlation | Fail | Rejected |
+| **Typed presentation-only catalogs** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0356** |
+
+### Shell operational localization (ADR-0357)
+
+| Option | Operational clarity | Authority/value isolation | Determinism | Decision |
+| --- | --- | --- | --- | --- |
+| Leave shell diagnostics in English | Fails for multilingual operators | Pass | Pass | Rejected |
+| Scattered locale conditionals | Partial | Pass | Partial | Rejected |
+| Runtime machine translation | Unstable security and incident wording | Partial | Fail | Rejected |
+| **Typed shell-operational presentation catalog** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0357** |
+
+### Lazy-workspace and recovery-state localization (ADR-0358)
+
+| Option | Recovery clarity | Information safety | Determinism | Decision |
+| --- | --- | --- | --- | --- |
+| Keep loading/error copy in English | Fails for localized operators | Pass | Pass | Rejected |
+| Render raw chunk/error details | Partial | Fail; can disclose implementation or secrets | Partial | Rejected |
+| Duplicate workspace-specific recovery catalogs | Partial | Pass | Partial | Rejected |
+| **Reuse the typed shell-operational catalog** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0358** |
+
+### Secondary rule simulation disclosure (ADR-0364)
+
+| Option | Empty-state clarity | Keyboard/accessibility cost | Workflow discoverability | Decision |
+| --- | --- | --- | --- | --- |
+| Keep authoring and simulation expanded | Fail; two competing tasks | Pass | Pass | Rejected |
+| Hide simulation until a rule loads | Pass | Pass | Fail; secondary review is undiscoverable | Rejected |
+| Modal or custom popover | Pass | Partial; adds focus/layering state | Pass | Rejected |
+| **Native collapsed details disclosure** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0364** |
+
+### Plain-language authorization recovery copy (ADR-0365)
+
+| Alternative | Operator clarity | Localization | Diagnostic safety | Decision |
+| --- | --- | --- | --- | --- |
+| Render parser/network error text directly | Fail | Weak | Weak | Rejected |
+| One generic recovery sentence for every failure | Partial | Pass | Pass | Rejected; expiry needs distinct recovery guidance |
+| **Typed failure key mapped by the localized shell catalog** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0365** |
+| Client-visible technical diagnostics drawer | Partial | Higher surface area | Risk of response-detail leakage | Deferred |
+
+### Typed localized authorization affordance reasons (ADR-0404)
+
+| Alternative | Localization | Diagnostic safety | Operator recovery | Decision |
+| --- | --- | --- | --- | --- |
+| Render server reason strings directly | Fail | Weak | Inconsistent | Rejected |
+| One generic message for every state | Pass | Pass | Weak; loses actionable context | Rejected |
+| Infer a reason from translated text | Fail | Weak | Unstable | Rejected |
+| **Bounded reason code mapped through the shell catalog** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0404** |
+
+### Wallet-provider error redaction (ADR-0366)
+
+| Alternative | Operator clarity | Information safety | Wallet authority | Decision |
+| --- | --- | --- | --- | --- |
+| Render provider exception text directly | Inconsistent | Weak | Pass | Rejected |
+| Retry or classify provider errors in the browser | Partial | Partial | Risk of changing intent | Rejected |
+| **Localized rejection copy with typed account-selection recovery** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0366** |
+| Technical diagnostic drawer | Partial | Requires separate support contract | Pass | Deferred |
+
+### Financial-workspace error redaction boundary (ADR-0367)
+
+| Alternative | Operator clarity | Information safety | Recovery specificity | Decision |
+| --- | --- | --- | --- | --- |
+| Render bounded `Error.message` | Inconsistent | Fail; provenance is unknown | Partial | Rejected |
+| One generic message for every failure | Partial | Pass | Fail; state-specific recovery is lost | Rejected |
+| Browser-side classification of arbitrary messages | Unstable | Partial | Partial | Rejected |
+| **Typed operator-facing errors with localized fallbacks** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0367** |
+
+### Non-interruptive system-status disclosure (ADR-0368)
+
+| Option | Interruption control | Discoverability | Accessibility semantics | Decision |
+| --- | --- | --- | --- | --- |
+| Assertive `role="alert"` for every system warning | Fail; competing announcements | Pass | Misrepresents context as urgent action | Rejected |
+| Remove system warning content from the DOM | Pass | Fail | Fails operational transparency | Rejected |
+| Polite `role="status"` inside the expandable disclosure | Partial; duplicates the navigation status region | Pass | Semantically valid but noisy in this shell | Rejected |
+| **Ordinary disclosure text with no live-region role** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0368** |
+| Custom live-region queue | Partial | Partial | Higher lifecycle and localization risk | Deferred |
+
+### Explicit CI toolchain bootstrap (ADR-0369)
+
+| Option | Reproducibility | Release evidence visibility | Supply-chain surface | Decision |
+| --- | --- | --- | --- | --- |
+| Trust runner preinstalls | Fail | Fail | Partial | Rejected |
+| Implicit `rust-toolchain.toml` discovery | Partial | Partial | Pass | Rejected |
+| Floating `stable` installation | Fail | Partial | Pass | Rejected |
+| Third-party setup action without a repository contract | Partial | Pass | Partial | Rejected |
+| **Explicit pinned `rustup` install plus executable contract** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0369** |
+
+### Explicit frontend CI toolchain evidence (ADR-0370)
+
+| Option | Version visibility | Reproducibility | Decision |
+| --- | --- | --- | --- |
+| Trust setup-action and Corepack defaults | Fail | Partial | Rejected |
+| Infer versions from install output | Partial | Partial | Rejected |
+| Floating package-manager channel | Fail | Fail | Rejected |
+| **Pinned versions plus explicit executable evidence and contract** | **Pass** | **Pass** | **Selected; see ADR-0370** |
+
+### Production-source Material color boundary (ADR-0371)
+
+| Option | Bypass coverage | Runtime cost | Decision |
+| --- | --- | --- | --- |
+| Scan CSS only | Misses inline/CSS-in-JS colors | Low | Rejected |
+| Broadly ban every `style` prop | Noisy and incomplete | Low | Rejected |
+| Add a third-party component color system | Additional ownership/runtime surface | Medium | Rejected |
+| **Scan production TypeScript/TSX for raw colors and gradients** | **Covers component source while preserving test fixtures** | **None at runtime** | **Selected; see ADR-0371** |
+
+### Bounded operational observability dashboard (ADR-0372)
+
+| Option | Incident triage value | Cardinality and authority safety | Decision |
+| --- | --- | --- | --- |
+| Keep the minimal service overview | Low | Pass | Rejected |
+| Add tenant/wallet dashboard variables | High for individual debugging | Fail; identity leakage and unbounded series | Rejected |
+| Use dashboard state as settlement authority | Superficially high | Fail; violates source-of-truth boundary | Rejected |
+| **Fixed-cardinality read-only safety panels** | **High** | **Pass; remains non-authoritative** | **Selected; see ADR-0372** |
+
+### Linux/amd64 conformance host preflight (ADR-0376)
+
+| Alternative | Early failure clarity | Evidence integrity | Validator authority | Decision |
+| --- | --- | --- | --- | --- |
+| Inline workflow assertions only | Partial; local runs differ | Partial | Pass | Rejected |
+| Allow amd64 Docker emulation on ARM hosts | Fast to start | Fail; kernel capability is unproven | Fail | Rejected |
+| Independent ad-hoc `io_uring` probe | Partial; may disagree with validator | Partial | Partial | Rejected |
+| **Shared native Linux/amd64 preflight plus validator evidence** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0376** |
+
+### Dedicated Solana conformance evidence workflow (ADR-0377)
+
+| Alternative | Evidence-owner speed | Provenance | Gate fidelity | Decision |
+| --- | --- | --- | --- | --- |
+| Broad CI job only | Partial | Pass | Pass | Rejected |
+| Release-candidate bundle only | Low | Pass | Pass | Rejected |
+| Unpinned third-party validator action or hosted RPC | High | Fail | Fail | Rejected |
+| **Pinned dedicated workflow using the existing verifier** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0377** |
+
+### Non-custodial Solidity receipt mirror (ADR-0378)
+
+| Alternative | Solana authority isolation | EVM utility | Audit surface | Decision |
+| --- | --- | --- | --- | --- |
+| Documentation-only optional adapter | Pass | Fail | Low | Rejected |
+| Recalculate tax or move tokens on EVM | Fail | High | Very high | Rejected |
+| ERC-20 escrow or bridge | Fail | High | Very high | Rejected |
+| **Governed non-custodial receipt mirror** | **Pass** | **Bounded** | **Low and separate** | **Selected; see ADR-0378** |
+
+### Bounded taxable-base min/max (ADR-0379)
+
+| Alternative | Semantic fidelity | Execution bound | Replay/audit | Decision |
+| --- | --- | --- | --- | --- |
+| Tax-result floor/cap | Fails for progressive and threshold rules | High | High | Rejected |
+| Unrestricted formula/expression interpreter | Potentially high | Unbounded risk | Difficult to govern | Rejected |
+| External/provider-precomputed adjusted base | Partial; shifts authority outside the rule | High | Weak | Rejected |
+| **Optional exact floor/cap on the versioned linear `TaxBase`** | **High for bounded clamp regimes** | **High** | **High** | **Selected; see ADR-0379** |
+
+### Policy issuer authority and asset-dependency evidence (ADR-0380)
+
+| Alternative | Authority clarity | Hot-path safety | Evidence/replay | Decision |
+| --- | --- | --- | --- | --- |
+| One authority for policy, assets, upgrades, and custody | Low; conflated privileges create a large blast radius | Fail; compromise crosses bounded contexts | Weak attribution | Rejected |
+| Database dependency rows as authority | Low; projections can be stale or substituted | Fast but unsafe activation | Weak chain/signer provenance | Rejected |
+| External provider metadata as tax or redemption proof | Low; scope and legal meaning vary | Adds network dependency and ambiguity | Non-deterministic | Rejected |
+| Untyped generic evidence JSON | Partial; flexible but ambiguous | Difficult to validate and bound | Weak schema evolution | Rejected |
+| **Separate typed authorities with a bounded versioned evidence envelope and explicit dependency state** | **High** | **Fail-closed and bounded** | **Canonical and replayable** | **Selected; see ADR-0380** |
+
+### Tax Engine v2 golden-vector coverage manifest (ADR-0382)
+
+| Alternative | Scenario coverage | Drift detection | Cross-language portability | Decision |
+| --- | --- | --- | --- | --- |
+| Vector count only | Partial | Weak | Pass | Rejected |
+| Documentation-derived list | Partial | Weak | None | Rejected |
+| Second arithmetic implementation | High | Partial | Risk of semantic divergence | Rejected |
+| **Explicit required IDs with exact JSON execution** | **High** | **Pass** | **Pass** | **Selected; see ADR-0382** |
+
+### Explicit atomic display scale at the browser boundary (ADR-0383)
+
+| Alternative | Missing-scale safety | Solana precision | Runtime/authority risk | Decision |
+| --- | --- | --- | --- | --- |
+| Implicit two-decimal formatter default | Fail | Fail | Low | Rejected |
+| Infer scale from currency symbol or locale | Partial | Fail for arbitrary mints | Browser-dependent | Rejected |
+| Fetch mint metadata while rendering | Partial | Better | Adds latency and an authority race | Rejected |
+| **Required explicit scale with server-owned route precision** | **Pass** | **Pass for bound assets** | **Presentation-only and bounded** | **Selected; see ADR-0383** |
+
+### Authoritative atomic scale in the quote contract (ADR-0384)
+
+| Alternative | Precision safety | Backward compatibility | Settlement authority | Decision |
+| --- | --- | --- | --- | --- |
+| Keep the named two-decimal convention | Fail for non-2-decimal mints | High | Ambiguous | Rejected |
+| Infer from ISO currency or locale | Partial and browser-dependent | Medium | Not bound to route | Rejected |
+| Read mint metadata during rendering | Partial; adds RPC latency and races | Medium | Late and non-atomic | Rejected |
+| **Require bounded scale in facts/results and compare with the finalized route** | **Pass** | **Explicit fail-closed migration** | **Pass** | **Selected; see ADR-0384** |
+
+### Versioned asset-precision UI language (ADR-0385)
+
+| Alternative | Consistency | Localization | Financial safety | Decision |
+| --- | --- | --- | --- | --- |
+| Keep repeated English strings | Fail | Fail | Partial | Rejected |
+| Duplicate the field in each workspace catalog | Partial | Pass | Pass | Rejected |
+| Put browser copy in the API contract | Partial | Partial | Risk of coupling | Rejected |
+| **One browser-owned versioned semantic catalog** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0385** |
+
+### Versioned financial-workspace error language (ADR-0386)
+
+| Alternative | Localization | Safety-copy ownership | Diagnostic redaction | Decision |
+| --- | --- | --- | --- | --- |
+| Inline English strings | Fail | Partial | Partial | Rejected |
+| One generic global error dictionary | Partial | Weak workspace ownership | Pass | Rejected |
+| API-owned localized copy | Partial | Wrong boundary and locale coupling | Risk of leaking provider detail | Rejected |
+| **Existing bounded workspace catalogs with typed dynamic values** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0386** |
+
+### Versioned document-settlement error language (ADR-0387)
+
+| Alternative | Recovery-action clarity | Localization ownership | Authority/redaction safety | Decision |
+| --- | --- | --- | --- | --- |
+| Inline English strings | Fail | Fail | Partial | Rejected |
+| Reuse aggregate-checkout catalog | Partial; document evidence actions differ | Partial | Pass | Rejected |
+| API-owned localized messages | Partial | Fail; couples locale to the API | Risk of leaking diagnostics | Rejected |
+| **Document-checkout catalog with bounded dynamic values** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0387** |
+
+### Versioned refund-execution recovery language (ADR-0388)
+
+| Alternative | Two-person recovery clarity | Localization ownership | Authority/redaction safety | Decision |
+| --- | --- | --- | --- | --- |
+| Inline execution strings | Fail | Fail | Partial | Rejected |
+| Reuse refund-claim/global checkout copy | Partial; execution has distinct signing states | Partial | Pass | Rejected |
+| API-owned localized messages | Partial | Fail; couples locale to the API | Risk of leaking diagnostics | Rejected |
+| **Refund-execution catalog with bounded typed messages** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0388** |
+
+### Versioned refund-claim recovery language (ADR-0389)
+
+| Alternative | Claim recovery clarity | Localization ownership | Authority/redaction safety | Decision |
+| --- | --- | --- | --- | --- |
+| Inline claim strings | Fail | Fail | Partial | Rejected |
+| Reuse refund-execution/global checkout copy | Partial; claim has distinct reconciliation semantics | Partial | Pass | Rejected |
+| API-owned localized messages | Partial | Fail; couples locale to the API | Risk of leaking diagnostics | Rejected |
+| **Refund-claim catalog with bounded typed messages** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0389** |
+
+### No implicit asset precision in financial workspaces (ADR-0400)
+
+| Alternative | Financial safety | Latency/operational coupling | Explicit operator intent | Decision |
+| --- | --- | --- | --- | --- |
+| Keep a two-decimal default | Fail; silently misinterprets non-2-decimal assets | Pass | Fail | Rejected |
+| Infer from currency or locale | Fail; currency is not mint authority | Pass | Fail | Rejected |
+| Fetch mint metadata during form rendering | Partial; race and RPC dependency | Fail | Partial | Rejected |
+| Rely on HTML `required` only | Partial; programmatic submission can coerce empty input | Pass | Partial | Rejected |
+| **Start blank and use one exact bounded parser** | **Pass; fail closed before fact construction** | **Pass; pure local validation** | **Pass** | **Selected; see ADR-0400** |
+
+### Complete authorization benchmark catalog (ADR-0401)
+
+| Alternative | Coverage safety | Change detection | Operational cost | Decision |
+| --- | --- | --- | --- | --- |
+| Leave the benchmark's hand-maintained subset | Fail; omitted workspaces can regress unseen | Fail | Low | Rejected |
+| Discover keys dynamically from each response | Partial; a server can omit a key and still self-validate | Fail; catalog shrinkage is hidden | Low | Rejected |
+| Load the production catalog directly at benchmark runtime | Pass for key coverage | Partial; runtime fixture coupling can hide source drift | Medium | Rejected |
+| **Exact static catalog assertions plus an executable source contract** | **Pass; every ID and decision branch is named** | **Pass; missing IDs fail before Docker load** | **Low and bounded** | **Selected; see ADR-0401** |
+
+### Single tax-trace disclosure in the result workspace (ADR-0402)
+
+| Alternative | Scan cost | Evidence clarity | Implementation risk | Decision |
+| --- | --- | --- | --- | --- |
+| Keep the duplicate trace | High | Misleading repetition | Low | Rejected |
+| Remove the trace entirely | Low | Fails explainability and reviewability | Low | Rejected |
+| Move the trace into technical details | Medium | Hides the operator-facing explanation | Medium | Rejected |
+| **Keep one trace in “Why this tax?”** | **Low** | **Preserves plain-language explanation and exact values** | **Low** | **Selected; see ADR-0402** |
+
+### Single persistent account context in the navigation shell (ADR-0403)
+
+| Alternative | Visual density | Identity clarity | Authorization safety | Decision |
+| --- | --- | --- | --- | --- |
+| Repeat account context in sidebar, page, and account menu | Fail | Repetitive | Pass | Rejected |
+| Remove persistent access state entirely | Pass | Partial | Fail; recovery state is easy to miss | Rejected |
+| Move all identity and access information into a modal | Pass | Partial | Partial; adds interaction cost | Rejected |
+| **Keep one persistent access state and progressive identity details** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0403** |
+
+### Material theme-color synchronization (ADR-0405)
+
+| Alternative | Palette consistency | First-paint behavior | Complexity | Decision |
+| --- | --- | --- | --- | --- |
+| Keep the legacy hard-coded browser color | Fail; outside the M3 role matrix | Pass | Low | Rejected |
+| Remove browser `theme-color` metadata | Pass | Browser-defined and inconsistent | Low | Rejected |
+| Reuse a component accent color | Fail; wrong semantic role | Pass | Low | Rejected |
+| **Approved M3 background metadata with bounded media synchronization** | **Pass** | **Pass with safe fallback** | **Low and testable** | **Selected; see ADR-0405** |
+
+### Material 3 mobile shell action row (ADR-0406)
+
+| Alternative | Scan cost | Accessibility and discoverability | Workspace stability | Decision |
+| --- | --- | --- | --- | --- |
+| Keep the vertical stack | High; controls dominate the mobile header | Pass | Fail; pushes task content down | Rejected |
+| Hide session/status controls on mobile | Low | Fail; protected recovery and service state become undiscoverable | Pass | Rejected |
+| Move all controls into one overflow menu | Low | Partial; adds interaction cost and hides important state | Pass | Rejected |
+| **Two-row identity plus wrapped Material action row** | **Low** | **Pass; existing controls and names remain present** | **Pass** | **Selected; see ADR-0406** |
+
+### Evidence-bound tax applicability context (ADR-0407)
+
+| Alternative | Applicability clarity | Replay and evidence | Latency / safety | Decision |
+| --- | --- | --- | --- | --- |
+| Add arbitrary applicability fields to `TaxFacts` | Partial | Fail; evidence ownership is unclear | Medium risk of digest drift | Rejected |
+| Overload `regime` as product category | Fail | Partial | Low implementation cost but unsafe semantics | Rejected |
+| Unbounded rule-expression language | Pass in theory | Partial | Fail; complexity and latency are unbounded | Rejected |
+| External tax SaaS as authority | Partial | Partial | Fail; hot-path and provider dependency | Rejected |
+| **Separate bounded applicability context and attestation** | **Pass** | **Pass** | **Pass; immutable precompiled policy** | **Selected; see ADR-0407** |
+
+### Server-owned applicability-context persistence (ADR-0409)
+
+| Alternative | Evidence ownership | Hot-path latency | Replay/governance | Decision |
+| --- | --- | --- | --- | --- |
+| Browser submits treatment and attestation JSON | Fail; caller becomes authority | Fast but unsafe | Fail | Rejected |
+| External tax SaaS resolves every quote | Partial; provider becomes authority | Unbounded | Partial | Rejected |
+| Full applicability graph on Solana | Strong settlement binding | Transaction/compute constrained | Partial | Rejected |
+| Mutable policy rows recalculated during replay | Fail; historical meaning changes | Variable | Fail | Rejected |
+| **Immutable PostgreSQL context projection plus signed attestation and bounded cache** | **Pass** | **Bounded and measurable** | **Pass** | **Selected; see ADR-0409** |
+
+### Material state emphasis and border budget (ADR-0410)
+
+| Alternative | Scan clarity | State semantics | Accessibility/contrast | Decision |
+| --- | --- | --- | --- | --- |
+| Fill every badge and outline every panel | Fail; routine content reads as alerting | Partial | Risk of competing fills | Rejected |
+| Remove all status styling | Pass | Fail; operational states become harder to scan | Pass | Rejected |
+| Assign an accent to each workspace | Fail; taxonomy becomes decoration | Fail; color meaning drifts | Unbounded palette | Rejected |
+| **Neutral badges, explicit state fills, and tonal surfaces** | **Pass** | **Pass** | **Pass; paired M3 roles** | **Selected; see ADR-0410** |
+
+### Versioned Solana applicability settlement binding (ADR-0411)
+
+| Alternative | Compatibility | On-chain authority | Latency/complexity | Decision |
+| --- | --- | --- | --- | --- |
+| Extend the existing settlement wire layout | Fails old clients and vectors | Partial | Low code cost, high migration risk | Rejected |
+| Store the context only in API metadata | Passes no message/program binding | Fails | Low | Rejected |
+| Add a second post-settlement binding instruction | Payment can succeed without evidence | Fails atomicity | Medium and race-prone | Rejected |
+| **Versioned instruction plus receipt-scoped binding PDA** | **Pass** | **Pass** | **Bounded extra account and bytes** | **Selected; see ADR-0411** |
+
+### Finalized applicability-binding account verification (ADR-0412)
+
+| Option | Finalized account proof | Settlement hot-path impact | Failure containment | Decision |
+| --- | --- | --- | --- | --- |
+| Trust applicability event only | **Fail** | Low | Weak; event can outlive or disagree with account state | Rejected |
+| Fetch account during quote/compile/signing | Pass | **Fail** | RPC outage contaminates user authorization path | Rejected |
+| Generic unbounded account read | Partial | Medium | Layout/response ambiguity | Rejected |
+| Include every binding account in normal block projection | Pass | Medium/high | Inflates all indexer work | Rejected |
+| Dedicated bounded finalized verifier port | **Pass** | **Pass** | Explicit fail-closed account/layout contract | **Selected; see ADR-0412** |
+
+### Atomic applicability-binding verification projection (ADR-0413)
+
+| Option | Replayable evidence | Legacy compatibility | Conflict safety | Decision |
+| --- | --- | --- | --- | --- |
+| Logs/process memory | **Fail** | Pass | Fail | Rejected |
+| Mutable fields on `indexed_receipts` | Partial | **Fail** | Partial | Rejected |
+| Unchecked upsert | Pass | Pass | **Fail** | Rejected |
+| Dedicated serializable append-only projection | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0413** |
+
+### Bounded applicability-binding verifier worker (ADR-0414)
+
+| Option | Concurrency safety | Recovery | Hot-path impact | Decision |
+| --- | --- | --- | --- | --- |
+| Scan all raw events every tick | Fail; duplicate work grows with history | Partial | Low | Rejected |
+| In-memory queue | Fail across restarts and replicas | Fail | Low | Rejected |
+| Hold database locks across RPC | Partial | Poor under crash | Fail | Rejected |
+| Unleased bounded candidate query | Partial; duplicate provider reads | Partial | Low | Rejected |
+| **Lease-fenced PostgreSQL job table** | **Pass** | **Pass; bounded retry/dead-letter** | **Pass; asynchronous** | **Selected; see ADR-0414** |
+
+### Tenant-scoped applicability verification read model (ADR-0415)
+
+| Option | Tenant safety | Evidence clarity | Decision |
+| --- | --- | --- | --- |
+| Return worker coordination rows directly | Fail; exposes implementation state | Partial | Rejected |
+| Accept merchant ID from the query | Fail; caller becomes authority | Partial | Rejected |
+| Return only a boolean | Partial | Fail; pending/dead-letter states disappear | Rejected |
+| Read by signature only | Partial; weak intent ownership | Partial | Rejected |
+| **Authenticated merchant + settlement intent + stream selector** | **Pass** | **Pass; explicit lifecycle** | **Selected; see ADR-0415** |
+
+### Applicability-treatment settlement semantics (ADR-0416)
+
+| Option | Determinism | Settlement clarity | Replayability | Decision |
+| --- | --- | --- | --- | --- |
+| Continue rejecting every non-taxable treatment | Pass | Fail; product cannot support global cases | Pass | Rejected |
+| Map all non-taxable outcomes to zero tax | Fail; loses legal/reporting distinction | Fail; reverse charge and withholding are misrepresented | Partial | Rejected |
+| Let API adapters reinterpret treatment after arithmetic | Fail; multiple authorities | Fail; digest omits the interpretation | Fail | Rejected |
+| **Pure engine `TreatmentOutcome` with explicit collection channels** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0416** |
+
+### Signed treatment-outcome binding (ADR-0417)
+
+| Alternative | Evidence completeness | Legacy compatibility | Settlement hot-path impact | Decision |
+| --- | --- | --- | --- | --- |
+| Leave gross/tax/net as the only signed values | Fail; treatment channels are unsigned | Pass | Low | Rejected |
+| Mutate the v1 canonical payload | Fail; issuer/replay ambiguity | Fail | Low | Rejected |
+| Add a second outcome PDA/instruction | Partial; creates an atomicity gap | Partial | Higher account/byte cost | Rejected |
+| Execute the full rule graph on Solana | Partial | Fail | Fails bounded compute goals | Rejected |
+| **Versioned v2 outcome digest in the signed payload, bound by existing policy digest** | **Pass** | **Pass; dual-read rollout** | **Bounded** | **Selected; see ADR-0417** |
+
+### Applicability-context management API (ADR-0418)
+
+| Alternative | Tenant/authority safety | Replay/governance | Operational latency | Decision |
+| --- | --- | --- | --- | --- |
+| Accept applicability fields on quote requests | **Fail; caller becomes authority** | Fail | Low | Rejected |
+| Keep PostgreSQL context storage without an API boundary | Partial; unreachable from a product workflow | Partial | N/A | Rejected |
+| Resolve treatment through an external provider on every quote | Partial | Fail; provider availability changes replay | Unbounded | Rejected |
+| **Dedicated authenticated CRUD-lite management routes over immutable storage and signed attestation verification** | **Pass** | **Pass; four-eyes lifecycle and idempotent creation** | **Bounded; off the settlement hot path** | **Selected; see ADR-0418** |
+
+### Neutral risk taxonomy and calm active navigation (ADR-0419)
+
+| Alternative | Semantic clarity | Scanability | Accessibility/auditability | Decision |
+| --- | --- | --- | --- | --- |
+| One accent per workflow risk category | Fail; taxonomy looks like incident state | Fail | Partial | Rejected |
+| Remove risk labels from the product surface | Fail; action consequence becomes hidden | Pass | Fail | Rejected |
+| Keep a bordered, shadowed active navigation item | Partial | Partial; selection is over-emphasized | Pass | Rejected |
+| **Neutral risk taxonomy, semantic outcome fills, and tonal active selection** | **Pass** | **Pass; one visual priority** | **Pass; role-based and testable** | **Selected; see ADR-0419** |
+
+### Applicability governance workspace (ADR-0420)
+
+| Alternative | Workflow clarity | Authority safety | Navigation/UX cost | Decision |
+| --- | --- | --- | --- | --- |
+| Add treatment evidence controls to the tax-rule workbench | Fail; rule authoring and signed treatment review become one dense task | Partial; two authority models share one surface | High | Rejected |
+| Build a browser-side treatment calculator or attestation editor | Fail; browser becomes a calculation or evidence authority | **Fail** | Medium | Rejected |
+| Generic admin JSON console | Partial | Fail; weak role and lifecycle affordances | Low | Rejected |
+| **Dedicated localized treatment-evidence workspace using server-owned signed-attestation import and lifecycle APIs** | **Pass; author/review/publish steps are explicit** | **Pass; API and capability snapshot remain authoritative** | **Bounded; one additional Rules & access workspace** | **Selected; see ADR-0420** |
+
+### Material baseline palette and Expressive tokens (ADR-0422)
+
+| Criterion | Keep hand-tuned Aurora | Runtime dynamic colour | Hand-copied baseline hex | **Generated from baseline seed, verified by test** |
+| --- | --- | --- | --- | --- |
+| Matches product direction (default Material, no teal) | No | Partly | Yes | **Yes** |
+| Provenance and regeneration | Weak | None (non-deterministic) | None | **Pinned seed, variant, library** |
+| Contrast auditability | Static | Unaudited | Static | **Static, 30 pairs at 4.5:1** |
+| Evidence/screenshot determinism | Yes | No | Yes | **Yes** |
+| Supply-chain cost | None | None | None | One pinned dev-only dependency |
+
+Revisit if the library drops TonalSpot, or if tenants require brand theming.

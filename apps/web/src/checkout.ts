@@ -34,6 +34,8 @@ export const COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget1111111111111111111111111
 export const SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT = 13;
 const SETTLE_DISCRIMINATOR_BASE64 = "ryq5V5CDZtQ=";
 const DOCUMENT_SETTLE_DISCRIMINATOR_BASE64 = "XAF7GP/zWDU=";
+const APPLICABILITY_SETTLE_DISCRIMINATOR_BASE64 = "t29GiZEhFiU=";
+const APPLICABILITY_DOCUMENT_SETTLE_DISCRIMINATOR_BASE64 = "Ya7IjJIhSO4=";
 const SPLIT_SETTLE_DISCRIMINATOR_BASE64 = "A6qY2V4JCdU=";
 const ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR = [208, 86, 69, 183, 44, 203, 236, 75] as const;
 
@@ -84,6 +86,16 @@ function parseDigestBytes(value: unknown, field: string): number[] {
       || value.some((byte) => typeof byte !== "number"
         || !Number.isInteger(byte) || byte < 0 || byte > 255)) {
     throw new Error(`The API returned an invalid ${field} digest.`);
+  }
+  return [...value] as number[];
+}
+
+function parseContextIdBytes(value: unknown): number[] {
+  if (!Array.isArray(value) || value.length !== 16
+      || value.some((byte) => typeof byte !== "number"
+        || !Number.isInteger(byte) || byte < 0 || byte > 255)
+      || value.every((byte) => byte === 0)) {
+    throw new Error("The API returned an invalid applicability context ID.");
   }
   return [...value] as number[];
 }
@@ -230,6 +242,9 @@ export type CompiledSettlementInstruction = {
   policy_attestation: string;
   receipt: string;
   asset_config: string;
+  applicability_context_id?: number[];
+  applicability_attestation_digest?: number[];
+  applicability_binding?: string;
   compute_budget_policy: ComputeBudgetPolicy;
 };
 
@@ -335,6 +350,19 @@ function parseCompiledInstructionFields(record: Record<string, unknown>): Compil
       || microLamports > 10_000_000) {
     throw new Error("The API returned an unsupported or unsafe compute-budget policy.");
   }
+  const hasContext = Object.prototype.hasOwnProperty.call(record, "applicability_context_id");
+  const hasApplicabilityDigest = Object.prototype.hasOwnProperty.call(record, "applicability_attestation_digest");
+  const hasBinding = Object.prototype.hasOwnProperty.call(record, "applicability_binding");
+  if (hasContext !== hasApplicabilityDigest || hasContext !== hasBinding) {
+    throw new Error("The API returned an incomplete applicability settlement binding.");
+  }
+  const applicabilityContextId = hasContext ? parseContextIdBytes(record.applicability_context_id) : undefined;
+  const applicabilityAttestationDigest = hasApplicabilityDigest
+    ? parseDigestBytes(record.applicability_attestation_digest, "applicability attestation")
+    : undefined;
+  const applicabilityBinding = hasBinding
+    ? requirePublicKey(record.applicability_binding as string, "applicability binding PDA").toBase58()
+    : undefined;
   const instruction: CompiledSettlementInstruction = {
     status: record.status,
     program_id: record.program_id,
@@ -345,6 +373,9 @@ function parseCompiledInstructionFields(record: Record<string, unknown>): Compil
     policy_attestation: requirePublicKey(record.policy_attestation as string, "policy attestation PDA").toBase58(),
     receipt: requirePublicKey(record.receipt as string, "receipt PDA").toBase58(),
     asset_config: requirePublicKey(record.asset_config as string, "asset admission PDA").toBase58(),
+    applicability_context_id: applicabilityContextId,
+    applicability_attestation_digest: applicabilityAttestationDigest,
+    applicability_binding: applicabilityBinding,
     compute_budget_policy: {
       policy_version: policyVersion,
       compute_unit_limit: computeUnitLimit,
@@ -769,10 +800,21 @@ export function validateCompiledSettlementInstruction(
   }
   const isSplit = "split_plan" in instruction;
   const isDocument = "document_attestation_digest" in instruction;
+  const applicabilityInstruction = isSplit ? undefined : instruction as CompiledSettlementInstruction | CompiledDocumentSettlementInstruction;
+  const contextId = applicabilityInstruction?.applicability_context_id;
+  const attestationDigest = applicabilityInstruction?.applicability_attestation_digest;
+  const bindingPda = applicabilityInstruction?.applicability_binding;
+  const hasApplicability = contextId !== undefined
+    && attestationDigest !== undefined
+    && bindingPda !== undefined;
+  if ((contextId !== undefined) !== (attestationDigest !== undefined)
+      || (contextId !== undefined) !== (bindingPda !== undefined)) {
+    throw new Error("Settlement applicability binding is incomplete.");
+  }
   if (isSplit && isDocument) throw new Error("Settlement artifact cannot be both split and document scoped.");
   const expectedAccountCount = isSplit
     ? SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT
-    : SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT;
+    : SETTLEMENT_INSTRUCTION_ACCOUNT_COUNT + (hasApplicability ? 1 : 0);
   const invalidAccountCount = isSplit
     ? instruction.accounts.length < expectedAccountCount
       || instruction.accounts.length > expectedAccountCount + 8
@@ -821,6 +863,8 @@ export function validateCompiledSettlementInstruction(
     for (let index = 0; index < recipientCount; index += 1) {
       expectedFlags.push([false, true]);
     }
+  } else if (hasApplicability) {
+    expectedFlags.splice(10, 0, [false, true]);
   }
   accountKeys.forEach(({ account }, index) => {
     const [isSigner, isWritable] = expectedFlags[index];
@@ -847,16 +891,20 @@ export function validateCompiledSettlementInstruction(
   if (isSplit && !accountKeys[8].key.equals(requirePublicKey(instruction.split_plan, "Split Plan PDA"))) {
     throw new Error("Split Plan PDA does not match the canonical account order.");
   }
-  const assetConfigIndex = 10;
+  const bindingIndex = hasApplicability ? 10 : -1;
+  if (hasApplicability && !accountKeys[bindingIndex].key.equals(requirePublicKey(bindingPda as string, "applicability binding PDA"))) {
+    throw new Error("Applicability binding PDA does not match the canonical account order.");
+  }
+  const assetConfigIndex = hasApplicability ? 11 : 10;
   if (!accountKeys[assetConfigIndex].key.equals(requirePublicKey(instruction.asset_config, "asset admission PDA"))) {
     throw new Error("Asset admission PDA does not match the canonical account order.");
   }
-  const tokenProgramIndex = 11;
+  const tokenProgramIndex = hasApplicability ? 12 : 11;
   if (accountKeys[tokenProgramIndex].key.toBase58() !== SPL_TOKEN_PROGRAM_ID
       && accountKeys[tokenProgramIndex].key.toBase58() !== TOKEN_2022_PROGRAM_ID) {
     throw new Error("Settlement token program is not supported.");
   }
-  const systemProgramIndex = 12;
+  const systemProgramIndex = hasApplicability ? 13 : 12;
   if (accountKeys[systemProgramIndex].key.toBase58() !== SYSTEM_PROGRAM_ID) {
     throw new Error("Settlement System Program account is not canonical.");
   }
@@ -866,15 +914,21 @@ export function validateCompiledSettlementInstruction(
   }
 
   const instructionData = decodeBase64(instruction.instruction_data_base64);
-  const expectedDataLength = isDocument ? 144 : isSplit ? 88 : 80;
+  const expectedDataLength = isDocument ? (hasApplicability ? 192 : 144) : isSplit ? 88 : (hasApplicability ? 128 : 80);
   if (instructionData.length !== expectedDataLength) {
     throw new Error("Settlement instruction data has an invalid length.");
   }
   const discriminator = Buffer.from(instructionData.subarray(0, 8)).toString("base64");
   const expectedDiscriminator = isDocument
-    ? DOCUMENT_SETTLE_DISCRIMINATOR_BASE64
+    ? (hasApplicability ? APPLICABILITY_DOCUMENT_SETTLE_DISCRIMINATOR_BASE64 : DOCUMENT_SETTLE_DISCRIMINATOR_BASE64)
     : isSplit ? SPLIT_SETTLE_DISCRIMINATOR_BASE64 : SETTLE_DISCRIMINATOR_BASE64;
-  if (discriminator !== expectedDiscriminator) {
+  const expectedAggregateDiscriminator = hasApplicability
+    ? APPLICABILITY_SETTLE_DISCRIMINATOR_BASE64
+    : SETTLE_DISCRIMINATOR_BASE64;
+  const resolvedDiscriminator = isDocument
+    ? expectedDiscriminator
+    : isSplit ? SPLIT_SETTLE_DISCRIMINATOR_BASE64 : expectedAggregateDiscriminator;
+  if (discriminator !== resolvedDiscriminator) {
     throw new Error("Settlement instruction discriminator is not canonical.");
   }
   if (isDocument) {
@@ -883,6 +937,15 @@ export function validateCompiledSettlementInstruction(
     if (documentDigest.some((byte, index) => byte !== instruction.document_attestation_digest[index])
         || scopeDigest.some((byte, index) => byte !== instruction.payment_scope_digest[index])) {
       throw new Error("Document provenance digests do not match the canonical instruction bytes.");
+    }
+  }
+  if (hasApplicability) {
+    const offset = isDocument ? 144 : 80;
+    const contextBytes = Array.from(instructionData.subarray(offset, offset + 16));
+    const attestationBytes = Array.from(instructionData.subarray(offset + 16, offset + 48));
+    if (contextBytes.some((byte, index) => byte !== contextId?.[index])
+        || attestationBytes.some((byte, index) => byte !== attestationDigest?.[index])) {
+      throw new Error("Applicability binding values do not match the canonical instruction bytes.");
     }
   }
 }

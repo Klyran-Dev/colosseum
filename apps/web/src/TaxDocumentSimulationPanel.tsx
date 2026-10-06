@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import { fetchWithTimeout, REQUEST_TIMEOUT_MS, responseError } from "./api";
+import { fetchWithTimeout, operatorResponseError, REQUEST_TIMEOUT_MS } from "./api";
 import { DEFAULT_LOCALE, formatAtomic as formatAtomicValue } from "./formatters";
 import {
   buildTaxDocumentFacts,
@@ -9,6 +9,10 @@ import {
   TaxDocumentSimulation,
   validateTaxDocumentLines,
 } from "./taxDocumentSimulation";
+import { taxDocumentSimulationMessagesFor } from "./taxDocumentSimulationMessages";
+import { assetScaleMessagesFor, parseAssetScale } from "./assetScaleMessages";
+import { operatorErrorMessage } from "./operatorError";
+import TaxTreatmentOutcome from "./TaxTreatmentOutcome";
 
 type Props = {
   apiBase: string;
@@ -19,8 +23,11 @@ type Props = {
 };
 
 export default function TaxDocumentSimulationPanel({ apiBase, serviceOnline, ruleSet, jurisdiction, locale = DEFAULT_LOCALE }: Props) {
+  const messages = taxDocumentSimulationMessagesFor(locale);
+  const assetScaleMessages = assetScaleMessagesFor(locale);
   const [documentId, setDocumentId] = useState("");
   const [currency, setCurrency] = useState("");
+  const [atomicDecimals, setAtomicDecimals] = useState("");
   const [lines, setLines] = useState<TaxDocumentLineDraft[]>(() => emptyDocumentLines());
   const [simulation, setSimulation] = useState<TaxDocumentSimulation | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -48,11 +55,11 @@ export default function TaxDocumentSimulationPanel({ apiBase, serviceOnline, rul
     setError(null);
     setNotice(null);
     if (!serviceOnline) {
-      setError("The API is unavailable; no local tax result is substituted.");
+      setError(messages.state.unavailable);
       return;
     }
     if (ruleSet === null || typeof ruleSet !== "object") {
-      setError("The current rule document is not valid. Fix the rule workbench before simulating a document.");
+      setError(messages.state.invalidRule);
       return;
     }
     const lineErrors = validateTaxDocumentLines(lines);
@@ -62,19 +69,19 @@ export default function TaxDocumentSimulationPanel({ apiBase, serviceOnline, rul
     }
     setIsSubmitting(true);
     try {
-      const facts = buildTaxDocumentFacts(documentId, currency, jurisdiction, lines);
+      const facts = buildTaxDocumentFacts(documentId, parseAssetScale(atomicDecimals, assetScaleMessages.invalid), currency, jurisdiction, lines, assetScaleMessages.invalid);
       const response = await fetchWithTimeout(`${apiBase}/v1/tax/calculate-document`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ facts, rule_set: ruleSet }),
       }, REQUEST_TIMEOUT_MS.default);
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(responseError(response, payload, `Document simulation failed (${response.status})`));
+      if (!response.ok) throw operatorResponseError(response, payload, messages.state.failed(response.status));
       setSimulation(parseTaxDocumentSimulation(payload));
-      setNotice("The server returned a deterministic, unattested document trace. It cannot create a quote or authorize settlement.");
+      setNotice(messages.state.notice);
     } catch (cause) {
       setSimulation(null);
-      setError(cause instanceof Error ? cause.message : "Document simulation failed");
+      setError(operatorErrorMessage(cause, messages.state.failed()));
     } finally {
       setIsSubmitting(false);
     }
@@ -82,34 +89,36 @@ export default function TaxDocumentSimulationPanel({ apiBase, serviceOnline, rul
 
   return (
     <details className="authoring-section simulation-section" open>
-      <summary>Line and invoice tax simulation</summary>
-      <p className="evidence-note">This is an explicit document-facts workbench. The Rust service validates bounds, canonicalizes line identity, applies the rule&apos;s Line or Invoice scope, and returns an unattested trace. No browser arithmetic or settlement authority is used.</p>
+      <summary>{messages.panel.summary}</summary>
+      <p className="evidence-note">{messages.panel.evidenceNote}</p>
       <form onSubmit={simulate} className="document-simulation-form">
         <div className="form-grid">
-          <label><span>Document ID</span><input value={documentId} onChange={(event) => setDocumentId(event.target.value)} maxLength={64} required /></label>
-          <label><span>Currency</span><input value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase())} maxLength={12} required /></label>
-          <p className="field-help full-field">Jurisdiction follows the loaded rule: <strong>{jurisdiction || "not selected"}</strong>.</p>
+          <label><span>{messages.form.documentId}</span><input value={documentId} onChange={(event) => setDocumentId(event.target.value)} maxLength={64} required /></label>
+          <label><span>{messages.form.currency}</span><input value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase())} maxLength={12} required /></label>
+          <label><span>{assetScaleMessages.label}</span><input inputMode="numeric" min="0" max="9" value={atomicDecimals} onChange={(event) => setAtomicDecimals(event.target.value)} aria-describedby="simulation-asset-precision-help" required /><small id="simulation-asset-precision-help" className="field-help">{assetScaleMessages.help}</small></label>
+          <p className="field-help full-field">{messages.form.jurisdiction(jurisdiction)}</p>
         </div>
         <div className="document-lines" role="group" aria-labelledby="document-lines-heading">
-          <div className="document-lines-heading"><div><h3 id="document-lines-heading">Tax lines</h3><p className="field-help">Canonical results are sorted by line ID. Maximum 256 lines.</p></div><button type="button" className="secondary-button" onClick={addLine} disabled={lines.length >= 256}>Add line</button></div>
+          <div className="document-lines-heading"><div><h3 id="document-lines-heading">{messages.form.linesHeading}</h3><p className="field-help">{messages.form.linesDescription}</p></div><button type="button" className="secondary-button" onClick={addLine} disabled={lines.length >= 256}>{messages.form.addLine}</button></div>
           {lines.map((line, index) => <fieldset className="document-line" key={`${line.id}-${index}`}>
-            <legend>Line {index + 1}</legend>
-            <label><span>Line ID</span><input value={line.id} onChange={(event) => updateLine(index, { id: event.target.value })} maxLength={64} required /></label>
-            <label><span>Amount before tax</span><input inputMode="numeric" value={line.grossAtomic} onChange={(event) => updateLine(index, { grossAtomic: event.target.value })} required /></label>
-            <label><span>Amount after tax</span><input inputMode="numeric" value={line.netAtomic} onChange={(event) => updateLine(index, { netAtomic: event.target.value })} required /></label>
-            <label><span>Exemption codes</span><input value={line.exemptionCodes} onChange={(event) => updateLine(index, { exemptionCodes: event.target.value })} placeholder="One per line or comma-separated" /></label>
-            <button type="button" className="secondary-button" onClick={() => removeLine(index)} disabled={lines.length <= 1}>Remove</button>
+            <legend>{messages.form.line(index + 1)}</legend>
+            <label><span>{messages.form.lineId}</span><input value={line.id} onChange={(event) => updateLine(index, { id: event.target.value })} maxLength={64} required /></label>
+            <label><span>{messages.form.gross}</span><input inputMode="numeric" value={line.grossAtomic} onChange={(event) => updateLine(index, { grossAtomic: event.target.value })} required /></label>
+            <label><span>{messages.form.net}</span><input inputMode="numeric" value={line.netAtomic} onChange={(event) => updateLine(index, { netAtomic: event.target.value })} required /></label>
+            <label><span>{messages.form.exemptions}</span><input value={line.exemptionCodes} onChange={(event) => updateLine(index, { exemptionCodes: event.target.value })} placeholder={messages.form.exemptionsPlaceholder} /></label>
+            <button type="button" className="secondary-button" onClick={() => removeLine(index)} disabled={lines.length <= 1}>{messages.form.remove}</button>
           </fieldset>)}
         </div>
-        <button type="submit" disabled={!serviceOnline || isSubmitting}>{isSubmitting ? "Calculating bounded document trace…" : "Simulate document tax"}</button>
+        <button type="submit" disabled={!serviceOnline || isSubmitting}>{isSubmitting ? messages.form.calculating : messages.form.submit}</button>
       </form>
-      {!serviceOnline && <p className="inline-warning" role="alert">The service is unavailable. This workbench does not display a locally invented total.</p>}
+      {!serviceOnline && <p className="inline-warning" role="alert">{messages.state.noLocalTotal}</p>}
       {error && <p className="inline-error" role="alert">{error}</p>}
       {notice && <p className="inline-success" role="status">{notice}</p>}
-      {simulation && <div className="document-result" role="region" aria-label="Document simulation result">
-        <div className="total-card"><span>Unattested document tax</span><strong>{formatAtomicValue(simulation.result.total_tax_atomic, simulation.result.currency, locale)}</strong><small>{simulation.result.document_id} · {simulation.result.engine_version} · calculation {simulation.calculation_id}</small></div>
-        <dl className="summary-list"><div><dt>Gross</dt><dd>{formatAtomicValue(simulation.result.gross_atomic, simulation.result.currency, locale)}</dd></div><div><dt>Net after tax</dt><dd>{formatAtomicValue(simulation.result.total_net_atomic, simulation.result.currency, locale)}</dd></div><div><dt>Facts digest</dt><dd><code>{simulation.result.facts_digest.slice(0, 8).map((byte) => byte.toString(16).padStart(2, "0")).join("")}…</code></dd></div>{simulation.result.fx_conversion && <div><dt>FX evidence</dt><dd>{simulation.result.fx_conversion.source_currency} → {simulation.result.fx_conversion.target_currency} · {simulation.result.fx_conversion.provider} · {simulation.result.fx_conversion.quote_id}</dd></div>}</dl>
-        <div className="document-result-lines"><h3>Canonical line trace</h3>{simulation.result.lines.map((line) => <div className="document-result-line" key={line.id}><div><strong>{line.id}</strong><small>Gross {formatAtomicValue(line.gross_atomic, simulation.result.currency, locale)} · net {formatAtomicValue(line.total_net_atomic, simulation.result.currency, locale)}</small></div><strong>{formatAtomicValue(line.total_tax_atomic, simulation.result.currency, locale)} tax</strong></div>)}</div>
+      {simulation && <div className="document-result" role="region" aria-label={messages.state.resultRegion}>
+        <div className="total-card"><span>{messages.result.unattestedTax}</span><strong>{formatAtomicValue(simulation.result.total_tax_atomic, simulation.result.currency, locale, simulation.result.atomic_decimals)}</strong><small>{simulation.result.document_id} · {simulation.result.engine_version} · {messages.result.calculationReference} {simulation.calculation_id}</small></div>
+        <TaxTreatmentOutcome outcome={simulation.result.treatment_outcome} currency={simulation.result.currency} atomicDecimals={simulation.result.atomic_decimals} locale={locale} formatAtomic={(value, currency, atomicDecimals) => formatAtomicValue(value, currency, locale, atomicDecimals)} />
+        <dl className="summary-list"><div><dt>{messages.result.gross}</dt><dd>{formatAtomicValue(simulation.result.gross_atomic, simulation.result.currency, locale, simulation.result.atomic_decimals)}</dd></div><div><dt>{messages.result.netAfterTax}</dt><dd>{formatAtomicValue(simulation.result.total_net_atomic, simulation.result.currency, locale, simulation.result.atomic_decimals)}</dd></div><div><dt>{messages.result.factsDigest}</dt><dd><code>{simulation.result.facts_digest.slice(0, 8).map((byte) => byte.toString(16).padStart(2, "0")).join("")}…</code></dd></div>{simulation.result.fx_conversion && <div><dt>{messages.result.fxEvidence}</dt><dd>{simulation.result.fx_conversion.source_currency} → {simulation.result.fx_conversion.target_currency} · {simulation.result.fx_conversion.provider} · {simulation.result.fx_conversion.quote_id}</dd></div>}</dl>
+        <div className="document-result-lines"><h3>{messages.result.canonicalTrace}</h3>{simulation.result.lines.map((line) => <div className="document-result-line" key={line.id}><div><strong>{line.id}</strong><small>{messages.result.gross} {formatAtomicValue(line.gross_atomic, simulation.result.currency, locale, simulation.result.atomic_decimals)} · {messages.result.netAfterTax.toLowerCase()} {formatAtomicValue(line.total_net_atomic, simulation.result.currency, locale, simulation.result.atomic_decimals)}</small></div><strong>{formatAtomicValue(line.total_tax_atomic, simulation.result.currency, locale, simulation.result.atomic_decimals)} {messages.result.tax}</strong></div>)}</div>
       </div>}
     </details>
   );

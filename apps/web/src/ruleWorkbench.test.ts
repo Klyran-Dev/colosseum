@@ -87,6 +87,86 @@ describe("structured Tier-1 rule workbench contract", () => {
     });
   });
 
+  it("requires and serializes the explicit inclusive gross-excess equation", () => {
+    const draft = defaultRuleWorkbenchDraft();
+    const component = draft.components[0];
+    component.priceMode = "Inclusive";
+    component.thresholdEnabled = true;
+    component.thresholdAtomic = "1100";
+
+    expect(validateRuleWorkbench(draft)).toContain(
+      "Component sales-tax inclusive thresholds require an explicit equation.",
+    );
+
+    component.inclusiveThresholdEquation = "GrossExcess";
+    expect(validateRuleWorkbench(draft)).toEqual([]);
+    expect(buildRuleSet(draft).components[0].threshold).toEqual({
+      amount_atomic: "1100",
+      basis: "PerTransaction",
+      mode: "ExemptUpTo",
+      inclusive_equation: "GrossExcess",
+    });
+  });
+
+  it("rejects repeated additive base sources before server submission", () => {
+    const draft = defaultRuleWorkbenchDraft();
+    draft.components[0].baseSources = ["Net", "Net"];
+    expect(validateRuleWorkbench(draft)).toContain(
+      "Component sales-tax base sources must be distinct.",
+    );
+  });
+
+  it("builds exact weighted and subtractive base terms without client arithmetic", () => {
+    const draft = defaultRuleWorkbenchDraft();
+    const component = draft.components[0];
+    component.baseSources = ["Net", "Gross"];
+    component.baseNumerators = ["3", "-1"];
+    component.baseDenominators = ["4", "10"];
+
+    expect(validateRuleWorkbench(draft)).toEqual([]);
+    expect(buildRuleSet(draft).components[0].base.sources).toEqual([
+      { Weighted: { source: "Net", numerator: "3", denominator: "4" } },
+      { Weighted: { source: "Gross", numerator: "-1", denominator: "10" } },
+    ]);
+  });
+
+  it("builds bounded taxable-base clamps without confusing them with tax clamps", () => {
+    const draft = defaultRuleWorkbenchDraft();
+    const component = draft.components[0];
+    component.baseFloorAtomic = "503";
+    component.baseCapAtomic = "900";
+    component.roundingQuantumAtomic = "10";
+
+    expect(validateRuleWorkbench(draft)).toEqual([]);
+    expect(buildRuleSet(draft).components[0].base).toEqual({
+      sources: ["Net"],
+      floor_atomic: "503",
+      cap_atomic: "900",
+    });
+  });
+
+  it("rejects a taxable-base floor above its cap", () => {
+    const draft = defaultRuleWorkbenchDraft();
+    draft.components[0].baseFloorAtomic = "901";
+    draft.components[0].baseCapAtomic = "900";
+
+    expect(validateRuleWorkbench(draft)).toContain(
+      "Component sales-tax taxable-base floor cannot exceed cap.",
+    );
+  });
+
+  it("rejects zero or negative-denominator base shares and unsafe inclusive weighting", () => {
+    const draft = defaultRuleWorkbenchDraft();
+    draft.components[0].baseNumerators = ["0"];
+    expect(validateRuleWorkbench(draft)).toContain("Component sales-tax base share numerator must be non-zero and fit the bounded coefficient range.");
+    draft.components[0].baseNumerators = ["1"];
+    draft.components[0].baseDenominators = ["-1"];
+    expect(validateRuleWorkbench(draft)).toContain("Component sales-tax base share denominator must be positive.");
+    draft.components[0].baseDenominators = ["2"];
+    draft.components[0].priceMode = "Inclusive";
+    expect(validateRuleWorkbench(draft)).toContain("Component sales-tax inclusive prices require a whole base amount; weighted bases need an explicit approved equation.");
+  });
+
   it("rejects settlement rounding for mixed scopes, dependencies, and modes", () => {
     const draft = defaultRuleWorkbenchDraft();
     draft.components[0].roundingScope = "Settlement";

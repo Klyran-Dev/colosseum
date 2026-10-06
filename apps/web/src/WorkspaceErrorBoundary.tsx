@@ -1,7 +1,10 @@
 import { Component, ErrorInfo, ReactNode } from "react";
+import { DEFAULT_LOCALE } from "./formatters";
+import { shellOperationalMessagesFor } from "./shellOperationalMessages";
 
 type WorkspaceErrorBoundaryProps = {
   workspace: string;
+  locale?: string;
   children: ReactNode;
 };
 
@@ -23,12 +26,13 @@ export default class WorkspaceErrorBoundary extends Component<WorkspaceErrorBoun
 
   render() {
     if (this.state.error) {
+      const messages = shellOperationalMessagesFor(this.props.locale ?? DEFAULT_LOCALE);
       return (
         <section className="panel workspace-error" role="alert" aria-labelledby="workspace-error-title">
-          <p className="eyebrow">Workspace unavailable</p>
-          <h2 id="workspace-error-title">This workspace could not be loaded</h2>
-          <p>The {this.props.workspace} workspace failed before it could render. No calculation, wallet action, settlement, or evidence state was inferred.</p>
-          <button type="button" onClick={() => window.location.reload()}>Reload application</button>
+          <p className="eyebrow">{messages.error.eyebrow}</p>
+          <h2 id="workspace-error-title">{messages.error.title}</h2>
+          <p>{messages.error.copy(this.props.workspace)}</p>
+          <button type="button" onClick={() => window.location.reload()}>{messages.error.reload}</button>
         </section>
       );
     }

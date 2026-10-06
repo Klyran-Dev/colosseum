@@ -3,6 +3,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import VaultReleasePanel from "./VaultReleasePanel";
+import { SUPPORTED_LOCALES } from "./formatters";
+import { vaultReleaseMessagesFor } from "./vaultReleaseMessages";
 
 const claimId = "01992f1b-4a70-7e30-8ea2-b6e37a9d9d21";
 const merchantId = "01992f1b-4a70-7e30-8ea2-b6e37a9d9d22";
@@ -64,6 +66,28 @@ afterEach(() => {
 });
 
 describe("vault-release response and authority boundary", () => {
+  it("provides a complete bounded catalog with deterministic fallback", () => {
+    for (const locale of SUPPORTED_LOCALES) {
+      const messages = vaultReleaseMessagesFor(locale);
+      expect(messages.proposal.title).toBeTruthy();
+      expect(messages.lifecycle.title).toBeTruthy();
+      expect(messages.lifecycle.nextStep).toBeTruthy();
+      expect(messages.authority.title).toBeTruthy();
+    }
+    expect(vaultReleaseMessagesFor("xx-XX").proposal.title).toBe(vaultReleaseMessagesFor("en-US").proposal.title);
+  });
+
+  it("localizes operator copy without translating authority-bound values", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    render(<VaultReleasePanel apiBase="/api" serviceOnline={false} accessToken="" locale="de-DE" />);
+
+    expect(screen.getByRole("heading", { name: "Freigabeantrag erstellen" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Antrag prüfen oder weiterführen" })).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Freigabeantrag erstellen" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("Diese Seite kann Folgendes tun:", { exact: false })).toBeTruthy();
+    expect(screen.getByText("Die API ist nicht verfügbar.", { exact: false })).toBeTruthy();
+  });
+
   it("does not invent a release evidence digest", () => {
     vi.stubGlobal("fetch", vi.fn());
     render(<VaultReleasePanel apiBase="/api" serviceOnline accessToken="proposer-token" />);
@@ -84,7 +108,7 @@ describe("vault-release response and authority boundary", () => {
     fillClaimProposalForm();
     fireEvent.click(screen.getByRole("button", { name: "Create release request" }));
 
-    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/amount/));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/invalid release request/));
     expect(screen.queryByText(/250,000 atomic units/)).toBeNull();
   });
 
@@ -134,5 +158,15 @@ describe("vault-release response and authority boundary", () => {
     expect(request).not.toHaveProperty("mint");
     expect(request).not.toHaveProperty("token_program");
     expect(request).not.toHaveProperty("tax_vault");
+  });
+
+  it("redacts provider and transport exceptions while loading release routes", async () => {
+    const providerDetail = "provider-internal vault route diagnostic";
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error(providerDetail)));
+    render(<VaultReleasePanel apiBase="/api" serviceOnline accessToken="proposer-token" />);
+
+    await screen.findByText("Payment routes could not be loaded.", { exact: false });
+    expect(screen.queryByText(providerDetail)).toBeNull();
+    expect(screen.getByRole("button", { name: "Create release request" }).getAttribute("disabled")).not.toBeNull();
   });
 });

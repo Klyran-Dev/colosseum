@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted; baseline verified 2026-09-28.
+Accepted; baseline revalidated 2026-10-05.
 
 ## Context
 
@@ -36,6 +36,23 @@ Maintain the following compatibility matrix as the repository baseline:
 Exact container tags and immutable digests remain authoritative for Docker;
 this ADR does not authorize a floating `latest`, `stable`, `current`, or
 unbounded semver range in production or CI.
+
+## Revalidation decision — 2026-10-05
+
+Rust 1.98.1, React 19.3.0, PostgreSQL 18.6, Solidity 0.8.37, and Anchor 1.2.0
+remain within their approved release boundaries. Node 24 remains selected over
+Node 26 because 24 is the LTS line. Agave 4.3.0 remains selected because the
+4.4 and 4.5 release entries are prerelease channels. The NGINX 1.30.5 image
+pin remains subject to its existing digest, configuration, and security gates.
+
+The authoritative release references for this refresh are the [Rust stable
+release index](https://blog.rust-lang.org/releases/), [React
+versions](https://react.dev/versions), [Node.js release
+schedule](https://nodejs.org/en/about/previous-releases), [PostgreSQL 18.6
+release notes](https://www.postgresql.org/docs/release/18.6/), [Agave stable
+channel changelog](https://github.com/anza-xyz/agave-runtime/blob/master/CHANGELOG.md),
+[Anchor changelog](https://www.anchor-lang.com/docs/updates/changelog), and
+[Solidity 0.8.37 release announcement](https://www.soliditylang.org/blog/2026/09/10/solidity-0.8.37-release-announcement/).
 
 The selected baseline is refreshed by a compatibility change that must:
 

@@ -41,6 +41,17 @@ function fillAdjustmentProposalForm(): void {
 }
 
 describe("settlement adjustment operator workspace", () => {
+  it("localizes the correction and record-only wallet boundary", () => {
+    render(<SettlementAdjustmentPanel apiBase="/api" serviceOnline accessToken="operator-token" locale="de-DE" />);
+
+    expect(screen.getByRole("heading", { name: "Korrekturantrag erstellen" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Korrektur prüfen" })).toBeTruthy();
+    expect(screen.getByLabelText("Referenz der ursprünglichen Zahlung")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Korrekturantrag erstellen" })).toBeTruthy();
+    expect(screen.getAllByText("Keine Geldbewegung", { exact: true })).toHaveLength(2);
+    expect(screen.queryByText(/UUIDv7|PDA|atomic units|server-owned/i)).toBeNull();
+  });
+
   it("does not invent settlement, financial, asset, or evidence inputs", () => {
     vi.stubGlobal("fetch", vi.fn());
     render(<SettlementAdjustmentPanel apiBase="/api" serviceOnline accessToken="proposer-token" />);
@@ -79,9 +90,9 @@ describe("settlement adjustment operator workspace", () => {
 
     fireEvent.change(screen.getByLabelText("Adjustment reference"), { target: { value: record.id } });
     fireEvent.click(screen.getByRole("button", { name: "Load adjustment" }));
-    await waitFor(() => expect(screen.getByText("proposed")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Proposed")).toBeTruthy());
     fireEvent.change(screen.getByText("Decision evidence").parentElement?.querySelector("textarea") as HTMLTextAreaElement, { target: { value: '{"review_ticket":"review-1"}' } });
-    fireEvent.click(screen.getByRole("button", { name: "Record approved decision" }));
+    fireEvent.click(screen.getByRole("button", { name: "Record decision Approved" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(fetchMock.mock.calls[1][0]).toBe(`/api/v1/settlement/adjustments/${record.id}/transition`);
@@ -89,7 +100,7 @@ describe("settlement adjustment operator workspace", () => {
     expect(screen.getByText(/No token movement occurred/i)).toBeTruthy();
   });
 
-  it("shows bounded API failures and preserves the no-client-fallback boundary", async () => {
+  it("shows safe API failures and preserves the no-client-fallback boundary", async () => {
     const requestId = "01992f1b-4a70-7e30-8ea2-b6e37a9d9d16";
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { message: "adjustment rejected" } }), { status: 409, headers: { "x-request-id": requestId } }));
     vi.stubGlobal("fetch", fetchMock);
@@ -97,7 +108,8 @@ describe("settlement adjustment operator workspace", () => {
 
     fillAdjustmentProposalForm();
     fireEvent.click(screen.getByRole("button", { name: "Create adjustment request" }));
-    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/adjustment rejected/));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/Adjustment proposal failed/));
+    expect(screen.getByRole("alert").textContent).not.toContain("adjustment rejected");
     expect(screen.getByRole("alert").textContent).toContain(requestId);
     expect(screen.queryByText(/payment succeeded/i)).toBeNull();
   });
@@ -124,7 +136,7 @@ describe("settlement adjustment operator workspace", () => {
 
     fireEvent.change(screen.getByLabelText("Adjustment reference"), { target: { value: record.id } });
     fireEvent.click(screen.getByRole("button", { name: "Load adjustment" }));
-    await waitFor(() => expect(screen.getByText("approved")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Approved")).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Prepare ledger record" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
@@ -132,5 +144,17 @@ describe("settlement adjustment operator workspace", () => {
     expect(JSON.parse(fetchMock.mock.calls[1][1].body as string)).toEqual({ confirm: true });
     await waitFor(() => expect(screen.getByText(/ready for wallet signing/i)).toBeTruthy());
     expect(screen.queryByText(/payment succeeded/i)).toBeNull();
+  });
+
+  it("redacts provider and transport exceptions from the adjustment proposal surface", async () => {
+    const providerDetail = "provider-internal adjustment diagnostic";
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error(providerDetail)));
+    render(<SettlementAdjustmentPanel apiBase="/api" serviceOnline accessToken="proposer-token" />);
+
+    fillAdjustmentProposalForm();
+    fireEvent.click(screen.getByRole("button", { name: "Create adjustment request" }));
+
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Adjustment proposal failed."));
+    expect(screen.getByRole("alert").textContent).not.toContain(providerDetail);
   });
 });

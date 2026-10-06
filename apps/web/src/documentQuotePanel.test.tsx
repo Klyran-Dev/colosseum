@@ -3,6 +3,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import DocumentQuotePanel from "./DocumentQuotePanel";
+import { documentQuoteMessagesFor } from "./documentQuoteMessages";
 
 const quote = {
   calculation_id: "0199f8a8-0000-7abc-8def-0123456789ab",
@@ -14,6 +15,7 @@ const quote = {
     rule_set_id: "rule-1",
     rule_version: 1,
     engine_version: "tax-engine-v1",
+    atomic_decimals: 2,
     currency: "USD",
     jurisdiction: "US-CA",
     facts_digest: new Array(32).fill(1),
@@ -28,6 +30,7 @@ const quote = {
 function fillRequiredInvoiceFields() {
   fireEvent.change(screen.getByLabelText("Document ID"), { target: { value: "invoice-1" } });
   fireEvent.change(screen.getByLabelText("Currency"), { target: { value: "usd" } });
+  fireEvent.change(screen.getByRole("textbox", { name: /Asset precision/ }), { target: { value: "2" } });
   fireEvent.change(screen.getByLabelText("Jurisdiction"), { target: { value: "US-CA" } });
   fireEvent.change(screen.getByLabelText("Tax category"), { target: { value: "sales-tax" } });
   fireEvent.change(screen.getByLabelText("Approved tax rule"), { target: { value: "rule-1" } });
@@ -78,6 +81,26 @@ describe("authenticated document quote workspace", () => {
     expect(checkoutButton.getAttribute("disabled")).toBeNull();
     fireEvent.click(checkoutButton);
     expect(onOpenCheckout).toHaveBeenCalledWith(quote.calculation_id);
+  });
+
+  it("localizes invoice entry without introducing document or financial values", () => {
+    render(
+      <DocumentQuotePanel
+        apiBase="/api"
+        serviceOnline
+        accessToken="session"
+        locale="de-DE"
+        formatAtomic={(value, currency) => `${currency} ${value}`}
+        onOpenCheckout={() => undefined}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Steuer für eine Rechnung berechnen" })).toBeTruthy();
+    expect(screen.getByLabelText("Dokument-ID")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Zum Beispiel Umsatzsteuer")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Position hinzufügen" })).toBeTruthy();
+    expect(screen.queryByText("invoice-1")).toBeNull();
+    expect(screen.queryByText("USD")).toBeNull();
   });
 
   it("rejects an empty jurisdiction-evidence set before network submission", async () => {
@@ -150,5 +173,28 @@ describe("authenticated document quote workspace", () => {
     expect(screen.queryByLabelText("Tax regime")).toBeNull();
     expect(screen.queryByLabelText("Published rule set ID")).toBeNull();
     expect(screen.queryByRole("textbox", { name: /Location evidence/ })).toBeNull();
+  });
+
+  it("redacts provider and transport exceptions from the invoice quote surface", async () => {
+    const providerDetail = "provider-internal document quote diagnostic";
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error(providerDetail)));
+    render(
+      <DocumentQuotePanel
+        apiBase="/api"
+        serviceOnline
+        accessToken="signed-token"
+        formatAtomic={(value, currency) => `${currency} ${value}`}
+        onOpenCheckout={vi.fn()}
+      />,
+    );
+
+    fillRequiredInvoiceFields();
+    fireEvent.change(screen.getByRole("textbox", { name: /Provider-signed location record \(advanced\)/ }), {
+      target: { value: '[{"fixture":"provider-signed-evidence"}]' },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Calculate invoice tax" }));
+
+    await screen.findByText(documentQuoteMessagesFor("en-US").errors.quoteFailed);
+    expect(screen.queryByText(providerDetail)).toBeNull();
   });
 });

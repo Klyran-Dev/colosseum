@@ -8,8 +8,13 @@ import {
 } from "./formatters";
 
 describe("locale-aware financial and evidence formatting", () => {
+  it("rejects an omitted display scale instead of silently assuming two decimals", () => {
+    const formatter = formatAtomic as unknown as (value: string, currency: string, locale: string) => string;
+    expect(() => formatter("100", "USD", "en-US")).toThrow(/display scale/i);
+  });
+
   it("preserves large atomic values without Number conversion", () => {
-    expect(formatAtomic("900719925474099312345", "USD", "en-US")).toBe("USD\u00a09,007,199,254,740,993,123.45");
+    expect(formatAtomic("900719925474099312345", "USD", "en-US", 2)).toBe("USD\u00a09,007,199,254,740,993,123.45");
   });
 
   it("formats zero, six, and nine decimal Solana assets from BigInt atomic units", () => {
@@ -25,7 +30,7 @@ describe("locale-aware financial and evidence formatting", () => {
   });
 
   it("uses locale grouping and decimal conventions", () => {
-    expect(formatAtomic("123456", "EUR", "de-DE")).toBe("1.234,56 EUR");
+    expect(formatAtomic("123456", "EUR", "de-DE", 2)).toBe("1.234,56 EUR");
   });
 
   it("formats the same timestamp in the requested time zone", () => {

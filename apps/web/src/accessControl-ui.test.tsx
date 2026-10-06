@@ -33,4 +33,12 @@ describe("access control workspace", () => {
     expect(screen.getByText("Sign in needed")).toBeTruthy();
     expect(screen.getByText("Waiting for sign-in")).toBeTruthy();
   });
+
+  it("localizes authorization explanations without changing policy identity", () => {
+    render(<AccessControlPanel accessToken="" locale="de-DE" />);
+    expect(screen.getByRole("heading", { name: "Wer darf was?" })).toBeTruthy();
+    expect(screen.getByText("Regeln & Zugriff")).toBeTruthy();
+    expect(screen.getAllByText("Steuerangebot erstellen").length).toBeGreaterThan(0);
+    expect(screen.queryByText("tax.quote.create")).toBeNull();
+  });
 });

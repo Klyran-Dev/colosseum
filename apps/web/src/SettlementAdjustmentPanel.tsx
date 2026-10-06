@@ -1,6 +1,6 @@
 import { FormEvent, useMemo, useState } from "react";
 import { PublicKey } from "@solana/web3.js";
-import { fetchWithTimeout, REQUEST_TIMEOUT_MS, responseError } from "./api";
+import { fetchWithTimeout, operatorResponseError, REQUEST_TIMEOUT_MS } from "./api";
 import { createClientUuid } from "./clientIdentity";
 import {
   parseCompiledSettlementAdjustmentArtifact,
@@ -23,11 +23,15 @@ import {
 } from "./settlementAdjustments";
 import WalletPicker from "./WalletPicker";
 import { ensureConnectedWallet } from "./wallet";
+import { DEFAULT_LOCALE } from "./formatters";
+import { settlementAdjustmentMessagesFor, type SettlementAdjustmentMessages } from "./settlementAdjustmentMessages";
+import { operatorErrorMessage, operatorFacingError } from "./operatorError";
 
 type SettlementAdjustmentPanelProps = {
   apiBase: string;
   serviceOnline: boolean;
   accessToken: string;
+  locale?: string;
 };
 
 const KINDS: AdjustmentKind[] = ["Refund", "Reversal", "Correction", "Chargeback", "RemittanceAdjustment"];
@@ -36,21 +40,22 @@ function digestPreview(value: number[]): string {
   return value.map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 16) + "…";
 }
 
-function parseBytes(value: string, label: string): number[] {
+function parseBytes(value: string, label: string, invalidJsonMessage: string): number[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new Error(`${label} must be valid JSON.`);
+    throw operatorFacingError(invalidJsonMessage);
   }
   return validateByteArray(parsed, label, true);
 }
 
-function statusLabel(status: string): string {
-  return status.replaceAll("_", " ");
+function statusLabel(status: string, messages: SettlementAdjustmentMessages): string {
+  return messages.status.labels[status] ?? status.replaceAll("_", " ");
 }
 
-export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, accessToken }: SettlementAdjustmentPanelProps) {
+export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, accessToken, locale = DEFAULT_LOCALE }: SettlementAdjustmentPanelProps) {
+  const messages = settlementAdjustmentMessagesFor(locale);
   const [idempotencyKey, setIdempotencyKey] = useState(() => createClientUuid());
   const [originalSettlementId, setOriginalSettlementId] = useState("");
   const [assetId, setAssetId] = useState("");
@@ -77,7 +82,7 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
 
   function requireToken(): string {
     const token = accessToken.trim();
-    if (!token) throw new Error("Sign in with an account allowed to manage adjustments. The credential is held in memory only.");
+    if (!token) throw operatorFacingError(messages.errors.auth);
     return token;
   }
 
@@ -86,9 +91,9 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
     try {
       parsed = JSON.parse(value);
     } catch {
-      throw new Error("Transition evidence must be valid JSON.");
+      throw operatorFacingError(messages.errors.evidenceJsonInvalid);
     }
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("Transition evidence must be a JSON object.");
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw operatorFacingError(messages.errors.evidenceObjectRequired);
     return parsed as Record<string, unknown>;
   }
 
@@ -99,14 +104,14 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
     setNotice(null);
     try {
       const token = requireToken();
-      const parsedAsset = parseBytes(assetId, "asset_id");
-      const parsedEvidenceDigest = parseBytes(evidenceDigest, "evidence_digest");
+      const parsedAsset = parseBytes(assetId, "asset_id", messages.errors.bytesJsonInvalid);
+      const parsedEvidenceDigest = parseBytes(evidenceDigest, "evidence_digest", messages.errors.bytesJsonInvalid);
       validateUuidV7(originalSettlementId.trim(), "original_settlement_id");
       validateUuidV7(sourceCalculationId.trim(), "source_calculation_id");
       if (replacementCalculationId.trim()) validateUuidV7(replacementCalculationId.trim(), "replacement_calculation_id");
       validateAdjustmentDelta(kind, { gross_atomic: grossAtomic.trim(), tax_atomic: taxAtomic.trim(), net_atomic: netAtomic.trim() });
-      if (!reasonCode.trim() || reasonCode.trim().length > 256) throw new Error("reason_code must contain between 1 and 256 characters.");
-      if (!idempotencyKey.trim()) throw new Error("An idempotency key is required for safe retry.");
+      if (!reasonCode.trim() || reasonCode.trim().length > 256) throw operatorFacingError(messages.errors.reasonCodeInvalid);
+      if (!idempotencyKey.trim()) throw operatorFacingError(messages.errors.idempotencyKeyRequired);
       const response = await fetchWithTimeout(`${apiBase.replace(/\/$/, "")}/v1/settlement/adjustments`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
@@ -123,15 +128,15 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
         }),
       });
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(responseError(response, payload, `Adjustment proposal failed (${response.status})`));
+      if (!response.ok) throw operatorResponseError(response, payload, messages.errors.httpError(messages.errors.proposal, response.status));
       const loaded = parseSettlementAdjustment(payload);
       setRecord(loaded);
       setChainArtifact(null);
       setChainStatus(null);
       setLookupId(loaded.id);
-      setNotice(`Adjustment ${loaded.id} is ${statusLabel(loaded.status)}. No funds moved; this is governance evidence only.`);
+      setNotice(messages.notices.proposed(loaded.id, statusLabel(loaded.status, messages)));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Adjustment proposal failed.");
+      setError(operatorErrorMessage(cause, messages.errors.proposal));
     } finally {
       setBusy(false);
     }
@@ -147,13 +152,13 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
       const id = validateUuidV7(lookupId.trim(), "adjustment_id");
       const response = await fetchWithTimeout(buildSettlementAdjustmentUrl(apiBase, id), { headers: { authorization: `Bearer ${token}` } });
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(responseError(response, payload, `Adjustment lookup failed (${response.status})`));
+      if (!response.ok) throw operatorResponseError(response, payload, messages.errors.httpError(messages.errors.lookup, response.status));
       setRecord(parseSettlementAdjustment(payload));
       setChainArtifact(null);
       setChainStatus(null);
-      setNotice("Adjustment state loaded from the tenant-scoped API. Approval remains evidence and does not mean payment.");
+      setNotice(messages.notices.loaded);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Adjustment lookup failed.");
+      setError(operatorErrorMessage(cause, messages.errors.lookup));
     } finally {
       setBusy(false);
     }
@@ -166,8 +171,8 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
     setNotice(null);
     try {
       const token = requireToken();
-      if (!record) throw new Error("Load or propose an adjustment before changing its lifecycle.");
-      if (!availableTransitions.includes(transitionStatus)) throw new Error("That next step is not available for the current request status.");
+      if (!record) throw operatorFacingError(messages.review.noAdjustment);
+      if (!availableTransitions.includes(transitionStatus)) throw operatorFacingError(messages.review.noTransition);
       const evidence = parseEvidence(transitionEvidence);
       const response = await fetchWithTimeout(`${buildSettlementAdjustmentUrl(apiBase, record.id)}/transition`, {
         method: "POST",
@@ -175,18 +180,18 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
         body: JSON.stringify({ to_status: transitionStatus, evidence }),
       });
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(responseError(response, payload, `Adjustment transition failed (${response.status})`));
+      if (!response.ok) throw operatorResponseError(response, payload, messages.errors.httpError(messages.errors.transition, response.status));
       const transitionResponse = parseSettlementAdjustmentTransition(payload);
       const reload = await fetchWithTimeout(buildSettlementAdjustmentUrl(apiBase, transitionResponse.adjustment_id), { headers: { authorization: `Bearer ${token}` } });
       const reloadPayload: unknown = await reload.json().catch(() => null);
-      if (!reload.ok) throw new Error(responseError(reload, reloadPayload, `Adjustment refresh failed (${reload.status})`));
+      if (!reload.ok) throw operatorResponseError(reload, reloadPayload, messages.errors.httpError(messages.errors.lookup, reload.status));
       const refreshed = parseSettlementAdjustment(reloadPayload);
       setRecord(refreshed);
       setChainArtifact(null);
       setChainStatus(null);
-      setNotice(`Server accepted the ${statusLabel(transitionResponse.to_status)} transition. No token movement occurred.`);
+      setNotice(messages.notices.transitionAccepted(statusLabel(transitionResponse.to_status, messages)));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Adjustment transition failed.");
+      setError(operatorErrorMessage(cause, messages.errors.transition));
     } finally {
       setBusy(false);
     }
@@ -198,14 +203,14 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
     setNotice(null);
     try {
       const token = requireToken();
-      if (!record || record.status !== "approved") throw new Error("Only an approved adjustment can be prepared for wallet evidence recording.");
+      if (!record || record.status !== "approved") throw operatorFacingError(messages.review.noTransition);
       const response = await fetchWithTimeout(`${buildSettlementAdjustmentUrl(apiBase, record.id)}/compile`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
         body: JSON.stringify({ confirm: true }),
       }, REQUEST_TIMEOUT_MS.default);
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(responseError(response, payload, `Adjustment compilation failed (${response.status})`));
+      if (!response.ok) throw operatorResponseError(response, payload, messages.errors.httpError(messages.errors.compile, response.status));
       const artifact = parseCompiledSettlementAdjustmentArtifact(payload);
       setChainArtifact(artifact);
       setChainStatus({
@@ -215,9 +220,9 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
         provider_index: null,
         finalized_evidence: null,
       });
-      setNotice("Ready for wallet signing: the server prepared an exact record-adjustment instruction. Review it before signing; no tokens move in this evidence instruction.");
+      setNotice(messages.notices.readyForWallet);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Adjustment compilation failed.");
+      setError(operatorErrorMessage(cause, messages.errors.compile));
     } finally {
       setBusy(false);
     }
@@ -229,17 +234,17 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
     setNotice(null);
     try {
       const token = requireToken();
-      if (!chainArtifact) throw new Error("Prepare the ledger record before loading its saved status.");
+      if (!chainArtifact) throw operatorFacingError(messages.chain.prepare);
       const response = await fetchWithTimeout(`${apiBase}/v1/settlement/adjustment-chain-intents/${chainArtifact.chain_intent_id}`, {
         headers: { authorization: `Bearer ${token}` },
       });
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(responseError(response, payload, `Adjustment chain status failed (${response.status})`));
+      if (!response.ok) throw operatorResponseError(response, payload, messages.errors.httpError(messages.errors.refresh, response.status));
       const status = parseSettlementAdjustmentChainIntentResponse(payload);
       setChainStatus(status);
-      setNotice(`The server reports durable adjustment evidence status: ${statusLabel(status.status)}. This is not payment confirmation.`);
+      setNotice(messages.notices.durableStatus(statusLabel(status.status, messages)));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Adjustment chain status failed.");
+      setError(operatorErrorMessage(cause, messages.errors.refresh));
     } finally {
       setBusy(false);
     }
@@ -252,7 +257,7 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
     let submissionAttempted = false;
     try {
       const token = requireToken();
-      if (!chainArtifact) throw new Error("Prepare the ledger record before signing.");
+      if (!chainArtifact) throw operatorFacingError(messages.chain.prepare);
       const connected = (await ensureConnectedWallet()).publicKey;
       setWalletAddress(connected);
       const signedTransactionBase64 = await signAndEncodeSettlementAdjustment(
@@ -271,22 +276,22 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
         }),
       }, REQUEST_TIMEOUT_MS.settlementSubmit);
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(responseError(response, payload, `Adjustment submission failed (${response.status})`));
+      if (!response.ok) throw operatorResponseError(response, payload, messages.errors.httpError(messages.errors.sign, response.status));
       const status = parseSettlementAdjustmentChainIntentResponse(payload);
       setChainStatus(status);
       setNotice(status.status === "finalized"
-        ? "The server returned finalized adjustment evidence. This record-only instruction did not move tokens or establish filing/compliance."
-        : `Wallet submission accepted into durable status ${statusLabel(status.status)}. Finalized event reconciliation is still required.`);
+        ? messages.notices.submissionFinalized
+        : messages.notices.submissionAccepted(statusLabel(status.status, messages)));
     } catch (cause) {
       if (submissionAttempted) {
         try {
           await refreshChainStatus();
-          setError("The submission request did not complete. The durable chain intent was refreshed; do not sign a second transaction.");
+          setError(messages.errors.sign);
         } catch {
-          setError("The adjustment submission outcome is unknown. Do not sign again; load or reconcile the durable chain intent before retrying.");
+          setError(messages.status.providerAmbiguous);
         }
       } else {
-        setError(cause instanceof Error ? cause.message : "Wallet signing or adjustment submission failed.");
+        setError(operatorErrorMessage(cause, messages.errors.sign));
       }
     } finally {
       setBusy(false);
@@ -299,96 +304,96 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
     setNotice(null);
     try {
       const token = requireToken();
-      if (!chainArtifact) throw new Error("Prepare the ledger record before reconciliation.");
-      if (!chainStatus?.signature) throw new Error("A server-bound chain signature is required before reconciliation.");
+      if (!chainArtifact) throw operatorFacingError(messages.chain.prepare);
+      if (!chainStatus?.signature) throw operatorFacingError(messages.chain.noSignature);
       const response = await fetchWithTimeout(`${apiBase}/v1/settlement/adjustment-chain-intents/${chainArtifact.chain_intent_id}/reconcile`, {
         method: "POST",
         headers: { authorization: `Bearer ${token}` },
       }, REQUEST_TIMEOUT_MS.settlementSubmit);
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(responseError(response, payload, `Adjustment reconciliation failed (${response.status})`));
+      if (!response.ok) throw operatorResponseError(response, payload, messages.errors.httpError(messages.errors.reconcile, response.status));
       const status = parseSettlementAdjustmentChainIntentResponse(payload);
       setChainStatus(status);
       setNotice(status.status === "finalized"
-        ? "Finalized typed event and raw evidence matched the immutable adjustment intent. No token movement is implied."
-        : `Reconciliation returned ${statusLabel(status.status)}. The indexer or provider may still be catching up.`);
+        ? messages.notices.reconciliationFinalized
+        : messages.notices.reconciliationPending(statusLabel(status.status, messages)));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Adjustment reconciliation failed.");
+      setError(operatorErrorMessage(cause, messages.errors.reconcile));
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <section className="adjustment-layout" aria-label="Settlement adjustments workspace">
+    <section className="adjustment-layout" aria-label={messages.proposal.ariaLabel}>
       <article className="panel">
-        <div className="panel-heading"><div><p className="eyebrow">Payment corrections / review first</p><h2>Create an adjustment request</h2></div><span className="status-pill">No money moved</span></div>
-        <p className="panel-copy">Create a refund, reversal, correction, chargeback, or remittance request against an existing payment. The service checks the account, approval rights, and exact amounts before saving it.</p>
+        <div className="panel-heading"><div><p className="eyebrow">{messages.proposal.eyebrow}</p><h2>{messages.proposal.title}</h2></div><span className="status-pill">{messages.proposal.badge}</span></div>
+        <p className="panel-copy">{messages.proposal.description}</p>
         <form className="form-grid" onSubmit={propose}>
-          <label className="full-field"><span>Sign-in status</span><textarea value={accessToken ? "Account ready" : ""} readOnly placeholder="Sign in to create a request" aria-describedby="adjustment-token-help" /></label>
-          <small id="adjustment-token-help" className="field-help full-field">Your account must be allowed to create payment corrections. Sign-in data is never saved by this page.</small>
-          <label className="full-field"><span>Request reference</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} aria-describedby="adjustment-reference-help" required /><small id="adjustment-reference-help">A unique reference prevents duplicate requests when you retry.</small></label>
-          <label><span>Correction type</span><select value={kind} onChange={(event) => setKind(event.target.value as AdjustmentKind)}>{KINDS.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
-          <label><span>Reason</span><input value={reasonCode} onChange={(event) => setReasonCode(event.target.value)} maxLength={256} required /></label>
-          <label className="full-field"><span>Original payment reference</span><input value={originalSettlementId} onChange={(event) => setOriginalSettlementId(event.target.value)} required /></label>
-          <label><span>Gross change</span><input inputMode="numeric" value={grossAtomic} onChange={(event) => setGrossAtomic(event.target.value)} aria-describedby="adjustment-amount-help" required /></label>
-          <label><span>Tax change</span><input inputMode="numeric" value={taxAtomic} onChange={(event) => setTaxAtomic(event.target.value)} aria-describedby="adjustment-amount-help" required /></label>
-          <label><span>Net change</span><input inputMode="numeric" value={netAtomic} onChange={(event) => setNetAtomic(event.target.value)} aria-describedby="adjustment-amount-help" required /></label>
-          <small id="adjustment-amount-help" className="field-help full-field">Enter exact asset amounts. The service checks precision and conservation before saving.</small>
-          <label className="full-field"><span>Asset address</span><textarea value={assetId} onChange={(event) => setAssetId(event.target.value)} rows={2} required /></label>
-          <label className="full-field"><span>Supporting evidence</span><textarea value={evidenceDigest} onChange={(event) => setEvidenceDigest(event.target.value)} aria-describedby="adjustment-evidence-help" rows={2} required /><small id="adjustment-evidence-help">Advanced evidence supplied by the approved workflow. Do not edit it manually.</small></label>
-          <label><span>Source calculation reference</span><input value={sourceCalculationId} onChange={(event) => setSourceCalculationId(event.target.value)} required /></label>
-          <label><span>Replacement calculation reference (optional)</span><input value={replacementCalculationId} onChange={(event) => setReplacementCalculationId(event.target.value)} /></label>
-          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>{busy ? "Saving…" : "Create adjustment request"}</button>
+          <label className="full-field"><span>{messages.proposal.signInStatus}</span><textarea value={accessToken ? messages.proposal.accountReady : ""} readOnly placeholder={messages.proposal.signInPlaceholder} aria-describedby="adjustment-token-help" /></label>
+          <small id="adjustment-token-help" className="field-help full-field">{messages.proposal.accountHelp}</small>
+          <label className="full-field"><span>{messages.proposal.requestReference}</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} aria-describedby="adjustment-reference-help" required /><small id="adjustment-reference-help">{messages.proposal.requestHelp}</small></label>
+          <label><span>{messages.proposal.correctionType}</span><select value={kind} onChange={(event) => setKind(event.target.value as AdjustmentKind)}>{KINDS.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
+          <label><span>{messages.proposal.reason}</span><input value={reasonCode} onChange={(event) => setReasonCode(event.target.value)} maxLength={256} required /></label>
+          <label className="full-field"><span>{messages.proposal.originalPayment}</span><input value={originalSettlementId} onChange={(event) => setOriginalSettlementId(event.target.value)} required /></label>
+          <label><span>{messages.proposal.gross}</span><input inputMode="numeric" value={grossAtomic} onChange={(event) => setGrossAtomic(event.target.value)} aria-describedby="adjustment-amount-help" required /></label>
+          <label><span>{messages.proposal.tax}</span><input inputMode="numeric" value={taxAtomic} onChange={(event) => setTaxAtomic(event.target.value)} aria-describedby="adjustment-amount-help" required /></label>
+          <label><span>{messages.proposal.net}</span><input inputMode="numeric" value={netAtomic} onChange={(event) => setNetAtomic(event.target.value)} aria-describedby="adjustment-amount-help" required /></label>
+          <small id="adjustment-amount-help" className="field-help full-field">{messages.proposal.amountHelp}</small>
+          <label className="full-field"><span>{messages.proposal.asset}</span><textarea value={assetId} onChange={(event) => setAssetId(event.target.value)} rows={2} required /></label>
+          <label className="full-field"><span>{messages.proposal.supportingEvidence}</span><textarea value={evidenceDigest} onChange={(event) => setEvidenceDigest(event.target.value)} aria-describedby="adjustment-evidence-help" rows={2} required /><small id="adjustment-evidence-help">{messages.proposal.evidenceHelp}</small></label>
+          <label><span>{messages.proposal.source}</span><input value={sourceCalculationId} onChange={(event) => setSourceCalculationId(event.target.value)} required /></label>
+          <label><span>{messages.proposal.replacement}</span><input value={replacementCalculationId} onChange={(event) => setReplacementCalculationId(event.target.value)} /></label>
+          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>{busy ? messages.proposal.saving : messages.proposal.create}</button>
         </form>
       </article>
 
-      <article className="panel">
-        <div className="panel-heading"><div><p className="eyebrow">Payment correction / review and approval</p><h2>Review an adjustment</h2></div><span className="status-pill status-pill-warning">No money moved</span></div>
-        <p className="panel-copy">Load a saved request to review the exact changes, reason, evidence, and approvals before choosing its next step.</p>
+      <article className="panel" aria-label={messages.review.ariaLabel}>
+        <div className="panel-heading"><div><p className="eyebrow">{messages.review.eyebrow}</p><h2>{messages.review.title}</h2></div><span className="status-pill status-pill-warning">{messages.review.badge}</span></div>
+        <p className="panel-copy">{messages.review.description}</p>
         <form className="form-grid" onSubmit={load}>
-          <label className="full-field"><span>Adjustment reference</span><input value={lookupId} onChange={(event) => setLookupId(event.target.value)} placeholder="Paste a saved adjustment reference" required /></label>
-          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>Load adjustment</button>
+          <label className="full-field"><span>{messages.review.adjustmentReference}</span><input value={lookupId} onChange={(event) => setLookupId(event.target.value)} placeholder={messages.review.placeholder} required /></label>
+          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>{busy ? messages.review.loading : messages.review.load}</button>
         </form>
         {record ? <>
           <div className="adjustment-record-card" aria-live="polite">
-            <div className="adjustment-status-line"><strong>{statusLabel(record.status)}</strong><span className="status-pill">{record.kind}</span></div>
+            <div className="adjustment-status-line"><strong>{statusLabel(record.status, messages)}</strong><span className="status-pill">{record.kind}</span></div>
             <dl className="summary-list">
-              <div><dt>Gross change</dt><dd>{record.delta.gross_atomic}</dd></div>
-              <div><dt>Tax change</dt><dd>{record.delta.tax_atomic}</dd></div>
-              <div><dt>Net change</dt><dd>{record.delta.net_atomic}</dd></div>
-              <div><dt>Reason</dt><dd>{record.reason_code}</dd></div>
-              <div><dt>Proposer</dt><dd>{record.proposer_subject}</dd></div>
-              <div><dt>Approver</dt><dd>{record.approver_subject ?? "Not approved"}</dd></div>
-              <div><dt>Request evidence</dt><dd><code>{digestPreview(record.adjustment_digest)}</code></dd></div>
-              <div><dt>Supporting evidence</dt><dd><code>{digestPreview(record.evidence_digest)}</code></dd></div>
+              <div><dt>{messages.review.gross}</dt><dd>{record.delta.gross_atomic}</dd></div>
+              <div><dt>{messages.review.tax}</dt><dd>{record.delta.tax_atomic}</dd></div>
+              <div><dt>{messages.review.net}</dt><dd>{record.delta.net_atomic}</dd></div>
+              <div><dt>{messages.review.reason}</dt><dd>{record.reason_code}</dd></div>
+              <div><dt>{messages.review.proposer}</dt><dd>{record.proposer_subject}</dd></div>
+              <div><dt>{messages.review.approver}</dt><dd>{record.approver_subject ?? messages.review.notApproved}</dd></div>
+              <div><dt>{messages.review.requestEvidence}</dt><dd><code>{digestPreview(record.adjustment_digest)}</code></dd></div>
+              <div><dt>{messages.review.supportingEvidence}</dt><dd><code>{digestPreview(record.evidence_digest)}</code></dd></div>
             </dl>
           </div>
           <form className="adjustment-transition-form" onSubmit={transition}>
-            <h3>Choose the next step</h3>
+            <h3>{messages.review.nextStep}</h3>
             {availableTransitions.length ? <>
-              <label><span>Next step</span><select value={transitionStatus} onChange={(event) => setTransitionStatus(event.target.value as "approved" | "rejected" | "voided")}>{availableTransitions.map((option) => <option key={option} value={option}>{statusLabel(option)}</option>)}</select></label>
-              <label><span>Decision evidence</span><textarea value={transitionEvidence} onChange={(event) => setTransitionEvidence(event.target.value)} aria-describedby="adjustment-transition-help" rows={4} required /><small id="adjustment-transition-help">Advanced evidence for the audit record.</small></label>
-              <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>Record {statusLabel(transitionStatus)} decision</button>
-            </> : <p className="inline-warning">This status has no available browser transition. A posted state is intentionally not represented here.</p>}
+              <label><span>{messages.review.nextStepLabel}</span><select value={transitionStatus} onChange={(event) => setTransitionStatus(event.target.value as "approved" | "rejected" | "voided")}>{availableTransitions.map((option) => <option key={option} value={option}>{statusLabel(option, messages)}</option>)}</select></label>
+              <label><span>{messages.review.decisionEvidence}</span><textarea value={transitionEvidence} onChange={(event) => setTransitionEvidence(event.target.value)} aria-describedby="adjustment-transition-help" rows={4} required /><small id="adjustment-transition-help">{messages.review.decisionHelp}</small></label>
+              <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>{messages.review.recordDecision} {statusLabel(transitionStatus, messages)}</button>
+            </> : <p className="inline-warning">{messages.review.noTransition}</p>}
           </form>
-          {record.status === "approved" && <div className="adjustment-chain-card" aria-label="Wallet-bound adjustment evidence">
-            <h3>Record the approved correction</h3>
-            <p className="panel-copy">This ledger record confirms the approved correction and creates an audit trail. It does not transfer tokens, issue a refund, file taxes, or establish legal compliance.</p>
-            <WalletPicker disabled={busy} connectEnabled={Boolean(chainArtifact)} connectedAddress={walletAddress?.toBase58()} onConnected={setWalletAddress} />
-            {!chainArtifact ? <button type="button" onClick={compileChainEvidence} disabled={busy || !serviceOnline || !accessToken.trim()}>Prepare ledger record</button> : <>
-              <dl className="summary-list"><div><dt>Ledger record reference</dt><dd><code>{chainArtifact.chain_intent_id}</code></dd></div><div><dt>Ledger registry</dt><dd><code>{chainArtifact.registry}</code></dd></div><div><dt>Registry proof</dt><dd>Confirmed ledger position {chainArtifact.registry_slot} · {chainArtifact.instruction.accounts.length} exact account records</dd></div><div><dt>Wallet</dt><dd>{walletAddress?.toBase58() ?? "Not connected"}</dd></div></dl>
-              <p className="inline-warning">The connected wallet must equal the compiled approver signer. The API repeats this check against the complete signed message.</p>
-              <button type="button" onClick={signAndSubmitChainEvidence} disabled={busy || !serviceOnline || !accessToken.trim()}>{busy ? "Waiting for wallet or service…" : "Sign and submit ledger record"}</button>
-              {chainStatus && <div className="settlement-status" aria-live="polite"><strong>Durable evidence status: {statusLabel(chainStatus.status)}</strong><small>{chainStatus.signature ? `Signature ${chainStatus.signature}` : "No server-bound chain signature yet."}</small>{chainStatus.status === "unknown" && <small role="status">Provider outcome is ambiguous. Do not authorize another transaction; reconcile this intent.</small>}{chainStatus.status !== "finalized" && chainStatus.signature && <div className="status-actions"><button type="button" onClick={refreshChainStatus} disabled={busy}>Refresh status</button><button type="button" onClick={reconcileChainEvidence} disabled={busy}>Reconcile finalized evidence</button></div>}{chainStatus.status === "finalized" && chainStatus.finalized_evidence && <><small role="status">Finalized typed event evidence matched. This is not a payment or compliance claim.</small><details><summary>Finalized event proof</summary><dl className="summary-list"><div><dt>Event</dt><dd>{chainStatus.finalized_evidence.event_type} · {chainStatus.finalized_evidence.event_version}</dd></div><div><dt>Finalized slot</dt><dd>{chainStatus.finalized_evidence.slot}</dd></div><div><dt>Event index</dt><dd>{chainStatus.finalized_evidence.event_index}</dd></div><div><dt>Event evidence digest</dt><dd><code>{digestPreview(chainStatus.finalized_evidence.event_evidence_digest)}</code></dd></div></dl></details></>}</div>}
+          {record.status === "approved" && <div className="adjustment-chain-card" aria-label={messages.chain.ariaLabel}>
+            <h3>{messages.chain.title}</h3>
+            <p className="panel-copy">{messages.chain.description}</p>
+            <WalletPicker locale={locale} disabled={busy} connectEnabled={Boolean(chainArtifact)} connectedAddress={walletAddress?.toBase58()} onConnected={setWalletAddress} />
+            {!chainArtifact ? <button type="button" onClick={compileChainEvidence} disabled={busy || !serviceOnline || !accessToken.trim()}>{messages.chain.prepare}</button> : <>
+              <dl className="summary-list"><div><dt>{messages.chain.ledgerReference}</dt><dd><code>{chainArtifact.chain_intent_id}</code></dd></div><div><dt>{messages.chain.ledgerRegistry}</dt><dd><code>{chainArtifact.registry}</code></dd></div><div><dt>{messages.chain.registryProof}</dt><dd>Confirmed ledger position {chainArtifact.registry_slot} · {chainArtifact.instruction.accounts.length} exact account records</dd></div><div><dt>{messages.chain.wallet}</dt><dd>{walletAddress?.toBase58() ?? messages.chain.notConnected}</dd></div></dl>
+              <p className="inline-warning">{messages.chain.warning}</p>
+              <button type="button" onClick={signAndSubmitChainEvidence} disabled={busy || !serviceOnline || !accessToken.trim()}>{busy ? messages.chain.waiting : messages.chain.signSubmit}</button>
+              {chainStatus && <div className="settlement-status" aria-live="polite"><strong>{messages.chain.durableStatus}: {statusLabel(chainStatus.status, messages)}</strong><small>{chainStatus.signature ? `Signature ${chainStatus.signature}` : messages.chain.noSignature}</small>{chainStatus.status === "unknown" && <small role="status">{messages.chain.providerAmbiguous}</small>}{chainStatus.status !== "finalized" && chainStatus.signature && <div className="status-actions"><button type="button" onClick={refreshChainStatus} disabled={busy}>{messages.chain.refresh}</button><button type="button" onClick={reconcileChainEvidence} disabled={busy}>{messages.chain.reconcile}</button></div>}{chainStatus.status === "finalized" && chainStatus.finalized_evidence && <><small role="status">{messages.chain.finalizedEvidence}</small><details><summary>{messages.chain.finalizedProof}</summary><dl className="summary-list"><div><dt>{messages.chain.event}</dt><dd>{chainStatus.finalized_evidence.event_type} · {chainStatus.finalized_evidence.event_version}</dd></div><div><dt>{messages.chain.slot}</dt><dd>{chainStatus.finalized_evidence.slot}</dd></div><div><dt>{messages.chain.index}</dt><dd>{chainStatus.finalized_evidence.event_index}</dd></div><div><dt>{messages.chain.evidenceDigest}</dt><dd><code>{digestPreview(chainStatus.finalized_evidence.event_evidence_digest)}</code></dd></div></dl></details></>}</div>}
             </>}
           </div>}
-        </> : <div className="empty-state"><span className="empty-icon">◎</span><strong>No adjustment loaded</strong><p>Create or load a request to review the exact changes and available approval steps.</p></div>}
-        <div className="adjustment-authority-note"><strong>What this page can do:</strong> record a correction request and its approvals. Approval is not payment, tax advice, filing, or legal compliance. Token movement requires a separate wallet-approved ledger workflow and confirmed chain evidence.</div>
+        </> : <div className="empty-state"><span className="empty-icon">◎</span><strong>{messages.review.noAdjustment}</strong><p>{messages.review.noAdjustmentCopy}</p></div>}
+        <div className="adjustment-authority-note"><strong>{messages.review.authorityTitle}</strong> {messages.review.authorityCopy}</div>
       </article>
-      {error && <p className="inline-error full-field" role="alert">{error}<button type="button" className="inline-retry" onClick={() => setError(null)}>Dismiss</button></p>}
+      {error && <p className="inline-error full-field" role="alert">{error}<button type="button" className="inline-retry" onClick={() => setError(null)}>{messages.common.dismiss}</button></p>}
       {notice && <p className="inline-success full-field" role="status">{notice}</p>}
-      {!serviceOnline && <p className="inline-warning full-field" role="alert">The API is unavailable. No cached adjustment state or client-derived lifecycle success is shown.</p>}
+      {!serviceOnline && <p className="inline-warning full-field" role="alert">{messages.common.unavailable}</p>}
     </section>
   );
 }

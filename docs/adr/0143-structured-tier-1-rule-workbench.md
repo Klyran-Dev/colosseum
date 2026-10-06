@@ -29,6 +29,7 @@ workbench will:
 2. support flat and progressive rates with explicit numerator/denominator
    values and contiguous bracket boundaries;
 3. expose price mode, credit, floor, cap, rounding mode, threshold semantics,
+   and the explicit `GrossExcess` equation when an inclusive threshold is used,
    and exemption codes as named controls;
 4. generate the exact canonical `RuleSet` JSON request without calculating tax
    locally;

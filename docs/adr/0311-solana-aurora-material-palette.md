@@ -2,6 +2,9 @@
 
 ## Status
 
+Superseded by [ADR-0422](0422-material-baseline-palette-and-expressive-tokens.md) (palette only).
+
+
 Accepted — the fixed light and dark role matrix is implemented in the SPA
 tokens and guarded by the palette contract. Rendered visual review and manual
 assistive-technology review remain release gates.

@@ -325,3 +325,101 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0322](0322-route-evidence-version-migration.md) — Expand/contract migration for stablecoin route evidence
 - [ADR-0323](0323-material-expressive-operational-workspace-composition.md) — Grouped navigation and one active-workspace hierarchy
 - [ADR-0324](0324-server-owned-vault-release-route-selection.md) — Server-owned vault-release route selection
+- [ADR-0325](0325-typed-asset-admission-projection.md) — Typed asset-admission projection for settlement routes
+- [ADR-0326](0326-material-expressive-semantic-state-hierarchy.md) — Material 3 Expressive semantic state hierarchy for navigation
+- [ADR-0327](0327-fail-closed-public-release-claims.md) — Fail-closed public release claims and authority boundary
+- [ADR-0328](0328-route-verification-run-evidence.md) — Durable route-verification run evidence
+- [ADR-0329](0329-approved-route-verification-backfill-mode.md) — Approval-bound route-verification backfill mode
+- [ADR-0330](0330-server-owned-document-evidence-status.md) — Server-owned document evidence status for checkout
+- [ADR-0331](0331-canonical-authorization-policy-catalog.md) — Canonical authorization policy catalog
+- [ADR-0332](0332-server-decision-only-browser-authorization.md) — Server-decision-only browser authorization affordances
+- [ADR-0333](0333-capability-decision-reason-consistency.md) — Capability decision and reason consistency
+- [ADR-0334](0334-capability-snapshot-expiry-boundary.md) — Capability snapshot expiry boundary
+- [ADR-0335](0335-material-expressive-quiet-state-hierarchy.md) — Material 3 Expressive quiet state hierarchy
+- [ADR-0336](0336-route-verification-operator-evidence-view.md) — Bounded route-verification operator evidence view
+- [ADR-0337](0337-single-open-material-navigation-group.md) — Single-open Material 3 navigation group
+- [ADR-0338](0338-forced-colors-accessibility-layer.md) — Forced-colors accessibility layer for the Material shell
+- [ADR-0339](0339-polite-workspace-navigation-announcement.md) — Polite workspace navigation announcement
+- [ADR-0340](0340-versioned-shell-navigation-localization.md) — Versioned shell and navigation localization
+- [ADR-0341](0341-versioned-shell-chrome-and-session-localization.md) — Versioned shell chrome and session localization
+- [ADR-0342](0342-versioned-quote-workspace-localization.md) — Versioned quote workspace localization
+- [ADR-0343](0343-versioned-document-quote-localization.md) — Versioned document-quote localization
+- [ADR-0344](0344-versioned-document-checkout-localization.md) — Versioned document-checkout localization
+- [ADR-0345](0345-versioned-checkout-localization.md) — Versioned aggregate-checkout localization
+- [ADR-0346](0346-versioned-vault-release-localization.md) — Versioned Treasury and vault-release localization
+- [ADR-0347](0347-versioned-refund-claim-localization.md) — Versioned refund-claim localization at the wallet boundary
+- [ADR-0348](0348-versioned-refund-execution-localization.md) — Versioned refund-execution localization at the final release boundary
+- [ADR-0349](0349-versioned-refund-cancellation-localization.md) — Versioned refund-cancellation localization at the governance boundary
+- [ADR-0350](0350-versioned-settlement-adjustment-localization.md) — Versioned settlement-adjustment localization at the correction boundary
+- [ADR-0351](0351-versioned-replay-operations-localization.md) — Versioned replay-operations localization at the recovery boundary
+- [ADR-0352](0352-versioned-vault-reconciliation-localization.md) — Versioned vault-reconciliation localization at the release-stop boundary
+- [ADR-0353](0353-material-3-expressive-aurora-v2-shell.md) — Material 3 Expressive Aurora v2 shell and semantic state containers
+- [ADR-0354](0354-versioned-rule-governance-authoring-localization.md) — Versioned rule-governance and structured authoring localization
+- [ADR-0355](0355-versioned-revenue-streaming-localization.md) — Versioned revenue-streaming operator localization
+- [ADR-0356](0356-versioned-access-control-localization.md) — Versioned access-control workspace localization
+- [ADR-0357](0357-versioned-shell-operational-localization.md) — Versioned shell operational localization
+- [ADR-0358](0358-versioned-lazy-workspace-recovery-localization.md) — Versioned lazy-workspace and recovery-state localization
+- [ADR-0359](0359-explicit-fee-payer-binding.md) — Explicit fee-payer binding at the signed-message boundary
+- [ADR-0360](0360-versioned-document-simulation-localization.md) — Versioned document-simulation localization
+- [ADR-0361](0361-distinct-tax-base-sources.md) — Distinct tax-base sources in the Tier-1 Tax Engine
+- [ADR-0362](0362-inclusive-threshold-equation.md) — Explicit inclusive gross-excess threshold equation
+- [ADR-0363](0363-responsive-shell-popover-boundary.md) — Responsive shell popover boundary
+- [ADR-0364](0364-collapsed-secondary-rule-simulation.md) — Collapsed secondary rule simulation disclosure
+- [ADR-0365](0365-plain-language-authorization-recovery-copy.md) — Plain-language authorization recovery copy
+- [ADR-0366](0366-wallet-provider-error-redaction.md) — Localized wallet-provider error redaction
+- [ADR-0367](0367-financial-workspace-error-redaction.md) — Financial-workspace error redaction boundary
+- [ADR-0368](0368-non-interruptive-system-status-disclosure.md) — Non-interruptive system-status disclosure
+- [ADR-0369](0369-explicit-ci-toolchain-bootstrap.md) — Explicit CI toolchain bootstrap
+- [ADR-0370](0370-explicit-frontend-ci-toolchain-evidence.md) — Explicit frontend CI toolchain evidence
+- [ADR-0371](0371-production-source-material-color-boundary.md) — Production-source Material color boundary
+- [ADR-0372](0372-bounded-operational-observability-dashboard.md) — Bounded operational observability dashboard
+- [ADR-0373](0373-tenant-scoped-evidence-access-explorer.md) — Tenant-scoped evidence-access explorer
+- [ADR-0374](0374-collapsible-material-navigation-rail.md) — Collapsible Material 3 navigation rail
+- [ADR-0375](0375-bounded-linear-tax-base-operations.md) — Bounded linear tax-base operations
+- [ADR-0376](0376-linux-amd64-conformance-host-preflight.md) — Linux/amd64 conformance host preflight
+- [ADR-0377](0377-dedicated-solana-conformance-evidence-workflow.md) — Dedicated Solana conformance evidence workflow
+- [ADR-0378](0378-non-custodial-solidity-receipt-mirror.md) — Non-custodial Solidity receipt mirror
+- [ADR-0379](0379-bounded-tax-base-clamps.md) — Bounded tax-base clamps
+- [ADR-0380](0380-policy-issuer-and-asset-dependency-evidence.md) — Policy issuer authority and asset-dependency evidence boundary
+- [ADR-0381](0381-single-flight-tax-rule-compilation.md) — Bounded single-flight Tax Engine rule compilation
+- [ADR-0382](0382-tax-engine-v2-golden-vector-coverage-manifest.md) — Tax Engine v2 golden-vector coverage manifest
+- [ADR-0383](0383-explicit-atomic-display-scale.md) — Explicit atomic display scale at the browser boundary
+- [ADR-0384](0384-authoritative-atomic-scale-in-quote-contract.md) — Authoritative atomic scale in the quote contract
+- [ADR-0385](0385-versioned-asset-precision-ui-language.md) — Versioned asset-precision UI language
+- [ADR-0386](0386-versioned-financial-error-language.md) — Versioned financial-workspace error language
+- [ADR-0387](0387-versioned-document-settlement-error-language.md) — Versioned document-settlement error language
+- [ADR-0388](0388-versioned-refund-execution-recovery-language.md) — Versioned refund-execution recovery language
+- [ADR-0389](0389-versioned-refund-claim-recovery-language.md) — Versioned refund-claim recovery language
+- [ADR-0390](0390-versioned-vault-release-recovery-language.md) — Versioned vault-release recovery language
+- [ADR-0391](0391-versioned-replay-operations-recovery-language.md) — Versioned replay-operations recovery language
+- [ADR-0392](0392-versioned-settlement-adjustment-recovery-language.md) — Versioned settlement-adjustment recovery language
+- [ADR-0393](0393-versioned-revenue-streaming-recovery-language.md) — Versioned revenue-streaming recovery language
+- [ADR-0394](0394-versioned-vault-reconciliation-recovery-language.md) — Versioned vault-reconciliation recovery language
+- [ADR-0395](0395-versioned-governance-recovery-language.md) — Versioned governance recovery language
+- [ADR-0396](0396-versioned-evidence-access-recovery-language.md) — Versioned evidence-access recovery language
+- [ADR-0397](0397-versioned-refund-cancellation-recovery-language.md) — Versioned refund-cancellation recovery language
+- [ADR-0398](0398-material-shell-landmark-and-role-boundary.md) — Material shell landmark and role boundary
+- [ADR-0399](0399-versioned-navigation-access-language.md) — Versioned navigation access language
+- [ADR-0400](0400-no-implicit-asset-precision.md) — No implicit asset precision in financial workspaces
+- [ADR-0401](0401-complete-authorization-benchmark-catalog.md) — Complete authorization benchmark catalog
+- [ADR-0402](0402-single-tax-trace-disclosure.md) — Single tax-trace disclosure in the result workspace
+- [ADR-0403](0403-single-persistent-account-context.md) — Single persistent account context in the navigation shell
+- [ADR-0404](0404-localized-authorization-affordance-reasons.md) — Typed localized authorization affordance reasons
+- [ADR-0405](0405-material-theme-color-synchronization.md) — Material theme-color synchronization
+- [ADR-0406](0406-material-mobile-shell-action-row.md) — Material 3 mobile shell action row
+- [ADR-0407](0407-evidence-bound-tax-applicability-context.md) — Evidence-bound tax applicability context
+- [ADR-0408](0408-material-expressive-quiet-tonal-shell.md) — Quiet tonal shell for Material 3 Expressive operations
+- [ADR-0409](0409-server-owned-applicability-context-persistence.md) — Server-owned applicability-context persistence and quote binding
+- [ADR-0410](0410-material-state-emphasis-and-border-budget.md) — Material state emphasis and border budget
+- [ADR-0411](0411-versioned-solana-applicability-settlement-binding.md) — Versioned Solana applicability settlement binding
+- [ADR-0412](0412-finalized-applicability-binding-verifier.md) — Finalized applicability-binding account verifier
+- [ADR-0413](0413-atomic-applicability-binding-projection.md) — Atomic applicability-binding verification projection
+- [ADR-0414](0414-bounded-applicability-binding-verifier-worker.md) — Bounded applicability-binding verifier worker
+- [ADR-0415](0415-tenant-scoped-applicability-verification-read-model.md) — Tenant-scoped applicability verification read model
+- [ADR-0416](0416-applicability-treatment-settlement-semantics.md) — Explicit applicability-treatment settlement semantics
+- [ADR-0417](0417-signed-treatment-outcome-binding.md) — Signed treatment-outcome binding
+- [ADR-0418](0418-applicability-context-management-api.md) — Applicability-context management API
+- [ADR-0419](0419-neutral-risk-taxonomy-and-active-navigation.md) — Neutral risk taxonomy and calm active navigation
+- [ADR-0420](0420-applicability-governance-workspace.md) — Dedicated applicability governance workspace
+- [ADR-0421](0421-workspace-container-queries.md) — Workspace container queries for responsive layout
+- [ADR-0422](0422-material-baseline-palette-and-expressive-tokens.md) — Material baseline palette and full Expressive token families

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchWithTimeout, MAX_RESPONSE_ERROR_MESSAGE_LENGTH, REQUEST_TIMEOUT_MS, responseError } from "./api";
+import { fetchWithTimeout, REQUEST_TIMEOUT_MS, responseError } from "./api";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -7,13 +7,13 @@ afterEach(() => {
 });
 
 describe("API failure boundary", () => {
-  it("returns the server message with a canonical UUIDv7 support reference", () => {
+  it("returns the safe fallback with a canonical UUIDv7 support reference", () => {
     const response = new Response(null, {
       status: 409,
       headers: { "x-request-id": "01992f1b-4a70-7e30-8ea2-b6e37a9d9d13" },
     });
-    expect(responseError(response, { error: { message: "Quote expired" } }, "Fallback"))
-      .toBe("Quote expired (support reference: 01992f1b-4a70-7e30-8ea2-b6e37a9d9d13)");
+    expect(responseError(response, { error: { message: "provider-internal diagnostic" } }, "Fallback"))
+      .toBe("Fallback (support reference: 01992f1b-4a70-7e30-8ea2-b6e37a9d9d13)");
   });
 
   it("does not render an invalid or caller-controlled request ID", () => {
@@ -24,22 +24,26 @@ describe("API failure boundary", () => {
     expect(responseError(response, null, "Service failed")).toBe("Service failed");
   });
 
-  it("bounds and normalizes untrusted server error text before rendering", () => {
+  it("does not render untrusted server error text", () => {
     const response = new Response(null, { status: 500 });
-    const message = `  provider\n${"x".repeat(MAX_RESPONSE_ERROR_MESSAGE_LENGTH + 100)}\u0000`;
+    const message = "  provider\n" + "x".repeat(600) + "\u0000";
 
     const rendered = responseError(response, { error: { message } }, "Fallback");
 
-    expect(rendered).toHaveLength(MAX_RESPONSE_ERROR_MESSAGE_LENGTH);
-    expect(rendered.startsWith("provider x")).toBe(true);
-    expect(rendered.endsWith("…")).toBe(true);
-    expect(rendered).not.toMatch(/[\u0000-\u001f\u007f\n\r]/);
+    expect(rendered).toBe("Fallback");
+    expect(rendered).not.toContain("provider");
   });
 
   it("uses the bounded fallback when a server message is empty", () => {
     const response = new Response(null, { status: 503 });
     expect(responseError(response, { error: { message: " \n\t" } }, "Service unavailable"))
       .toBe("Service unavailable");
+  });
+
+  it("removes HTTP status suffixes from primary operator copy", () => {
+    const response = new Response(null, { status: 503 });
+    expect(responseError(response, null, "Payment preparation failed (503)."))
+      .toBe("Payment preparation failed.");
   });
 
   it("aborts a hanging request at the bounded deadline", async () => {

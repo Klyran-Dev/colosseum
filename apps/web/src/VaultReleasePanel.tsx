@@ -1,14 +1,16 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { fetchWithTimeout, REQUEST_TIMEOUT_MS, responseError } from "./api";
+import { fetchWithTimeout, operatorResponseError, REQUEST_TIMEOUT_MS } from "./api";
 import { parseSettlementRoutes, type SettlementRoute } from "./checkout";
 import { DEFAULT_LOCALE, DEFAULT_TIME_ZONE, formatEpoch } from "./formatters";
 import { createClientUuid } from "./clientIdentity";
+import { vaultReleaseMessagesFor } from "./vaultReleaseMessages";
 import {
   VaultReleaseClaim,
   VaultReleaseStatus,
   parseVaultReleaseClaim,
   parseVaultReleaseTransitionResponse,
 } from "./vaultRelease";
+import { operatorErrorMessage, operatorFacingError } from "./operatorError";
 
 type VaultReleasePanelProps = {
   apiBase: string;
@@ -29,8 +31,25 @@ function digestPreview(value: number[]): string {
   return value.map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 16) + "…";
 }
 
+function parseOperatorClaim(payload: unknown, invalidMessage: string): VaultReleaseClaim {
+  try {
+    return parseVaultReleaseClaim(payload);
+  } catch {
+    throw operatorFacingError(invalidMessage);
+  }
+}
+
+function parseOperatorTransition(payload: unknown, invalidMessage: string): ReturnType<typeof parseVaultReleaseTransitionResponse> {
+  try {
+    return parseVaultReleaseTransitionResponse(payload);
+  } catch {
+    throw operatorFacingError(invalidMessage);
+  }
+}
+
 export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken, locale = DEFAULT_LOCALE, timeZone = DEFAULT_TIME_ZONE }: VaultReleasePanelProps) {
   const initialWindow = useMemo(defaultWindow, []);
+  const messages = vaultReleaseMessagesFor(locale);
   const [idempotencyKey, setIdempotencyKey] = useState<string>(() => createClientUuid());
   const [routes, setRoutes] = useState<SettlementRoute[]>([]);
   const [routeId, setRouteId] = useState("");
@@ -72,16 +91,16 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
           signal: controller.signal,
         }, REQUEST_TIMEOUT_MS.default);
         const payload: unknown = await response.json().catch(() => null);
-        if (!response.ok) throw new Error(responseError(response, payload, `Payment routes could not be loaded (${response.status})`));
+        if (!response.ok) throw operatorResponseError(response, payload, messages.errors.routeRequestFailed(response.status));
         const loaded = parseSettlementRoutes(payload);
         setRoutes(loaded);
         setRouteId((current) => loaded.some((route) => route.id === current) ? current : loaded[0]?.id ?? "");
-        if (loaded.length === 0) setRouteError("No active, verified payment routes are available for this account.");
+        if (loaded.length === 0) setRouteError(messages.errors.noVerifiedRoutes);
       } catch (cause) {
         if (controller.signal.aborted) return;
         setRoutes([]);
         setRouteId("");
-        setRouteError(cause instanceof Error ? cause.message : "Payment routes could not be loaded.");
+        setRouteError(operatorErrorMessage(cause, messages.errors.routeLoadFailed));
       } finally {
         if (!controller.signal.aborted) setRouteLoading(false);
       }
@@ -91,13 +110,13 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
 
   function requireToken(): string {
     const token = accessToken.trim();
-    if (!token) throw new Error("Sign in with an account allowed to manage treasury releases. The credential is held in memory only.");
+    if (!token) throw operatorFacingError(messages.errors.authorizationRequired);
     return token;
   }
 
-  function parseJsonObject(value: string, label: string): Record<string, unknown> {
+  function parseJsonObject(value: string): Record<string, unknown> {
     const parsed: unknown = JSON.parse(value);
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error(`${label} must be a JSON object.`);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw operatorFacingError(messages.errors.evidenceObjectRequired);
     return parsed as Record<string, unknown>;
   }
 
@@ -106,8 +125,8 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
       headers: { authorization: `Bearer ${token}` },
     });
     const payload: unknown = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(responseError(response, payload, `Claim lookup failed (${response.status})`));
-    return parseVaultReleaseClaim(payload);
+    if (!response.ok) throw operatorResponseError(response, payload, messages.errors.claimLookupRequestFailed(response.status));
+    return parseOperatorClaim(payload, messages.errors.invalidClaim);
   }
 
   async function createClaim(event: FormEvent<HTMLFormElement>) {
@@ -119,7 +138,7 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
       const token = requireToken();
       const parsedReference = JSON.parse(referenceDigest) as unknown;
       if (!Array.isArray(parsedReference) || parsedReference.length !== 32 || parsedReference.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) {
-        throw new Error("Reference digest must be a JSON array of exactly 32 byte values.");
+        throw operatorFacingError(messages.errors.referenceDigestInvalid);
       }
       const response = await fetchWithTimeout(`${apiBase}/v1/vault/release-claims`, {
         method: "POST",
@@ -136,13 +155,13 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
         }),
       });
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(responseError(response, payload, `Claim proposal failed (${response.status})`));
-      const created = parseVaultReleaseClaim(payload);
+      if (!response.ok) throw operatorResponseError(response, payload, messages.errors.claimProposalRequestFailed(response.status));
+      const created = parseOperatorClaim(payload, messages.errors.invalidClaim);
       setClaim(created);
       setClaimId(created.id);
-      setNotice(`Release request ${created.id} was saved for approval. No funds moved and no spending authority was delegated.`);
+      setNotice(`${messages.errors.claimCreated} ${created.id}`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Claim proposal failed");
+      setError(operatorErrorMessage(cause, messages.errors.claimProposalFailed));
     } finally {
       setBusy(false);
     }
@@ -159,11 +178,11 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
         headers: { authorization: `Bearer ${token}` },
       });
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(responseError(response, payload, `Claim lookup failed (${response.status})`));
-      setClaim(parseVaultReleaseClaim(payload));
-      setNotice("The saved release request was loaded. Confirmed ledger evidence remains the final source of truth.");
+      if (!response.ok) throw operatorResponseError(response, payload, messages.errors.claimLookupRequestFailed(response.status));
+      setClaim(parseOperatorClaim(payload, messages.errors.invalidClaim));
+      setNotice(messages.errors.claimLoaded);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Claim lookup failed");
+      setError(operatorErrorMessage(cause, messages.errors.claimLookupFailed));
     } finally {
       setBusy(false);
     }
@@ -176,7 +195,7 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
     setBusy(true);
     try {
       const token = requireToken();
-      const parsedEvidence = parseJsonObject(evidence, "Evidence");
+      const parsedEvidence = parseJsonObject(evidence);
       const response = await fetchWithTimeout(`${apiBase}/v1/vault/release-claims/${encodeURIComponent((claim?.id ?? claimId).trim())}/transition`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
@@ -190,22 +209,22 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
         }),
       });
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(responseError(response, payload, `Claim transition failed (${response.status})`));
-      const transitioned = parseVaultReleaseTransitionResponse(payload);
+      if (!response.ok) throw operatorResponseError(response, payload, messages.errors.claimTransitionRequestFailed(response.status));
+      const transitioned = parseOperatorTransition(payload, messages.errors.invalidTransition);
       const expectedClaimId = (claim?.id ?? claimId).trim();
-      if (transitioned.claim_id !== expectedClaimId) throw new Error("The API returned a transition for a different claim.");
+      if (transitioned.claim_id !== expectedClaimId) throw operatorFacingError(messages.errors.claimMismatch);
       try {
         const refreshed = await loadClaimById(transitioned.claim_id, token);
         setClaim(refreshed);
         setClaimId(refreshed.id);
-        setNotice(`The request moved to ${transitioned.to_status.replaceAll("_", " ")}. The page was refreshed from the service.`);
+        setNotice(messages.errors.transitionSaved);
       } catch (refreshCause) {
         setClaim(null);
-        setNotice(`The request moved to ${transitioned.to_status.replaceAll("_", " ")}, but the refreshed request could not be loaded. Reconcile before taking another action.`);
+        setNotice(messages.errors.transitionSavedButRefreshFailed);
         throw refreshCause;
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Claim transition failed");
+      setError(operatorErrorMessage(cause, messages.errors.claimTransitionFailed));
     } finally {
       setBusy(false);
     }
@@ -214,49 +233,48 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
   const transitionNeedsChain = transitionStatus === "onchain_created" || transitionStatus === "executed";
   const transitionNeedsError = transitionStatus === "unknown";
   const selectedRoute = routes.find((route) => route.id === routeId);
-
   return (
-    <section className="vault-layout" aria-label="Governed vault release workspace">
+    <section className="vault-layout" aria-label={messages.proposal.ariaLabel}>
       <article className="panel">
-        <div className="panel-heading"><div><p className="eyebrow">Treasury / two-person approval</p><h2>Create a release request</h2></div><span className="status-pill">Two-person control</span></div>
-        <p className="panel-copy">Create a release request for review. Approval, ledger recording, completion, cancellation, and uncertainty are tracked separately so every decision can be explained. The browser never signs or moves funds.</p>
+        <div className="panel-heading"><div><p className="eyebrow">{messages.proposal.eyebrow}</p><h2>{messages.proposal.title}</h2></div><span className="status-pill">{messages.proposal.control}</span></div>
+        <p className="panel-copy">{messages.proposal.description}</p>
         <form onSubmit={createClaim} className="form-grid">
-          <label className="full-field"><span>Sign-in status</span><textarea value={accessToken ? "Account ready" : ""} readOnly aria-describedby="vault-token-help" rows={2} /><small id="vault-token-help">Your account must be allowed to create treasury release requests. Sign-in data is never saved by this page.</small></label>
-          <label><span>Request reference</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} aria-describedby="release-reference-help" required /><small id="release-reference-help">A unique reference prevents duplicate requests when you retry.</small></label>
-          <label><span>Release reference number</span><input aria-label="Release reference number" inputMode="numeric" value={nonce} onChange={(event) => setNonce(event.target.value)} aria-describedby="release-number-help" required /><small id="release-number-help">This binds the request to one ledger record.</small></label>
-          <label><span>Verified payment route</span><select aria-label="Verified payment route" value={routeId} onChange={(event) => setRouteId(event.target.value)} disabled={routeLoading || routes.length === 0} required><option value="">{routeLoading ? "Loading verified routes…" : "Select a verified route"}</option>{routes.map((route) => <option key={route.id} value={route.id}>{route.route_key} · version {route.version}</option>)}</select><small>Mint, token program, and tax holding account are resolved from this server-approved route.</small></label>
-          <label><span>Recipient account</span><input value={destination} onChange={(event) => setDestination(event.target.value)} placeholder="Paste the recipient account" required /></label>
-          <label><span>Amount</span><input aria-label="Amount" inputMode="numeric" value={amountAtomic} onChange={(event) => setAmountAtomic(event.target.value)} aria-describedby="release-amount-help" required /><small id="release-amount-help">Enter the exact amount in the asset’s smallest unit. The service checks precision before saving.</small></label>
-          <label><span>Earliest release time</span><input inputMode="numeric" value={executeAfter} onChange={(event) => setExecuteAfter(event.target.value)} aria-describedby="release-start-help" required /><small id="release-start-help">Use the UTC timestamp required by the release policy.</small></label>
-          <label><span>Release expiry</span><input inputMode="numeric" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} aria-describedby="release-expiry-help" required /><small id="release-expiry-help">The request cannot be executed after this time.</small></label>
-          <label className="full-field"><span>Evidence reference</span><textarea id="vault-release-evidence-reference" aria-label="Evidence reference" value={referenceDigest} onChange={(event) => setReferenceDigest(event.target.value)} aria-describedby="release-evidence-help" rows={3} required /><small id="release-evidence-help">Paste the exact evidence reference supplied by the approved workflow. A request cannot be created without it.</small></label>
-          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim() || !routeId}>{busy ? "Saving…" : "Create release request"}</button>
+          <label className="full-field"><span>{messages.proposal.signInStatus}</span><textarea value={accessToken ? messages.proposal.accountReady : ""} readOnly aria-describedby="vault-token-help" rows={2} /><small id="vault-token-help">{messages.proposal.accountHelp}</small></label>
+          <label><span>{messages.proposal.requestReference}</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} aria-describedby="release-reference-help" required /><small id="release-reference-help">{messages.proposal.requestHelp}</small></label>
+          <label><span>{messages.proposal.releaseNumber}</span><input aria-label={messages.proposal.releaseNumber} inputMode="numeric" value={nonce} onChange={(event) => setNonce(event.target.value)} aria-describedby="release-number-help" required /><small id="release-number-help">{messages.proposal.releaseNumberHelp}</small></label>
+          <label><span>{messages.proposal.verifiedRoute}</span><select aria-label={messages.proposal.verifiedRoute} value={routeId} onChange={(event) => setRouteId(event.target.value)} disabled={routeLoading || routes.length === 0} required><option value="">{routeLoading ? messages.proposal.loadingRoutes : messages.proposal.selectRoute}</option>{routes.map((route) => <option key={route.id} value={route.id}>{route.route_key} · version {route.version}</option>)}</select><small>{messages.proposal.routeHelp}</small></label>
+          <label><span>{messages.proposal.recipient}</span><input aria-label={messages.proposal.recipient} value={destination} onChange={(event) => setDestination(event.target.value)} placeholder={messages.proposal.recipientPlaceholder} required /></label>
+          <label><span>{messages.proposal.amount}</span><input aria-label={messages.proposal.amount} inputMode="numeric" value={amountAtomic} onChange={(event) => setAmountAtomic(event.target.value)} aria-describedby="release-amount-help" required /><small id="release-amount-help">{messages.proposal.amountHelp}</small></label>
+          <label><span>{messages.proposal.earliest}</span><input aria-label={messages.proposal.earliest} inputMode="numeric" value={executeAfter} onChange={(event) => setExecuteAfter(event.target.value)} aria-describedby="release-start-help" required /><small id="release-start-help">{messages.proposal.earliestHelp}</small></label>
+          <label><span>{messages.proposal.expiry}</span><input aria-label={messages.proposal.expiry} inputMode="numeric" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} aria-describedby="release-expiry-help" required /><small id="release-expiry-help">{messages.proposal.expiryHelp}</small></label>
+          <label className="full-field"><span>{messages.proposal.evidenceReference}</span><textarea id="vault-release-evidence-reference" aria-label={messages.proposal.evidenceReference} value={referenceDigest} onChange={(event) => setReferenceDigest(event.target.value)} aria-describedby="release-evidence-help" rows={3} required /><small id="release-evidence-help">{messages.proposal.evidenceHelp}</small></label>
+          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim() || !routeId}>{busy ? messages.proposal.saving : messages.proposal.create}</button>
         </form>
-        {routeError && <p className="inline-warning" role="alert">{routeError} No release request can be created until a verified route is available.</p>}
-        {selectedRoute && <div className="vault-route-summary" aria-label="Verified route details"><strong>Route evidence</strong><span>{selectedRoute.mint}</span><span>{selectedRoute.token_program}</span><span>Tax holding account: {selectedRoute.tax_vault}</span></div>}
-        {!serviceOnline && <p className="inline-warning" role="alert">The API is unavailable. No client-side fallback or optimistic claim is created.</p>}
+        {routeError && <p className="inline-warning" role="alert">{routeError} {messages.proposal.routeErrorSuffix}</p>}
+        {selectedRoute && <div className="vault-route-summary" aria-label={messages.proposal.routeDetails}><strong>{messages.proposal.routeEvidence}</strong><span>{selectedRoute.mint}</span><span>{selectedRoute.token_program}</span><span>{messages.proposal.taxHoldingAccount} {selectedRoute.tax_vault}</span></div>}
+        {!serviceOnline && <p className="inline-warning" role="alert">{messages.proposal.offline}</p>}
       </article>
 
-      <article className="panel">
-        <div className="panel-heading"><div><p className="eyebrow">Lifecycle and evidence</p><h2>Review or transition a claim</h2></div>{claim && <span className="status-pill status-pill-warning">{claim.status.replaceAll("_", " ")}</span>}</div>
-        <p className="panel-copy">Each next step requires the right approval. Ledger-created and completed states need proof from the network; an uncertain state must include a clear reason.</p>
+      <article className="panel" aria-label={messages.lifecycle.ariaLabel}>
+        <div className="panel-heading"><div><p className="eyebrow">{messages.lifecycle.eyebrow}</p><h2>{messages.lifecycle.title}</h2></div>{claim && <span className="status-pill status-pill-warning">{claim.status.replaceAll("_", " ")}</span>}</div>
+        <p className="panel-copy">{messages.lifecycle.description}</p>
         <form onSubmit={loadClaim} className="form-grid">
-          <label className="full-field"><span>Release request reference</span><input value={claimId} onChange={(event) => setClaimId(event.target.value)} placeholder="Paste a saved release request reference" required /></label>
-          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>Load release request</button>
+          <label className="full-field"><span>{messages.lifecycle.requestReference}</span><input aria-label={messages.lifecycle.requestReference} value={claimId} onChange={(event) => setClaimId(event.target.value)} placeholder={messages.lifecycle.requestPlaceholder} required /></label>
+          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>{messages.lifecycle.load}</button>
         </form>
-        {claim && <div className="vault-claim-card"><dl className="summary-list"><div><dt>Status</dt><dd>{claim.status.replaceAll("_", " ")}</dd></div><div><dt>Amount</dt><dd>{claim.amount_atomic}</dd></div><div><dt>Release reference number</dt><dd>{claim.nonce}</dd></div><div><dt>Release window</dt><dd>{formatEpoch(claim.execute_after_unix, locale, timeZone)} → {formatEpoch(claim.expires_at_unix, locale, timeZone)}</dd></div><div><dt>Request evidence</dt><dd><code>{digestPreview(claim.request_digest)}</code></dd></div><div><dt>Supporting evidence</dt><dd><code>{digestPreview(claim.reference_digest)}</code></dd></div><div><dt>Created by</dt><dd><code>{claim.proposer_subject}</code></dd></div><div><dt>Approved by</dt><dd><code>{claim.approver_subject ?? "Not approved"}</code></dd></div></dl></div>}
+        {claim && <div className="vault-claim-card"><dl className="summary-list"><div><dt>{messages.lifecycle.status}</dt><dd>{claim.status.replaceAll("_", " ")}</dd></div><div><dt>{messages.lifecycle.amount}</dt><dd>{claim.amount_atomic}</dd></div><div><dt>{messages.lifecycle.releaseNumber}</dt><dd>{claim.nonce}</dd></div><div><dt>{messages.lifecycle.releaseWindow}</dt><dd>{formatEpoch(claim.execute_after_unix, locale, timeZone)} → {formatEpoch(claim.expires_at_unix, locale, timeZone)}</dd></div><div><dt>{messages.lifecycle.requestEvidence}</dt><dd><code>{digestPreview(claim.request_digest)}</code></dd></div><div><dt>{messages.lifecycle.supportingEvidence}</dt><dd><code>{digestPreview(claim.reference_digest)}</code></dd></div><div><dt>{messages.lifecycle.createdBy}</dt><dd><code>{claim.proposer_subject}</code></dd></div><div><dt>{messages.lifecycle.approvedBy}</dt><dd><code>{claim.approver_subject ?? messages.lifecycle.notApproved}</code></dd></div></dl></div>}
         <form onSubmit={transitionClaim} className="vault-transition-form">
-          <label><span>Next step</span><select value={transitionStatus} onChange={(event) => setTransitionStatus(event.target.value as ReleaseStatus)}><option value="approved">Approved</option><option value="onchain_created">Ledger record created</option><option value="executed">Completed</option><option value="cancelled">Cancelled</option><option value="unknown">Needs investigation</option></select></label>
-          {transitionNeedsChain && <label><span>On-chain release account {transitionStatus === "onchain_created" ? "(required)" : "(if available)"}</span><input value={claimPda} onChange={(event) => setClaimPda(event.target.value)} required={transitionStatus === "onchain_created"} /></label>}
-          {transitionNeedsChain && <label><span>Ledger transaction reference (required)</span><input value={transactionSignature} onChange={(event) => setTransactionSignature(event.target.value)} required /></label>}
-          {transitionNeedsChain && <label><span>Confirmed ledger position (required)</span><input inputMode="numeric" value={slot} onChange={(event) => setSlot(event.target.value)} required /></label>}
-          {transitionNeedsError && <label><span>Why it stopped (required)</span><input value={lastErrorCode} onChange={(event) => setLastErrorCode(event.target.value)} required /></label>}
-          <label className="full-field"><span>Decision evidence</span><textarea value={evidence} onChange={(event) => setEvidence(event.target.value)} aria-describedby="release-transition-evidence-help" rows={3} required /><small id="release-transition-evidence-help">Advanced evidence for the audit record. Use the format supplied by your operations workflow.</small></label>
-          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim() || !(claim?.id ?? claimId).trim()}>Record next step</button>
+          <label><span>{messages.lifecycle.nextStep}</span><select aria-label={messages.lifecycle.nextStep} value={transitionStatus} onChange={(event) => setTransitionStatus(event.target.value as ReleaseStatus)}><option value="approved">{messages.lifecycle.approved}</option><option value="onchain_created">{messages.lifecycle.ledgerCreated}</option><option value="executed">{messages.lifecycle.completed}</option><option value="cancelled">{messages.lifecycle.cancelled}</option><option value="unknown">{messages.lifecycle.needsInvestigation}</option></select></label>
+          {transitionNeedsChain && <label><span>{messages.lifecycle.onChainAccount} {transitionStatus === "onchain_created" ? `(${messages.lifecycle.required})` : `(${messages.lifecycle.ifAvailable})`}</span><input aria-label={messages.lifecycle.onChainAccount} value={claimPda} onChange={(event) => setClaimPda(event.target.value)} required={transitionStatus === "onchain_created"} /></label>}
+          {transitionNeedsChain && <label><span>{messages.lifecycle.ledgerTransaction}</span><input aria-label={messages.lifecycle.ledgerTransaction} value={transactionSignature} onChange={(event) => setTransactionSignature(event.target.value)} required /></label>}
+          {transitionNeedsChain && <label><span>{messages.lifecycle.confirmedPosition}</span><input aria-label={messages.lifecycle.confirmedPosition} inputMode="numeric" value={slot} onChange={(event) => setSlot(event.target.value)} required /></label>}
+          {transitionNeedsError && <label><span>{messages.lifecycle.whyStopped}</span><input aria-label={messages.lifecycle.whyStopped} value={lastErrorCode} onChange={(event) => setLastErrorCode(event.target.value)} required /></label>}
+          <label className="full-field"><span>{messages.lifecycle.decisionEvidence}</span><textarea aria-label={messages.lifecycle.decisionEvidence} value={evidence} onChange={(event) => setEvidence(event.target.value)} aria-describedby="release-transition-evidence-help" rows={3} required /><small id="release-transition-evidence-help">{messages.lifecycle.decisionEvidenceHelp}</small></label>
+          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim() || !(claim?.id ?? claimId).trim()}>{messages.lifecycle.record}</button>
         </form>
         {notice && <p className="inline-success" role="status">{notice}</p>}
         {error && <p className="inline-error" role="alert">{error}</p>}
-        <p className="vault-authority-note"><strong>What this page can do:</strong> record requests and evidence. A separately approved operator must prepare, sign, submit, and reconcile the ledger transaction. Confirmed ledger state—not this page—decides whether funds moved.</p>
+        <p className="vault-authority-note"><strong>{messages.authority.title}</strong> {messages.authority.copy}</p>
       </article>
     </section>
   );

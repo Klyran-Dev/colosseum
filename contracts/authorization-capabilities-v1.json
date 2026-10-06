@@ -1,0 +1,237 @@
+{
+  "schema": "authorization-catalog/v1",
+  "version": 1,
+  "policies": [
+    {
+      "id": "tax.quote.create",
+      "label": "Create tax quote",
+      "description": "Prepare a customer quote with a clear tax breakdown.",
+      "group": "Daily work",
+      "workspace": "quote",
+      "risk": "write",
+      "required_scopes": ["tax:quote"],
+      "required_roles": [],
+      "required_attributes": ["environment"]
+    },
+    {
+      "id": "tax.document.quote.create",
+      "label": "Calculate invoice tax",
+      "description": "Calculate tax across an invoice and its lines.",
+      "group": "Daily work",
+      "workspace": "document-quote",
+      "risk": "write",
+      "required_scopes": ["tax:quote"],
+      "required_roles": [],
+      "required_attributes": ["environment"]
+    },
+    {
+      "id": "tax.preview.run",
+      "label": "Explore a scenario",
+      "description": "Try a scenario without changing published rules or payments.",
+      "group": "Daily work",
+      "workspace": "preview",
+      "risk": "read",
+      "required_scopes": [],
+      "required_roles": [],
+      "required_attributes": []
+    },
+    {
+      "id": "tax.rule.govern",
+      "label": "Manage tax rules",
+      "description": "Create, review, approve, and publish tax rules.",
+      "group": "Rules & access",
+      "workspace": "governance",
+      "risk": "governance",
+      "required_scopes": ["tax:rule:read"],
+      "required_roles": ["tax_rule_author", "tax_rule_reviewer", "tax_rule_approver"],
+      "required_attributes": ["environment", "jurisdiction"]
+    },
+    {
+      "id": "tax.applicability.govern",
+      "label": "Manage tax treatment evidence",
+      "description": "Author, review, publish, and retire server-owned tax treatment contexts.",
+      "group": "Rules & access",
+      "workspace": "governance",
+      "risk": "governance",
+      "required_scopes": ["tax:applicability:read"],
+      "required_roles": ["tax_applicability_author", "tax_applicability_reviewer", "tax_applicability_approver"],
+      "required_attributes": ["environment", "jurisdiction"]
+    },
+    {
+      "id": "settlement.wallet",
+      "label": "Review payment",
+      "description": "Check the payment details before the customer signs.",
+      "group": "Daily work",
+      "workspace": "checkout",
+      "risk": "financial",
+      "required_scopes": ["tax:settlement:compile"],
+      "required_roles": [],
+      "required_attributes": []
+    },
+    {
+      "id": "settlement.document.wallet",
+      "label": "Review document payment",
+      "description": "Review and approve payment for an invoice.",
+      "group": "Daily work",
+      "workspace": "document-checkout",
+      "risk": "financial",
+      "required_scopes": ["tax:settlement:compile"],
+      "required_roles": [],
+      "required_attributes": []
+    },
+    {
+      "id": "vault.reconciliation",
+      "label": "Review balance checks",
+      "description": "Compare recorded balances with the latest verified observation.",
+      "group": "Money movement",
+      "workspace": "vault-reconciliation",
+      "risk": "read",
+      "required_scopes": ["tax:vault:read"],
+      "required_roles": [],
+      "required_attributes": []
+    },
+    {
+      "id": "vault.release",
+      "label": "Release treasury funds",
+      "description": "Prepare a controlled treasury release for approval.",
+      "group": "Money movement",
+      "workspace": "vault-release",
+      "risk": "financial",
+      "required_scopes": ["tax:vault:propose"],
+      "required_roles": ["vault_release_proposer"],
+      "required_attributes": []
+    },
+    {
+      "id": "revenue_stream.read",
+      "label": "View partner payout plans",
+      "description": "Review governed partner payout plans and their verified balances.",
+      "group": "Money movement",
+      "workspace": "revenue-streaming",
+      "risk": "read",
+      "required_scopes": ["tax:stream:read"],
+      "required_roles": ["revenue_stream_proposer", "revenue_stream_approver", "revenue_stream_operator", "revenue_stream_auditor"],
+      "required_attributes": []
+    },
+    {
+      "id": "revenue_stream.propose",
+      "label": "Create partner payout plan",
+      "description": "Propose a bounded payout plan for a partner.",
+      "group": "Money movement",
+      "workspace": "revenue-streaming",
+      "risk": "governance",
+      "required_scopes": ["tax:stream:propose"],
+      "required_roles": ["revenue_stream_proposer"],
+      "required_attributes": []
+    },
+    {
+      "id": "revenue_stream.govern",
+      "label": "Approve partner payout plan",
+      "description": "Review and govern a partner payout plan.",
+      "group": "Money movement",
+      "workspace": "revenue-streaming",
+      "risk": "governance",
+      "required_scopes": ["tax:stream:govern"],
+      "required_roles": ["revenue_stream_approver", "revenue_stream_governance"],
+      "required_attributes": []
+    },
+    {
+      "id": "revenue_stream.claim.prepare",
+      "label": "Prepare partner payout release",
+      "description": "Reserve an available amount for a verified release.",
+      "group": "Money movement",
+      "workspace": "revenue-streaming",
+      "risk": "financial",
+      "required_scopes": ["tax:stream:claim:prepare"],
+      "required_roles": ["revenue_stream_operator"],
+      "required_attributes": []
+    },
+    {
+      "id": "settlement.adjustment",
+      "label": "Prepare an adjustment",
+      "description": "Correct a completed transaction with a clear record.",
+      "group": "Money movement",
+      "workspace": "adjustments",
+      "risk": "governance",
+      "required_scopes": ["tax:adjustment:propose"],
+      "required_roles": ["settlement_adjustment_proposer"],
+      "required_attributes": []
+    },
+    {
+      "id": "refund.claim.create",
+      "label": "Request a refund",
+      "description": "Prepare a refund request for review.",
+      "group": "Money movement",
+      "workspace": "refund-claims",
+      "risk": "financial",
+      "required_scopes": ["tax:refund:claim:prepare"],
+      "required_roles": ["settlement_adjustment_proposer"],
+      "required_attributes": []
+    },
+    {
+      "id": "refund.claim.cancel",
+      "label": "Cancel a refund request",
+      "description": "Stop a refund request with an approval record.",
+      "group": "Money movement",
+      "workspace": "refund-cancellations",
+      "risk": "governance",
+      "required_scopes": ["tax:refund:claim:cancel:prepare"],
+      "required_roles": ["settlement_adjustment_governance"],
+      "required_attributes": []
+    },
+    {
+      "id": "refund.payment.release",
+      "label": "Release a refund payment",
+      "description": "Release an approved refund after all checks pass.",
+      "group": "Money movement",
+      "workspace": "refund-executions",
+      "risk": "financial",
+      "required_scopes": ["tax:refund:execute:prepare"],
+      "required_roles": ["settlement_adjustment_approver"],
+      "required_attributes": []
+    },
+    {
+      "id": "evidence.replay",
+      "label": "Review exceptions",
+      "description": "Investigate and recover records that need attention.",
+      "group": "Records & issues",
+      "workspace": "replay-ops",
+      "risk": "write",
+      "required_scopes": ["tax:indexer:read"],
+      "required_roles": ["indexer_operator"],
+      "required_attributes": []
+    },
+    {
+      "id": "evidence.audit.read",
+      "label": "Review evidence access",
+      "description": "Review protected evidence access activity for this account.",
+      "group": "Records & issues",
+      "workspace": "evidence-access",
+      "risk": "read",
+      "required_scopes": ["audit:read"],
+      "required_roles": [],
+      "required_attributes": []
+    },
+    {
+      "id": "evidence.applicability.read",
+      "label": "Review tax treatment evidence",
+      "description": "See whether a settlement's server-owned tax treatment has finalized chain evidence.",
+      "group": "Records & issues",
+      "workspace": "evidence-access",
+      "risk": "read",
+      "required_scopes": ["audit:read"],
+      "required_roles": [],
+      "required_attributes": []
+    },
+    {
+      "id": "access.control",
+      "label": "View access rules",
+      "description": "See who can act and what requires approval.",
+      "group": "Rules & access",
+      "workspace": "access-control",
+      "risk": "read",
+      "required_scopes": ["audit:read"],
+      "required_roles": [],
+      "required_attributes": []
+    }
+  ]
+}

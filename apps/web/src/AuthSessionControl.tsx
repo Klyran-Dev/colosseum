@@ -1,4 +1,6 @@
 import { BrowserAuthConfig } from "./authConfig";
+import { SupportedLocale } from "./formatters";
+import { shellMessagesFor } from "./shellMessages";
 
 export type AuthSessionStatus = "signed-out" | "signing-in" | "signed-in" | "error";
 
@@ -10,6 +12,7 @@ export interface AuthSessionControlProps {
   onCredentialChange: (value: string) => void;
   onSignIn: () => void;
   onSignOut: () => void;
+  locale?: SupportedLocale;
 }
 
 export default function AuthSessionControl({
@@ -20,16 +23,19 @@ export default function AuthSessionControl({
   onCredentialChange,
   onSignIn,
   onSignOut,
+  locale = "en-US",
 }: AuthSessionControlProps) {
+  const session = shellMessagesFor(locale).session;
+
   if (config.mode === "local-credential") {
-    return <details className="session-control session-control-local" aria-label="Local sign-in">
-      <summary role="button" aria-label="Open local sign-in">Local sign-in</summary>
+    return <details className="session-control session-control-local" aria-label={session.localSignIn}>
+      <summary role="button" aria-label={session.openLocalSignIn}>{session.localSignIn}</summary>
       <div className="session-control-local-fields">
         <label>
-          <span>Sign-in credential (held in memory)</span>
-          <textarea value={accessToken} onChange={(event) => onCredentialChange(event.target.value)} placeholder="Paste a local test credential" autoComplete="off" spellCheck={false} rows={2} aria-describedby="local-sign-in-help" />
+          <span>{session.signInCredential}</span>
+          <textarea value={accessToken} onChange={(event) => onCredentialChange(event.target.value)} placeholder={session.localCredentialPlaceholder} autoComplete="off" spellCheck={false} rows={2} aria-describedby="local-sign-in-help" />
         </label>
-        <small id="local-sign-in-help">Local development only. This field is unavailable in staging and production builds.</small>
+        <small id="local-sign-in-help">{session.localDevelopmentHelp}</small>
         {error && <p className="inline-error" role="alert">{error}</p>}
       </div>
     </details>;
@@ -37,23 +43,23 @@ export default function AuthSessionControl({
 
   if (config.mode === "oidc") {
     if (status === "signed-in" && accessToken) {
-      return <div className="session-control session-control-signed-in" aria-label="Signed-in session">
-        <span className="session-state"><span className="status-dot" aria-hidden="true" />Signed in</span>
-        <button type="button" className="session-action" onClick={onSignOut}>Sign out</button>
+      return <div className="session-control session-control-signed-in" aria-label={session.signedInSession}>
+        <span className="session-state"><span className="status-dot" aria-hidden="true" />{session.signedIn}</span>
+        <button type="button" className="session-action" onClick={onSignOut}>{session.signOut}</button>
         {error && <p className="inline-error" role="alert">{error}</p>}
       </div>;
     }
-    return <div className="session-control session-control-oidc" aria-label="Sign-in">
-      <button type="button" className="session-action" onClick={onSignIn} disabled={status === "signing-in"}>{status === "signing-in" ? "Opening sign-in…" : "Sign in"}</button>
+    return <div className="session-control session-control-oidc" aria-label={session.signIn}>
+      <button type="button" className="session-action" onClick={onSignIn} disabled={status === "signing-in"}>{status === "signing-in" ? session.openingSignIn : session.signIn}</button>
       {error && <p className="inline-error" role="alert">{error}</p>}
     </div>;
   }
 
-  return <details className="session-control session-control-unconfigured" aria-label="Sign-in unavailable">
-    <summary role="button" aria-label="Sign-in unavailable"><span className="session-state"><span className="status-dot" aria-hidden="true" />Sign-in unavailable</span></summary>
+  return <details className="session-control session-control-unconfigured" aria-label={session.signInSetupNeeded}>
+    <summary role="button" aria-label={session.signInSetupNeededSummary}><span className="session-state"><span className="status-dot" aria-hidden="true" />{session.signInSetupNeeded}</span></summary>
     <div className="session-control-unconfigured-details">
       <p className="inline-error" role="alert">{error ?? config.warnings.join(" ")}</p>
-      <small>Ask your administrator to configure secure sign-in for this deployment.</small>
+      <small>{session.secureSignInHelp}</small>
     </div>
   </details>;
 }

@@ -20,6 +20,18 @@ export type TaxComponent = {
   explanation: string;
 };
 
+export const TAX_TREATMENTS = ["Taxable", "ZeroRated", "Exempt", "ReverseCharge", "Withholding", "OutOfScope"] as const;
+export type TaxTreatment = (typeof TAX_TREATMENTS)[number];
+
+export type TreatmentOutcome = {
+  treatment: TaxTreatment;
+  arithmetic_tax_atomic: string;
+  collected_tax_atomic: string;
+  self_assessed_tax_atomic: string;
+  withheld_tax_atomic: string;
+  taxable_base_atomic: string;
+};
+
 export type JurisdictionResolution = {
   policy_id: string;
   policy_version: number;
@@ -57,6 +69,7 @@ export type Calculation = {
     rule_set_id: string;
     rule_version: number;
     engine_version: string;
+    atomic_decimals: number;
     currency: string;
     jurisdiction: string;
     facts_digest: number[];
@@ -64,6 +77,7 @@ export type Calculation = {
     gross_atomic: string;
     total_tax_atomic: string;
     total_net_atomic: string;
+    treatment_outcome?: TreatmentOutcome;
     jurisdiction_resolution?: JurisdictionResolution;
     fx_conversion?: FxConversionEvidence;
     components: TaxComponent[];
@@ -97,6 +111,13 @@ function boundedArray(value: unknown, label: string, maximum: number): unknown[]
 
 function positiveVersion(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) throw new Error(`${label} is invalid.`);
+  return value;
+}
+
+function atomicDecimals(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 9) {
+    throw new Error("atomic decimals must be an integer between 0 and 9.");
+  }
   return value;
 }
 
@@ -134,6 +155,32 @@ function positiveI128(value: unknown, label: string): string {
   const parsed = signedI128(value, label);
   if (BigInt(parsed) <= 0n) throw new Error(`${label} must be positive.`);
   return parsed;
+}
+
+function nonNegativeI128(value: unknown, label: string): string {
+  const parsed = signedI128(value, label);
+  if (BigInt(parsed) < 0n) throw new Error(`${label} must be non-negative.`);
+  return parsed;
+}
+
+export function parseTreatmentOutcome(value: unknown, totalTaxAtomic?: string): TreatmentOutcome | undefined {
+  if (value === undefined || value === null) return undefined;
+  const record = objectValue(value, "tax treatment outcome is invalid.");
+  if (typeof record.treatment !== "string" || !TAX_TREATMENTS.includes(record.treatment as TaxTreatment)) {
+    throw new Error("tax treatment outcome is unknown.");
+  }
+  const outcome = {
+    treatment: record.treatment as TaxTreatment,
+    arithmetic_tax_atomic: nonNegativeI128(record.arithmetic_tax_atomic, "arithmetic_tax_atomic"),
+    collected_tax_atomic: nonNegativeI128(record.collected_tax_atomic, "collected_tax_atomic"),
+    self_assessed_tax_atomic: nonNegativeI128(record.self_assessed_tax_atomic, "self_assessed_tax_atomic"),
+    withheld_tax_atomic: nonNegativeI128(record.withheld_tax_atomic, "withheld_tax_atomic"),
+    taxable_base_atomic: nonNegativeI128(record.taxable_base_atomic, "taxable_base_atomic"),
+  };
+  if (totalTaxAtomic !== undefined && BigInt(outcome.collected_tax_atomic) !== BigInt(totalTaxAtomic)) {
+    throw new Error("treatment collected tax does not match total tax.");
+  }
+  return outcome;
 }
 
 function optionalExpiry(value: unknown): number | undefined {
@@ -227,8 +274,12 @@ export function parseCalculationResponse(value: unknown): Calculation {
   }
   const result = objectValue(record.result, "calculation result is invalid.");
   const components = boundedArray(result.components, "tax components", 128);
-  if (components.length === 0) throw new Error("tax components must not be empty.");
   const currency = boundedText(result.currency, "currency", 16);
+  const grossAtomic = signedI128(result.gross_atomic, "gross_atomic");
+  const totalTaxAtomic = signedI128(result.total_tax_atomic, "total_tax_atomic");
+  const totalNetAtomic = signedI128(result.total_net_atomic, "total_net_atomic");
+  const treatmentOutcome = parseTreatmentOutcome(result.treatment_outcome, totalTaxAtomic);
+  if (components.length === 0 && treatmentOutcome === undefined) throw new Error("tax components or treatment outcome are required.");
   const fxConversion = result.fx_conversion === undefined || result.fx_conversion === null
     ? undefined
     : parseFxConversionEvidence(result.fx_conversion, currency);
@@ -240,17 +291,19 @@ export function parseCalculationResponse(value: unknown): Calculation {
       rule_set_id: boundedText(result.rule_set_id, "rule set ID", 128),
       rule_version: positiveVersion(result.rule_version, "rule version"),
       engine_version: boundedText(result.engine_version, "engine version", 128, true),
+      atomic_decimals: atomicDecimals(result.atomic_decimals),
       currency,
       jurisdiction: boundedText(result.jurisdiction, "jurisdiction", 64),
       facts_digest: digest(result.facts_digest, "facts"),
       rule_digest: digest(result.rule_digest, "rule"),
-      gross_atomic: signedI128(result.gross_atomic, "gross_atomic"),
-      total_tax_atomic: signedI128(result.total_tax_atomic, "total_tax_atomic"),
-      total_net_atomic: signedI128(result.total_net_atomic, "total_net_atomic"),
+      gross_atomic: grossAtomic,
+      total_tax_atomic: totalTaxAtomic,
+      total_net_atomic: totalNetAtomic,
       jurisdiction_resolution: result.jurisdiction_resolution === undefined
         ? undefined
         : parseJurisdictionResolution(result.jurisdiction_resolution),
       fx_conversion: fxConversion,
+      treatment_outcome: treatmentOutcome,
       components: components.map(parseComponent),
     },
   };

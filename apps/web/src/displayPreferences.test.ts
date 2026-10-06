@@ -1,15 +1,21 @@
 // @vitest-environment happy-dom
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DISPLAY_PREFERENCES_STORAGE_KEY,
   DEFAULT_DISPLAY_PREFERENCES,
   loadDisplayPreferences,
+  resolveDisplayTheme,
   saveDisplayPreferences,
+  syncBrowserThemeColor,
 } from "./displayPreferences";
 
 afterEach(() => {
   window.localStorage.clear();
+});
+
+beforeEach(() => {
+  document.head.querySelectorAll('meta[name="theme-color"]').forEach((element) => element.remove());
 });
 
 describe("versioned local display preferences", () => {
@@ -72,5 +78,44 @@ describe("versioned local display preferences", () => {
       theme: "dark",
     })).not.toThrow();
     expect(JSON.stringify(DEFAULT_DISPLAY_PREFERENCES)).not.toContain("token");
+  });
+});
+
+describe("Material browser theme-color synchronization", () => {
+  it("resolves only the bounded light and dark modes", () => {
+    expect(resolveDisplayTheme("light", false)).toBe("light");
+    expect(resolveDisplayTheme("dark", true)).toBe("dark");
+    expect(resolveDisplayTheme("system", true)).toBe("light");
+    expect(resolveDisplayTheme("system", false)).toBe("dark");
+  });
+
+  it("updates bounded metadata media conditions for explicit themes", () => {
+    const darkMeta = document.createElement("meta");
+    darkMeta.name = "theme-color";
+    darkMeta.dataset.themeColor = "dark";
+    const lightMeta = document.createElement("meta");
+    lightMeta.name = "theme-color";
+    lightMeta.dataset.themeColor = "light";
+    document.head.append(darkMeta, lightMeta);
+
+    syncBrowserThemeColor("light", document);
+
+    expect(darkMeta.media).toBe("not all");
+    expect(lightMeta.media).toBe("all");
+  });
+
+  it("leaves system mode to the browser media-query evaluator", () => {
+    const darkMeta = document.createElement("meta");
+    darkMeta.name = "theme-color";
+    darkMeta.dataset.themeColor = "dark";
+    const lightMeta = document.createElement("meta");
+    lightMeta.name = "theme-color";
+    lightMeta.dataset.themeColor = "light";
+    document.head.append(darkMeta, lightMeta);
+
+    syncBrowserThemeColor("system", document);
+
+    expect(darkMeta.media).toBe("(prefers-color-scheme: dark)");
+    expect(lightMeta.media).toBe("(prefers-color-scheme: light)");
   });
 });

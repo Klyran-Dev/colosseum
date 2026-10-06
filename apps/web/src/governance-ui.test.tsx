@@ -30,9 +30,31 @@ describe("governance workbench submission boundary", () => {
     expect(screen.getByLabelText("Review record")).toBeTruthy();
     expect(screen.getByLabelText("How the rate changes")).toBeTruthy();
     expect(screen.getByLabelText("When rounding happens")).toBeTruthy();
+    const simulation = screen.getByText("Try the saved rule", { exact: true }).closest("details");
+    expect(simulation).toBeTruthy();
+    expect(simulation?.hasAttribute("open")).toBe(false);
+    fireEvent.click(screen.getByText("Try the saved rule", { exact: true }));
+    expect(simulation?.hasAttribute("open")).toBe(true);
     expect(screen.queryByText("Structured Tier-1 authoring")).toBeNull();
     expect(screen.queryByText("Rule components and semantics")).toBeNull();
     expect(screen.queryByText(/canonical rule document from explicit controls/i)).toBeNull();
+  });
+
+  it("localizes governance authoring while preserving protocol values", () => {
+    render(<GovernancePanel apiBase="/api" serviceOnline accessToken="author-token" locale="de-DE" />);
+
+    expect(screen.getByRole("heading", { name: "Regel prüfen und veröffentlichen" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "So wird die Steuer berechnet" })).toBeTruthy();
+    expect(screen.getByLabelText("Quelldatensatz")).toBeTruthy();
+
+    const editor = screen.getByLabelText("Wie soll die Regel eingegeben werden?") as HTMLSelectElement;
+    expect(editor.value).toBe("structured");
+    expect((screen.getByRole("option", { name: "Geführter Regel-Builder" }) as HTMLOptionElement).value).toBe("structured");
+    expect((screen.getByRole("option", { name: "Erweitertes JSON" }) as HTMLOptionElement).value).toBe("json");
+
+    const priceMode = screen.getByLabelText("Wie wird der Preis angezeigt?") as HTMLSelectElement;
+    expect(priceMode.value).toBe("Exclusive");
+    expect((screen.getByRole("option", { name: "Steuer wird aufgeschlagen" }) as HTMLOptionElement).value).toBe("Exclusive");
   });
 
   it("submits the structured canonical rule document through the authenticated API", async () => {
@@ -134,6 +156,7 @@ describe("governance workbench submission boundary", () => {
         rule_set_id: "new-sales-tax",
         rule_version: 1,
         engine_version: "0.1.0",
+        atomic_decimals: 2,
         currency: "USD",
         jurisdiction: "US-CA",
         facts_digest: Array.from({ length: 32 }, (_, index) => index),
@@ -157,13 +180,26 @@ describe("governance workbench submission boundary", () => {
     fireEvent.change(screen.getAllByLabelText("Amount before tax")[0], { target: { value: "1100" } });
     fireEvent.change(screen.getAllByLabelText("Amount subject to tax")[0], { target: { value: "1000" } });
     fireEvent.change(screen.getAllByLabelText("Currency")[0], { target: { value: "USD" } });
+    fireEvent.change(screen.getAllByRole("textbox", { name: /Asset precision/ })[0], { target: { value: "2" } });
     fireEvent.click(screen.getByRole("button", { name: "Run controlled simulation" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(fetchMock.mock.calls[2][0]).toBe(`/api/v1/tax/rules/${draftResponse.rule_set_id}/simulate`);
     expect(JSON.parse(fetchMock.mock.calls[2][1].body as string)).toEqual({
-      facts: { gross_atomic: "1100", net_atomic: "1000", currency: "USD", jurisdiction: "US-CA" },
+      facts: { gross_atomic: "1100", net_atomic: "1000", atomic_decimals: 2, currency: "USD", jurisdiction: "US-CA" },
     });
     await waitFor(() => expect(screen.getByText(/controlled scenario result/i)).toBeTruthy());
+  });
+
+  it("redacts provider and transport exceptions from governance recovery copy", async () => {
+    const providerDetail = "provider-internal governance diagnostic";
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error(providerDetail)));
+    render(<GovernancePanel apiBase="/api" serviceOnline accessToken="author-token" />);
+
+    fireEvent.change(screen.getByLabelText("Saved rule reference"), { target: { value: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d15" } });
+    fireEvent.click(screen.getByRole("button", { name: "Load rule details" }));
+
+    await screen.findByText("Governance lookup failed");
+    expect(screen.queryByText(providerDetail)).toBeNull();
   });
 });

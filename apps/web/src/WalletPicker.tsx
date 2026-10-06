@@ -8,15 +8,19 @@ import {
   WalletAccountSelectionRequired,
   type WalletDescriptor,
 } from "./wallet";
+import { DEFAULT_LOCALE } from "./formatters";
+import { walletMessagesFor } from "./walletMessages";
 
 type WalletPickerProps = {
   disabled?: boolean;
   connectEnabled?: boolean;
   connectedAddress?: string | null;
   onConnected?: (publicKey: PublicKey) => void;
+  locale?: string;
 };
 
-export default function WalletPicker({ disabled = false, connectEnabled = true, connectedAddress = null, onConnected }: WalletPickerProps) {
+export default function WalletPicker({ disabled = false, connectEnabled = true, connectedAddress = null, onConnected, locale = DEFAULT_LOCALE }: WalletPickerProps) {
+  const messages = walletMessagesFor(locale);
   const [wallets, setWallets] = useState<WalletDescriptor[]>(() => discoverWallets());
   const [selectedWalletId, setSelectedWalletId] = useState<string>(() => {
     const initial = discoverWallets();
@@ -42,7 +46,7 @@ export default function WalletPicker({ disabled = false, connectEnabled = true, 
   }, []);
 
   if (wallets.length === 0) {
-    return <p className="wallet-picker-status" role="status">No compatible Solana wallet is currently available.</p>;
+    return <p className="wallet-picker-status" role="status">{messages.noWallet}</p>;
   }
 
   async function connect() {
@@ -61,9 +65,9 @@ export default function WalletPicker({ disabled = false, connectEnabled = true, 
         setPreferredWalletId(cause.walletId);
         setAccountOptions(cause.accounts);
         setSelectedAccount("");
-        setError("This wallet has multiple Solana accounts. Select the account that should authorize the server-compiled transaction.");
+        setError(messages.multipleAccounts);
       } else {
-        setError(cause instanceof Error ? cause.message : "Wallet connection was rejected.");
+        setError(messages.connectionRejected);
       }
     } finally {
       setBusy(false);
@@ -73,11 +77,11 @@ export default function WalletPicker({ disabled = false, connectEnabled = true, 
   return (
     <div className="wallet-picker">
       {wallets.length === 1
-        ? <p className="wallet-picker-status" role="status">Wallet provider: <strong>{wallets[0].name}</strong></p>
+        ? <p className="wallet-picker-status" role="status">{messages.providerPrefix} <strong>{wallets[0].name}</strong></p>
         : <label>
-          <span>Wallet provider</span>
+          <span>{messages.providerLabel}</span>
           <select
-            aria-label="Wallet provider"
+            aria-label={messages.providerLabel}
             value={selectedWalletId}
             disabled={disabled || busy}
             onChange={(event) => {
@@ -89,30 +93,30 @@ export default function WalletPicker({ disabled = false, connectEnabled = true, 
               setError(null);
             }}
           >
-            <option value="">Select a wallet provider</option>
+            <option value="">{messages.providerPlaceholder}</option>
             {wallets.map((wallet) => <option value={wallet.id} key={wallet.id}>{wallet.name}</option>)}
           </select>
         </label>}
       {accountOptions.length > 0 && <label>
-        <span>Solana account</span>
+        <span>{messages.accountLabel}</span>
         <select
-          aria-label="Wallet account"
+          aria-label={messages.accountAriaLabel}
           value={selectedAccount}
           disabled={disabled || busy}
           onChange={(event) => setSelectedAccount(event.target.value)}
         >
-          <option value="">Select an account</option>
+          <option value="">{messages.accountPlaceholder}</option>
           {accountOptions.map((account) => <option value={account} key={account}>{account}</option>)}
         </select>
       </label>}
       {error && <p className="wallet-picker-error" role="alert">{error}</p>}
-      {connectedAddress && <p className="wallet-picker-account" role="status">Selected account: <code>{connectedAddress}</code></p>}
+      {connectedAddress && <p className="wallet-picker-account" role="status">{messages.selectedAccount} <code>{connectedAddress}</code></p>}
       <button
         type="button"
         onClick={connect}
         disabled={disabled || busy || !connectEnabled || (wallets.length > 1 && !selectedWalletId) || (accountOptions.length > 0 && !selectedAccount)}
       >
-        {busy ? "Connecting…" : accountOptions.length > 0 ? "Connect selected account" : connectEnabled ? connectedAddress ? "Reconnect wallet" : "Connect wallet" : "Connect after artifact review"}
+        {busy ? messages.connecting : accountOptions.length > 0 ? messages.connectSelected : connectEnabled ? connectedAddress ? messages.reconnect : messages.connect : messages.connectAfterArtifact}
       </button>
     </div>
   );

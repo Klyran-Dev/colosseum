@@ -6,6 +6,7 @@ export type ProductWorkspace =
   | "document-checkout"
   | "governance"
   | "access-control"
+  | "evidence-access"
   | "replay-ops"
   | "vault-release"
   | "vault-reconciliation"
@@ -23,6 +24,7 @@ const WORKSPACE_PATHS: Readonly<Record<ProductWorkspace, string>> = {
   "document-checkout": "/operations/document-payment",
   governance: "/rules/tax-rules",
   "access-control": "/rules/access-approvals",
+  "evidence-access": "/records/evidence-audit",
   "vault-release": "/money/treasury",
   "vault-reconciliation": "/money/balance-checks",
   "revenue-streaming": "/money/partner-payouts",

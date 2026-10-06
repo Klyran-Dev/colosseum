@@ -50,4 +50,16 @@ describe("workspace error containment", () => {
     expect(screen.getByText("Checkout workspace loaded")).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
   });
+
+  it("localizes the recovery state without exposing exception details", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    render(
+      <WorkspaceErrorBoundary workspace="governance" locale="de-DE">
+        <BrokenWorkspace />
+      </WorkspaceErrorBoundary>,
+    );
+
+    expect(screen.getByRole("heading", { name: "Dieser Arbeitsbereich konnte nicht geladen werden" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Anwendung neu laden" })).toBeTruthy();
+  });
 });

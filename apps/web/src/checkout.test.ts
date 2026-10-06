@@ -207,6 +207,39 @@ describe("checkout settlement boundary", () => {
     expect(artifact.intent_id).toBe(routeId);
     expect(artifact.route_id).toBe(routeId);
 
+    const applicabilityContextId = new Array(16).fill(7);
+    const applicabilityAttestationDigest = new Array(32).fill(8);
+    const legacyInstructionData = Buffer.from(vectorInstruction.instruction_data_base64, "base64");
+    const applicabilityInstructionData = Buffer.concat([
+      Buffer.from("t29GiZEhFiU=", "base64"),
+      legacyInstructionData.subarray(8),
+      Buffer.from(applicabilityContextId),
+      Buffer.from(applicabilityAttestationDigest),
+    ]).toString("base64");
+    const applicabilityArtifact = parseCompiledSettlementArtifact({
+      ...vectorInstruction,
+      instruction_data_base64: applicabilityInstructionData,
+      accounts: [
+        ...vectorInstruction.accounts.slice(0, 10),
+        { pubkey: vectorInstruction.accounts[10].pubkey, is_signer: false, is_writable: true },
+        ...vectorInstruction.accounts.slice(10),
+      ],
+      asset_config: vectorInstruction.accounts[10].pubkey,
+      applicability_context_id: applicabilityContextId,
+      applicability_attestation_digest: applicabilityAttestationDigest,
+      applicability_binding: vectorInstruction.accounts[10].pubkey,
+      intent_id: routeId,
+      request_digest: new Array(32).fill(1),
+      instruction_digest: new Array(32).fill(2),
+      route_id: routeId,
+    });
+    expect((applicabilityArtifact as { applicability_context_id?: number[] }).applicability_context_id)
+      .toEqual(applicabilityContextId);
+    validateCompiledSettlementInstruction(
+      applicabilityArtifact,
+      new PublicKey(vectorInstruction.accounts[0].pubkey),
+    );
+
     const splitInstruction = {
       ...vectorInstruction,
       instruction_data_base64: Buffer.concat([

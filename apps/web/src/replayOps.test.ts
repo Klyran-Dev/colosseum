@@ -3,13 +3,33 @@ import {
   buildReplayGapActionUrl,
   buildReplayGapListUrl,
   buildTargetedRecoveryUrl,
+  buildRouteVerificationRunsUrl,
   parseTargetedRecoveryResult,
   parseReplayGapList,
+  parseRouteVerificationRunList,
   validateRecoveryTarget,
   validateOperatorNote,
 } from "./replayOps";
 
 const id = "01992f1b-4a70-7e30-8ea2-b6e37a9d9d13";
+
+function verificationRun(overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    run_kind: "backfill",
+    status: "completed",
+    batch_size: 8,
+    examined_count: 2,
+    activated_count: 1,
+    already_active_count: 1,
+    failed_count: 0,
+    failure_code: null,
+    operator_approval_id: "01992f1b-4a70-7e31-8ea2-b6e37a9d9d13",
+    started_at: "2026-10-05T10:00:00.000Z",
+    completed_at: "2026-10-05T10:00:01.000Z",
+    ...overrides,
+  };
+}
 
 function gap(overrides: Record<string, unknown> = {}) {
   return {
@@ -76,5 +96,27 @@ describe("replay-gap operator contract", () => {
     expect(() => parseTargetedRecoveryResult({ status: "recovered", audit_id: id, signature: "sig", pages_scanned: 65, slot: "1", raw_transaction_count: 1, raw_evidence_count: 1, receipt_count: 1 })).toThrow(/malformed/i);
     expect(() => validateRecoveryTarget(" ", "Address")).toThrow(/bounded/i);
     expect(buildTargetedRecoveryUrl("/api/")).toBe("/api/v1/indexer/targeted-recovery");
+  });
+});
+
+describe("route-verification operator evidence contract", () => {
+  it("parses bounded terminal evidence and preserves approval identity", () => {
+    const [parsed] = parseRouteVerificationRunList([verificationRun()]);
+    expect(parsed.id).toBe(id);
+    expect(parsed.operator_approval_id).toBe("01992f1b-4a70-7e31-8ea2-b6e37a9d9d13");
+    expect(parsed.activated_count + parsed.already_active_count + parsed.failed_count).toBe(parsed.examined_count);
+  });
+
+  it("rejects malformed lifecycle evidence, unsafe counts, and approval drift", () => {
+    expect(() => parseRouteVerificationRunList([verificationRun({ failed_count: 1 })])).toThrow(/malformed/i);
+    expect(() => parseRouteVerificationRunList([verificationRun({ status: "completed_with_failures", examined_count: 2, activated_count: 1, already_active_count: 0, failed_count: 1, failure_code: "route_attempts_failed" })])).not.toThrow();
+    expect(() => parseRouteVerificationRunList([verificationRun({ status: "backfill", run_kind: "scheduled", operator_approval_id: null })])).toThrow(/malformed/i);
+    expect(() => parseRouteVerificationRunList([verificationRun({ batch_size: Number.MAX_SAFE_INTEGER + 1 })])).toThrow(/malformed/i);
+    expect(() => parseRouteVerificationRunList([verificationRun({ status: "running", completed_at: "2026-10-05T10:00:01.000Z" })])).toThrow(/malformed/i);
+  });
+
+  it("bounds the explicit read request and never accepts a route or merchant selector", () => {
+    expect(buildRouteVerificationRunsUrl("/api/", 20)).toBe("/api/v1/indexer/route-verification-runs?limit=20");
+    expect(() => buildRouteVerificationRunsUrl("/api", 51)).toThrow(/out of bounds/i);
   });
 });

@@ -1,4 +1,4 @@
-import { parseFxConversionEvidence, type FxConversionEvidence } from "./taxResponses";
+import { parseFxConversionEvidence, parseTreatmentOutcome, type FxConversionEvidence, type TreatmentOutcome } from "./taxResponses";
 
 const MAX_LINES = 256;
 const MAX_ATOMIC = 18_446_744_073_709_551_615n;
@@ -14,6 +14,7 @@ export type TaxDocumentLineDraft = {
 
 export type TaxDocumentFactsRequest = {
   id: string;
+  atomic_decimals: number;
   currency: string;
   jurisdiction: string;
   jurisdiction_resolution: null;
@@ -36,6 +37,7 @@ export type TaxDocumentCalculation = {
     rule_set_id: string;
     rule_version: number;
     engine_version: string;
+    atomic_decimals: number;
     currency: string;
     jurisdiction: string;
     facts_digest: number[];
@@ -43,6 +45,7 @@ export type TaxDocumentCalculation = {
     gross_atomic: string;
     total_tax_atomic: string;
     total_net_atomic: string;
+    treatment_outcome?: TreatmentOutcome;
     fx_conversion?: FxConversionEvidence;
     lines: Array<{
       id: string;
@@ -113,7 +116,8 @@ export function validateTaxDocumentLines(lines: TaxDocumentLineDraft[]): string[
   return [...new Set(errors)];
 }
 
-export function buildTaxDocumentFacts(documentId: string, currency: string, jurisdiction: string, lines: TaxDocumentLineDraft[]): TaxDocumentFactsRequest {
+export function buildTaxDocumentFacts(documentId: string, atomicDecimals: number, currency: string, jurisdiction: string, lines: TaxDocumentLineDraft[], invalidScaleMessage = "Asset precision must be a whole number from 0 to 9."): TaxDocumentFactsRequest {
+  if (!Number.isInteger(atomicDecimals) || atomicDecimals < 0 || atomicDecimals > 9) throw new Error(invalidScaleMessage);
   const id = boundedText(documentId, "Document ID");
   const normalizedCurrency = boundedText(currency, "Currency", 12).toUpperCase();
   const normalizedJurisdiction = boundedText(jurisdiction, "Jurisdiction", 64);
@@ -121,6 +125,7 @@ export function buildTaxDocumentFacts(documentId: string, currency: string, juri
   if (errors.length > 0) throw new Error(`Document facts are invalid: ${errors.join(" ")}`);
   return {
     id,
+    atomic_decimals: atomicDecimals,
     currency: normalizedCurrency,
     jurisdiction: normalizedJurisdiction,
     jurisdiction_resolution: null,
@@ -144,7 +149,7 @@ function parseTaxDocumentCalculation(value: unknown, allowedStatuses: TaxDocumen
   const response = value as Record<string, unknown>;
   if (typeof response.calculation_id !== "string" || !UUID_V7.test(response.calculation_id) || typeof response.status !== "string" || !allowedStatuses.includes(response.status as TaxDocumentCalculationStatus) || typeof response.result !== "object" || response.result === null || Array.isArray(response.result)) throw invalid();
   const raw = response.result as Record<string, unknown>;
-  if (typeof raw.document_id !== "string" || raw.document_id.trim() === "" || typeof raw.rule_set_id !== "string" || raw.rule_set_id.trim() === "" || typeof raw.rule_version !== "number" || !Number.isSafeInteger(raw.rule_version) || raw.rule_version < 1 || typeof raw.engine_version !== "string" || raw.engine_version.trim() === "" || typeof raw.currency !== "string" || raw.currency.trim() === "" || typeof raw.jurisdiction !== "string" || raw.jurisdiction.trim() === "" || !Array.isArray(raw.lines) || raw.lines.length > MAX_LINES) throw invalid();
+  if (typeof raw.document_id !== "string" || raw.document_id.trim() === "" || typeof raw.rule_set_id !== "string" || raw.rule_set_id.trim() === "" || typeof raw.rule_version !== "number" || !Number.isSafeInteger(raw.rule_version) || raw.rule_version < 1 || typeof raw.engine_version !== "string" || raw.engine_version.trim() === "" || typeof raw.atomic_decimals !== "number" || !Number.isInteger(raw.atomic_decimals) || raw.atomic_decimals < 0 || raw.atomic_decimals > 9 || typeof raw.currency !== "string" || raw.currency.trim() === "" || typeof raw.jurisdiction !== "string" || raw.jurisdiction.trim() === "" || !Array.isArray(raw.lines) || raw.lines.length > MAX_LINES) throw invalid();
   const lines = raw.lines.map((value) => {
     if (typeof value !== "object" || value === null || Array.isArray(value)) throw invalid();
     const line = value as Record<string, unknown>;
@@ -165,6 +170,7 @@ function parseTaxDocumentCalculation(value: unknown, allowedStatuses: TaxDocumen
       rule_set_id: raw.rule_set_id,
       rule_version: raw.rule_version,
       engine_version: raw.engine_version,
+      atomic_decimals: raw.atomic_decimals,
       currency: raw.currency,
       jurisdiction: raw.jurisdiction,
       facts_digest: digest(raw.facts_digest),
@@ -172,6 +178,7 @@ function parseTaxDocumentCalculation(value: unknown, allowedStatuses: TaxDocumen
       gross_atomic: atomic(raw.gross_atomic, false),
       total_tax_atomic: atomic(raw.total_tax_atomic),
       total_net_atomic: atomic(raw.total_net_atomic),
+      treatment_outcome: parseTreatmentOutcome(raw.treatment_outcome, atomic(raw.total_tax_atomic)),
       fx_conversion: raw.fx_conversion === undefined || raw.fx_conversion === null
         ? undefined
         : parseFxConversionEvidence(raw.fx_conversion, raw.currency),

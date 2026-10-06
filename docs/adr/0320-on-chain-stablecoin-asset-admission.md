@@ -94,10 +94,10 @@ the v1 movement instructions.
    non-stable configurations.
 2. Add the PDA initializer/disable instruction and bounded account validation;
    update all movement contexts and the typed IDL/compiler contracts.
-3. Add the PostgreSQL asset projection and route-verifier evidence binding with
-   expand/contract migration behavior. Existing active routes become blocked
-   until their asset evidence is backfilled and verified; no silent default is
-   allowed.
+3. Add the typed PostgreSQL asset projection and route-verifier evidence
+   binding with expand/contract migration behavior. Existing active routes
+   become blocked until their typed asset evidence is backfilled and verified;
+   no silent default is allowed.
 4. Add legacy-SPL and extension-free Token-2022 positive vectors, non-stable
    and disabled negative vectors, signed-message substitution tests, and the
    real Linux validator matrix.
@@ -146,12 +146,13 @@ as the fixed account ten for Split Plan settlement; signed-message checking
 uses the same account contract. Focused Rust, API, coordinator, and browser
 tests pass.
 
-This slice does not yet claim route activation or production stablecoin
-support. PostgreSQL asset projection, finalized route-verifier evidence,
-migration/backfill, successful Linux/amd64 execution of the real validator
-harness, non-stable/substitution/tenant-isolation negatives, audit, and
-governance evidence remain required. Until those are complete, missing asset
-evidence must keep signing unavailable.
+This slice does not yet claim production stablecoin support. Finalized
+route-verifier evidence, typed PostgreSQL projection, migration constraints,
+and Docker integration checks are present locally. Representative production
+backfill/re-verification, successful Linux/amd64 execution of the real
+validator harness, non-stable/substitution/tenant-isolation negatives, audit,
+and governance evidence remain required. Until those are complete, missing
+asset evidence must keep signing unavailable.
 
 ## References
 

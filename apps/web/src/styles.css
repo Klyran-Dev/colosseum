@@ -1,53 +1,172 @@
-/* Material 3 Expressive theme family: Solana Aurora / seed #8DF0CE / role matrix v1 */
+/* Material 3 Expressive theme family: Material Baseline / seed #6750A4 / TonalSpot / role matrix v3 */
 :root {
   color-scheme: dark;
-  --md-sys-color-primary: #8DF0CE;
-  --md-sys-color-on-primary: #00382D;
-  --md-sys-color-primary-container: #005143;
-  --md-sys-color-on-primary-container: #ACF2DD;
-  --md-sys-color-secondary: #B3CCC3;
-  --md-sys-color-on-secondary: #1F3530;
-  --md-sys-color-secondary-container: #354B44;
-  --md-sys-color-on-secondary-container: #CEE9E0;
-  --md-sys-color-tertiary: #A9C8FF;
-  --md-sys-color-on-tertiary: #0A305F;
-  --md-sys-color-tertiary-container: #284777;
-  --md-sys-color-on-tertiary-container: #D5E3FF;
+  --md-sys-color-primary: #CFBDFE;
+  --md-sys-color-on-primary: #36275D;
+  --md-sys-color-primary-container: #4D3D75;
+  --md-sys-color-on-primary-container: #E9DDFF;
+  --md-sys-color-secondary: #CBC2DB;
+  --md-sys-color-on-secondary: #332D41;
+  --md-sys-color-secondary-container: #4A4458;
+  --md-sys-color-on-secondary-container: #E8DEF8;
+  --md-sys-color-tertiary: #EFB8C8;
+  --md-sys-color-on-tertiary: #4A2532;
+  --md-sys-color-tertiary-container: #633B48;
+  --md-sys-color-on-tertiary-container: #FFD9E3;
   --md-sys-color-error: #FFB4AB;
   --md-sys-color-on-error: #690005;
   --md-sys-color-error-container: #93000A;
   --md-sys-color-on-error-container: #FFDAD6;
-  --md-sys-color-warning: #F5C467;
-  --md-sys-color-on-warning: #3F2E00;
-  --md-sys-color-warning-container: #5D4300;
-  --md-sys-color-on-warning-container: #FFDEA0;
-  --md-sys-color-background: #071321;
-  --md-sys-color-on-background: #E1E8F5;
-  --md-sys-color-surface: #071321;
-  --md-sys-color-on-surface: #E1E8F5;
-  --md-sys-color-surface-variant: #424852;
-  --md-sys-color-on-surface-variant: #C4CAD5;
-  --md-sys-color-surface-container: #0D1B2F;
-  --md-sys-color-surface-container-lowest: #020B16;
-  --md-sys-color-surface-container-low: #0A1728;
-  --md-sys-color-surface-container-high: #142943;
-  --md-sys-color-surface-container-highest: #1D3654;
-  --md-sys-color-surface-dim: #071321;
-  --md-sys-color-surface-bright: #1D3654;
-  --md-sys-color-outline: #8D94A1;
-  --md-sys-color-outline-variant: #424852;
-  --md-sys-color-inverse-surface: #E1E8F5;
-  --md-sys-color-inverse-on-surface: #2D3037;
-  --md-sys-color-inverse-primary: #006B5A;
+  --md-sys-color-background: #141218;
+  --md-sys-color-on-background: #E6E0E9;
+  --md-sys-color-surface: #141218;
+  --md-sys-color-on-surface: #E6E0E9;
+  --md-sys-color-surface-variant: #49454E;
+  --md-sys-color-on-surface-variant: #CAC4CF;
+  --md-sys-color-surface-dim: #141218;
+  --md-sys-color-surface-bright: #3B383E;
+  --md-sys-color-surface-container-lowest: #0F0D13;
+  --md-sys-color-surface-container-low: #1D1B20;
+  --md-sys-color-surface-container: #211F24;
+  --md-sys-color-surface-container-high: #2B292F;
+  --md-sys-color-surface-container-highest: #36343A;
+  --md-sys-color-outline: #948F99;
+  --md-sys-color-outline-variant: #49454E;
+  --md-sys-color-inverse-surface: #E6E0E9;
+  --md-sys-color-inverse-on-surface: #322F35;
+  --md-sys-color-inverse-primary: #65558F;
+  --md-sys-color-surface-tint: #CFBDFE;
+  --md-sys-color-scrim: #000000;
   --md-sys-color-shadow: #000000;
-  --md-shape-small: .5rem;
-  --md-shape-medium: .75rem;
-  --md-shape-large: 1rem;
-  --md-shape-extra-large: 1.75rem;
+  --md-sys-color-primary-fixed: #E9DDFF;
+  --md-sys-color-primary-fixed-dim: #CFBDFE;
+  --md-sys-color-on-primary-fixed: #201047;
+  --md-sys-color-on-primary-fixed-variant: #4D3D75;
+  --md-sys-color-secondary-fixed: #E8DEF8;
+  --md-sys-color-secondary-fixed-dim: #CBC2DB;
+  --md-sys-color-on-secondary-fixed: #1E192B;
+  --md-sys-color-on-secondary-fixed-variant: #4A4458;
+  --md-sys-color-tertiary-fixed: #FFD9E3;
+  --md-sys-color-tertiary-fixed-dim: #EFB8C8;
+  --md-sys-color-on-tertiary-fixed: #31101D;
+  --md-sys-color-on-tertiary-fixed-variant: #633B48;
+  --md-sys-color-warning: #FFB870;
+  --md-sys-color-on-warning: #4A2800;
+  --md-sys-color-warning-container: #693C00;
+  --md-sys-color-on-warning-container: #FFDCBE;
   --md-elevation-1: 0 1px 2px rgba(0, 0, 0, .22), 0 1px 3px rgba(0, 0, 0, .14);
   --md-elevation-2: 0 2px 6px rgba(0, 0, 0, .24), 0 1px 2px rgba(0, 0, 0, .16);
-  --md-motion-short: 180ms cubic-bezier(.2, 0, 0, 1);
-  --md-motion-medium: 300ms cubic-bezier(.2, 0, 0, 1);
+  /* Shape: full M3 Expressive corner scale. */
+  --md-sys-shape-corner-none: 0;
+  --md-sys-shape-corner-extra-small: .25rem;
+  --md-sys-shape-corner-small: .5rem;
+  --md-sys-shape-corner-medium: .75rem;
+  --md-sys-shape-corner-large: 1rem;
+  --md-sys-shape-corner-large-increased: 1.25rem;
+  --md-sys-shape-corner-extra-large: 1.75rem;
+  --md-sys-shape-corner-extra-large-increased: 2rem;
+  --md-sys-shape-corner-extra-extra-large: 3rem;
+  --md-sys-shape-corner-full: 999rem;
+  --md-shape-small: var(--md-sys-shape-corner-small);
+  --md-shape-medium: var(--md-sys-shape-corner-medium);
+  --md-shape-large: var(--md-sys-shape-corner-large);
+  --md-shape-extra-large: var(--md-sys-shape-corner-extra-large);
+  /* Motion: Material spring physics (damping/stiffness) sampled to linear(). */
+  --md-sys-motion-spring-fast-spatial-duration: 225ms;
+  --md-sys-motion-spring-fast-spatial-easing: linear(0, 0.05, 0.162, 0.298, 0.433, 0.556, 0.662, 0.749, 0.817, 0.871, 0.91, 0.94, 0.961, 0.976, 0.986, 0.992, 0.996, 0.999, 1, 1.001, 1.001, 1.002, 1.001, 1.001, 1);
+  --md-sys-motion-spring-default-spatial-duration: 318ms;
+  --md-sys-motion-spring-default-spatial-easing: linear(0, 0.05, 0.162, 0.297, 0.433, 0.556, 0.662, 0.748, 0.817, 0.87, 0.91, 0.94, 0.961, 0.975, 0.985, 0.992, 0.996, 0.999, 1, 1.001, 1.001, 1.002, 1.001, 1.001, 1);
+  --md-sys-motion-spring-slow-spatial-duration: 485ms;
+  --md-sys-motion-spring-slow-spatial-easing: linear(0, 0.05, 0.162, 0.297, 0.432, 0.555, 0.661, 0.747, 0.816, 0.87, 0.91, 0.939, 0.96, 0.975, 0.985, 0.992, 0.996, 0.999, 1, 1.001, 1.001, 1.002, 1.001, 1.001, 1);
+  --md-sys-motion-spring-fast-effects-duration: 151ms;
+  --md-sys-motion-spring-fast-effects-easing: linear(0, 0.058, 0.182, 0.324, 0.459, 0.577, 0.675, 0.754, 0.816, 0.863, 0.899, 0.926, 0.946, 0.961, 0.972, 0.98, 0.985, 0.99, 0.993, 0.995, 0.996, 0.997, 0.998, 0.999, 1);
+  --md-sys-motion-spring-default-effects-duration: 232ms;
+  --md-sys-motion-spring-default-effects-easing: linear(0, 0.058, 0.182, 0.323, 0.458, 0.576, 0.674, 0.753, 0.814, 0.862, 0.898, 0.925, 0.946, 0.96, 0.971, 0.979, 0.985, 0.989, 0.992, 0.995, 0.996, 0.997, 0.998, 0.999, 1);
+  --md-sys-motion-spring-slow-effects-duration: 328ms;
+  --md-sys-motion-spring-slow-effects-easing: linear(0, 0.058, 0.182, 0.323, 0.458, 0.575, 0.674, 0.752, 0.814, 0.862, 0.898, 0.925, 0.945, 0.96, 0.971, 0.979, 0.985, 0.989, 0.992, 0.995, 0.996, 0.997, 0.998, 0.999, 1);
+  --md-motion-short: var(--md-sys-motion-spring-fast-effects-duration) var(--md-sys-motion-spring-fast-effects-easing);
+  --md-motion-medium: var(--md-sys-motion-spring-default-effects-duration) var(--md-sys-motion-spring-default-effects-easing);
+  /* Typography: M3 scale; emphasized variants raise weight to bold. */
+  --md-sys-typescale-display-large-size: 3.5625rem;
+  --md-sys-typescale-display-large-line-height: 4rem;
+  --md-sys-typescale-display-large-weight: 400;
+  --md-sys-typescale-display-large-emphasized-weight: 700;
+  --md-sys-typescale-display-large-tracking: -.25px;
+  --md-sys-typescale-display-medium-size: 2.8125rem;
+  --md-sys-typescale-display-medium-line-height: 3.25rem;
+  --md-sys-typescale-display-medium-weight: 400;
+  --md-sys-typescale-display-medium-emphasized-weight: 700;
+  --md-sys-typescale-display-medium-tracking: 0;
+  --md-sys-typescale-display-small-size: 2.25rem;
+  --md-sys-typescale-display-small-line-height: 2.75rem;
+  --md-sys-typescale-display-small-weight: 400;
+  --md-sys-typescale-display-small-emphasized-weight: 700;
+  --md-sys-typescale-display-small-tracking: 0;
+  --md-sys-typescale-headline-large-size: 2rem;
+  --md-sys-typescale-headline-large-line-height: 2.5rem;
+  --md-sys-typescale-headline-large-weight: 400;
+  --md-sys-typescale-headline-large-emphasized-weight: 700;
+  --md-sys-typescale-headline-large-tracking: 0;
+  --md-sys-typescale-headline-medium-size: 1.75rem;
+  --md-sys-typescale-headline-medium-line-height: 2.25rem;
+  --md-sys-typescale-headline-medium-weight: 400;
+  --md-sys-typescale-headline-medium-emphasized-weight: 700;
+  --md-sys-typescale-headline-medium-tracking: 0;
+  --md-sys-typescale-headline-small-size: 1.5rem;
+  --md-sys-typescale-headline-small-line-height: 2rem;
+  --md-sys-typescale-headline-small-weight: 400;
+  --md-sys-typescale-headline-small-emphasized-weight: 700;
+  --md-sys-typescale-headline-small-tracking: 0;
+  --md-sys-typescale-title-large-size: 1.375rem;
+  --md-sys-typescale-title-large-line-height: 1.75rem;
+  --md-sys-typescale-title-large-weight: 400;
+  --md-sys-typescale-title-large-emphasized-weight: 700;
+  --md-sys-typescale-title-large-tracking: 0;
+  --md-sys-typescale-title-medium-size: 1rem;
+  --md-sys-typescale-title-medium-line-height: 1.5rem;
+  --md-sys-typescale-title-medium-weight: 500;
+  --md-sys-typescale-title-medium-emphasized-weight: 700;
+  --md-sys-typescale-title-medium-tracking: .15px;
+  --md-sys-typescale-title-small-size: 0.875rem;
+  --md-sys-typescale-title-small-line-height: 1.25rem;
+  --md-sys-typescale-title-small-weight: 500;
+  --md-sys-typescale-title-small-emphasized-weight: 700;
+  --md-sys-typescale-title-small-tracking: .1px;
+  --md-sys-typescale-body-large-size: 1rem;
+  --md-sys-typescale-body-large-line-height: 1.5rem;
+  --md-sys-typescale-body-large-weight: 400;
+  --md-sys-typescale-body-large-emphasized-weight: 700;
+  --md-sys-typescale-body-large-tracking: .5px;
+  --md-sys-typescale-body-medium-size: 0.875rem;
+  --md-sys-typescale-body-medium-line-height: 1.25rem;
+  --md-sys-typescale-body-medium-weight: 400;
+  --md-sys-typescale-body-medium-emphasized-weight: 700;
+  --md-sys-typescale-body-medium-tracking: .25px;
+  --md-sys-typescale-body-small-size: 0.75rem;
+  --md-sys-typescale-body-small-line-height: 1rem;
+  --md-sys-typescale-body-small-weight: 400;
+  --md-sys-typescale-body-small-emphasized-weight: 700;
+  --md-sys-typescale-body-small-tracking: .4px;
+  --md-sys-typescale-label-large-size: 0.875rem;
+  --md-sys-typescale-label-large-line-height: 1.25rem;
+  --md-sys-typescale-label-large-weight: 500;
+  --md-sys-typescale-label-large-emphasized-weight: 700;
+  --md-sys-typescale-label-large-tracking: .1px;
+  --md-sys-typescale-label-medium-size: 0.75rem;
+  --md-sys-typescale-label-medium-line-height: 1rem;
+  --md-sys-typescale-label-medium-weight: 500;
+  --md-sys-typescale-label-medium-emphasized-weight: 700;
+  --md-sys-typescale-label-medium-tracking: .5px;
+  --md-sys-typescale-label-small-size: 0.6875rem;
+  --md-sys-typescale-label-small-line-height: 1rem;
+  --md-sys-typescale-label-small-weight: 500;
+  --md-sys-typescale-label-small-emphasized-weight: 700;
+  --md-sys-typescale-label-small-tracking: .5px;
+  /* State layers (opacity of the on-role overlay). */
+  --md-sys-state-hover-opacity: .08;
+  --md-sys-state-focus-opacity: .1;
+  --md-sys-state-pressed-opacity: .1;
+  --md-sys-state-dragged-opacity: .16;
   --app-bg: var(--md-sys-color-background);
   --app-surface: var(--md-sys-color-surface);
   --app-surface-lowest: var(--md-sys-color-surface-container-lowest);
@@ -72,6 +191,20 @@
   --app-error-container: var(--md-sys-color-error-container);
   --app-warning: var(--md-sys-color-warning);
   --app-warning-container: var(--md-sys-color-warning-container);
+  --app-success-container: var(--md-sys-color-primary-container);
+  --app-attention-container: var(--md-sys-color-warning-container);
+  --app-blocked-container: var(--md-sys-color-error-container);
+  --app-supporting-container: var(--md-sys-color-tertiary-container);
+  /* State aliases are intentionally semantic. Components never select a
+     literal hue; theme changes resolve these aliases through the M3 role map. */
+  --app-success: var(--md-sys-color-primary);
+  --app-on-success-container: var(--md-sys-color-on-primary-container);
+  --app-attention: var(--md-sys-color-warning);
+  --app-on-attention-container: var(--md-sys-color-on-warning-container);
+  --app-blocked: var(--md-sys-color-error);
+  --app-on-blocked-container: var(--md-sys-color-on-error-container);
+  --app-supporting: var(--md-sys-color-tertiary);
+  --app-on-supporting-container: var(--md-sys-color-on-tertiary-container);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--app-on-surface);
   background: var(--app-bg);
@@ -81,88 +214,118 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --md-sys-color-primary: #006B5A;
+  --md-sys-color-primary: #65558F;
   --md-sys-color-on-primary: #FFFFFF;
-  --md-sys-color-primary-container: #8DF0CE;
-  --md-sys-color-on-primary-container: #002019;
-  --md-sys-color-secondary: #4E635C;
+  --md-sys-color-primary-container: #E9DDFF;
+  --md-sys-color-on-primary-container: #4D3D75;
+  --md-sys-color-secondary: #625B71;
   --md-sys-color-on-secondary: #FFFFFF;
-  --md-sys-color-secondary-container: #D0E8DF;
-  --md-sys-color-on-secondary-container: #0A1F19;
-  --md-sys-color-tertiary: #4C5F8A;
+  --md-sys-color-secondary-container: #E8DEF8;
+  --md-sys-color-on-secondary-container: #4A4458;
+  --md-sys-color-tertiary: #7E5260;
   --md-sys-color-on-tertiary: #FFFFFF;
-  --md-sys-color-tertiary-container: #D5E3FF;
-  --md-sys-color-on-tertiary-container: #091B36;
+  --md-sys-color-tertiary-container: #FFD9E3;
+  --md-sys-color-on-tertiary-container: #633B48;
   --md-sys-color-error: #BA1A1A;
   --md-sys-color-on-error: #FFFFFF;
   --md-sys-color-error-container: #FFDAD6;
-  --md-sys-color-on-error-container: #410002;
-  --md-sys-color-warning: #775A00;
-  --md-sys-color-on-warning: #FFFFFF;
-  --md-sys-color-warning-container: #FFDEA0;
-  --md-sys-color-on-warning-container: #261A00;
-  --md-sys-color-background: #F8F9FF;
-  --md-sys-color-on-background: #181B22;
-  --md-sys-color-surface: #F8F9FF;
-  --md-sys-color-on-surface: #181B22;
-  --md-sys-color-surface-variant: #DFE4EC;
-  --md-sys-color-on-surface-variant: #43474F;
-  --md-sys-color-surface-container: #ECEFF7;
+  --md-sys-color-on-error-container: #93000A;
+  --md-sys-color-background: #FDF7FF;
+  --md-sys-color-on-background: #1D1B20;
+  --md-sys-color-surface: #FDF7FF;
+  --md-sys-color-on-surface: #1D1B20;
+  --md-sys-color-surface-variant: #E7E0EB;
+  --md-sys-color-on-surface-variant: #49454E;
+  --md-sys-color-surface-dim: #DED8E0;
+  --md-sys-color-surface-bright: #FDF7FF;
   --md-sys-color-surface-container-lowest: #FFFFFF;
-  --md-sys-color-surface-container-low: #F2F5FC;
-  --md-sys-color-surface-container-high: #E6EAF3;
-  --md-sys-color-surface-container-highest: #E0E5EF;
-  --md-sys-color-surface-dim: #D5D8E0;
-  --md-sys-color-surface-bright: #F8F9FF;
-  --md-sys-color-outline: #737780;
-  --md-sys-color-outline-variant: #C3C7D0;
-  --md-sys-color-inverse-surface: #2D3037;
-  --md-sys-color-inverse-on-surface: #F0F2F9;
-  --md-sys-color-inverse-primary: #7CD9BE;
+  --md-sys-color-surface-container-low: #F8F2FA;
+  --md-sys-color-surface-container: #F2ECF4;
+  --md-sys-color-surface-container-high: #ECE6EE;
+  --md-sys-color-surface-container-highest: #E6E0E9;
+  --md-sys-color-outline: #7A757F;
+  --md-sys-color-outline-variant: #CAC4CF;
+  --md-sys-color-inverse-surface: #322F35;
+  --md-sys-color-inverse-on-surface: #F5EFF7;
+  --md-sys-color-inverse-primary: #CFBDFE;
+  --md-sys-color-surface-tint: #65558F;
+  --md-sys-color-scrim: #000000;
+  --md-sys-color-shadow: #000000;
+  --md-sys-color-primary-fixed: #E9DDFF;
+  --md-sys-color-primary-fixed-dim: #CFBDFE;
+  --md-sys-color-on-primary-fixed: #201047;
+  --md-sys-color-on-primary-fixed-variant: #4D3D75;
+  --md-sys-color-secondary-fixed: #E8DEF8;
+  --md-sys-color-secondary-fixed-dim: #CBC2DB;
+  --md-sys-color-on-secondary-fixed: #1E192B;
+  --md-sys-color-on-secondary-fixed-variant: #4A4458;
+  --md-sys-color-tertiary-fixed: #FFD9E3;
+  --md-sys-color-tertiary-fixed-dim: #EFB8C8;
+  --md-sys-color-on-tertiary-fixed: #31101D;
+  --md-sys-color-on-tertiary-fixed-variant: #633B48;
+  --md-sys-color-warning: #8B5000;
+  --md-sys-color-on-warning: #FFFFFF;
+  --md-sys-color-warning-container: #FFDCBE;
+  --md-sys-color-on-warning-container: #2C1600;
   --md-sys-color-shadow: #000000;
 }
 
 @media (prefers-color-scheme: light) {
   :root[data-theme="system"] { color-scheme: light; }
   :root[data-theme="system"], .product-shell[data-theme="system"] {
-    --md-sys-color-primary: #006B5A;
+    --md-sys-color-primary: #65558F;
     --md-sys-color-on-primary: #FFFFFF;
-    --md-sys-color-primary-container: #8DF0CE;
-    --md-sys-color-on-primary-container: #002019;
-    --md-sys-color-secondary: #4E635C;
+    --md-sys-color-primary-container: #E9DDFF;
+    --md-sys-color-on-primary-container: #4D3D75;
+    --md-sys-color-secondary: #625B71;
     --md-sys-color-on-secondary: #FFFFFF;
-    --md-sys-color-secondary-container: #D0E8DF;
-    --md-sys-color-on-secondary-container: #0A1F19;
-    --md-sys-color-tertiary: #4C5F8A;
+    --md-sys-color-secondary-container: #E8DEF8;
+    --md-sys-color-on-secondary-container: #4A4458;
+    --md-sys-color-tertiary: #7E5260;
     --md-sys-color-on-tertiary: #FFFFFF;
-    --md-sys-color-tertiary-container: #D5E3FF;
-    --md-sys-color-on-tertiary-container: #091B36;
+    --md-sys-color-tertiary-container: #FFD9E3;
+    --md-sys-color-on-tertiary-container: #633B48;
     --md-sys-color-error: #BA1A1A;
     --md-sys-color-on-error: #FFFFFF;
     --md-sys-color-error-container: #FFDAD6;
-    --md-sys-color-on-error-container: #410002;
-    --md-sys-color-warning: #775A00;
-    --md-sys-color-on-warning: #FFFFFF;
-    --md-sys-color-warning-container: #FFDEA0;
-    --md-sys-color-on-warning-container: #261A00;
-    --md-sys-color-background: #F8F9FF;
-    --md-sys-color-on-background: #181B22;
-    --md-sys-color-surface: #F8F9FF;
-    --md-sys-color-on-surface: #181B22;
-    --md-sys-color-surface-variant: #DFE4EC;
-    --md-sys-color-on-surface-variant: #43474F;
-    --md-sys-color-surface-container: #ECEFF7;
+    --md-sys-color-on-error-container: #93000A;
+    --md-sys-color-background: #FDF7FF;
+    --md-sys-color-on-background: #1D1B20;
+    --md-sys-color-surface: #FDF7FF;
+    --md-sys-color-on-surface: #1D1B20;
+    --md-sys-color-surface-variant: #E7E0EB;
+    --md-sys-color-on-surface-variant: #49454E;
+    --md-sys-color-surface-dim: #DED8E0;
+    --md-sys-color-surface-bright: #FDF7FF;
     --md-sys-color-surface-container-lowest: #FFFFFF;
-    --md-sys-color-surface-container-low: #F2F5FC;
-    --md-sys-color-surface-container-high: #E6EAF3;
-    --md-sys-color-surface-container-highest: #E0E5EF;
-    --md-sys-color-surface-dim: #D5D8E0;
-    --md-sys-color-surface-bright: #F8F9FF;
-    --md-sys-color-outline: #737780;
-    --md-sys-color-outline-variant: #C3C7D0;
-    --md-sys-color-inverse-surface: #2D3037;
-    --md-sys-color-inverse-on-surface: #F0F2F9;
-    --md-sys-color-inverse-primary: #7CD9BE;
+    --md-sys-color-surface-container-low: #F8F2FA;
+    --md-sys-color-surface-container: #F2ECF4;
+    --md-sys-color-surface-container-high: #ECE6EE;
+    --md-sys-color-surface-container-highest: #E6E0E9;
+    --md-sys-color-outline: #7A757F;
+    --md-sys-color-outline-variant: #CAC4CF;
+    --md-sys-color-inverse-surface: #322F35;
+    --md-sys-color-inverse-on-surface: #F5EFF7;
+    --md-sys-color-inverse-primary: #CFBDFE;
+    --md-sys-color-surface-tint: #65558F;
+    --md-sys-color-scrim: #000000;
+    --md-sys-color-shadow: #000000;
+    --md-sys-color-primary-fixed: #E9DDFF;
+    --md-sys-color-primary-fixed-dim: #CFBDFE;
+    --md-sys-color-on-primary-fixed: #201047;
+    --md-sys-color-on-primary-fixed-variant: #4D3D75;
+    --md-sys-color-secondary-fixed: #E8DEF8;
+    --md-sys-color-secondary-fixed-dim: #CBC2DB;
+    --md-sys-color-on-secondary-fixed: #1E192B;
+    --md-sys-color-on-secondary-fixed-variant: #4A4458;
+    --md-sys-color-tertiary-fixed: #FFD9E3;
+    --md-sys-color-tertiary-fixed-dim: #EFB8C8;
+    --md-sys-color-on-tertiary-fixed: #31101D;
+    --md-sys-color-on-tertiary-fixed-variant: #633B48;
+    --md-sys-color-warning: #8B5000;
+    --md-sys-color-on-warning: #FFFFFF;
+    --md-sys-color-warning-container: #FFDCBE;
+    --md-sys-color-on-warning-container: #2C1600;
     --md-sys-color-shadow: #000000;
   }
 }
@@ -310,6 +473,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .workbench-source-list, .bracket-list { display: grid; gap: .55rem; }
 .workbench-inline-row { display: flex; align-items: end; gap: .55rem; }
 .inline-control { flex: 1; }
+.base-share-divider { align-self: center; margin-top: 1.15rem; color: var(--app-on-variant); font-weight: 800; }
 .secondary-button { grid-column: auto; width: fit-content; padding: .58rem .72rem; color: var(--app-secondary); background: color-mix(in srgb, var(--app-secondary) 18%, transparent); font-size: .72rem; }
 .workbench-source-list + .secondary-button, .bracket-list + .secondary-button { margin-top: .6rem; }
 .bracket-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto auto; gap: .55rem; align-items: end; padding: .7rem; border: 1px solid color-mix(in srgb, var(--app-outline-variant) 1%, transparent); border-radius: .65rem; background: color-mix(in srgb, var(--app-surface) 28%, transparent); }
@@ -325,6 +489,16 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .evidence-summary { margin-top: .1rem; }
 .replay-authority-note { display: grid; gap: .3rem; margin-top: 1rem; padding: .8rem; border: 1px solid color-mix(in srgb, var(--app-warning) 20%, transparent); border-radius: .7rem; color: var(--app-warning); background: color-mix(in srgb, var(--app-warning) 8%, transparent); font-size: .74rem; line-height: 1.45; }
 .replay-authority-note span { color: var(--app-on-variant); }
+.replay-route-verification { display: grid; gap: .7rem; margin-top: 1rem; padding: .85rem; border: 1px solid var(--app-outline-variant); border-radius: var(--md-shape-medium); background: var(--app-surface-container-low); }
+.replay-route-verification > summary { display: flex; align-items: center; justify-content: space-between; gap: .8rem; cursor: pointer; color: var(--app-on-surface); font-size: .82rem; font-weight: 800; list-style-position: inside; }
+.replay-route-verification > summary::after { content: "Read-only"; padding: .24rem .45rem; border: 1px solid var(--app-outline-variant); border-radius: 999px; color: var(--app-on-variant); background: var(--app-surface-container); font-size: .62rem; font-weight: 750; letter-spacing: .02em; }
+.replay-route-verification > summary:focus-visible { outline: 3px solid color-mix(in srgb, var(--app-primary) 55%, transparent); outline-offset: 3px; }
+.replay-route-verification[open] > summary { color: var(--app-primary); }
+.replay-route-verification > button { justify-self: start; width: fit-content; }
+.route-verification-run-list { display: grid; gap: .65rem; }
+.route-verification-run-card { display: grid; gap: .7rem; padding: .8rem; border: 1px solid var(--app-outline-variant); border-radius: var(--md-shape-small); background: var(--app-surface-container); }
+.route-verification-run-card .replay-gap-heading strong { color: var(--app-on-surface); }
+.route-verification-run-card .replay-summary div { font-size: .72rem; }
 .replay-targeted-recovery { display: grid; gap: .65rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid color-mix(in srgb, var(--app-outline-variant) 12%, transparent); }
 .replay-targeted-recovery h3 { margin: .15rem 0 0; font-size: 1rem; }
 .replay-gap-list { display: grid; gap: .8rem; }
@@ -417,6 +591,115 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 [dir="rtl"] .skip-link { left: auto; right: 1rem; }
 @media (max-width: 760px) { .topbar-actions { align-items: flex-end; flex-direction: column; gap: .55rem; } }
 
+/* ADR-0338: preserve task, focus, and state meaning in OS high-contrast
+   modes. System colors are intentionally used here; the Material palette is
+   not reinterpreted with a second application-specific color scheme. */
+@media (forced-colors: active) {
+  .product-shell {
+    forced-color-adjust: auto;
+    --app-bg: Canvas;
+    --app-surface: Canvas;
+    --app-surface-lowest: Canvas;
+    --app-surface-container: Canvas;
+    --app-surface-high: Canvas;
+    --app-surface-highest: Canvas;
+    --app-on-surface: CanvasText;
+    --app-on-variant: CanvasText;
+    --app-outline: GrayText;
+    --app-outline-variant: GrayText;
+    --app-primary: Highlight;
+    --app-on-primary: HighlightText;
+    --app-primary-container: Highlight;
+    --app-on-primary-container: HighlightText;
+    --app-secondary: ButtonText;
+    --app-secondary-container: ButtonFace;
+    --app-tertiary: Highlight;
+    --app-tertiary-container: Highlight;
+    --app-error: Mark;
+    --app-error-container: Canvas;
+    --app-warning: Mark;
+    --app-warning-container: Canvas;
+    color: CanvasText;
+    background: Canvas;
+  }
+
+  .product-shell .app-sidebar,
+  .product-shell .product-topbar,
+  .product-shell .panel,
+  .product-shell .metric-card,
+  .product-shell .page-context-card,
+  .product-shell .display-settings-menu,
+  .product-shell .account-menu-panel,
+  .product-shell .protection-details-panel,
+  .product-shell .technical-policy-list > div,
+  .product-shell .permission-group,
+  .product-shell .authorization-posture > div,
+  .product-shell .policy-dimension-grid article,
+  .product-shell .session-control-unconfigured-details {
+    color: CanvasText;
+    background: Canvas;
+    border-color: GrayText;
+    box-shadow: none;
+  }
+
+  .product-shell .nav-item,
+  .product-shell .display-settings summary,
+  .product-shell .session-control-local > summary,
+  .product-shell .account-menu-trigger,
+  .product-shell .mobile-nav-toggle,
+  .product-shell input,
+  .product-shell textarea,
+  .product-shell select,
+  .product-shell button:not(:disabled) {
+    color: ButtonText;
+    background: ButtonFace;
+    border-color: ButtonText;
+  }
+
+  .product-shell .nav-item-active,
+  .product-shell .nav-item-active .nav-item-icon,
+  .product-shell .nav-group-summary:focus-visible,
+  .product-shell button:focus-visible,
+  .product-shell a:focus-visible,
+  .product-shell input:focus-visible,
+  .product-shell textarea:focus-visible,
+  .product-shell select:focus-visible {
+    color: HighlightText;
+    background: Highlight;
+    border-color: Highlight;
+    outline-color: Highlight;
+  }
+
+  .product-shell .brand-mark,
+  .product-shell .identity-avatar,
+  .product-shell .dimension-icon,
+  .product-shell .status-pill,
+  .product-shell .status-pill-warning,
+  .product-shell .decision-chip,
+  .product-shell .risk-chip,
+  .product-shell .route-evidence,
+  .product-shell .inline-success,
+  .product-shell .inline-warning,
+  .product-shell .inline-error,
+  .product-shell .empty-icon {
+    color: CanvasText;
+    background: Canvas;
+    border: 1px solid GrayText;
+  }
+
+  .product-shell .inline-error,
+  .product-shell .risk-financial,
+  .product-shell .decision-deny {
+    color: Mark;
+    border-color: Mark;
+  }
+
+  .product-shell :disabled {
+    color: GrayText;
+    border-color: GrayText;
+  }
+}
+
 /* Material 3 Expressive application layer. Every value below references a
    semantic role from the token block above; component styles do not invent
    another palette. */
@@ -424,19 +707,15 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .product-shell .app-sidebar { border-color: var(--app-outline-variant); background: var(--app-surface-lowest); }
 .product-shell .sidebar-header, .product-shell .sidebar-footer { border-color: var(--app-outline-variant); }
 .product-shell .brand-mark { color: var(--md-sys-color-on-primary); background: var(--app-primary); }
-.product-shell .sidebar-brand small, .product-shell .sidebar-context small, .product-shell .sidebar-legal { color: var(--app-on-variant); }
-.product-shell .sidebar-context { border-color: var(--app-outline-variant); background: var(--app-surface-container); }
-.product-shell .sidebar-context-label, .product-shell .nav-group-label, .product-shell .context-card-label { color: var(--app-tertiary); }
-.product-shell .sidebar-context strong, .product-shell .nav-item-copy strong { color: var(--app-on-surface); }
+.product-shell .sidebar-brand small, .product-shell .sidebar-legal { color: var(--app-on-variant); }
+.product-shell .nav-group-label, .product-shell .context-card-label { color: var(--app-tertiary); }
+.product-shell .nav-item-copy strong { color: var(--app-on-surface); }
 .product-shell .nav-item { grid-template-columns: 1.65rem minmax(0, 1fr) auto; color: var(--app-on-variant); }
 .product-shell .nav-item:hover:not(:disabled) { border-color: var(--app-outline-variant); background: var(--app-surface-container-low); }
 .product-shell .nav-item-active { border-color: var(--app-primary); color: var(--app-on-surface); background: var(--app-primary-container); box-shadow: inset 3px 0 var(--app-primary); }
 .product-shell .nav-item-icon { border-color: var(--app-outline-variant); color: var(--app-on-variant); background: var(--app-surface-container-low); }
 .product-shell .nav-item-active .nav-item-icon { border-color: var(--app-primary); color: var(--app-on-primary); background: var(--app-primary); }
 .product-shell .nav-item-copy small { color: var(--app-on-variant); }
-.product-shell .nav-risk { display: none; }
-.product-shell .nav-policy-mark { display: none; }
-.product-shell .nav-item-active .nav-policy-mark { display: inline-flex; color: var(--app-on-primary-container); font-size: .62rem; font-weight: 750; }
 .product-shell .identity-state { background: var(--app-surface-dim); }
 .product-shell .identity-avatar { color: var(--app-on-primary); background: var(--app-primary); }
 .product-shell .identity-server-evaluation-required .identity-avatar { color: var(--app-on-primary); background: var(--app-secondary); }
@@ -473,12 +752,12 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .product-shell .panel, .product-shell .metric-card { border-color: var(--app-outline-variant); color: var(--app-on-surface); background: var(--app-surface-container); box-shadow: var(--md-elevation-1); }
 .product-shell .panel h2, .product-shell .panel h3, .product-shell .panel strong, .product-shell .metric-card strong { color: var(--app-on-surface); }
 .product-shell .panel-copy, .product-shell .panel p, .product-shell .metric-card span, .product-shell .metric-card small { color: var(--app-on-variant); }
-.product-shell .status-pill { color: var(--app-on-primary-container); background: var(--app-primary-container); }
-.product-shell .status-pill-warning { color: var(--md-sys-color-on-warning-container); background: var(--app-warning-container); }
+.product-shell .status-pill { color: var(--app-on-success-container); background: var(--app-primary-container); }
+.product-shell .status-pill-warning { color: var(--app-on-attention-container); background: var(--app-warning-container); }
 .product-shell label span, .product-shell .field-label { color: var(--app-on-variant); }
 .product-shell input, .product-shell textarea, .product-shell select { border-color: var(--app-outline); color: var(--app-on-surface); background: var(--app-surface-container-low); }
 .product-shell input:focus, .product-shell textarea:focus, .product-shell select:focus { border-color: var(--app-primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-primary) 24%, transparent); }
-.product-shell button:not(.nav-item):not(.mobile-nav-toggle):not(.secondary-button):not(.session-action):not(.account-menu-signout):not(.vault-target-card) { color: var(--app-on-primary); background: var(--app-primary); }
+.product-shell button:not(.nav-item):not(.mobile-nav-toggle):not(.secondary-button):not(.session-action):not(.account-menu-signout):not(.vault-target-card):not(:disabled) { color: var(--app-on-primary); background: var(--app-primary); }
 .product-shell button:not(:disabled):hover { transform: translateY(-1px); }
 .product-shell button:focus-visible, .product-shell a:focus-visible, .product-shell input:focus-visible, .product-shell textarea:focus-visible, .product-shell select:focus-visible { outline-color: var(--app-primary); }
 .product-shell .secondary-button, .product-shell .account-menu-signout { color: var(--app-on-primary-container); background: var(--app-primary-container); }
@@ -526,14 +805,11 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 
 @media (max-width: 1020px) {
   .product-shell .nav-item { grid-template-columns: 1fr; }
-  .product-shell .nav-item-active .nav-policy-mark { display: none; }
 }
 
 @media (max-width: 760px) {
   .product-shell .product-content { width: min(100% - 2rem, 42rem); }
   .product-shell .nav-item { grid-template-columns: 1.65rem minmax(0, 1fr) auto; }
-  .product-shell .nav-policy-mark { display: inline-flex; }
-  .product-shell .nav-item-active .nav-policy-mark { display: inline-flex; }
 }
 
 /* ADR-0317: use the complete M3 tonal hierarchy to reduce visual noise. The
@@ -542,7 +818,6 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .product-shell .app-sidebar { background: var(--app-surface-lowest); }
 .product-shell .sidebar-header,
 .product-shell .sidebar-footer { border-color: var(--app-outline-variant); }
-.product-shell .sidebar-context { border-color: var(--app-outline-variant); background: var(--app-surface-container); }
 .product-shell .primary-nav { gap: .82rem; padding: .65rem .75rem; }
 .product-shell .nav-group { gap: .12rem; }
 .product-shell .nav-group-label { margin-inline: .55rem; color: var(--app-on-variant); }
@@ -574,10 +849,8 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .sidebar-brand strong { font-size: .82rem; letter-spacing: -.015em; }
 .sidebar-brand small { font-size: .66rem; color: var(--app-on-variant); }
 .mobile-nav-toggle { display: none; grid-column: auto; align-self: center; width: auto; margin: .6rem .7rem; padding: .55rem .65rem; border: 1px solid color-mix(in srgb, var(--app-primary) 28%, transparent); color: var(--app-primary); background: color-mix(in srgb, var(--app-primary) 08%, transparent); font-size: .68rem; white-space: nowrap; }
-.sidebar-context { display: grid; gap: .25rem; margin: 1rem .8rem .7rem; padding: .8rem .85rem; border: 1px solid color-mix(in srgb, var(--app-primary) 18%, transparent); border-radius: .8rem; background: color-mix(in srgb, var(--app-primary) 4.5%, transparent); }
-.sidebar-context-label, .nav-group-label, .context-card-label { color: var(--app-tertiary); font-size: .63rem; font-weight: 850; letter-spacing: .1em; text-transform: uppercase; }
-.sidebar-context strong { color: var(--app-on-surface); font-size: .78rem; }
-.sidebar-context small { color: var(--app-on-variant); font-size: .64rem; }
+.navigation-compact-toggle { display: grid; place-items: center; align-self: center; width: 2rem; height: 2rem; margin: .6rem .7rem .6rem 0; padding: 0; border: 1px solid var(--app-outline); border-radius: 50%; color: var(--app-on-variant); background: var(--app-surface-container-low); font-size: .95rem; line-height: 1; }
+.nav-group-label, .context-card-label { color: var(--app-tertiary); font-size: .63rem; font-weight: 850; letter-spacing: .1em; text-transform: uppercase; }
 .primary-nav { display: grid; gap: 1.05rem; padding: .45rem .65rem; }
 .nav-group { display: grid; gap: .25rem; }
 .nav-group-label { margin: 0 .45rem .25rem; color: var(--app-on-variant); }
@@ -585,16 +858,11 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .nav-item:hover:not(:disabled) { border-color: color-mix(in srgb, var(--app-outline-variant) 14%, transparent); background: color-mix(in srgb, var(--app-outline-variant) 06%, transparent); transform: none; }
 .nav-item-active { border-color: var(--app-primary); color: var(--app-on-primary-container); background: var(--app-primary-container); box-shadow: inset 3px 0 var(--app-primary); }
 .nav-item-icon { display: grid; place-items: center; width: 1.5rem; height: 1.5rem; border: 1px solid color-mix(in srgb, var(--app-outline-variant) 16%, transparent); border-radius: .45rem; color: var(--app-on-variant); background: color-mix(in srgb, var(--app-outline-variant) 05%, transparent); font-size: .67rem; font-weight: 900; }
+.nav-item-glyph { width: .92rem; height: .92rem; pointer-events: none; }
 .nav-item-active .nav-item-icon { border-color: color-mix(in srgb, var(--app-primary) 35%, transparent); color: var(--app-on-primary); background: var(--app-primary); }
 .nav-item-copy { display: grid; min-width: 0; gap: .1rem; }
 .nav-item-copy strong { overflow: hidden; font-size: .73rem; text-overflow: ellipsis; white-space: nowrap; }
 .nav-item-copy small { overflow: hidden; color: var(--app-on-variant); font-size: .61rem; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
-.nav-risk { align-self: start; margin-top: .1rem; color: var(--app-warning); font-size: 1rem; line-height: .7; }
-.nav-risk-financial { color: var(--app-error); }
-.nav-risk-governance { color: var(--app-tertiary); }
-.nav-policy-mark { color: var(--app-tertiary); font-size: .68rem; }
-.nav-policy-deny { color: var(--app-error); }
-.nav-policy-indeterminate { color: var(--app-warning); }
 .sidebar-footer { display: grid; gap: .8rem; margin-top: auto; padding: .8rem; border-top: 1px solid color-mix(in srgb, var(--app-outline-variant) 1%, transparent); }
 .identity-state { display: flex; align-items: center; gap: .55rem; min-width: 0; padding: .55rem; border-radius: .65rem; background: color-mix(in srgb, var(--app-outline-variant) 05%, transparent); }
 .identity-avatar { display: grid; place-items: center; flex: 0 0 auto; width: 1.65rem; height: 1.65rem; border-radius: 50%; color: var(--app-on-primary); background: var(--app-warning); font-size: .7rem; font-weight: 900; }
@@ -603,6 +871,17 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .identity-state strong { color: var(--app-on-surface); font-size: .67rem; }
 .identity-state small { overflow: hidden; color: var(--app-on-variant); font-size: .59rem; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-legal { color: var(--app-on-variant); font-size: .6rem; line-height: 1.4; }
+.navigation-compact { grid-template-columns: 4.2rem minmax(0, 1fr); }
+.navigation-compact .sidebar-brand { justify-content: center; padding-inline: .75rem; }
+.navigation-compact .sidebar-brand > span:last-child,
+.navigation-compact .nav-group-count,
+.navigation-compact .sidebar-footer { display: none; }
+.navigation-compact .nav-group-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.navigation-compact .primary-nav { padding-inline: .55rem; }
+.navigation-compact .nav-group-summary { justify-content: center; min-height: 1rem; padding: 0; }
+.navigation-compact .nav-item { grid-template-columns: 1fr; place-items: center; min-height: 2.65rem; padding: .55rem .35rem; }
+.navigation-compact .nav-item-copy { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.navigation-compact .navigation-compact-toggle { margin-inline: auto; }
 .app-main-column { min-width: 0; }
 .product-topbar { position: sticky; top: 0; z-index: 4; min-height: 4.2rem; padding: .85rem clamp(1.25rem, 3vw, 3rem); border-bottom-color: color-mix(in srgb, var(--app-outline-variant) 12%, transparent); background: color-mix(in srgb, var(--app-surface) 88%, transparent); }
 .breadcrumb { display: flex; align-items: center; gap: .55rem; color: var(--app-on-variant); font-size: .72rem; }
@@ -740,8 +1019,8 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .revenue-disclaimer { margin: 0; padding: .85rem 1rem; border: 1px solid color-mix(in srgb, var(--app-warning) 20%, transparent); border-radius: .75rem; color: var(--app-warning); background: color-mix(in srgb, var(--app-warning) 8%, transparent); font-size: .76rem; line-height: 1.5; }
 @media (max-width: 900px) { .revenue-stream-columns { grid-template-columns: 1fr; } }
 @media (max-width: 620px) { .revenue-stream-overview { grid-template-columns: 1fr; } .revenue-plan-topline { align-items: flex-start; flex-direction: column; } }
-@media (max-width: 1020px) { .product-shell { grid-template-columns: 4.2rem minmax(0, 1fr); } .sidebar-brand { justify-content: center; padding-inline: .75rem; } .sidebar-brand > span:last-child, .sidebar-context, .nav-group-label, .nav-item-copy, .nav-risk, .nav-policy-mark, .sidebar-footer { display: none; } .primary-nav { padding-inline: .55rem; } .nav-item { grid-template-columns: 1fr; place-items: center; padding: .55rem .35rem; } .nav-item-icon { width: 1.8rem; height: 1.8rem; } }
-@media (max-width: 760px) { .product-shell { display: block; } .app-sidebar { position: static; height: auto; overflow: visible; border-inline-end: 0; border-bottom: 1px solid color-mix(in srgb, var(--app-outline-variant) 12%, transparent); } .sidebar-header { align-items: center; } .sidebar-brand { justify-content: flex-start; min-width: 0; padding: .75rem .7rem; } .sidebar-brand > span:last-child, .sidebar-context, .sidebar-footer { display: grid; } .mobile-nav-toggle { display: block; } .primary-nav { display: none; gap: 1rem; max-height: min(65vh, 32rem); overflow-y: auto; padding: .85rem .7rem 1rem; } .primary-nav-open { display: grid; } .nav-group { display: grid; gap: .25rem; } .nav-group-label, .nav-item-copy, .nav-risk, .nav-policy-mark { display: block; } .nav-group-label { margin-inline: .45rem; } .nav-item { display: grid; grid-template-columns: 1.65rem minmax(0, 1fr) auto auto; width: 100%; min-width: 0; } .nav-item-copy strong, .nav-item-copy small { white-space: normal; } .product-topbar { position: static; } .page-heading, .access-control-layout { display: block; } .page-context-card { margin-top: 1rem; } .authorization-posture { grid-template-columns: 1fr; } .permission-row { grid-template-columns: 1fr; } .permission-requirements { justify-content: start; max-width: none; text-align: start; } .session-control-local { max-width: 100%; } .session-control-local textarea { width: min(12rem, 42vw); } .account-menu-panel { inset-inline-end: -.35rem; } }
+@media (max-width: 1020px) { .product-shell { grid-template-columns: 4.2rem minmax(0, 1fr); } .sidebar-brand { justify-content: center; padding-inline: .75rem; } .sidebar-brand > span:last-child, .nav-group-label, .nav-item-copy, .sidebar-footer { display: none; } .primary-nav { padding-inline: .55rem; } .nav-item { grid-template-columns: 1fr; place-items: center; padding: .55rem .35rem; } .nav-item-icon { width: 1.8rem; height: 1.8rem; } }
+@media (max-width: 760px) { .product-shell { display: block; } .app-sidebar { position: static; height: auto; overflow: visible; border-inline-end: 0; border-bottom: 1px solid color-mix(in srgb, var(--app-outline-variant) 12%, transparent); } .sidebar-header { align-items: center; } .sidebar-brand { justify-content: flex-start; min-width: 0; padding: .75rem .7rem; } .sidebar-brand > span:last-child, .sidebar-footer { display: grid; } .mobile-nav-toggle { display: block; } .primary-nav { display: none; gap: 1rem; max-height: min(65vh, 32rem); overflow-y: auto; padding: .85rem .7rem 1rem; } .primary-nav-open { display: grid; } .nav-group { display: grid; gap: .25rem; } .nav-group-label { display: block; margin-inline: .45rem; } .nav-item { display: grid; grid-template-columns: 1.65rem minmax(0, 1fr) auto auto; width: 100%; min-width: 0; } .nav-item-copy strong, .nav-item-copy small { white-space: normal; } .product-topbar { position: static; } .page-heading, .access-control-layout { display: block; } .page-context-card { margin-top: 1rem; } .authorization-posture { grid-template-columns: 1fr; } .permission-row { grid-template-columns: 1fr; } .permission-requirements { justify-content: start; max-width: none; text-align: start; } .session-control-local { max-width: 100%; } .session-control-local textarea { width: min(12rem, 42vw); } .account-menu-panel { inset-inline-end: -.35rem; } }
 
 /* Material 3 Expressive final precedence layer. This is intentionally the
    last visual layer so legacy component declarations cannot reintroduce an
@@ -749,20 +1028,15 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .product-shell { background: var(--app-bg); color: var(--app-on-surface); }
 .product-shell .app-sidebar { border-color: var(--app-outline-variant); background: var(--app-surface-container-low); }
 .product-shell .sidebar-header, .product-shell .sidebar-footer { border-color: var(--app-outline-variant); }
-.product-shell .sidebar-brand small, .product-shell .sidebar-context small, .product-shell .sidebar-legal { color: var(--app-on-variant); }
-.product-shell .sidebar-context { border-color: var(--app-outline-variant); background: var(--app-surface-container); }
-.product-shell .sidebar-context-label, .product-shell .nav-group-label, .product-shell .context-card-label { color: var(--app-tertiary); }
-.product-shell .sidebar-context strong, .product-shell .nav-item-copy strong { color: var(--app-on-surface); }
+.product-shell .sidebar-brand small, .product-shell .sidebar-legal { color: var(--app-on-variant); }
+.product-shell .nav-group-label, .product-shell .context-card-label { color: var(--app-tertiary); }
+.product-shell .nav-item-copy strong { color: var(--app-on-surface); }
 .product-shell .nav-item { color: var(--app-on-variant); background: transparent; }
 .product-shell .nav-item:hover:not(:disabled) { border-color: var(--app-outline-variant); background: var(--app-surface-container); }
-.product-shell .nav-item-active { border-color: var(--app-primary); color: var(--app-on-primary-container); background: var(--app-primary-container); box-shadow: inset 3px 0 var(--app-primary); }
+.product-shell .nav-item-active { border-color: var(--app-outline-variant); color: var(--app-on-surface); background: var(--app-surface-container-high); box-shadow: inset 4px 0 var(--app-primary); }
 .product-shell .nav-item-icon { border-color: var(--app-outline-variant); color: var(--app-on-variant); background: var(--app-surface-container); }
 .product-shell .nav-item-active .nav-item-icon { border-color: var(--app-primary); color: var(--app-on-primary); background: var(--app-primary); }
 .product-shell .nav-item-copy small { color: var(--app-on-variant); }
-.product-shell .nav-risk, .product-shell .nav-policy-mark { color: var(--app-warning); }
-.product-shell .nav-risk-financial, .product-shell .nav-policy-deny { color: var(--app-error); }
-.product-shell .nav-risk-governance { color: var(--app-tertiary); }
-.product-shell .nav-item-active .nav-policy-mark { color: var(--app-on-primary-container); }
 .product-shell .identity-state { background: var(--app-surface-container); }
 .product-shell .identity-avatar { color: var(--app-on-primary); background: var(--app-primary); }
 .product-shell .identity-server-evaluation-required .identity-avatar { color: var(--app-on-primary); background: var(--app-secondary); }
@@ -773,6 +1047,64 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .product-shell .breadcrumb { color: var(--app-on-variant); }
 .product-shell .breadcrumb strong { color: var(--app-on-surface); }
 .product-shell .avatar-button { border-color: var(--app-primary); color: var(--app-on-primary); background: var(--app-primary); }
+.product-shell .session-control-unconfigured > summary { border-color: var(--app-attention); color: var(--app-on-attention-container); background: var(--app-warning-container); }
+.product-shell .session-control-unconfigured .session-state { color: var(--app-on-attention-container); }
+
+/* Forced-colors must remain the final cascade layer so the accessible system
+   palette wins over every component-specific Material role declaration. */
+@media (forced-colors: active) {
+  .product-shell,
+  .product-shell * {
+    forced-color-adjust: auto;
+  }
+
+  .product-shell button:not(:disabled),
+  .product-shell input,
+  .product-shell textarea,
+  .product-shell select {
+    color: ButtonText;
+    background: ButtonFace;
+    border-color: ButtonText;
+  }
+
+  .product-shell .nav-item-active,
+  .product-shell .nav-item-active .nav-item-icon,
+  .product-shell .nav-item-active .nav-item-copy strong {
+    color: HighlightText;
+    background: Highlight;
+    border-color: Highlight;
+  }
+
+  .product-shell .status-pill,
+  .product-shell .status-pill-warning,
+  .product-shell .route-evidence,
+  .product-shell .inline-success,
+  .product-shell .inline-warning,
+  .product-shell .inline-error,
+  .product-shell .decision-chip,
+  .product-shell .risk-chip,
+  .product-shell .empty-icon {
+    color: CanvasText;
+    background: Canvas;
+    border-color: GrayText;
+  }
+
+  .product-shell .inline-error,
+  .product-shell .risk-financial,
+  .product-shell .decision-deny {
+    color: Mark;
+    border-color: Mark;
+  }
+
+  .product-shell .route-evidence > strong,
+  .product-shell .route-evidence > small,
+  .product-shell .status-pill,
+  .product-shell .status-pill-warning {
+    color: CanvasText;
+  }
+}
+.product-shell .session-control-unconfigured .status-dot { background: var(--app-attention); }
+.product-shell .session-control-unconfigured-details { border-color: var(--app-outline); background: var(--app-surface-container-high); box-shadow: var(--md-elevation-2); }
 .product-shell .account-menu-trigger:focus-visible, .product-shell .technical-details summary:focus-visible { outline-color: var(--app-primary); }
 .product-shell .account-menu-panel { border-color: var(--app-outline); color: var(--app-on-surface); background: var(--app-surface-container-high); box-shadow: var(--md-elevation-2); }
 .product-shell .account-menu-label { color: var(--app-tertiary); }
@@ -787,6 +1119,17 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .product-shell .session-control-local[open] > summary { border-color: var(--app-primary); color: var(--app-on-primary-container); background: var(--app-primary-container); }
 .product-shell .session-control-local-fields { border-color: var(--app-outline); background: var(--app-surface-container-high); }
 .product-shell .page-description, .product-shell .technical-details p { color: var(--app-on-variant); }
+.product-shell .treatment-outcome { display: grid; gap: .75rem; margin: 1rem 0; padding: .9rem; border: 1px solid var(--app-outline-variant); border-radius: .75rem; background: var(--app-surface-container); }
+.product-shell .treatment-outcome-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: .8rem; }
+.product-shell .treatment-outcome-heading .eyebrow { margin: 0 0 .25rem; color: var(--app-tertiary); }
+.product-shell .treatment-outcome-heading strong { color: var(--app-on-surface); font-size: .82rem; }
+.product-shell .treatment-outcome .status-pill { flex: 0 0 auto; color: var(--app-on-primary-container); background: var(--app-primary-container); }
+.product-shell .treatment-channels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .55rem; margin: 0; }
+.product-shell .treatment-channels div { display: grid; gap: .25rem; min-width: 0; padding: .6rem; border-radius: .55rem; background: var(--app-surface-container-high); }
+.product-shell .treatment-channels dt { color: var(--app-on-variant); font-size: .64rem; line-height: 1.35; }
+.product-shell .treatment-channels dd { margin: 0; color: var(--app-on-surface); font-size: .73rem; font-weight: 750; overflow-wrap: anywhere; }
+.product-shell .treatment-outcome .technical-details { margin-top: 0; }
+.product-shell .treatment-outcome .evidence-note { margin: 0; }
 .product-shell .page-context-card { border-color: var(--app-outline-variant); background: var(--app-surface-container); }
 .product-shell .page-context-card strong, .product-shell .technical-policy-list strong { color: var(--app-on-surface); }
 .product-shell .page-context-card small, .product-shell .technical-policy-list small { color: var(--app-on-variant); }
@@ -803,17 +1146,402 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .product-shell .permission-group h3 { border-color: var(--app-outline-variant); color: var(--app-on-surface); }
 .product-shell .permission-row { border-color: var(--app-outline-variant); }
 .product-shell .decision-chip { border-color: var(--app-outline-variant); color: var(--app-on-variant); background: var(--app-surface-container); }
-.product-shell .decision-allow { border-color: var(--app-primary); color: var(--app-on-primary-container); background: var(--app-primary-container); }
-.product-shell .decision-deny { border-color: var(--app-error); color: var(--md-sys-color-on-error-container); background: var(--app-error-container); }
-.product-shell .decision-indeterminate { border-color: var(--app-warning); color: var(--app-on-warning-container); background: var(--app-warning-container); }
+.product-shell .decision-allow { border-color: var(--app-success); color: var(--app-on-success-container); background: var(--app-primary-container); }
+.product-shell .decision-deny { border-color: var(--app-blocked); color: var(--app-on-blocked-container); background: var(--app-error-container); }
+.product-shell .decision-indeterminate { border-color: var(--app-attention); color: var(--app-on-attention-container); background: var(--app-warning-container); }
 .product-shell .permission-requirements code { color: var(--app-primary); }
 .product-shell .permission-requirements span { color: var(--app-tertiary); }
-.product-shell .risk-chip { color: var(--app-on-primary); background: var(--app-primary); }
-.product-shell .risk-financial { color: var(--md-sys-color-on-error-container); background: var(--app-error-container); }
-.product-shell .risk-governance { color: var(--app-on-tertiary-container); background: var(--app-tertiary-container); }
-.product-shell .risk-write { color: var(--app-on-warning-container); background: var(--app-warning-container); }
-.product-shell .risk-read { color: var(--app-on-primary-container); background: var(--app-primary-container); }
+.product-shell .risk-chip { color: var(--app-on-success-container); background: var(--app-success); }
+.product-shell .risk-financial { color: var(--app-on-blocked-container); background: var(--app-error-container); }
+.product-shell .risk-governance { border-color: var(--app-supporting); color: var(--app-on-supporting-container); background: var(--app-tertiary-container); }
+.product-shell .risk-write { color: var(--app-on-attention-container); background: var(--app-warning-container); }
+.product-shell .risk-read { color: var(--app-on-success-container); background: var(--app-primary-container); }
 .product-shell .revenue-plan-card { border-color: var(--app-outline-variant); background: var(--app-surface-container); }
 .product-shell .revenue-claim-form { border-color: var(--app-outline-variant); }
 .product-shell .revenue-disclaimer { border-color: var(--app-warning); color: var(--app-on-warning-container); background: var(--app-warning-container); }
 .product-shell .footer { border-color: var(--app-outline-variant); color: var(--app-on-variant); }
+.product-shell .session-control-unconfigured .session-state { color: var(--app-on-attention-container); }
+
+/* ADR-0373: the evidence explorer is intentionally read-only and visually
+   quieter than recovery or money-movement workspaces. */
+.evidence-layout { display: grid; grid-template-columns: minmax(18rem, .82fr) minmax(0, 1.18fr); gap: 1rem; align-items: start; }
+.evidence-authority-note { display: grid; gap: .35rem; margin-top: 1rem; padding: .85rem 1rem; border: 1px solid var(--app-outline-variant); border-radius: var(--md-shape-medium); color: var(--app-on-variant); background: var(--app-surface-container); font-size: .75rem; line-height: 1.5; }
+.evidence-authority-note strong { color: var(--app-on-surface); }
+.evidence-event-list { display: grid; gap: .75rem; }
+.evidence-event-card { display: grid; gap: .75rem; padding: 1rem; border: 1px solid var(--app-outline-variant); border-radius: var(--md-shape-large); background: var(--app-surface-container); }
+.evidence-event-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.evidence-event-heading strong, .evidence-event-heading small { display: block; }
+.evidence-event-heading strong { color: var(--app-on-surface); }
+.evidence-event-heading small { margin-top: .25rem; color: var(--app-on-variant); overflow-wrap: anywhere; }
+.evidence-summary { margin: 0; }
+.evidence-summary dd { overflow-wrap: anywhere; }
+.evidence-summary code { font-size: .68rem; }
+@media (max-width: 900px) { .evidence-layout { grid-template-columns: 1fr; } }
+
+/* ADR-0353: v2 expressive shell application layer. Keep the operational
+   canvas calm by assigning each surface one M3 tonal role. State containers
+   are explicit roles; opacity blends are not used to invent new colors. */
+.product-shell { grid-template-columns: 16.5rem minmax(0, 1fr); }
+.product-shell .app-sidebar { background: var(--app-surface); }
+.product-shell .primary-nav { gap: .55rem; padding: .7rem .7rem; }
+.product-shell .nav-group-disclosure { border-bottom-color: var(--app-outline-variant); }
+.product-shell .nav-group-summary { min-height: 2.4rem; padding-inline: .65rem; }
+.product-shell .nav-group-summary:hover { background: var(--app-surface-container-low); }
+.product-shell .nav-item { min-height: 2.65rem; border-radius: 999px; }
+.product-shell .nav-item:hover:not(:disabled) { background: var(--app-surface-container-low); }
+.product-shell .nav-item-active { border-color: var(--app-primary); color: var(--app-on-primary-container); background: var(--app-primary-container); box-shadow: none; }
+.product-shell .nav-item-active .nav-item-icon { border-color: var(--app-primary); color: var(--app-on-primary); background: var(--app-primary); }
+.product-shell .identity-state { background: var(--app-surface-container-low); }
+.product-shell .product-topbar { min-height: 4rem; background: var(--app-surface); }
+.product-shell .product-content { width: min(1320px, calc(100% - 3rem)); padding-top: clamp(2rem, 4vw, 3.5rem); }
+.product-shell .page-heading { margin-bottom: 1.75rem; }
+.product-shell .page-heading h1 { font-size: clamp(2.15rem, 4vw, 3.4rem); }
+.product-shell .page-context-card { border-color: var(--app-outline-variant); background: var(--app-surface-container-low); }
+.product-shell .panel, .product-shell .metric-card { border-color: var(--app-outline-variant); background: var(--app-surface-container-low); box-shadow: var(--md-elevation-1); }
+.product-shell .panel { border-radius: var(--md-shape-extra-large); }
+.product-shell .metric-card { border-radius: var(--md-shape-large); }
+.product-shell .status-pill, .product-shell .decision-allow, .product-shell .risk-read { color: var(--app-on-success-container); background: var(--app-success-container); }
+.product-shell .status-pill-warning, .product-shell .decision-indeterminate, .product-shell .risk-write { color: var(--app-on-attention-container); background: var(--app-attention-container); }
+.product-shell .decision-deny, .product-shell .risk-financial { color: var(--app-on-blocked-container); background: var(--app-blocked-container); }
+.product-shell .risk-governance { color: var(--app-on-supporting-container); background: var(--app-supporting-container); }
+.product-shell .route-evidence, .product-shell .inline-success { border-color: var(--app-primary); color: var(--app-on-primary-container); background: var(--app-success-container); }
+.product-shell .route-evidence-warning, .product-shell .inline-warning, .product-shell .revenue-disclaimer { border-color: var(--app-warning); color: var(--app-on-attention-container); background: var(--app-attention-container); }
+.product-shell .inline-error { border-color: var(--app-error); color: var(--app-on-blocked-container); background: var(--app-blocked-container); }
+.product-shell .system-status-ready > summary { border-color: var(--app-primary); background: var(--app-success-container); color: var(--app-on-success-container); }
+.product-shell .system-status-attention > summary { border-color: var(--app-warning); background: var(--app-attention-container); color: var(--app-on-attention-container); }
+.product-shell .system-status-checking > summary { border-color: var(--app-outline); background: var(--app-surface-container); }
+.product-shell .display-settings summary, .product-shell .session-control-local > summary { border-color: var(--app-outline); background: var(--app-surface-container-low); }
+.product-shell button:not(:disabled):hover { transform: none; }
+
+@media (max-width: 1020px) {
+  .product-shell { grid-template-columns: 4.2rem minmax(0, 1fr); }
+}
+
+@media (max-width: 760px) {
+  .product-shell { display: block; }
+  .product-shell .product-content { width: min(100% - 2rem, 42rem); }
+  .navigation-compact { display: block; }
+  .navigation-compact .sidebar-brand { justify-content: flex-start; padding: .75rem .7rem; }
+  .navigation-compact .sidebar-brand > span:last-child,
+  .navigation-compact .sidebar-footer { display: grid; }
+  .navigation-compact .nav-group-label,
+  .navigation-compact .nav-group-count,
+  .navigation-compact .nav-item-copy { display: initial; position: static; width: auto; height: auto; overflow: visible; clip: auto; clip-path: none; white-space: normal; }
+  .navigation-compact .nav-group-summary { justify-content: space-between; min-height: 2.4rem; padding-inline: .65rem; }
+  .navigation-compact .nav-item { grid-template-columns: 1.65rem minmax(0, 1fr) auto; place-items: center stretch; min-height: 2.65rem; padding: .5rem .55rem; }
+}
+
+/* ADR-0363: expanded shell controls are anchored popovers. Keeping their
+   content out of the topbar flex row preserves the workspace geometry while
+   still leaving the controls available to keyboard and pointer users. */
+.product-shell .product-topbar .breadcrumb {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.product-shell .product-topbar .breadcrumb strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.product-shell .product-topbar .topbar-actions {
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.product-shell .session-control-local {
+  display: block;
+  max-width: none;
+}
+.product-shell .session-control-local-fields {
+  position: absolute;
+  inset-inline-end: 0;
+  top: calc(100% + .55rem);
+  z-index: 8;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  width: min(25rem, calc(100vw - 2rem));
+  min-width: 0;
+}
+.product-shell .session-control-local label {
+  min-width: 0;
+}
+.product-shell .session-control-local textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 4rem;
+  height: auto;
+  resize: vertical;
+}
+.product-shell .session-control-local-fields > small {
+  max-width: none;
+}
+
+@media (min-width: 761px) and (max-width: 1100px) {
+  .product-shell .product-topbar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .product-shell .product-topbar .topbar-actions {
+    flex: 1 1 100%;
+  }
+}
+
+/* ADR-0374: the compact rail is a calm presentation preference. It keeps
+   icon controls on the same surface hierarchy and is never used as an
+   authorization affordance. */
+.product-shell .navigation-compact-toggle {
+  border-color: var(--app-outline);
+  color: var(--app-on-variant);
+  background: var(--app-surface-container-low);
+}
+.product-shell .navigation-compact-toggle:hover:not(:disabled) {
+  border-color: var(--app-primary);
+  color: var(--app-on-primary-container);
+  background: var(--app-primary-container);
+}
+@media (max-width: 760px) {
+  .product-shell .navigation-compact-toggle { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .product-shell .navigation-compact-toggle { transition: none; }
+}
+
+/* ADR-0398: the final shell role boundary. Keep this immediately before the
+   forced-colors override so the normal product surface has one auditable
+   semantic palette. No component may introduce a literal hue or decorative
+   blend here; Material roles carry the hierarchy and state meaning. */
+.product-shell .skip-link { color: var(--app-on-primary); background: var(--app-primary); }
+.product-shell .app-sidebar { border-color: var(--app-outline-variant); background: var(--app-surface-container-lowest); }
+.product-shell .sidebar-header, .product-shell .sidebar-footer { border-color: var(--app-outline-variant); }
+.product-shell .identity-state { border-color: var(--app-outline-variant); background: var(--app-surface-container); }
+.product-shell .nav-item { color: var(--app-on-variant); background: transparent; }
+.product-shell .nav-item:hover:not(:disabled), .product-shell .nav-group-summary:hover { border-color: var(--app-outline-variant); background: var(--app-surface-container-low); }
+.product-shell .nav-item-active { border-color: var(--app-primary); color: var(--app-on-primary-container); background: var(--app-primary-container); box-shadow: inset 4px 0 var(--app-primary); }
+.product-shell .nav-item-icon { border-color: var(--app-outline-variant); color: var(--app-on-variant); background: var(--app-surface-container-low); }
+.product-shell .nav-item-active .nav-item-icon { border-color: var(--app-primary); color: var(--app-on-primary); background: var(--app-primary); }
+.product-shell .product-topbar { border-color: var(--app-outline-variant); background: var(--app-surface); }
+.product-shell .panel, .product-shell .metric-card { border-color: var(--app-outline-variant); background: var(--app-surface-container); }
+.product-shell .page-context-card, .product-shell .display-settings-menu, .product-shell .account-menu-panel { border-color: var(--app-outline); background: var(--app-surface-container-high); }
+.product-shell .status-pill, .product-shell .decision-allow, .product-shell .risk-read { color: var(--app-on-success-container); background: var(--app-success-container); }
+.product-shell .status-pill-warning, .product-shell .decision-indeterminate, .product-shell .risk-write { color: var(--app-on-attention-container); background: var(--app-attention-container); }
+.product-shell .decision-deny, .product-shell .risk-financial { color: var(--app-on-blocked-container); background: var(--app-blocked-container); }
+.product-shell .risk-governance { color: var(--app-on-supporting-container); background: var(--app-supporting-container); }
+.product-shell .inline-error { border-color: var(--app-error); color: var(--app-on-blocked-container); background: var(--app-blocked-container); }
+.product-shell .inline-warning { border-color: var(--app-warning); color: var(--app-on-attention-container); background: var(--app-attention-container); }
+.product-shell .inline-success { border-color: var(--app-primary); color: var(--app-on-success-container); background: var(--app-success-container); }
+
+/* ADR-0406: mobile shell action row. Keep the workspace identity and its
+   operational controls in two calm rows; popover contents remain out of the
+   layout until explicitly opened. */
+@media (max-width: 760px) {
+  .product-shell .product-topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: center;
+    gap: .65rem;
+    padding: .7rem 1rem;
+  }
+
+  .product-shell .product-topbar .topbar-actions {
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: .4rem;
+  }
+
+  .product-shell .product-topbar .breadcrumb {
+    min-height: 1.8rem;
+  }
+
+  .product-shell .product-topbar .account-menu {
+    margin-inline-start: auto;
+  }
+}
+
+/* Material 3 Expressive final precedence layer. ADR-0408 keeps the shell
+   expressive through role hierarchy and shape, not a pile of competing hues.
+   Keep this block semantic-token-only so the palette remains auditable. */
+.product-shell .product-topbar { background: var(--app-surface-container); }
+.product-shell .app-main-column { color: var(--app-on-surface); }
+.product-shell .sidebar-header, .product-shell .sidebar-footer { border-color: var(--app-outline-variant); }
+.product-shell .system-status > summary { background: var(--app-surface-container-low); }
+.product-shell .system-status-attention > summary { border-color: var(--app-warning); color: var(--app-on-attention-container); background: var(--app-warning-container); box-shadow: 0 0 0 1px var(--app-attention); }
+.product-shell .panel, .product-shell .metric-card { background: var(--app-surface-container-low); box-shadow: none; }
+.product-shell .product-content { width: min(1200px, calc(100% - 3rem)); }
+.product-shell .page-heading { align-items: start; margin-bottom: 2rem; }
+.product-shell .page-heading h1 { max-width: 36rem; font-size: clamp(2rem, 3.4vw, 3rem); line-height: 1.04; }
+.product-shell .page-description { max-width: 38rem; font-size: .95rem; }
+.product-shell .page-context-card { flex-basis: 13rem; background: var(--app-surface-container-low); box-shadow: none; }
+.product-shell .protection-details-panel { background: var(--app-surface-container); }
+.product-shell .primary-nav { gap: .35rem; padding-inline: .65rem; }
+.product-shell .nav-group-disclosure { border-bottom: 0; }
+.product-shell .nav-group-summary { color: var(--app-on-variant); }
+.product-shell .nav-group-summary:hover { background: var(--app-surface-container); }
+.product-shell .nav-item { min-height: 2.55rem; border-radius: 999px; }
+.product-shell .nav-item-copy strong { font-size: .75rem; font-weight: 700; }
+.product-shell .nav-item-active { border-color: transparent; color: var(--app-on-primary-container); background: var(--app-primary-container); box-shadow: none; }
+.product-shell .identity-state { background: var(--app-surface-container-low); }
+.product-shell .display-settings summary, .product-shell .session-control-local > summary { background: var(--app-surface-container-low); }
+.product-shell .display-settings-menu, .product-shell .account-menu-panel, .product-shell .system-status-panel { box-shadow: var(--md-elevation-2); }
+.product-shell .workspace-tabs button { border-color: var(--app-outline-variant); background: var(--app-surface-container-low); }
+.product-shell .workspace-tabs button.tab-active { border-color: var(--app-primary); color: var(--app-on-primary); background: var(--app-primary); }
+.product-shell .inline-success { color: var(--app-success); }
+
+/* Applicability evidence uses the same Material semantic state roles as the
+   rest of the shell; state classes never introduce component-specific colors. */
+.product-shell .applicability-evidence.state-verified { border-color: var(--app-success); background: var(--app-success-container); color: var(--app-on-success-container); }
+.product-shell .applicability-evidence.state-dead_lettered { border-color: var(--app-blocked); background: var(--app-blocked-container); color: var(--app-on-blocked-container); }
+.product-shell .applicability-evidence.state-retrying { border-color: var(--app-attention); background: var(--app-attention-container); color: var(--app-on-attention-container); }
+.product-shell .applicability-evidence.state-pending,
+.product-shell .applicability-evidence.state-not_applicable,
+.product-shell .applicability-evidence.state-unknown { border-color: var(--app-outline); background: var(--app-surface-container); color: var(--app-on-surface); }
+.product-shell .inline-error { border-color: var(--app-error); }
+.product-shell .decision-deny { border-color: var(--app-blocked); }
+.product-shell .risk-governance { border-color: var(--app-supporting); }
+.product-shell .panel-heading { margin-bottom: 1.1rem; }
+.product-shell .panel-copy { min-height: 0; max-width: 42rem; }
+.product-shell .status-pill { letter-spacing: .06em; }
+.product-shell .footer { background: var(--app-surface-container-lowest); }
+.product-shell .status-pill { color: var(--app-on-variant); background: var(--app-surface-container); }
+.product-shell .status-pill-success { color: var(--app-on-success-container); background: var(--app-success-container); }
+.product-shell .status-pill-danger { color: var(--app-on-blocked-container); background: var(--app-blocked-container); }
+.product-shell .status-pill-warning { color: var(--app-on-attention-container); background: var(--app-attention-container); }
+.product-shell .panel, .product-shell .metric-card { border-color: transparent; box-shadow: none; }
+.product-shell .page-context-card { border-color: transparent; }
+.product-shell .nav-item-icon { border-color: transparent; }
+.product-shell .risk-read, .product-shell .risk-write, .product-shell .risk-financial, .product-shell .risk-governance { color: var(--app-on-variant); background: var(--app-surface-container); border-color: transparent; }
+
+@media (max-width: 760px) {
+  .product-shell .product-content { width: min(100% - 1.5rem, 42rem); }
+  .product-shell .page-heading { margin-bottom: 1.25rem; }
+  .product-shell .page-heading h1 { font-size: clamp(1.9rem, 9vw, 2.7rem); }
+  .product-shell .page-context-card { margin-top: .9rem; }
+}
+
+/* ADR-0421: workspace layouts respond to the width the workspace actually
+   has, not the viewport. The persistent navigation rail consumes a variable
+   share of the viewport, so viewport media queries left two-column panes and
+   form grids cramped (truncated labels and placeholders) at tablet and
+   collapsed-rail widths. Only layout is declared here; every colour continues
+   to come from the semantic roles above. */
+.product-shell .product-content { container: workspace / inline-size; }
+.product-shell .form-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); }
+.product-shell .form-grid > * { min-width: 0; }
+.product-shell .form-grid .full-field { grid-column: 1 / -1; }
+.product-shell .form-grid input::placeholder,
+.product-shell .form-grid textarea::placeholder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.product-shell .field-label,
+.product-shell label > span { overflow-wrap: anywhere; }
+@container workspace (max-width: 56rem) {
+  .product-shell .workspace-grid,
+  .product-shell .checkout-layout,
+  .product-shell .governance-layout,
+  .product-shell .replay-layout,
+  .product-shell .vault-layout,
+  .product-shell .adjustment-layout { grid-template-columns: minmax(0, 1fr); }
+}
+@container workspace (max-width: 40rem) {
+  .product-shell .metrics { grid-template-columns: minmax(0, 1fr); }
+}
+.product-shell .panel > .inline-warning + .route-evidence,
+.product-shell .panel > .route-evidence + .form-grid { margin-block-start: .75rem; }
+
+/* ADR-0422: Material 3 Expressive application of the shape, spring-motion,
+   type-scale and state-layer token families to content-area controls. Every
+   colour is a semantic role or a role-derived mix; state layers use the
+   documented hover/focus/pressed opacities. Reduced-motion users get no
+   transitions from the earlier reduced-motion rules. */
+.product-shell button:not(.nav-item):not(.mobile-nav-toggle):not(.secondary-button):not(.session-action):not(.account-menu-signout):not(.vault-target-card) {
+  border-radius: var(--md-sys-shape-corner-full);
+  padding-inline: 1.5rem;
+  font-size: var(--md-sys-typescale-label-large-size);
+  line-height: var(--md-sys-typescale-label-large-line-height);
+  font-weight: var(--md-sys-typescale-label-large-emphasized-weight);
+  letter-spacing: var(--md-sys-typescale-label-large-tracking);
+  color: var(--app-on-primary);
+  background: var(--app-primary);
+  transition:
+    border-radius var(--md-sys-motion-spring-fast-spatial-duration) var(--md-sys-motion-spring-fast-spatial-easing),
+    background-color var(--md-motion-short);
+}
+.product-shell button:not(.nav-item):not(.mobile-nav-toggle):not(.secondary-button):not(.session-action):not(.account-menu-signout):not(.vault-target-card):not(:disabled):hover {
+  transform: none;
+  background: color-mix(in srgb, var(--app-on-primary) calc(var(--md-sys-state-hover-opacity) * 100%), var(--app-primary));
+}
+.product-shell button:not(.nav-item):not(.mobile-nav-toggle):not(.secondary-button):not(.session-action):not(.account-menu-signout):not(.vault-target-card):not(:disabled):focus-visible {
+  background: color-mix(in srgb, var(--app-on-primary) calc(var(--md-sys-state-focus-opacity) * 100%), var(--app-primary));
+}
+.product-shell button:not(.nav-item):not(.mobile-nav-toggle):not(.secondary-button):not(.session-action):not(.account-menu-signout):not(.vault-target-card):not(:disabled):active {
+  border-radius: var(--md-sys-shape-corner-medium);
+  background: color-mix(in srgb, var(--app-on-primary) calc(var(--md-sys-state-pressed-opacity) * 100%), var(--app-primary));
+}
+.product-shell .product-content button.secondary-button {
+  border-radius: var(--md-sys-shape-corner-full);
+  font-weight: var(--md-sys-typescale-label-large-emphasized-weight);
+  color: var(--app-on-secondary-container);
+  background: var(--app-secondary-container);
+}
+.product-shell .product-content button.secondary-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--app-on-secondary-container) calc(var(--md-sys-state-hover-opacity) * 100%), var(--app-secondary-container));
+}
+.product-shell .product-content button.secondary-button:active:not(:disabled) {
+  background: color-mix(in srgb, var(--app-on-secondary-container) calc(var(--md-sys-state-pressed-opacity) * 100%), var(--app-secondary-container));
+}
+.product-shell button:not(.nav-item):not(.mobile-nav-toggle):not(.secondary-button):not(.session-action):not(.account-menu-signout):not(.vault-target-card):disabled {
+  opacity: 1;
+  color: color-mix(in srgb, var(--app-on-surface) 38%, transparent);
+  background: color-mix(in srgb, var(--app-on-surface) 12%, transparent);
+}
+.product-shell .product-content input,
+.product-shell .product-content textarea,
+.product-shell .product-content select {
+  border-color: var(--app-outline);
+  border-radius: var(--md-sys-shape-corner-extra-small);
+  font-size: var(--md-sys-typescale-body-large-size);
+  line-height: var(--md-sys-typescale-body-large-line-height);
+  transition: border-color var(--md-motion-short);
+}
+.product-shell .product-content input:hover:not(:disabled),
+.product-shell .product-content textarea:hover:not(:disabled),
+.product-shell .product-content select:hover:not(:disabled) { border-color: var(--app-on-surface); }
+.product-shell .product-content input:focus,
+.product-shell .product-content textarea:focus,
+.product-shell .product-content select:focus {
+  border-color: var(--app-primary);
+  box-shadow: 0 0 0 1px var(--app-primary);
+}
+.product-shell .page-heading h1 {
+  font-size: var(--md-sys-typescale-headline-medium-size);
+  line-height: var(--md-sys-typescale-headline-medium-line-height);
+  font-weight: var(--md-sys-typescale-headline-medium-weight);
+}
+.product-shell .panel h2 {
+  font-size: var(--md-sys-typescale-title-large-size);
+  line-height: var(--md-sys-typescale-title-large-line-height);
+  font-weight: var(--md-sys-typescale-title-large-weight);
+}
+.product-shell .panel h3 {
+  font-size: var(--md-sys-typescale-title-medium-size);
+  line-height: var(--md-sys-typescale-title-medium-line-height);
+  font-weight: var(--md-sys-typescale-title-medium-weight);
+  letter-spacing: var(--md-sys-typescale-title-medium-tracking);
+}
+.product-shell .panel-copy,
+.product-shell .panel p {
+  font-size: var(--md-sys-typescale-body-medium-size);
+  line-height: var(--md-sys-typescale-body-medium-line-height);
+  letter-spacing: var(--md-sys-typescale-body-medium-tracking);
+}
+.product-shell .field-label,
+.product-shell label > span {
+  font-size: var(--md-sys-typescale-label-medium-size);
+  line-height: var(--md-sys-typescale-label-medium-line-height);
+  font-weight: var(--md-sys-typescale-label-medium-weight);
+  letter-spacing: var(--md-sys-typescale-label-medium-tracking);
+}

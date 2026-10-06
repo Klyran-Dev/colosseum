@@ -1,9 +1,10 @@
-export type DocumentAttestationVerification = {
-  status: "document_attested_unsettled";
+export type DocumentAttestationStatus = {
+  status: "verified";
   calculation_id: string;
   payload_digest: number[];
   issuer_public_key: number[];
   expires_at_unix: number;
+  checked_at_unix: number;
 };
 
 const UUIDV7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -21,35 +22,28 @@ function digest(value: unknown, field: string): number[] {
   return [...value] as number[];
 }
 
-export function parseDocumentAttestationJson(value: string): Record<string, unknown> {
-  if (new TextEncoder().encode(value).length > 256 * 1024) {
-    throw new Error("The signed document attestation is larger than the 256 KiB browser safety bound.");
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new Error("The signed document attestation must be valid JSON.");
-  }
-  return record(parsed, "The signed document attestation must be a JSON object.");
-}
-
-export function parseDocumentAttestationVerification(value: unknown): DocumentAttestationVerification {
-  const response = record(value, "The API returned an invalid document attestation response.");
-  if (response.status !== "document_attested_unsettled"
-      || typeof response.calculation_id !== "string"
-      || !UUIDV7.test(response.calculation_id)
-      || typeof response.expires_at_unix !== "number"
-      || !Number.isSafeInteger(response.expires_at_unix)) {
-    throw new Error("The API did not return an active document attestation.");
-  }
+export function parseDocumentAttestationStatus(value: unknown): DocumentAttestationStatus {
+  const response = record(value, "The API returned an invalid document evidence status.");
+  if (response.status !== "verified") throw new Error("The service did not return a verified invoice record.");
+  if (typeof response.calculation_id !== "string" || !UUIDV7.test(response.calculation_id)) throw new Error("The API returned an invalid calculation_id.");
+  if (typeof response.expires_at_unix !== "number" || !Number.isSafeInteger(response.expires_at_unix)) throw new Error("The API returned an invalid expires_at_unix.");
+  if (typeof response.checked_at_unix !== "number" || !Number.isSafeInteger(response.checked_at_unix)) throw new Error("The API returned an invalid checked_at_unix.");
   return {
-    status: "document_attested_unsettled",
+    status: "verified",
     calculation_id: response.calculation_id.toLowerCase(),
-    payload_digest: digest(response.payload_digest, "document attestation payload digest"),
+    payload_digest: digest(response.payload_digest, "document evidence payload digest"),
     issuer_public_key: digest(response.issuer_public_key, "issuer public key"),
     expires_at_unix: response.expires_at_unix,
+    checked_at_unix: response.checked_at_unix,
   };
+}
+
+export function buildDocumentAttestationStatusUrl(apiBase: string, calculationId: string, routeId: string): string {
+  if (!UUIDV7.test(calculationId) || !UUIDV7.test(routeId)) {
+    throw new Error("Invoice and payment route references must be UUIDv7.");
+  }
+  const base = apiBase.replace(/\/$/, "");
+  return `${base}/v1/tax/document-quotes/${encodeURIComponent(calculationId)}/attestation/status?route_id=${encodeURIComponent(routeId)}`;
 }
 
 export function parseDocumentScopeLineIds(value: string): string[] {

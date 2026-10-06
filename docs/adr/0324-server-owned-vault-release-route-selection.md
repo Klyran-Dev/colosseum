@@ -29,6 +29,13 @@ resolved account snapshot. The request digest is versioned to v2 and binds
 merchant, route ID, resolved merchant-side accounts, beneficiary, financial
 inputs, and evidence. Creation evidence also records the route ID.
 
+The transaction locks the route row while resolving it. If the route is no
+longer active or effective, the service rejects a new idempotency key but first
+checks for an existing claim under that key. An exact replay returns the
+persisted claim without creating lifecycle events or outbox records; a changed
+request remains an idempotency conflict. This preserves recovery from a
+successful response lost during a later route suspension.
+
 The UI presents a bounded route selector and read-only route evidence. It has
 no free-form merchant-side account inputs and cannot create a request while
 route loading fails or no verified route is available. All account validation,
@@ -53,14 +60,19 @@ server/on-chain responsibilities.
 3. The beneficiary is distinct from the resolved tax vault.
 4. The stored request digest binds the route ID and resolved account snapshot.
 5. No route lookup failure, stale route, malformed route, or missing route can
-   create a claim or produce a client-side success state.
-6. Finalized Solana evidence remains authoritative for token movement.
+   create a new claim or produce a client-side success state.
+6. An exact replay of an existing claim remains idempotent even if its route is
+   subsequently suspended; no replay creates a second event or outbox record.
+7. Finalized Solana evidence remains authoritative for token movement.
 
 ## Verification
 
 - UI tests prove that the request body contains only `route_id` for the
   merchant-side topology and that route loading is required.
 - Storage/API compilation and focused vault-release tests pass.
+- The Docker integration harness suspends a verified route after claim
+  creation, proves an exact retry returns HTTP 200 with the original claim,
+  and proves lifecycle-event and outbox counts do not increase.
 - The full API, web, accessibility, Docker, and browser gates remain required
   before release.
 
@@ -69,4 +81,5 @@ server/on-chain responsibilities.
 The route registry becomes the single operational entry point for release
 topology. Route suspension blocks new proposals and requires operators to
 select another active route. Existing claim snapshots remain auditable and
-immutable; this change does not authorize movement or replace chain evidence.
+immutable, and an exact retry remains recoverable during suspension; this
+change does not authorize movement or replace chain evidence.

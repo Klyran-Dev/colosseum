@@ -27,6 +27,22 @@ describe("shared browser sign-in control", () => {
     expect(onCredentialChange).toHaveBeenCalledWith("synthetic");
   });
 
+  it("localizes session actions without exposing the credential value", () => {
+    render(<AuthSessionControl
+      config={parseBrowserAuthConfig({ VITE_DEPLOYMENT_ENVIRONMENT: "local", VITE_LOCAL_CREDENTIAL_ENTRY: "true" })}
+      accessToken=""
+      status="signed-out"
+      locale="de-DE"
+      onCredentialChange={() => undefined}
+      onSignIn={() => undefined}
+      onSignOut={() => undefined}
+    />);
+
+    expect(screen.getByRole("button", { name: "Lokale Anmeldung öffnen" })).toBeTruthy();
+    expect(screen.getByLabelText("Anmeldeinformation (im Speicher gehalten)")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Lokale Test-Anmeldeinformation einfügen")).toBeTruthy();
+  });
+
   it("uses a plain sign-in action for OIDC and never renders a bearer field", () => {
     const onSignIn = vi.fn();
     render(<AuthSessionControl
@@ -75,7 +91,7 @@ describe("shared browser sign-in control", () => {
       onSignOut={() => undefined}
     />);
 
-    const summary = screen.getByRole("button", { name: "Sign-in unavailable" });
+    const summary = screen.getByRole("button", { name: "Sign-in setup needed" });
     expect(summary.closest("details")?.hasAttribute("open")).toBe(false);
     fireEvent.click(summary);
     expect(screen.getByRole("alert").textContent).toContain("The identity provider is not configured.");

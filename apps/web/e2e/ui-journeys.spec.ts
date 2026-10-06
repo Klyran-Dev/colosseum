@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { Buffer } from "node:buffer";
 import axe from "axe-core";
 import { PublicKey } from "@solana/web3.js";
+import { documentQuoteMessagesFor } from "../src/documentQuoteMessages";
 
 async function expectNoBrowserAxeViolations(
   page: Page,
@@ -42,7 +43,9 @@ async function expectNoBrowserAxeViolations(
 
 const CAPABILITY_IDS = [
   "access.control",
+  "evidence.applicability.read",
   "evidence.replay",
+  "evidence.audit.read",
   "revenue_stream.claim.prepare",
   "revenue_stream.govern",
   "revenue_stream.propose",
@@ -56,6 +59,7 @@ const CAPABILITY_IDS = [
   "tax.document.quote.create",
   "tax.preview.run",
   "tax.quote.create",
+  "tax.applicability.govern",
   "tax.rule.govern",
   "vault.reconciliation",
   "vault.release",
@@ -69,9 +73,9 @@ function completeCapabilityCatalog(overrides: Record<string, { decision: "allow"
 }
 
 async function fillLocalCredential(page: Page, value: string): Promise<void> {
-  const field = page.getByLabel("Sign-in credential (held in memory)");
+  const field = page.getByLabel(/Sign-in credential \(held in memory\)|Anmeldeinformation \(im Speicher gehalten\)/);
   if (!(await field.isVisible())) {
-    await page.getByRole("button", { name: "Open local sign-in" }).click();
+    await page.getByRole("button", { name: /Open local sign-in|Lokale Anmeldung öffnen/ }).click();
   }
   await field.fill(value);
 }
@@ -109,6 +113,7 @@ const NAVIGATION_GROUPS: Record<string, string> = {
   "Refund cancellations": "Money movement",
   "Refund payments": "Money movement",
   "Exceptions & recovery": "Records & issues",
+  "Evidence & audit": "Records & issues",
 };
 
 async function openNavigationGroupFor(page: Page, workspace: string): Promise<void> {
@@ -124,6 +129,7 @@ async function openNavigationGroupFor(page: Page, workspace: string): Promise<vo
 test.describe("real-browser SPA journeys", () => {
   test("supports direct workspace links and browser history", async ({ page }) => {
     await page.goto("/operations/tax-quotes");
+    await expect(page.getByRole("status")).toHaveText("Tax quotes workspace");
     const aggregateLocationVerification = page.locator("details.route-evidence").filter({ hasText: "Location verification" }).first();
     await expect(aggregateLocationVerification).not.toHaveAttribute("open");
 
@@ -135,6 +141,7 @@ test.describe("real-browser SPA journeys", () => {
     await page.getByRole("button", { name: "Balance checks", exact: true }).click();
     await expect(page).toHaveURL(/\/money\/balance-checks$/);
     await expect(page.getByRole("heading", { name: "Check tax balances", exact: true })).toBeVisible();
+    await expect(page.getByRole("status")).toHaveText("Balance checks workspace");
 
     await page.goBack();
     await expect(page).toHaveURL(/\/money\/refund-payments$/);
@@ -142,6 +149,62 @@ test.describe("real-browser SPA journeys", () => {
     await page.goForward();
     await expect(page).toHaveURL(/\/money\/balance-checks$/);
     await expectNoBrowserAxeViolations(page, "addressable workspace navigation");
+  });
+
+  test("keeps one navigation group open around the current work area", async ({ page }) => {
+    await page.goto("/");
+
+    const dailyWork = page.locator("details.nav-group-disclosure").filter({ hasText: "Daily work" }).first();
+    const rulesAndAccess = page.locator("details.nav-group-disclosure").filter({ hasText: "Rules & access" }).first();
+    await expect(dailyWork).toHaveAttribute("open", "");
+    await expect(rulesAndAccess).not.toHaveAttribute("open", "");
+
+    await rulesAndAccess.locator("summary").click();
+    await expect(rulesAndAccess).toHaveAttribute("open", "");
+    await expect(dailyWork).not.toHaveAttribute("open", "");
+    await expectNoBrowserAxeViolations(page, "single-open navigation group");
+  });
+
+  test("lets operators compact the desktop navigation without hiding workspace names from assistive technology", async ({ page }) => {
+    await page.goto("/");
+
+    const shell = page.locator(".product-shell");
+    const collapse = page.getByRole("button", { name: "Collapse navigation", exact: true });
+    await expect(collapse).toBeVisible();
+    await collapse.click();
+
+    await expect(shell).toHaveClass(/navigation-compact/);
+    await expect(page.getByRole("button", { name: "Expand navigation", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Tax quotes", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Tax quotes", exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Expand navigation", exact: true }).click();
+    await expect(shell).not.toHaveClass(/navigation-compact/);
+    await expectNoBrowserAxeViolations(page, "compact navigation rail");
+  });
+
+  test("preserves semantic system roles in forced-colors mode", async ({ page }) => {
+    await page.emulateMedia({ forcedColors: "active" });
+    await page.goto("/");
+
+    await expect.poll(() => page.evaluate(() => window.matchMedia("(forced-colors: active)").matches)).toBe(true);
+    const roles = await page.locator(".product-shell").evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        background: style.getPropertyValue("--app-bg").trim(),
+        foreground: style.getPropertyValue("--app-on-surface").trim(),
+        primary: style.getPropertyValue("--app-primary").trim(),
+        onPrimary: style.getPropertyValue("--app-on-primary").trim(),
+      };
+    });
+    expect(roles).toEqual({
+      background: "Canvas",
+      foreground: "CanvasText",
+      primary: "Highlight",
+      onPrimary: "HighlightText",
+    });
+    await page.getByRole("button", { name: "Tax quotes", exact: true }).focus();
+    await expectNoBrowserAxeViolations(page, "forced-colors presentation");
   });
 
   test("supports keyboard context and real lazy workspace loading", async ({ page }) => {
@@ -165,7 +228,7 @@ test.describe("real-browser SPA journeys", () => {
     const skipLink = page.getByRole("link", { name: "Skip to workspace content" });
     await expect(skipLink).toBeFocused();
     await page.keyboard.press("Enter");
-    await expect(page.locator("#workspace-content")).toBeFocused();
+    await expect(page.locator("#main-content")).toBeFocused();
 
     const workspaces = [
       ["Tax rules", "Review and publish a rule"],
@@ -178,6 +241,7 @@ test.describe("real-browser SPA journeys", () => {
       ["Payment review", "Review payment before signing"],
       ["Invoice tax", "Calculate tax for an invoice"],
       ["Document payment", "Review and authorize this payment"],
+      ["Evidence & audit", "Review evidence access"],
     ] as const;
 
     for (const [buttonName, headingName] of workspaces) {
@@ -201,6 +265,136 @@ test.describe("real-browser SPA journeys", () => {
 
     await page.keyboard.press("Space");
     await expect(details).not.toHaveAttribute("open", "");
+  });
+
+  test("keeps expanded shell controls from widening or clipping the workspace", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+
+    const localSignIn = page.getByRole("button", { name: "Open local sign-in", exact: true });
+    await expect(localSignIn).toBeVisible();
+    await localSignIn.click();
+
+    const localPopoverGeometry = await page.evaluate(() => {
+      const summary = document.querySelector<HTMLElement>(".session-control-local > summary")?.getBoundingClientRect();
+      const fields = document.querySelector<HTMLElement>(".session-control-local-fields")?.getBoundingClientRect();
+      return {
+        summaryBottom: summary?.bottom ?? 0,
+        fieldsTop: fields?.top ?? 0,
+      };
+    });
+    expect(localPopoverGeometry.fieldsTop).toBeGreaterThanOrEqual(localPopoverGeometry.summaryBottom - 1);
+
+    await page.getByRole("button", { name: "Open display settings", exact: true }).click();
+
+    const geometry = await page.evaluate(() => {
+      const viewportWidth = document.documentElement.clientWidth;
+      const shell = document.querySelector<HTMLElement>(".product-shell")?.getBoundingClientRect();
+      const mainColumn = document.querySelector<HTMLElement>(".app-main-column")?.getBoundingClientRect();
+      const topbar = document.querySelector<HTMLElement>(".product-topbar")?.getBoundingClientRect();
+      const breadcrumb = document.querySelector<HTMLElement>(".breadcrumb")?.getBoundingClientRect();
+      return {
+        viewportWidth,
+        documentWidth: document.documentElement.scrollWidth,
+        shellRight: shell?.right ?? 0,
+        mainColumnRight: mainColumn?.right ?? 0,
+        topbarRight: topbar?.right ?? 0,
+        breadcrumbWidth: breadcrumb?.width ?? 0,
+        localOpen: document.querySelector<HTMLElement>(".session-control-local")?.matches("[open]") ?? false,
+      };
+    });
+
+    expect(geometry.documentWidth).toBeLessThanOrEqual(geometry.viewportWidth + 1);
+    expect(geometry.shellRight).toBeLessThanOrEqual(geometry.viewportWidth + 1);
+    expect(geometry.mainColumnRight).toBeLessThanOrEqual(geometry.viewportWidth + 1);
+    expect(geometry.topbarRight).toBeLessThanOrEqual(geometry.mainColumnRight + 1);
+    expect(geometry.breadcrumbWidth).toBeGreaterThan(80);
+    expect(geometry.localOpen).toBe(false);
+  });
+
+  test("keeps mobile shell actions in a compact Material action row", async ({ page }) => {
+    await page.setViewportSize({ width: 568, height: 900 });
+    await page.goto("/");
+
+    const geometry = await page.evaluate(() => {
+      const topbar = document.querySelector<HTMLElement>(".product-topbar");
+      const actions = document.querySelector<HTMLElement>(".product-topbar .topbar-actions");
+      const breadcrumb = document.querySelector<HTMLElement>(".product-topbar .breadcrumb");
+      const topbarRect = topbar?.getBoundingClientRect();
+      const actionsRect = actions?.getBoundingClientRect();
+      return {
+        topbarDisplay: topbar ? getComputedStyle(topbar).display : "",
+        actionsDirection: actions ? getComputedStyle(actions).flexDirection : "",
+        actionsWrap: actions ? getComputedStyle(actions).flexWrap : "",
+        topbarHeight: topbarRect?.height ?? 0,
+        actionsHeight: actionsRect?.height ?? 0,
+        breadcrumbHeight: breadcrumb?.getBoundingClientRect().height ?? 0,
+      };
+    });
+
+    expect(geometry.topbarDisplay).toBe("grid");
+    expect(geometry.actionsDirection).toBe("row");
+    expect(geometry.actionsWrap).toBe("wrap");
+    expect(geometry.breadcrumbHeight).toBeGreaterThan(0);
+    expect(geometry.actionsHeight).toBeLessThan(96);
+    expect(geometry.topbarHeight).toBeLessThan(180);
+  });
+
+  test("loads route-verification evidence only after an explicit operator action", async ({ page }) => {
+    let evidenceRequests = 0;
+    await page.route("**/api/v1/authorization/capabilities", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        schema: "authorization-capabilities/v1",
+        snapshot_id: "01900000-0000-7000-8000-000000000001",
+        subject: "indexer-operator",
+        tenant_id: "01900000-0000-4000-8000-000000000001",
+        expires_at_unix: Math.floor(Date.now() / 1000) + 30,
+        capabilities: completeCapabilityCatalog({
+          "access.control": { decision: "allow", reason_code: "scope_and_role_satisfied" },
+          "evidence.replay": { decision: "allow", reason_code: "scope_and_role_satisfied" },
+        }),
+      }),
+    }));
+    await page.route("**/api/v1/indexer/route-verification-runs*", async (route) => {
+      evidenceRequests += 1;
+      const authorized = (route.request().headers().authorization ?? "").includes("indexer-operator-session");
+      await route.fulfill({
+        status: authorized ? 200 : 403,
+        contentType: "application/json",
+        body: authorized ? JSON.stringify([{
+          id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d25",
+          run_kind: "backfill",
+          status: "completed",
+          batch_size: 8,
+          examined_count: 2,
+          activated_count: 1,
+          already_active_count: 1,
+          failed_count: 0,
+          failure_code: null,
+          operator_approval_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d26",
+          started_at: "2026-10-05T10:00:00.000Z",
+          completed_at: "2026-10-05T10:00:01.000Z",
+        }]) : JSON.stringify({ code: "FORBIDDEN", message: "operator role required" }),
+      });
+    });
+
+    await page.goto("/records/exceptions-recovery");
+    await fillLocalCredential(page, "indexer-operator-session");
+    await expect(page.getByRole("heading", { name: "Recovery queue", exact: true })).toBeVisible();
+    const evidence = page.locator("details.replay-route-verification");
+    await expect(evidence).not.toHaveAttribute("open", "");
+    expect(evidenceRequests).toBe(0);
+
+    await evidence.locator("summary").click();
+    await evidence.getByRole("button", { name: "Load route-verification evidence", exact: true }).click();
+    await expect(evidence.getByText("Verification completed", { exact: true })).toBeVisible();
+    await expect(evidence.getByText("does not activate a route or confirm finalized settlement.", { exact: false })).toBeVisible();
+    await evidence.getByText("Evidence reference", { exact: true }).click();
+    await expect(evidence.getByText("01992f1b-4a70-7e30-8ea2-b6e37a9d9d26", { exact: true })).toBeVisible();
+    expect(evidenceRequests).toBe(1);
+    await expectNoBrowserAxeViolations(page, "route-verification operator evidence");
   });
 
   test("keeps protection assurances in one compact keyboard disclosure", async ({ page }) => {
@@ -256,6 +450,34 @@ test.describe("real-browser SPA journeys", () => {
     await expectNoBrowserAxeViolations(page, "account and session menu");
   });
 
+  test("keeps protected actions unavailable when the server capability snapshot is expired", async ({ page }) => {
+    await page.route("**/api/v1/authorization/capabilities", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          schema: "authorization-capabilities/v1",
+          snapshot_id: "01900000-0000-7000-8000-000000000003",
+          subject: "operator-expired",
+          tenant_id: "01900000-0000-4000-8000-000000000003",
+          expires_at_unix: Math.floor(Date.now() / 1000) - 1,
+          capabilities: completeCapabilityCatalog({
+            "access.control": { decision: "allow", reason_code: "scope_and_role_satisfied" },
+          }),
+        }),
+      });
+    });
+
+    await page.goto("/");
+    await fillLocalCredential(page, "expired-capability-session");
+    const productNavigation = page.getByRole("complementary", { name: "Product navigation" });
+    await expect(productNavigation.getByText("Access check unavailable", { exact: true })).toBeVisible();
+    await expect(page.locator(".page-context-card").getByText("Your access check is out of date. We are refreshing access before you continue.", { exact: true })).toBeVisible();
+    await openNavigationGroupFor(page, "Tax simulator");
+    await expect(page.getByRole("button", { name: "Tax simulator", exact: true })).toHaveAttribute("title", /Needs access check/);
+    await expectNoBrowserAxeViolations(page, "expired capability snapshot");
+  });
+
   test("replaces the verified tenant context when the opaque session changes", async ({ page }) => {
     const tenantA = {
       token: "tenant-a-session",
@@ -296,20 +518,23 @@ test.describe("real-browser SPA journeys", () => {
 
     await page.goto("/");
     await openSystemStatus(page);
-    const credential = page.getByLabel("Sign-in credential (held in memory)");
     await fillLocalCredential(page, tenantA.token);
-    const productNavigation = page.getByRole("complementary", { name: "Product navigation" });
-    await expect(productNavigation.getByText("Account 01900000", { exact: true })).toBeVisible();
+    const accountMenu = page.getByRole("button", { name: "Open account menu" });
+    await accountMenu.click();
+    const accountPanel = page.locator(".account-menu-panel");
+    await expect(accountPanel.getByText("Account 01900000", { exact: true })).toBeVisible();
     await openNavigationGroupFor(page, "Access & approvals");
     await page.getByRole("button", { name: "Access & approvals", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Who can do what", exact: true })).toBeVisible();
     const workspaceContent = page.getByRole("region", { name: "Current tax workspace" });
     await expect(workspaceContent.getByText("operator-a", { exact: true })).toBeVisible();
+    await openNavigationGroupFor(page, "Tax simulator");
     await expect(page.getByRole("button", { name: "Tax simulator", exact: true })).toHaveAttribute("title", /Available/);
 
     await fillLocalCredential(page, tenantB.token);
-    await expect(productNavigation.getByText("Account 02900000", { exact: true })).toBeVisible();
-    await expect(productNavigation.getByText("Account 01900000", { exact: true })).toHaveCount(0);
+    await accountMenu.click();
+    await expect(accountPanel.getByText("Account 02900000", { exact: true })).toBeVisible();
+    await expect(accountPanel.getByText("Account 01900000", { exact: true })).toHaveCount(0);
     await expect(workspaceContent.getByText("operator-b", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Tax simulator", exact: true })).toHaveAttribute("title", /Not available/);
     await expectNoBrowserAxeViolations(page, "multi-tenant capability session reset");
@@ -489,6 +714,56 @@ test.describe("real-browser SPA journeys", () => {
     await expectNoBrowserAxeViolations(page, "partner payout reference selection flow");
   });
 
+  test("localizes access-control explanations in German and Arabic RTL without translating policy contracts", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Open display settings" }).click();
+    await page.getByLabel("Language").selectOption("de-DE");
+    await page.goto("/rules/access-approvals");
+    await expect(page.getByRole("heading", { name: "Wer darf was?", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Aktionen und Genehmigungen", exact: true })).toBeVisible();
+    await expect(page.getByText("Steuerangebot erstellen", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("RBAC checks responsibilities", { exact: false })).toHaveCount(0);
+    await expectNoBrowserAxeViolations(page, "German access-control localization");
+
+    await page.getByRole("button", { name: "Anzeigeeinstellungen öffnen" }).click();
+    await page.getByLabel("Sprache").selectOption("ar-EG");
+    await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+    await expect(page.getByRole("heading", { name: "من يستطيع تنفيذ ماذا؟", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "الإجراءات والموافقات", exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "Arabic RTL access-control localization");
+  });
+
+  test("localizes partner payout governance in German and Arabic RTL without translating values", async ({ page }) => {
+    const capabilities = completeCapabilityCatalog({
+      "revenue_stream.read": { decision: "allow", reason_code: "scope_and_role_satisfied" },
+      "revenue_stream.propose": { decision: "allow", reason_code: "scope_and_role_satisfied" },
+    });
+    await page.route("**/api/v1/authorization/capabilities", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ schema: "authorization-capabilities/v1", snapshot_id: "01992f1b-0000-7000-8000-000000000041", subject: "payout-proposer", tenant_id: "01992f1b-0000-4000-8000-000000000041", expires_at_unix: Math.floor(Date.now() / 1000) + 30, capabilities }),
+    }));
+    await page.route("**/api/v1/revenue-streaming/plans", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
+    await page.route("**/api/v1/revenue-streaming/references", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ destinations: [], split_plans: [], policies: [] }) }));
+
+    await page.goto("/");
+    await page.getByRole("button", { name: "Open display settings" }).click();
+    await page.getByLabel("Language").selectOption("de-DE");
+    await page.goto("/money/partner-payouts");
+    await fillLocalCredential(page, "localized-payout-session");
+    await expect(page.getByRole("heading", { name: "Partnerauszahlungspläne", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Auszahlungsplan erstellen", exact: true })).toBeVisible();
+    await expect(page.getByText("Genehmigte Einrichtung ist nicht bereit", { exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "German partner payout localization");
+
+    await page.getByRole("button", { name: "Anzeigeeinstellungen öffnen" }).click();
+    await page.getByLabel("Sprache").selectOption("ar-EG");
+    await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+    await expect(page.getByRole("heading", { name: "خطط مدفوعات الشركاء", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "إنشاء خطة دفع", exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "Arabic RTL partner payout localization");
+  });
+
   test("fails closed for partner payouts when the server denies the capability", async ({ page }) => {
     const capabilities = completeCapabilityCatalog({
       "revenue_stream.read": { decision: "deny", reason_code: "role_missing" },
@@ -541,14 +816,22 @@ test.describe("real-browser SPA journeys", () => {
 
   test("keeps the selected semantic theme across every workspace", async ({ page }) => {
     await page.goto("/");
+    const darkThemeMetadata = page.locator('meta[name="theme-color"][data-theme-color="dark"]');
+    const lightThemeMetadata = page.locator('meta[name="theme-color"][data-theme-color="light"]');
+    await expect(darkThemeMetadata).toHaveAttribute("media", "(prefers-color-scheme: dark)");
+    await expect(lightThemeMetadata).toHaveAttribute("media", "(prefers-color-scheme: light)");
     await page.getByRole("button", { name: "Open display settings" }).click();
     const theme = page.getByRole("combobox", { name: "Theme" });
 
     await theme.selectOption("light");
+    await expect(darkThemeMetadata).toHaveAttribute("media", "not all");
+    await expect(lightThemeMetadata).toHaveAttribute("media", "all");
     const lightShellBackground = await page.locator(".product-shell").evaluate(
       (element) => getComputedStyle(element).backgroundColor,
     );
     await theme.selectOption("dark");
+    await expect(darkThemeMetadata).toHaveAttribute("media", "all");
+    await expect(lightThemeMetadata).toHaveAttribute("media", "not all");
     const darkShellBackground = await page.locator(".product-shell").evaluate(
       (element) => getComputedStyle(element).backgroundColor,
     );
@@ -572,25 +855,277 @@ test.describe("real-browser SPA journeys", () => {
     }
   });
 
+  test("localizes the shell navigation without changing the workspace route", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Open display settings" }).click();
+    await page.getByRole("combobox", { name: "Language" }).selectOption("de-DE");
+    await expect(page.locator("html")).toHaveAttribute("dir", "ltr");
+    await expect(page.getByRole("button", { name: "Steuerangebote", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Steuerangebote", exact: true })).toBeVisible();
+    await expect(page.getByRole("status")).toHaveText("Arbeitsbereich: Steuerangebote");
+    await expectNoBrowserAxeViolations(page, "German shell navigation");
+
+    await page.getByRole("combobox", { name: "Sprache" }).selectOption("ar-EG");
+    await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+    await expect(page.getByRole("button", { name: "عروض ضريبية", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "عروض ضريبية", exact: true })).toBeVisible();
+    await expect(page.getByRole("status")).toHaveText("مساحة العمل: عروض ضريبية");
+    await expectNoBrowserAxeViolations(page, "Arabic shell navigation");
+  });
+
+  test("localizes the quote workspace without changing its financial input semantics", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Open display settings" }).click();
+    await page.getByRole("combobox", { name: "Language" }).selectOption("de-DE");
+    await expect(page.getByRole("heading", { name: "Steuerangebot erstellen", exact: true })).toBeVisible();
+    await expect(page.getByLabel("Gesamt vor Steuer", { exact: true })).toBeVisible();
+    await expect(page.getByPlaceholder("Währungscode eingeben", { exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "German quote workspace");
+
+    await page.getByRole("combobox", { name: "Sprache" }).selectOption("ar-EG");
+    await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+    await expect(page.getByRole("heading", { name: "إنشاء عرض ضريبي", exact: true })).toBeVisible();
+    await expect(page.getByLabel("الإجمالي قبل الضريبة", { exact: true })).toBeVisible();
+    await expect(page.getByPlaceholder("أدخل رمز العملة", { exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "Arabic quote workspace");
+  });
+
+  test("localizes the invoice quote workspace without translating document values", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Open display settings" }).click();
+    await page.getByRole("combobox", { name: "Language" }).selectOption("de-DE");
+    await page.goto("/operations/invoice-tax");
+    await expect(page.getByRole("heading", { name: "Steuer für eine Rechnung berechnen", exact: true })).toBeVisible();
+    await expect(page.getByLabel("Dokument-ID", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Position hinzufügen", exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "German invoice quote workspace");
+
+    await page.getByRole("button", { name: "Anzeigeeinstellungen öffnen" }).click();
+    await page.getByRole("combobox", { name: "Sprache" }).selectOption("ar-EG");
+    await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+    await expect(page.getByRole("heading", { name: "حساب الضريبة لفاتورة", exact: true })).toBeVisible();
+    await expect(page.getByLabel("معرّف المستند", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "إضافة بند", exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "Arabic invoice quote workspace");
+  });
+
+  test("localizes aggregate payment review in German and Arabic RTL", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Open display settings" }).click();
+    await page.getByRole("combobox", { name: "Language" }).selectOption("de-DE");
+    await page.goto("/operations/payment-review");
+
+    await expect(page.locator(".app-shell")).toHaveAttribute("dir", "ltr");
+    await expect(page.getByRole("heading", { name: "Zahlung vor der Signatur prüfen", exact: true })).toBeVisible();
+    await expect(page.locator(".checkout-review").getByRole("heading", { name: "Zahlungsprüfung", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Zahlung zur Prüfung vorbereiten", exact: true })).toBeVisible();
+    await expect(page.getByText("Derzeit ist kein kompatibles Solana-Wallet verfügbar.", { exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "German aggregate checkout localization");
+
+    await page.getByRole("button", { name: "Anzeigeeinstellungen öffnen" }).click();
+    await page.getByRole("combobox", { name: "Sprache" }).selectOption("ar-EG");
+    await expect(page.locator(".app-shell")).toHaveAttribute("dir", "rtl");
+    await expect(page.getByRole("heading", { name: "راجع الدفع قبل التوقيع", exact: true })).toBeVisible();
+    await expect(page.locator(".checkout-review").getByRole("heading", { name: "مراجعة الدفع", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "إعداد الدفع للمراجعة", exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "Arabic RTL aggregate checkout localization");
+  });
+
+  test("localizes governed Treasury release review in German and Arabic RTL", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Open display settings" }).click();
+    await page.getByRole("combobox", { name: "Language" }).selectOption("de-DE");
+    await page.goto("/money/treasury");
+
+    const treasury = page.locator(".vault-layout");
+    await expect(treasury).toHaveAttribute("aria-label", "Verwalteter Tresor-Freigabebereich");
+    await expect(treasury.getByRole("heading", { name: "Freigabeantrag erstellen", exact: true })).toBeVisible();
+    await expect(treasury.getByRole("heading", { name: "Antrag prüfen oder weiterführen", exact: true })).toBeVisible();
+    await expect(treasury.getByRole("button", { name: "Freigabeantrag erstellen", exact: true })).toBeDisabled();
+    await expect(treasury.getByText("Vier-Augen-Kontrolle", { exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "German Treasury release localization");
+
+    await page.getByRole("button", { name: "Anzeigeeinstellungen öffnen" }).click();
+    await page.getByRole("combobox", { name: "Sprache" }).selectOption("ar-EG");
+    await expect(page.locator(".app-shell")).toHaveAttribute("dir", "rtl");
+    await expect(treasury).toHaveAttribute("aria-label", "مساحة إصدار الخزينة الخاضعة للحوكمة");
+    await expect(treasury.getByRole("heading", { name: "إنشاء طلب إصدار", exact: true })).toBeVisible();
+    await expect(treasury.getByRole("heading", { name: "مراجعة طلب أو تغيير حالته", exact: true })).toBeVisible();
+    await expect(treasury.getByRole("button", { name: "إنشاء طلب إصدار", exact: true })).toBeDisabled();
+    await expectNoBrowserAxeViolations(page, "Arabic RTL Treasury release localization");
+  });
+
+  test("localizes refund-request wallet authorization in German and Arabic RTL", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Open display settings" }).click();
+    await page.getByRole("combobox", { name: "Language" }).selectOption("de-DE");
+    await page.goto("/money/refund-requests");
+
+    const refund = page.locator("section.adjustment-layout").first();
+    await expect(refund).toHaveAttribute("aria-label", "Wallet-Arbeitsbereich für Rückerstattungsanträge");
+    await expect(refund.getByRole("heading", { name: "Rückerstattungsantrag vorbereiten", exact: true })).toBeVisible();
+    await expect(refund.getByRole("heading", { name: "Wallet-Autorisierung", exact: true })).toBeVisible();
+    await expect(refund.getByRole("button", { name: "Rückerstattungsantrag vorbereiten", exact: true })).toBeDisabled();
+    await expect(refund.getByText("Sie behalten die Verwahrung", { exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "German refund-request localization");
+
+    await page.getByRole("button", { name: "Anzeigeeinstellungen öffnen" }).click();
+    await page.getByRole("combobox", { name: "Sprache" }).selectOption("ar-EG");
+    await expect(page.locator(".app-shell")).toHaveAttribute("dir", "rtl");
+    await expect(refund).toHaveAttribute("aria-label", "مساحة محفظة طلبات استرداد الأموال");
+    await expect(refund.getByRole("heading", { name: "إعداد طلب استرداد", exact: true })).toBeVisible();
+    await expect(refund.getByRole("heading", { name: "تفويض المحفظة", exact: true })).toBeVisible();
+    await expect(refund.getByRole("button", { name: "إعداد طلب استرداد", exact: true })).toBeDisabled();
+    await expectNoBrowserAxeViolations(page, "Arabic RTL refund-request localization");
+  });
+
+  test("localizes refund cancellation authorization in German and Arabic RTL", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Open display settings" }).click();
+    await page.getByRole("combobox", { name: "Language" }).selectOption("de-DE");
+    await page.goto("/money/refund-cancellations");
+
+    const cancellation = page.locator("section.adjustment-layout").first();
+    await expect(cancellation).toHaveAttribute("aria-label", "Wallet-Arbeitsbereich für die Stornierung von Rückerstattungsanträgen");
+    await expect(cancellation.getByRole("heading", { name: "Rückerstattungsantrag stornieren", exact: true })).toBeVisible();
+    await expect(cancellation.getByRole("heading", { name: "Autorisierung der Governance-Wallet", exact: true })).toBeVisible();
+    await expect(cancellation.getByRole("button", { name: "Stornierung vorbereiten", exact: true })).toBeDisabled();
+    await expect(cancellation.getByText("Keine Geldbewegung", { exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "German refund-cancellation localization");
+
+    await page.getByRole("button", { name: "Anzeigeeinstellungen öffnen" }).click();
+    await page.getByRole("combobox", { name: "Sprache" }).selectOption("ar-EG");
+    await expect(page.locator(".app-shell")).toHaveAttribute("dir", "rtl");
+    await expect(cancellation).toHaveAttribute("aria-label", "مساحة محفظة إلغاء طلبات الاسترداد");
+    await expect(cancellation.getByRole("heading", { name: "إلغاء طلب استرداد", exact: true })).toBeVisible();
+    await expect(cancellation.getByRole("heading", { name: "تفويض محفظة الحوكمة", exact: true })).toBeVisible();
+    await expect(cancellation.getByRole("button", { name: "إعداد الإلغاء", exact: true })).toBeDisabled();
+    await expect(cancellation.getByText("لم تتحرك أموال", { exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "Arabic RTL refund-cancellation localization");
+  });
+
+  test("localizes replay recovery controls in German and Arabic RTL", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Open display settings" }).click();
+    await page.getByRole("combobox", { name: "Language" }).selectOption("de-DE");
+    await page.goto("/records/exceptions-recovery");
+
+    const replay = page.locator("section.replay-layout").first();
+    await expect(replay).toHaveAttribute("aria-label", "Arbeitsbereich für Indexer-Wiederherstellung");
+    await expect(replay.getByRole("heading", { name: "Wiederherstellungslücken prüfen", exact: true })).toBeVisible();
+    await expect(replay.getByRole("heading", { name: "Wiederherstellungswarteschlange", exact: true })).toBeVisible();
+    await expect(replay.getByText("Routenprüfungsnachweise", { exact: true })).toBeVisible();
+    await expect(replay.getByRole("button", { name: "Wiederherstellungselemente laden", exact: true })).toBeDisabled();
+    await expectNoBrowserAxeViolations(page, "German replay-recovery localization");
+
+    await page.getByRole("button", { name: "Anzeigeeinstellungen öffnen" }).click();
+    await page.getByRole("combobox", { name: "Sprache" }).selectOption("ar-EG");
+    await expect(page.locator(".app-shell")).toHaveAttribute("dir", "rtl");
+    await expect(replay).toHaveAttribute("aria-label", "مساحة عمليات استعادة الفهرس");
+    await expect(replay.getByRole("heading", { name: "مراجعة فجوات الاستعادة", exact: true })).toBeVisible();
+    await expect(replay.getByRole("heading", { name: "قائمة انتظار الاستعادة", exact: true })).toBeVisible();
+    await expect(replay.getByText("أدلة التحقق من المسار", { exact: true })).toBeVisible();
+    await expect(replay.getByRole("button", { name: "تحميل عناصر الاستعادة", exact: true })).toBeDisabled();
+    await expectNoBrowserAxeViolations(page, "Arabic RTL replay-recovery localization");
+  });
+
+  test("localizes vault reconciliation release-stop states in German and Arabic RTL", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Open display settings" }).click();
+    await page.getByRole("combobox", { name: "Language" }).selectOption("de-DE");
+    await page.goto("/money/balance-checks");
+
+    const reconciliation = page.locator("section.vault-layout").first();
+    await expect(reconciliation).toHaveAttribute("aria-label", "Arbeitsbereich für Tresorabgleich");
+    await expect(reconciliation.getByRole("heading", { name: "Steuerguthaben prüfen", exact: true })).toBeVisible();
+    await expect(reconciliation.getByRole("heading", { name: "Aktive Steuerkonten", exact: true })).toBeVisible();
+    await expect(reconciliation.getByRole("button", { name: "Abgleichsziele laden", exact: true })).toBeDisabled();
+    await expect(reconciliation.getByText(/Guthaben nicht ändern, Gelder nicht freigeben/i)).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "German vault-reconciliation localization");
+
+    await page.getByRole("button", { name: "Anzeigeeinstellungen öffnen" }).click();
+    await page.getByRole("combobox", { name: "Sprache" }).selectOption("ar-EG");
+    await expect(page.locator(".app-shell")).toHaveAttribute("dir", "rtl");
+    await expect(reconciliation).toHaveAttribute("aria-label", "مساحة مطابقة خزينة الضرائب");
+    await expect(reconciliation.getByRole("heading", { name: "فحص أرصدة الضرائب", exact: true })).toBeVisible();
+    await expect(reconciliation.getByRole("heading", { name: "حسابات الضرائب النشطة", exact: true })).toBeVisible();
+    await expect(reconciliation.getByRole("button", { name: "تحميل أهداف المطابقة", exact: true })).toBeDisabled();
+    await expectNoBrowserAxeViolations(page, "Arabic RTL vault-reconciliation localization");
+  });
+
+  test("localizes settlement adjustment governance in German and Arabic RTL", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Open display settings" }).click();
+    await page.getByRole("combobox", { name: "Language" }).selectOption("de-DE");
+    await page.goto("/money/adjustments");
+
+    const adjustment = page.locator("section.adjustment-layout").first();
+    await expect(adjustment).toHaveAttribute("aria-label", "Arbeitsbereich für Zahlungsanpassungen");
+    await expect(adjustment.getByRole("heading", { name: "Korrekturantrag erstellen", exact: true })).toBeVisible();
+    await expect(adjustment.getByRole("heading", { name: "Korrektur prüfen", exact: true })).toBeVisible();
+    await expect(adjustment.getByRole("button", { name: "Korrekturantrag erstellen", exact: true })).toBeDisabled();
+    await expect(adjustment.getByText("Keine Geldbewegung", { exact: true })).toHaveCount(2);
+    await expectNoBrowserAxeViolations(page, "German settlement-adjustment localization");
+
+    await page.getByRole("button", { name: "Anzeigeeinstellungen öffnen" }).click();
+    await page.getByRole("combobox", { name: "Sprache" }).selectOption("ar-EG");
+    await expect(page.locator(".app-shell")).toHaveAttribute("dir", "rtl");
+    await expect(adjustment).toHaveAttribute("aria-label", "مساحة تعديلات التسوية");
+    await expect(adjustment.getByRole("heading", { name: "إنشاء طلب تصحيح", exact: true })).toBeVisible();
+    await expect(adjustment.getByRole("heading", { name: "مراجعة التصحيح", exact: true })).toBeVisible();
+    await expect(adjustment.getByRole("button", { name: "إنشاء طلب تصحيح", exact: true })).toBeDisabled();
+    await expect(adjustment.getByText("لم تتحرك أموال", { exact: true })).toHaveCount(2);
+    await expectNoBrowserAxeViolations(page, "Arabic RTL settlement-adjustment localization");
+  });
+
+  test("localizes refund execution authorization in German and Arabic RTL", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Open display settings" }).click();
+    await page.getByRole("combobox", { name: "Language" }).selectOption("de-DE");
+    await page.goto("/money/refund-payments");
+
+    const refund = page.locator("section.adjustment-layout").first();
+    await expect(refund).toHaveAttribute("aria-label", "Wallet-Arbeitsbereich für die Rückerstattungsfreigabe");
+    await expect(refund.getByRole("heading", { name: "Rückerstattung freigeben", exact: true })).toBeVisible();
+    await expect(refund.getByRole("heading", { name: "Ausführungsautorisierung", exact: true })).toBeVisible();
+    await expect(refund.getByRole("button", { name: "Rückerstattung freigeben", exact: true })).toBeDisabled();
+    await expect(refund.getByText("Nachweis erforderlich", { exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "German refund-execution localization");
+
+    await page.getByRole("button", { name: "Anzeigeeinstellungen öffnen" }).click();
+    await page.getByRole("combobox", { name: "Sprache" }).selectOption("ar-EG");
+    await expect(page.locator(".app-shell")).toHaveAttribute("dir", "rtl");
+    await expect(refund).toHaveAttribute("aria-label", "مساحة محفظة إصدار الاسترداد");
+    await expect(refund.getByRole("heading", { name: "إعداد إصدار الاسترداد", exact: true })).toBeVisible();
+    await expect(refund.getByRole("heading", { name: "تفويض التنفيذ", exact: true })).toBeVisible();
+    await expect(refund.getByRole("button", { name: "إعداد إصدار الاسترداد", exact: true })).toBeDisabled();
+    await expect(refund.getByText("الدليل مطلوب", { exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "Arabic RTL refund-execution localization");
+  });
+
   test("restores display preferences without restoring local credentials", async ({ page }) => {
     await page.goto("/");
     await page.getByRole("button", { name: "Open display settings" }).click();
-    await page.getByRole("combobox", { name: "Language" }).selectOption("ar-EG");
-    await page.getByRole("combobox", { name: "Time zone" }).fill("Asia/Kolkata");
-    await page.getByRole("combobox", { name: "Theme" }).selectOption("light");
     await fillLocalCredential(page, "never-persist-this-credential");
+    // The shell keeps adjacent popovers mutually exclusive so a credential
+    // surface cannot overlap the display-settings menu. Reopen the settings
+    // disclosure before changing the persisted presentation preferences.
+    await page.getByRole("button", { name: "Open display settings" }).click();
+    await page.getByRole("combobox", { name: "Language" }).selectOption("ar-EG");
+    await page.getByRole("combobox", { name: "المنطقة الزمنية" }).fill("Asia/Kolkata");
+    await page.getByRole("combobox", { name: "السمة" }).selectOption("light");
 
     await page.reload();
 
     await expect(page.locator(".product-shell")).toHaveAttribute("data-theme", "light");
     await expect(page.locator("html")).toHaveAttribute("lang", "ar");
     await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
-    await page.getByRole("button", { name: "Open display settings" }).click();
-    await expect(page.getByRole("combobox", { name: "Language" })).toHaveValue("ar-EG");
-    await expect(page.getByRole("combobox", { name: "Time zone" })).toHaveValue("Asia/Kolkata");
+    await page.getByRole("button", { name: "فتح إعدادات العرض" }).click();
+    await expect(page.getByRole("combobox", { name: "اللغة" })).toHaveValue("ar-EG");
+    await expect(page.getByRole("combobox", { name: "المنطقة الزمنية" })).toHaveValue("Asia/Kolkata");
 
-    await page.getByRole("button", { name: "Open local sign-in" }).click();
-    await expect(page.getByLabel("Sign-in credential (held in memory)")).toHaveValue("");
+    await page.getByRole("button", { name: "فتح تسجيل الدخول المحلي" }).click();
+    await expect(page.getByLabel("بيانات تسجيل الدخول (محفوظة في الذاكرة)")).toHaveValue("");
     await expectNoBrowserAxeViolations(page, "persisted display preferences");
   });
 
@@ -600,19 +1135,23 @@ test.describe("real-browser SPA journeys", () => {
 
     await page.getByText("Display settings", { exact: true }).click();
     await page.getByRole("combobox", { name: "Language" }).selectOption("ar-EG");
-    await page.getByRole("button", { name: "Open navigation", exact: true }).click();
-    await openNavigationGroupFor(page, "Tax rules");
-    await expect(page.getByRole("button", { name: "Tax rules", exact: true })).toBeVisible();
-    await openNavigationGroupFor(page, "Balance checks");
-    await page.getByRole("button", { name: "Balance checks", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Open navigation", exact: true })).toHaveAttribute("aria-expanded", "false");
-    await page.getByRole("button", { name: "Open navigation", exact: true }).click();
+    await page.getByRole("button", { name: "فتح التنقل", exact: true }).click();
+    const arabicRulesGroup = page.locator("details.nav-group-disclosure").filter({ hasText: "القواعد والوصول" }).first();
+    await arabicRulesGroup.locator("summary").click();
+    await expect(page.getByRole("button", { name: "القواعد الضريبية", exact: true })).toBeVisible();
+    const arabicMoneyGroup = page.locator("details.nav-group-disclosure").filter({ hasText: "حركة الأموال" }).first();
+    await arabicMoneyGroup.locator("summary").click();
+    await page.getByRole("button", { name: "فحوصات الأرصدة", exact: true }).click();
+    await expect(page.getByRole("button", { name: "فتح التنقل", exact: true })).toHaveAttribute("aria-expanded", "false");
+    await page.getByRole("button", { name: "فتح التنقل", exact: true }).click();
 
     await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
     await expect(page.locator(".app-shell")).toHaveAttribute("dir", "rtl");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
-    const transitionDuration = await page.getByRole("button", { name: "Tax quotes" }).evaluate(
+    const arabicDailyGroup = page.locator("details.nav-group-disclosure").filter({ hasText: "العمل اليومي" }).first();
+    await arabicDailyGroup.locator("summary").click();
+    const transitionDuration = await page.getByRole("button", { name: "عروض ضريبية" }).evaluate(
       (element) => getComputedStyle(element).transitionDuration,
     );
     expect(transitionDuration).toBe("0s");
@@ -657,6 +1196,7 @@ test.describe("real-browser SPA journeys", () => {
           rule_set_id: "published-sales-tax",
           rule_version: 3,
           engine_version: "tax-engine/v1",
+          atomic_decimals: 2,
           currency: "USD",
           jurisdiction: "US-CA",
           facts_digest: Array(32).fill(1),
@@ -709,6 +1249,7 @@ test.describe("real-browser SPA journeys", () => {
     await page.getByLabel("Total before tax").fill("1100");
     await page.getByLabel("Amount subject to tax").fill("1000");
     await page.getByLabel("Currency").fill("USD");
+    await page.getByRole("textbox", { name: /Asset precision/ }).fill("2");
     await page.getByLabel("Approved tax rule").fill("operator-simulator-flat-rate");
     await page.getByLabel("Rule version").fill("1");
     await page.getByLabel("Jurisdiction").fill("US-CA");
@@ -737,7 +1278,8 @@ test.describe("real-browser SPA journeys", () => {
     await openSystemStatus(page);
     await page.getByRole("button", { name: "Payment review", exact: true }).click();
     await page.getByRole("button", { name: "Connect wallet", exact: true }).click();
-    await expect(page.getByRole("alert")).toContainText("User rejected wallet connection");
+    await expect(page.getByRole("alert")).toContainText("Wallet connection was rejected.");
+    await expect(page.getByRole("alert")).not.toContainText("User rejected wallet connection");
     await expect(page.getByText("No wallet connected", { exact: true })).toBeVisible();
     await expectNoBrowserAxeViolations(page, "wallet rejection state");
   });
@@ -870,6 +1412,7 @@ test.describe("real-browser SPA journeys", () => {
     await page.getByRole("button", { name: "Invoice tax", exact: true }).click();
     await page.getByLabel("Document ID").fill("invoice-1");
     await page.getByLabel("Currency").fill("USD");
+    await page.getByRole("textbox", { name: /Asset precision/ }).fill("2");
     await page.getByLabel("Jurisdiction").fill("US-CA");
     await page.getByLabel("Tax category").fill("sales-tax");
     await page.getByLabel("Approved tax rule").fill("operator-document-flat-rate");
@@ -881,7 +1424,8 @@ test.describe("real-browser SPA journeys", () => {
     await page.getByLabel("Provider-signed location record (advanced)").fill("[{}]");
     await page.getByRole("button", { name: "Calculate invoice tax", exact: true }).click();
 
-    await expect(page.getByRole("alert")).toContainText("document quote service is unavailable");
+    await expect(page.getByRole("alert")).toContainText(documentQuoteMessagesFor("en-US").errors.quoteFailed);
+    await expect(page.getByRole("alert")).not.toContainText("document quote service is unavailable");
     await expect(page.getByText("No invoice calculation yet", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Open document checkout", exact: true })).toHaveCount(0);
     await expectNoBrowserAxeViolations(page, "document quote API unavailable state");
@@ -900,11 +1444,68 @@ test.describe("real-browser SPA journeys", () => {
     await fillLocalCredential(page, "synthetic-browser-token");
     await page.getByRole("button", { name: "Document payment", exact: true }).click();
 
-    await expect(page.getByRole("alert")).toContainText("active settlement routes are unavailable");
+    await expect(page.getByRole("alert")).toContainText("Routes unavailable");
+    await expect(page.getByRole("alert")).not.toContainText("active settlement routes are unavailable");
     await expect(page.getByRole("combobox", { name: "Payment route" })).toHaveValue("");
     await expect(page.getByRole("button", { name: "Prepare payment for review", exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Sign and submit", exact: true })).toHaveCount(0);
     await expectNoBrowserAxeViolations(page, "document checkout route failure state");
+  });
+
+  test("localizes the document checkout review surface in German and Arabic RTL", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Open display settings" }).click();
+    await page.getByLabel("Language").selectOption("de-DE");
+    await page.goto("/operations/document-payment");
+
+    await expect(page.locator(".app-shell")).toHaveAttribute("dir", "ltr");
+    await expect(page.getByRole("heading", { name: "Diese Zahlung prüfen und autorisieren", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Betrag und Empfänger bestätigen", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Zahlung zur Prüfung vorbereiten", exact: true })).toBeVisible();
+    await expect(page.getByText("Derzeit ist kein kompatibles Solana-Wallet verfügbar.", { exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "German document checkout localization");
+
+    await page.getByRole("button", { name: "Anzeigeeinstellungen öffnen" }).click();
+    await page.getByLabel("Sprache").selectOption("ar-EG");
+    await expect(page.locator(".app-shell")).toHaveAttribute("dir", "rtl");
+    await expect(page.getByRole("heading", { name: "مراجعة هذه الدفعة وتفويضها", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "تأكيد المبلغ والمستلم", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "إعداد الدفعة للمراجعة", exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "Arabic RTL document checkout localization");
+  });
+
+  test("localizes tax-rule governance and structured authoring without changing protocol values", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Open display settings" }).click();
+    await page.getByLabel("Language").selectOption("de-DE");
+    await page.goto("/rules/tax-rules");
+
+    await expect(page.getByRole("heading", { name: "Regel prüfen und veröffentlichen", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "So wird die Steuer berechnet", exact: true })).toBeVisible();
+    await expect(page.getByLabel("Quelldatensatz", { exact: true })).toBeVisible();
+    await expect(page.locator("label").filter({ hasText: "Wie wird der Preis angezeigt?" }).locator("select")).toHaveValue("Exclusive");
+    await expect(page.locator("label").filter({ hasText: "Wie soll die Regel eingegeben werden?" }).locator("select")).toHaveValue("structured");
+    await expect(page.getByRole("option", { name: "Erweitertes JSON", exact: true })).toHaveAttribute("value", "json");
+    await expectNoBrowserAxeViolations(page, "German tax-rule governance localization");
+
+    await page.getByRole("button", { name: "Anzeigeeinstellungen öffnen" }).click();
+    await page.getByLabel("Sprache").selectOption("ar-EG");
+    await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+    await expect(page.getByRole("heading", { name: "مراجعة قاعدة ونشرها", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "كيفية حساب الضريبة", exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "Arabic RTL tax-rule governance localization");
+  });
+
+  test("keeps saved-rule simulation progressively disclosed until requested", async ({ page }) => {
+    await page.goto("/rules/tax-rules");
+    await expect(page.getByRole("heading", { name: "Review and publish a rule", exact: true })).toBeVisible();
+
+    const simulation = page.locator("details.simulation-section").filter({ hasText: "Try the saved rule" }).first();
+    await expect(simulation).not.toHaveAttribute("open", "");
+    await simulation.locator("summary").click();
+    await expect(simulation).toHaveAttribute("open", "");
+    await expect(simulation.getByLabel("Amount before tax")).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "progressively disclosed rule simulation");
   });
 
   test("proves document evidence handoff and keeps signing behind a reviewed artifact", async ({ page }) => {
@@ -1005,6 +1606,7 @@ test.describe("real-browser SPA journeys", () => {
           rule_set_id: "operator-document-flat-rate",
           rule_version: 1,
           engine_version: "tax-engine/v1",
+          atomic_decimals: 2,
           currency: "USD",
           jurisdiction: "US-CA",
           facts_digest: new Array(32).fill(1),
@@ -1027,15 +1629,16 @@ test.describe("real-browser SPA journeys", () => {
       contentType: "application/json",
       body: JSON.stringify([route]),
     }));
-    await page.route(`**/api/v1/tax/document-quotes/${calculationId}/attestation/verify`, (routeRequest) => routeRequest.fulfill({
+    await page.route(`**/api/v1/tax/document-quotes/${calculationId}/attestation/status**`, (routeRequest) => routeRequest.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        status: "document_attested_unsettled",
+        status: "verified",
         calculation_id: calculationId,
         payload_digest: new Array(32).fill(8),
         issuer_public_key: new Array(32).fill(9),
         expires_at_unix: expiresAt,
+        checked_at_unix: expiresAt - 100,
       }),
     }));
     await page.route("**/api/v1/settlement/document/compile-from-quote", (routeRequest) => routeRequest.fulfill({
@@ -1077,6 +1680,7 @@ test.describe("real-browser SPA journeys", () => {
     await page.getByRole("button", { name: "Invoice tax", exact: true }).click();
     await page.getByLabel("Document ID").fill("invoice-1");
     await page.getByLabel("Currency").fill("USD");
+    await page.getByRole("textbox", { name: /Asset precision/ }).fill("2");
     await page.getByLabel("Jurisdiction").fill("US-CA");
     await page.getByLabel("Tax category").fill("sales-tax");
     await page.getByLabel("Approved tax rule").fill("operator-document-flat-rate");
@@ -1092,9 +1696,8 @@ test.describe("real-browser SPA journeys", () => {
     await expect(page).toHaveURL(/\/operations\/document-payment$/);
     await expect(page.getByRole("heading", { name: "Review and authorize this payment", exact: true })).toBeVisible();
 
-    await page.getByLabel("Invoice evidence (signed record)").fill('{"issuer":"synthetic-test"}');
-    await page.getByRole("button", { name: "Verify invoice evidence", exact: true }).click();
-    await expect(page.getByText("Invoice verified; payment not sent", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Check invoice evidence", exact: true }).click();
+    await expect(page.locator(".route-evidence strong").filter({ hasText: "Invoice evidence checked" }).first()).toBeVisible();
     await expect(page.getByRole("button", { name: "Prepare payment for review", exact: true })).toBeDisabled();
 
     await page.getByRole("button", { name: "Connect wallet", exact: true }).click();
@@ -1108,7 +1711,7 @@ test.describe("real-browser SPA journeys", () => {
     await page.reload();
     await expect(page).toHaveURL(/\/operations\/document-payment$/);
     await expect(page.getByRole("heading", { name: "Review and authorize this payment", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Verify invoice evidence", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Check invoice evidence", exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Prepare payment for review", exact: true })).toBeDisabled();
   });
 
@@ -1161,7 +1764,7 @@ test.describe("real-browser SPA journeys", () => {
 
     await page.getByRole("button", { name: /vault-account.*Mismatch/, exact: false }).click();
     await expect(page.getByRole("heading", { name: "Recent runs", exact: true })).toBeVisible();
-    await expect(page.getByText("matched", { exact: true })).toBeVisible();
+    await expect(page.getByText("Matched", { exact: true })).toBeVisible();
     await expectNoBrowserAxeViolations(page, "vault reconciliation mismatch state");
   });
 
@@ -1225,9 +1828,32 @@ test.describe("real-browser SPA journeys", () => {
     await fillLocalCredential(page, "synthetic-browser-token");
     await page.getByRole("button", { name: "Load reconciliation targets", exact: true }).click();
 
-    await expect(page.getByRole("alert")).toContainText("vault reconciliation access is not authorized");
+    await expect(page.getByRole("alert")).toContainText("Vault reconciliation lookup failed");
+    await expect(page.getByRole("alert")).not.toContainText("vault reconciliation access is not authorized");
     await expect(page.getByText("Balance evidence not loaded", { exact: true })).toBeVisible();
     await expectNoBrowserAxeViolations(page, "vault reconciliation unauthorized state");
+  });
+
+  test("fails closed when a reconciliation read exceeds its client deadline", async ({ page }) => {
+    await page.route("**/v1/vault/reconciliation/targets*", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 6_000));
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      });
+    });
+
+    await page.goto("/");
+    await openNavigationGroupFor(page, "Balance checks");
+    await page.getByRole("button", { name: "Balance checks", exact: true }).click();
+    await fillLocalCredential(page, "synthetic-browser-token");
+    await page.getByRole("button", { name: "Load reconciliation targets", exact: true }).click();
+
+    await expect(page.getByRole("alert")).toContainText("Vault reconciliation lookup failed; retry or contact an operator.", { timeout: 7_000 });
+    await expect(page.getByRole("alert")).not.toContainText("Request timed out");
+    await expect(page.getByText("Balance evidence not loaded", { exact: true })).toBeVisible();
+    await expectNoBrowserAxeViolations(page, "vault reconciliation timeout state");
   });
 });
 

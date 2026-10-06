@@ -9,7 +9,7 @@ import {
 describe("static SPA workspace navigation", () => {
   it("maps every workspace to one stable path and back", () => {
     const paths = allWorkspacePaths();
-    expect(paths).toHaveLength(15);
+    expect(paths).toHaveLength(16);
     expect(new Set(paths).size).toBe(paths.length);
     expect(new Set(paths.map((path) => workspaceFromPath(path)))).toEqual(new Set([
       "quote",
@@ -19,6 +19,7 @@ describe("static SPA workspace navigation", () => {
       "document-checkout",
       "governance",
       "access-control",
+      "evidence-access",
       "replay-ops",
       "vault-release",
       "vault-reconciliation",

@@ -12,6 +12,7 @@ function validCalculation(overrides: Record<string, unknown> = {}): Record<strin
       rule_set_id: "published-sales-tax",
       rule_version: 3,
       engine_version: "tax-engine/v1",
+      atomic_decimals: 6,
       currency: "USD",
       jurisdiction: "US-CA",
       facts_digest: Array(32).fill(1),
@@ -53,6 +54,15 @@ describe("strict tax evidence responses", () => {
     expect(() => parseCalculationResponse(validCalculation({
       result: { ...validCalculation().result as Record<string, unknown>, gross_atomic: "01" },
     }))).toThrow(/gross_atomic/);
+  });
+
+  it("requires a bounded authoritative atomic scale", () => {
+    expect(() => parseCalculationResponse(validCalculation({
+      result: { ...validCalculation().result as Record<string, unknown>, atomic_decimals: undefined },
+    }))).toThrow(/atomic decimals/i);
+    expect(() => parseCalculationResponse(validCalculation({
+      result: { ...validCalculation().result as Record<string, unknown>, atomic_decimals: 10 },
+    }))).toThrow(/atomic decimals/i);
   });
 
   it("validates and preserves exact FX evidence", () => {
@@ -102,6 +112,49 @@ describe("strict tax evidence responses", () => {
     expect(() => parseCalculationResponse(validCalculation({
       result: { ...validCalculation().result as Record<string, unknown>, rule_digest: [1, 2] },
     }))).toThrow(/rule digest/);
+  });
+
+  it("preserves treatment channels and accepts empty component traces when the outcome is authoritative", () => {
+    const parsed = parseCalculationResponse(validCalculation({
+      result: {
+        ...validCalculation().result as Record<string, unknown>,
+        total_tax_atomic: "0",
+        total_net_atomic: "100",
+        components: [],
+        treatment_outcome: {
+          treatment: "ReverseCharge",
+          arithmetic_tax_atomic: "20",
+          collected_tax_atomic: "0",
+          self_assessed_tax_atomic: "20",
+          withheld_tax_atomic: "0",
+          taxable_base_atomic: "100",
+        },
+      },
+    }));
+    expect(parsed.result.treatment_outcome?.treatment).toBe("ReverseCharge");
+    expect(parsed.result.treatment_outcome?.self_assessed_tax_atomic).toBe("20");
+  });
+
+  it("rejects treatment outcomes that disagree with the authoritative collected total", () => {
+    expect(() => parseCalculationResponse(validCalculation({
+      result: {
+        ...validCalculation().result as Record<string, unknown>,
+        treatment_outcome: {
+          treatment: "Withholding",
+          arithmetic_tax_atomic: "20",
+          collected_tax_atomic: "19",
+          self_assessed_tax_atomic: "0",
+          withheld_tax_atomic: "20",
+          taxable_base_atomic: "100",
+        },
+      },
+    }))).toThrow(/match total tax/);
+  });
+
+  it("rejects an empty trace without a treatment outcome", () => {
+    expect(() => parseCalculationResponse(validCalculation({
+      result: { ...validCalculation().result as Record<string, unknown>, components: [] },
+    }))).toThrow(/components or treatment outcome/);
   });
 
   it("requires the exact replay verification envelope", () => {

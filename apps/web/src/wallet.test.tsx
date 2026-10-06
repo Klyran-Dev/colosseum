@@ -131,6 +131,20 @@ describe("Wallet Standard signing boundary", () => {
     });
     unregister();
   });
+
+  it("redacts wallet provider exception details from the operator surface", async () => {
+    window.solana = {
+      connect: vi.fn(async () => { throw new Error("provider-internal rejection detail"); }),
+      signTransaction: vi.fn(async () => { throw new Error("provider-internal signing detail"); }),
+    };
+    render(<WalletPicker />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect wallet" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Wallet connection was rejected.");
+    expect(alert.textContent).not.toContain("provider-internal rejection detail");
+  });
 });
 
 function createStandardWallet(

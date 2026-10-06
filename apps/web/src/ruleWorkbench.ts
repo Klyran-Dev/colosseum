@@ -9,6 +9,7 @@ export type RoundingMode = "Floor" | "Ceil" | "HalfUp" | "HalfEven" | "AwayFromZ
 export type RoundingScope = "Component" | "Settlement" | "Line" | "Invoice";
 export type ThresholdBasis = "PerTransaction" | "CumulativePeriod";
 export type ThresholdMode = "ExemptUpTo" | "TriggerAt";
+export type InclusiveThresholdEquation = "GrossExcess";
 
 export type RuleBracketDraft = {
   lowerAtomic: string;
@@ -22,11 +23,17 @@ export type RuleComponentDraft = {
   id: string;
   label: string;
   baseSources: string[];
+  /** Parallel coefficient fields keep legacy drafts backwards compatible. */
+  baseNumerators?: string[];
+  baseDenominators?: string[];
   rateMode: RateMode;
   flatNumerator: string;
   flatDenominator: string;
   brackets: RuleBracketDraft[];
   priceMode: PriceMode;
+  /** Optional exact clamps applied to the derived taxable base before thresholds and rates. */
+  baseFloorAtomic: string;
+  baseCapAtomic: string;
   creditAtomic: string;
   floorAtomic: string;
   capAtomic: string;
@@ -37,6 +44,7 @@ export type RuleComponentDraft = {
   thresholdAtomic: string;
   thresholdBasis: ThresholdBasis;
   thresholdMode: ThresholdMode;
+  inclusiveThresholdEquation: InclusiveThresholdEquation | null;
   exemptionCodes: string;
 };
 
@@ -46,7 +54,13 @@ export type RuleWorkbenchDraft = {
   components: RuleComponentDraft[];
 };
 
-type BuiltBaseSource = "Gross" | "Net" | { Component: string };
+type BuiltBaseSource = "Gross" | "Net" | { Component: string } | {
+  Weighted: {
+    source: "Gross" | "Net" | { Component: string };
+    numerator: string;
+    denominator: string;
+  };
+};
 
 export type BuiltRuleSet = {
   id: string;
@@ -54,7 +68,7 @@ export type BuiltRuleSet = {
   components: Array<{
     id: string;
     label: string;
-    base: { sources: BuiltBaseSource[] };
+    base: { sources: BuiltBaseSource[]; floor_atomic?: string; cap_atomic?: string };
     rate:
       | { Flat: { numerator: string; denominator: string } }
       | { Progressive: Array<{ lower_atomic: string; upper_atomic: string | null; rate: { numerator: string; denominator: string } }> };
@@ -63,7 +77,7 @@ export type BuiltRuleSet = {
     floor_atomic: string | null;
     cap_atomic: string | null;
     rounding: { mode: RoundingMode; scope?: RoundingScope; quantum_atomic?: string };
-    threshold: { amount_atomic: string; basis: ThresholdBasis; mode: ThresholdMode } | null;
+    threshold: { amount_atomic: string; basis: ThresholdBasis; mode: ThresholdMode; inclusive_equation?: InclusiveThresholdEquation } | null;
     exemption_codes: string[];
   }>;
 };
@@ -73,6 +87,8 @@ export function defaultComponentDraft(index = 1): RuleComponentDraft {
     id: index === 1 ? "sales-tax" : `component-${index}`,
     label: index === 1 ? "Sales tax" : `Tax component ${index}`,
     baseSources: ["Net"],
+    baseNumerators: ["1"],
+    baseDenominators: ["1"],
     rateMode: "flat",
     flatNumerator: "10",
     flatDenominator: "100",
@@ -80,6 +96,8 @@ export function defaultComponentDraft(index = 1): RuleComponentDraft {
       { lowerAtomic: "0", upperAtomic: "", numerator: "10", denominator: "100", openEnded: true },
     ],
     priceMode: "Exclusive",
+    baseFloorAtomic: "",
+    baseCapAtomic: "",
     creditAtomic: "0",
     floorAtomic: "",
     capAtomic: "",
@@ -90,6 +108,7 @@ export function defaultComponentDraft(index = 1): RuleComponentDraft {
     thresholdAtomic: "0",
     thresholdBasis: "PerTransaction",
     thresholdMode: "ExemptUpTo",
+    inclusiveThresholdEquation: null,
     exemptionCodes: "",
   };
 }
@@ -104,6 +123,29 @@ function nonNegativeInteger(value: string, name: string, allowEmpty = false): bi
   const parsed = BigInt(value);
   if (parsed > MAX_ATOMIC) throw new Error(`${name} must fit an unsigned 64-bit atomic amount.`);
   return parsed;
+}
+
+function signedCoefficient(value: string, name: string): bigint {
+  const trimmed = value.trim();
+  if (!/^-?(0|[1-9][0-9]*)$/.test(trimmed)) throw new Error(`${name} must be a signed decimal integer.`);
+  const parsed = BigInt(trimmed);
+  if (parsed === 0n || parsed > MAX_ATOMIC || parsed < -MAX_ATOMIC) throw new Error(`${name} must be non-zero and fit the bounded coefficient range.`);
+  return parsed;
+}
+
+function positiveCoefficient(value: string, name: string): bigint {
+  const trimmed = value.trim();
+  if (!/^-?(0|[1-9][0-9]*)$/.test(trimmed)) throw new Error(`${name} must be a decimal integer.`);
+  const parsed = BigInt(trimmed);
+  if (parsed <= 0n || parsed > MAX_ATOMIC) throw new Error(`${name} must be positive.`);
+  return parsed;
+}
+
+function coefficientAt(component: RuleComponentDraft, index: number): { numerator: string; denominator: string } {
+  return {
+    numerator: component.baseNumerators?.[index] ?? "1",
+    denominator: component.baseDenominators?.[index] ?? "1",
+  };
 }
 
 function code(value: string, name: string): void {
@@ -121,20 +163,32 @@ function validateComponent(component: RuleComponentDraft, ids: Set<string>, allI
   if (ids.has(component.id)) errors.push("Component IDs must be unique.");
   ids.add(component.id);
   if (component.baseSources.length === 0 || component.baseSources.length > MAX_COMPONENTS) errors.push("Each component must have between 1 and 128 base sources.");
-  for (const source of component.baseSources) {
+  if (new Set(component.baseSources).size !== component.baseSources.length) errors.push(`Component ${component.id} base sources must be distinct.`);
+  component.baseSources.forEach((source, sourceIndex) => {
     if (source !== "Gross" && source !== "Net" && !source.startsWith("Component:")) {
       errors.push(`Component ${component.id} has an unsupported base source.`);
     } else if (source.startsWith("Component:")) {
       const dependency = source.slice("Component:".length).trim();
       if (!dependency || !allIds.has(dependency)) errors.push(`Component ${component.id} references missing component ${dependency || "(empty)"}.`);
     }
-  }
+    const coefficient = coefficientAt(component, sourceIndex);
+    try {
+      const numerator = signedCoefficient(coefficient.numerator, `Component ${component.id} base share numerator`);
+      const denominator = positiveCoefficient(coefficient.denominator, `Component ${component.id} base share denominator`);
+      if (component.priceMode === "Inclusive" && (numerator !== 1n || denominator !== 1n)) {
+        errors.push(`Component ${component.id} inclusive prices require a whole base amount; weighted bases need an explicit approved equation.`);
+      }
+    } catch (error) { errors.push(errorMessage(error)); }
+  });
   try {
+    const baseFloor = nonNegativeInteger(component.baseFloorAtomic, `Component ${component.id} taxable-base floor`, true);
+    const baseCap = nonNegativeInteger(component.baseCapAtomic, `Component ${component.id} taxable-base cap`, true);
     const credit = nonNegativeInteger(component.creditAtomic, `Component ${component.id} credit`);
     const floor = nonNegativeInteger(component.floorAtomic, `Component ${component.id} floor`, true);
     const cap = nonNegativeInteger(component.capAtomic, `Component ${component.id} cap`, true);
     const quantum = nonNegativeInteger(component.roundingQuantumAtomic, `Component ${component.id} rounding quantum`);
     if (floor !== null && cap !== null && floor > cap) errors.push(`Component ${component.id} floor cannot exceed cap.`);
+    if (baseFloor !== null && baseCap !== null && baseFloor > baseCap) errors.push(`Component ${component.id} taxable-base floor cannot exceed cap.`);
     if (credit === null) errors.push(`Component ${component.id} credit is required.`);
     if (quantum === 0n) errors.push(`Component ${component.id} rounding quantum must be positive.`);
     if (quantum !== null && quantum > 0n) {
@@ -161,7 +215,14 @@ function validateComponent(component: RuleComponentDraft, ids: Set<string>, allI
   }
   if (component.thresholdEnabled) {
     try { nonNegativeInteger(component.thresholdAtomic, `Component ${component.id} threshold`); } catch (error) { errors.push(errorMessage(error)); }
-    if (component.priceMode === "Inclusive") errors.push(`Component ${component.id} cannot combine an inclusive price mode with a threshold in rule DSL v1.`);
+    if (component.priceMode === "Inclusive" && component.inclusiveThresholdEquation === null) {
+      errors.push(`Component ${component.id} inclusive thresholds require an explicit equation.`);
+    }
+    if (component.priceMode === "Exclusive" && component.inclusiveThresholdEquation !== null) {
+      errors.push(`Component ${component.id} inclusive threshold equations require inclusive price mode.`);
+    }
+  } else if (component.inclusiveThresholdEquation !== null) {
+    errors.push(`Component ${component.id} inclusive threshold equations require an enabled threshold.`);
   }
   const exemptions = splitCodes(component.exemptionCodes);
   if (exemptions.length > MAX_EXEMPTION_CODES) errors.push(`Component ${component.id} has too many exemption codes.`);
@@ -209,7 +270,22 @@ export function buildRuleSet(draft: RuleWorkbenchDraft): BuiltRuleSet {
     components: draft.components.map((component) => ({
       id: component.id.trim(),
       label: component.label.trim(),
-      base: { sources: component.baseSources.map((source) => source === "Gross" || source === "Net" ? source : { Component: source.slice("Component:".length).trim() }) },
+      base: {
+        sources: component.baseSources.map((source, sourceIndex) => {
+        const plainSource = source === "Gross" || source === "Net" ? source : { Component: source.slice("Component:".length).trim() } as const;
+        const coefficient = coefficientAt(component, sourceIndex);
+        if (coefficient.numerator.trim() === "1" && coefficient.denominator.trim() === "1") return plainSource;
+        return {
+          Weighted: {
+            source: plainSource,
+            numerator: coefficient.numerator.trim(),
+            denominator: coefficient.denominator.trim(),
+          },
+        };
+        }),
+        ...(component.baseFloorAtomic.trim() === "" ? {} : { floor_atomic: component.baseFloorAtomic.trim() }),
+        ...(component.baseCapAtomic.trim() === "" ? {} : { cap_atomic: component.baseCapAtomic.trim() }),
+      },
       rate: component.rateMode === "flat"
         ? { Flat: { numerator: component.flatNumerator.trim(), denominator: component.flatDenominator.trim() } }
         : { Progressive: component.brackets.map((bracket) => ({
@@ -230,6 +306,7 @@ export function buildRuleSet(draft: RuleWorkbenchDraft): BuiltRuleSet {
         amount_atomic: component.thresholdAtomic.trim(),
         basis: component.thresholdBasis,
         mode: component.thresholdMode,
+        ...(component.inclusiveThresholdEquation === null ? {} : { inclusive_equation: component.inclusiveThresholdEquation }),
       } : null,
       exemption_codes: splitCodes(component.exemptionCodes),
     })),

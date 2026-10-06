@@ -15,6 +15,7 @@ import SettlementAdjustmentPanel from "./SettlementAdjustmentPanel";
 import RefundClaimPanel from "./RefundClaimPanel";
 import RefundCancellationPanel from "./RefundCancellationPanel";
 import RefundExecutePanel from "./RefundExecutePanel";
+import EvidenceAccessPanel from "./EvidenceAccessPanel";
 
 afterEach(() => {
   cleanup();
@@ -39,12 +40,13 @@ describe("primary product accessibility contract", () => {
     const workspaces = [
       <GovernancePanel key="governance" apiBase="/api" serviceOnline accessToken="" />,
       <ReplayOpsPanel key="replay" apiBase="/api" serviceOnline accessToken="" />,
-      <VaultReconciliationPanel key="vault-reconciliation" apiBase="/api" serviceOnline accessToken="" />,
+      <VaultReconciliationPanel key="vault-reconciliation" apiBase="/api" serviceOnline accessToken="" locale="en-US" />,
       <VaultReleasePanel key="vault" apiBase="/api" serviceOnline accessToken="" />,
       <SettlementAdjustmentPanel key="adjustments" apiBase="/api" serviceOnline accessToken="" />,
       <RefundClaimPanel key="refund-claims" apiBase="/api" serviceOnline accessToken="" locale="en-US" />,
-      <RefundCancellationPanel key="refund-cancellations" apiBase="/api" serviceOnline accessToken="" />,
+      <RefundCancellationPanel key="refund-cancellations" apiBase="/api" serviceOnline accessToken="" locale="en-US" />,
       <RefundExecutePanel key="refund-executions" apiBase="/api" serviceOnline accessToken="" locale="en-US" />,
+      <EvidenceAccessPanel key="evidence-access" apiBase="/api" serviceOnline accessToken="" locale="en-US" />,
       <CheckoutPanel
         key="checkout"
         apiBase="/api"
@@ -87,7 +89,7 @@ describe("primary product accessibility contract", () => {
     const workspaceContent = screen.getByRole("region", { name: "Current tax workspace" });
     const governanceButton = screen.getByRole("button", { name: "Tax rules" });
 
-    expect(skipLink.getAttribute("href")).toBe("#workspace-content");
+    expect(skipLink.getAttribute("href")).toBe("#main-content");
     expect(governanceButton.getAttribute("aria-current")).toBeNull();
 
     fireEvent.click(governanceButton);
@@ -124,9 +126,9 @@ describe("primary product accessibility contract", () => {
     expect(document.querySelector(".app-shell")?.getAttribute("dir")).toBe("rtl");
     expect(document.documentElement.lang).toBe("ar");
 
-    const timeZone = screen.getByRole("combobox", { name: "Time zone" });
+    const timeZone = screen.getByRole("combobox", { name: "المنطقة الزمنية" });
     fireEvent.change(timeZone, { target: { value: "Not/AZone" } });
     expect(timeZone.getAttribute("aria-invalid")).toBe("true");
-    expect(screen.getByText("Unknown time zone; UTC is used for rendering.")).toBeTruthy();
+    expect(screen.getByText("المنطقة الزمنية غير معروفة؛ يُستخدم UTC للعرض.")).toBeTruthy();
   });
 });

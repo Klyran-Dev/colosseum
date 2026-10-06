@@ -90,6 +90,28 @@ describe("refund wallet workspaces", () => {
     expect(screen.getAllByText("100").length).toBeGreaterThan(0);
     expect(screen.getByText("Evidence digest").parentElement?.textContent).toContain("0101010101010101");
   });
+
+  it("redacts an injected-wallet exception from the refund claim surface", async () => {
+    const proposer = Keypair.fromSeed(new Uint8Array(32).fill(97));
+    const refundFunder = Keypair.fromSeed(new Uint8Array(32).fill(98));
+    installWalletAndFetchMock(proposer, refundFunder, claimResponse(proposer, refundFunder), "claim");
+
+    render(<RefundClaimPanel apiBase="/api" serviceOnline accessToken="test-token" locale="en-US" />);
+    fireEvent.change(screen.getByLabelText("Approved correction reference"), { target: { value: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d12" } });
+    fireEvent.click(screen.getByRole("button", { name: "Prepare refund request" }));
+    await screen.findByText(/Your refund request is ready for review\./);
+
+    (window.solana as TestWallet).signTransaction = vi.fn(async () => {
+      throw new Error("provider-internal refund signing detail");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect wallet" }));
+    await screen.findByRole("button", { name: "Reconnect wallet" });
+    fireEvent.click(screen.getByRole("button", { name: "Sign as proposer" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Refund request wallet signing failed.");
+    expect(alert.textContent).not.toContain("provider-internal refund signing detail");
+  });
 });
 
 type TestWallet = {

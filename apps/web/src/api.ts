@@ -1,3 +1,5 @@
+import { operatorFacingError, OperatorFacingError } from "./operatorError";
+
 const UUIDV7_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const MAX_RESPONSE_ERROR_MESSAGE_LENGTH = 512;
 
@@ -53,17 +55,6 @@ export async function fetchWithTimeout(
   }
 }
 
-function payloadMessage(payload: unknown): string | null {
-  if (
-    typeof payload === "object" && payload !== null && "error" in payload
-    && typeof payload.error === "object" && payload.error !== null
-    && "message" in payload.error && typeof payload.error.message === "string"
-  ) {
-    return payload.error.message;
-  }
-  return null;
-}
-
 function boundedDisplayMessage(value: string): string | null {
   const normalized = value
     .replace(/[\u0000-\u001f\u007f]/g, " ")
@@ -75,11 +66,22 @@ function boundedDisplayMessage(value: string): string | null {
 }
 
 export function responseError(response: Response, payload: unknown, fallback: string): string {
-  const message = boundedDisplayMessage(payloadMessage(payload) ?? "")
-    ?? boundedDisplayMessage(fallback)
+  // The response payload is intentionally not a presentation authority. It
+  // may contain server/provider diagnostics even when bounded and normalized.
+  void payload;
+  const message = boundedDisplayMessage(fallback)
     ?? "The request could not be completed.";
+  const withoutHttpStatus = message.replace(/\s+\(\d{3}\)(?=[.!?]?$)/u, "");
   const requestId = response.headers.get("x-request-id")?.trim() ?? "";
   return UUIDV7_PATTERN.test(requestId)
-    ? `${message} (support reference: ${requestId})`
-    : message;
+    ? `${withoutHttpStatus} (support reference: ${requestId})`
+    : withoutHttpStatus;
+}
+
+export function operatorResponseError(response: Response, payload: unknown, fallback: string): OperatorFacingError {
+  const supportReference = response.headers.get("x-request-id")?.trim() ?? "";
+  return operatorFacingError(
+    responseError(response, payload, fallback),
+    UUIDV7_PATTERN.test(supportReference) ? supportReference : null,
+  );
 }

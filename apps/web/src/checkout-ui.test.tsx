@@ -32,4 +32,25 @@ describe("payment review language boundary", () => {
     expect(screen.getByText(/verified quote supplies the policy/i)).toBeTruthy();
     expect(screen.getByText(/secure payment reference is assigned for safe retry/i)).toBeTruthy();
   });
+
+  it("localizes aggregate payment review without translating financial or protocol values", () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 200 })));
+    render(
+      <CheckoutPanel
+        apiBase="/api"
+        serviceOnline={false}
+        accessToken=""
+        calculation={null}
+        locale="de-DE"
+        formatAtomic={(value, currency) => `${currency} ${value}`}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Zahlung vor der Signatur prüfen" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Zahlungsprüfung" })).toBeTruthy();
+    expect(screen.getByText("Wallet-Bestätigung erforderlich", { exact: true })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Zahlung zur Prüfung vorbereiten" })).toBeTruthy();
+    expect(screen.getByText("Derzeit ist kein kompatibles Solana-Wallet verfügbar.", { exact: true })).toBeTruthy();
+    expect(screen.queryByText(/Tokenkeg|0199|1000/)).toBeNull();
+  });
 });

@@ -1,6 +1,6 @@
 import { FormEvent, useState } from "react";
 import { PublicKey } from "@solana/web3.js";
-import { fetchWithTimeout, REQUEST_TIMEOUT_MS, responseError } from "./api";
+import { fetchWithTimeout, operatorResponseError, REQUEST_TIMEOUT_MS } from "./api";
 import { createClientUuid } from "./clientIdentity";
 import {
   RefundClaimResponse,
@@ -11,6 +11,8 @@ import {
 } from "./refundClaims";
 import { formatInteger } from "./formatters";
 import WalletPicker from "./WalletPicker";
+import { refundClaimMessagesFor } from "./refundClaimMessages";
+import { operatorErrorMessage } from "./operatorError";
 
 type RefundClaimPanelProps = {
   apiBase: string;
@@ -32,6 +34,7 @@ function digestPreview(bytes: number[]): string {
 }
 
 export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, locale }: RefundClaimPanelProps) {
+  const messages = refundClaimMessagesFor(locale);
   const [adjustmentId, setAdjustmentId] = useState("");
   const [lookupId, setLookupId] = useState("");
   const [idempotencyKey, setIdempotencyKey] = useState(() => createClientUuid());
@@ -45,7 +48,7 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
 
   function requireToken(): string {
     const token = accessToken.trim();
-    if (!token) throw new Error("Sign in with an account allowed to prepare refund requests. The credential is held in memory only.");
+    if (!token) throw new Error(messages.errors.authorizationRequired);
     return token;
   }
 
@@ -60,22 +63,22 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
     clearMessages();
     try {
       const token = requireToken();
-      if (!adjustmentId.trim()) throw new Error("An approved correction reference is required; financial values are loaded by the service.");
+      if (!adjustmentId.trim()) throw new Error(messages.errors.correctionReferenceRequired);
       const response = await fetchWithTimeout(`${apiBase.replace(/\/$/, "")}/v1/settlement/refund-claims`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
         body: JSON.stringify({ idempotency_key: idempotencyKey.trim(), adjustment_id: adjustmentId.trim(), confirm: true }),
       });
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(responseError(response, payload, `Refund claim preparation failed (${response.status})`));
+      if (!response.ok) throw operatorResponseError(response, payload, messages.errors.preparationRequestFailed(response.status));
       const parsed = parseRefundClaimResponse(payload);
       setClaim(parsed);
       setSignedBytes(null);
       setRecoveryBytes("");
       setLookupId(parsed.intent_id);
-      setNotice("Your refund request is ready for review. Check the amounts, recipient, approval roles, and expiry before signing. No funds moved.");
+      setNotice(messages.errors.preparationReady);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Refund claim preparation failed.");
+      setError(operatorErrorMessage(cause, messages.errors.preparationFailed));
     } finally {
       setBusy(false);
     }
@@ -87,16 +90,16 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
     clearMessages();
     try {
       const token = requireToken();
-      if (!lookupId.trim()) throw new Error("A refund request reference is required.");
+      if (!lookupId.trim()) throw new Error(messages.errors.requestReferenceRequired);
       const response = await fetchWithTimeout(`${apiBase.replace(/\/$/, "")}/v1/settlement/refund-claims/${lookupId.trim()}`, { headers: { authorization: `Bearer ${token}` } });
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(responseError(response, payload, `Refund claim recovery failed (${response.status})`));
+      if (!response.ok) throw operatorResponseError(response, payload, messages.errors.recoveryRequestFailed(response.status));
       setClaim(parseRefundClaimResponse(payload));
       setSignedBytes(null);
       setRecoveryBytes("");
-      setNotice("The saved refund request was loaded. For safety, the service does not return signed wallet data; paste the unchanged wallet file to continue.");
+      setNotice(messages.errors.recoveryLoaded);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Refund claim recovery failed.");
+      setError(operatorErrorMessage(cause, messages.errors.recoveryFailed));
     } finally {
       setBusy(false);
     }
@@ -106,21 +109,21 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
     setBusy(true);
     clearMessages();
     try {
-      if (!claim) throw new Error("Prepare or recover a refund request before signing.");
-      if (claim.status !== "prepared_unsubmitted" && claim.status !== "signed") throw new Error("This claim is not in a wallet-signable state. Reconcile the durable state before taking another action.");
+      if (!claim) throw new Error(messages.errors.prepareBeforeSigning);
+      if (claim.status !== "prepared_unsubmitted" && claim.status !== "signed") throw new Error(messages.errors.signableStateRequired);
       const serialized = signedBytes ?? (recoveryBytes.trim() || null);
-      if (role === "refund_funder" && !serialized) throw new Error("The proposer signature is required before the refund-funder wallet can sign.");
+      if (role === "refund_funder" && !serialized) throw new Error(messages.errors.funderPrerequisite);
       const expected = new PublicKey(role === "proposer" ? claim.artifact.proposer : claim.artifact.refund_funder);
       const next = await signRefundClaimRole(claim.artifact.instruction, role, expected, import.meta.env.VITE_SOLANA_RPC_URL ?? "", serialized);
       setSignedBytes(next);
       setRecoveryBytes("");
       setNotice(refundClaimHasAllSignatures(next)
-        ? "Both wallet signatures are present in the local transaction artifact. Submit these unchanged bytes to the API; a signature is not a refund confirmation."
+        ? messages.errors.bothSignaturesPresent
         : role === "proposer"
-          ? "Proposer signature collected. Switch to the configured refund-funder wallet and collect its signature before submission."
-          : "Wallet signature collected. The API still must verify and submit the complete transaction.");
+          ? messages.errors.proposerSignaturePresent
+          : messages.errors.funderSignaturePresent);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Refund claim wallet signing failed.");
+      setError(operatorErrorMessage(cause, messages.errors.signingFailed));
     } finally {
       setBusy(false);
     }
@@ -131,23 +134,23 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
     clearMessages();
     try {
       const token = requireToken();
-      if (!claim) throw new Error("Prepare or recover a refund request before submission.");
+      if (!claim) throw new Error(messages.errors.prepareBeforeSubmission);
       const bytes = signedBytes ?? recoveryBytes.trim();
-      if (!bytes || !refundClaimHasAllSignatures(bytes)) throw new Error("Both required wallet signatures must be present before submission.");
+      if (!bytes || !refundClaimHasAllSignatures(bytes)) throw new Error(messages.errors.signaturesRequired);
       const response = await fetchWithTimeout(`${apiBase.replace(/\/$/, "")}/v1/settlement/refund-claims/submit`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
         body: JSON.stringify({ intent_id: claim.intent_id, signed_transaction_base64: bytes }),
       }, REQUEST_TIMEOUT_MS.settlementSubmit);
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(responseError(response, payload, `Refund claim submission failed (${response.status})`));
+      if (!response.ok) throw operatorResponseError(response, payload, messages.errors.submissionRequestFailed(response.status));
       const result = parseRefundClaimSubmissionResponse(payload);
       setClaim({ ...claim, status: result.status, signature: result.signature });
       setNotice(result.status === "unknown"
-        ? "The provider outcome is unknown. Do not sign or submit different bytes; reconcile the durable claim against finalized chain evidence."
-        : "The provider accepted the unchanged transaction bytes. This is transport evidence only; the claim is not a completed refund until finalized event and balance proof are recorded.");
+        ? messages.errors.submissionUnknown
+        : messages.errors.submissionPending);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Refund claim submission failed.");
+      setError(operatorErrorMessage(cause, messages.errors.submissionFailed));
     } finally {
       setBusy(false);
     }
@@ -158,84 +161,85 @@ export default function RefundClaimPanel({ apiBase, serviceOnline, accessToken, 
     clearMessages();
     try {
       const token = requireToken();
-      if (!claim) throw new Error("Prepare or recover a refund request before reconciliation.");
+      if (!claim) throw new Error(messages.errors.prepareBeforeReconciliation);
       const response = await fetchWithTimeout(`${apiBase.replace(/\/$/, "")}/v1/settlement/refund-claims/${claim.intent_id}/reconcile`, {
         method: "POST",
         headers: { authorization: `Bearer ${token}` },
       }, REQUEST_TIMEOUT_MS.settlementSubmit);
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(responseError(response, payload, `Refund claim reconciliation failed (${response.status})`));
+      if (!response.ok) throw operatorResponseError(response, payload, messages.errors.reconciliationRequestFailed(response.status));
       setClaim(parseRefundClaimResponse(payload));
-      setNotice("Finalized claim event evidence matched the durable artifact. Execute preparation is now eligible for the separately authorized approver workflow.");
+      setNotice(messages.errors.reconciliationReady);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Refund claim reconciliation failed.");
+      setError(operatorErrorMessage(cause, messages.errors.reconciliationFailed));
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <section className="adjustment-layout" aria-label="Refund claim wallet workspace">
+    <section className="adjustment-layout" aria-label={messages.proposal.ariaLabel}>
       <article className="panel">
-        <div className="panel-heading"><div><p className="eyebrow">Refund request / two-person approval</p><h2>Prepare a refund request</h2></div><span className="status-pill">You keep custody</span></div>
-        <p className="panel-copy">The service loads the approved payment details and prepares the refund for review. You can review the result, but cannot change its financial or recipient details in the browser.</p>
+        <div className="panel-heading"><div><p className="eyebrow">{messages.proposal.eyebrow}</p><h2>{messages.proposal.title}</h2></div><span className="status-pill">{messages.proposal.badge}</span></div>
+        <p className="panel-copy">{messages.proposal.description}</p>
         <form className="form-grid" onSubmit={prepare}>
-          <label className="full-field"><span>Approved correction reference</span><input value={adjustmentId} onChange={(event) => setAdjustmentId(event.target.value)} placeholder="Paste the approved correction reference" required /></label>
-          <label className="full-field"><span>Request reference</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} aria-describedby="refund-request-reference-help" required /><small id="refund-request-reference-help">A unique reference prevents duplicate requests when you retry.</small></label>
-          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>{busy ? "Preparing…" : "Prepare refund request"}</button>
+          <label className="full-field"><span>{messages.proposal.correctionReference}</span><input aria-label={messages.proposal.correctionReference} value={adjustmentId} onChange={(event) => setAdjustmentId(event.target.value)} placeholder={messages.proposal.correctionPlaceholder} required /></label>
+          <label className="full-field"><span>{messages.proposal.requestReference}</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} aria-describedby="refund-request-reference-help" required /><small id="refund-request-reference-help">{messages.proposal.requestHelp}</small></label>
+          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>{busy ? messages.proposal.preparing : messages.proposal.prepare}</button>
         </form>
         <form className="form-grid" onSubmit={load}>
-          <label className="full-field"><span>Refund request reference</span><input value={lookupId} onChange={(event) => setLookupId(event.target.value)} placeholder="Paste a saved request reference" /></label>
-          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>Load saved request</button>
+          <label className="full-field"><span>{messages.proposal.refundRequestReference}</span><input aria-label={messages.proposal.refundRequestReference} value={lookupId} onChange={(event) => setLookupId(event.target.value)} placeholder={messages.proposal.savedRequestPlaceholder} /></label>
+          <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>{messages.proposal.load}</button>
         </form>
-        {!serviceOnline && <p className="inline-warning" role="alert">The service is unavailable. No client-side fallback or local settlement state is used.</p>}
+        {!serviceOnline && <p className="inline-warning" role="alert">{messages.proposal.serviceUnavailable}</p>}
         {error && <p className="inline-error" role="alert">{error}</p>}
         {notice && <p className="inline-success" role="status">{notice}</p>}
       </article>
 
-      <article className="panel" aria-live="polite">
-        <div className="panel-heading"><div><p className="eyebrow">Immutable artifact review</p><h2>Wallet authorization</h2></div>{claim && <span className="status-pill">{statusLabel(claim.status)}</span>}</div>
+      <article className="panel" aria-label={messages.review.ariaLabel} aria-live="polite">
+        <div className="panel-heading"><div><p className="eyebrow">{messages.review.eyebrow}</p><h2>{messages.review.title}</h2></div>{claim && <span className="status-pill">{statusLabel(claim.status)}</span>}</div>
         <WalletPicker
           disabled={busy}
           connectEnabled={Boolean(claim && (claim.status === "prepared_unsubmitted" || claim.status === "signed"))}
           connectedAddress={walletAddress?.toBase58()}
           onConnected={setWalletAddress}
+          locale={locale}
         />
-        {!claim ? <div className="empty-state"><span className="empty-icon">↔</span><strong>No refund request loaded</strong><p>Prepare or recover a request to review its payment details and approval status.</p></div> : <>
+        {!claim ? <div className="empty-state"><span className="empty-icon">↔</span><strong>{messages.review.noRequest}</strong><p>{messages.review.noRequestCopy}</p></div> : <>
           <dl className="summary-list">
-            <div><dt>Gross refund</dt><dd>{amountValue(claim.artifact.gross_atomic, locale)}</dd></div>
-            <div><dt>Tax included</dt><dd>{amountValue(claim.artifact.tax_atomic, locale)}</dd></div>
-            <div><dt>Refund after tax</dt><dd>{amountValue(claim.artifact.net_atomic, locale)}</dd></div>
-            <div><dt>Asset</dt><dd><code>{claim.artifact.mint}</code></dd></div>
-            <div><dt>Destination</dt><dd><code>{claim.artifact.refund_destination}</code></dd></div>
-            <div><dt>On-chain refund record</dt><dd><code>{claim.claim}</code></dd></div>
-            <div><dt>Refund account</dt><dd><code>{claim.artifact.refund_funder}</code></dd></div>
-            <div><dt>Expiry</dt><dd>{claim.artifact.expires_at_unix ? new Date(claim.artifact.expires_at_unix * 1000).toISOString() : "Not present"}</dd></div>
-            <div><dt>Submission reference</dt><dd>{claim.signature ? <code>{claim.signature}</code> : "None recorded"}</dd></div>
+            <div><dt>{messages.review.grossRefund}</dt><dd>{amountValue(claim.artifact.gross_atomic, locale)}</dd></div>
+            <div><dt>{messages.review.taxIncluded}</dt><dd>{amountValue(claim.artifact.tax_atomic, locale)}</dd></div>
+            <div><dt>{messages.review.refundAfterTax}</dt><dd>{amountValue(claim.artifact.net_atomic, locale)}</dd></div>
+            <div><dt>{messages.review.asset}</dt><dd><code>{claim.artifact.mint}</code></dd></div>
+            <div><dt>{messages.review.destination}</dt><dd><code>{claim.artifact.refund_destination}</code></dd></div>
+            <div><dt>{messages.review.onChainRecord}</dt><dd><code>{claim.claim}</code></dd></div>
+            <div><dt>{messages.review.refundAccount}</dt><dd><code>{claim.artifact.refund_funder}</code></dd></div>
+            <div><dt>{messages.review.expiry}</dt><dd>{claim.artifact.expires_at_unix ? new Date(claim.artifact.expires_at_unix * 1000).toISOString() : "Not present"}</dd></div>
+            <div><dt>{messages.review.submissionReference}</dt><dd>{claim.signature ? <code>{claim.signature}</code> : messages.review.noneRecorded}</dd></div>
           </dl>
           {claim.status === "finalized" && claim.finalized_evidence && <div className="settlement-status" aria-live="polite">
-            <strong role="status">Finalized claim event evidence matched the durable artifact.</strong>
-            <small>The event proof is bound to the recorded signature, finalized slot, claim PDA, amounts, and immutable evidence digest. Finality is movement evidence, not a legal or compliance determination.</small>
+            <strong role="status">{messages.review.finalizedTitle}</strong>
+            <small>{messages.review.finalizedCopy}</small>
             <details>
-              <summary>Finalized event proof</summary>
+              <summary>{messages.review.finalizedProof}</summary>
               <dl className="summary-list">
-                <div><dt>Event</dt><dd>{claim.finalized_evidence.event_type} · {claim.finalized_evidence.event_version}</dd></div>
-                <div><dt>Finalized slot</dt><dd>{claim.finalized_evidence.slot}</dd></div>
-                <div><dt>Event index</dt><dd>{claim.finalized_evidence.event_index}</dd></div>
-                <div><dt>Event signature</dt><dd><code>{claim.finalized_evidence.signature}</code></dd></div>
-                <div><dt>Gross / tax / refund</dt><dd>{claim.finalized_evidence.gross_magnitude} / {claim.finalized_evidence.tax_magnitude} / {claim.finalized_evidence.net_magnitude}</dd></div>
-                <div><dt>Evidence digest</dt><dd><code>{digestPreview(claim.finalized_evidence.evidence_digest)}</code></dd></div>
+                <div><dt>{messages.review.event}</dt><dd>{claim.finalized_evidence.event_type} · {claim.finalized_evidence.event_version}</dd></div>
+                <div><dt>{messages.review.finalizedSlot}</dt><dd>{claim.finalized_evidence.slot}</dd></div>
+                <div><dt>{messages.review.eventIndex}</dt><dd>{claim.finalized_evidence.event_index}</dd></div>
+                <div><dt>{messages.review.eventSignature}</dt><dd><code>{claim.finalized_evidence.signature}</code></dd></div>
+                <div><dt>{messages.review.grossTaxRefund}</dt><dd>{claim.finalized_evidence.gross_magnitude} / {claim.finalized_evidence.tax_magnitude} / {claim.finalized_evidence.net_magnitude}</dd></div>
+                <div><dt>{messages.review.evidenceDigest}</dt><dd><code>{digestPreview(claim.finalized_evidence.evidence_digest)}</code></dd></div>
               </dl>
             </details>
           </div>}
           {(claim.status === "prepared_unsubmitted" || claim.status === "signed") && <div className="evidence-actions">
-            <p className="evidence-note">Two different people must approve this refund: the request owner first, then the configured refund account owner. The service checks that the approved payment details were not changed.</p>
-            <div className="button-row"><button type="button" onClick={() => sign("proposer")} disabled={busy}>Sign as proposer</button><button type="button" onClick={() => sign("refund_funder")} disabled={busy || (!signedBytes && !recoveryBytes.trim())}>Sign as refund funder</button></div>
-            <label className="full-field"><span>Recovery data (advanced)</span><textarea value={recoveryBytes} onChange={(event) => setRecoveryBytes(event.target.value)} placeholder="Paste the unchanged wallet file after a browser reload." aria-describedby="refund-recovery-help" rows={3} autoComplete="off" spellCheck={false} /><small id="refund-recovery-help">This temporary data stays in memory and is sent unchanged for verification.</small></label>
-            <button type="button" onClick={submit} disabled={busy || (!signedBytes && !recoveryBytes.trim())}>{busy ? "Sending…" : "Send approved refund"}</button>
+            <p className="evidence-note">{messages.wallet.twoPersonNote}</p>
+            <div className="button-row"><button type="button" onClick={() => sign("proposer")} disabled={busy}>{messages.wallet.signProposer}</button><button type="button" onClick={() => sign("refund_funder")} disabled={busy || (!signedBytes && !recoveryBytes.trim())}>{messages.wallet.signFunder}</button></div>
+            <label className="full-field"><span>{messages.wallet.recovery}</span><textarea aria-label={messages.wallet.recovery} value={recoveryBytes} onChange={(event) => setRecoveryBytes(event.target.value)} placeholder={messages.wallet.recoveryPlaceholder} aria-describedby="refund-recovery-help" rows={3} autoComplete="off" spellCheck={false} /><small id="refund-recovery-help">{messages.wallet.recoveryHelp}</small></label>
+            <button type="button" onClick={submit} disabled={busy || (!signedBytes && !recoveryBytes.trim())}>{busy ? messages.wallet.sending : messages.wallet.send}</button>
           </div>}
-          {(claim.status === "unknown" || claim.status === "submitted" || claim.status === "processed" || claim.status === "confirmed") && <div className="evidence-actions"><p className="inline-warning">This state requires durable chain reconciliation. A provider response or wallet signature is not proof of a completed refund.</p><button type="button" onClick={reconcile} disabled={busy || !serviceOnline || !accessToken.trim()}>Reconcile finalized claim evidence</button></div>}
-          {claim.last_error_code && <p className="inline-error" role="alert">Last durable error: {claim.last_error_code}</p>}
+          {(claim.status === "unknown" || claim.status === "submitted" || claim.status === "processed" || claim.status === "confirmed") && <div className="evidence-actions"><p className="inline-warning">{messages.evidence.reconcileWarning}</p><button type="button" onClick={reconcile} disabled={busy || !serviceOnline || !accessToken.trim()}>{messages.evidence.reconcile}</button></div>}
+          {claim.last_error_code && <p className="inline-error" role="alert">{messages.evidence.lastError} {claim.last_error_code}</p>}
         </>}
       </article>
     </section>

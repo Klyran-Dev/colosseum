@@ -1,9 +1,11 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { PublicKey } from "@solana/web3.js";
-import { fetchWithTimeout, REQUEST_TIMEOUT_MS, responseError } from "./api";
+import { fetchWithTimeout, operatorResponseError, REQUEST_TIMEOUT_MS } from "./api";
 import { createClientUuid } from "./clientIdentity";
 import { AuthorizationSnapshot } from "./authorization";
-import { formatInteger } from "./formatters";
+import { DEFAULT_LOCALE, formatInteger } from "./formatters";
+import { revenueStreamingMessagesFor, RevenueStreamingMessages } from "./revenueStreamingMessages";
+import { operatorErrorMessage } from "./operatorError";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
@@ -34,6 +36,7 @@ interface Props {
   accessToken: string;
   authorizationSnapshot: AuthorizationSnapshot;
   authorizationError: string | null;
+  locale?: string;
 }
 
 interface DestinationReference {
@@ -189,21 +192,21 @@ function parseReferenceCatalog(value: unknown): ReferenceCatalog {
   };
 }
 
-function shortAddress(bytes: number[]): string {
+function shortAddress(bytes: number[], unavailable: string): string {
   try {
     const address = new PublicKey(Uint8Array.from(bytes)).toBase58();
     return `${address.slice(0, 6)}…${address.slice(-6)}`;
   } catch {
-    return "Unavailable";
+    return unavailable;
   }
 }
 
-function shortPublicKey(value: string): string {
+function shortPublicKey(value: string, unavailable: string): string {
   try {
     const address = new PublicKey(value).toBase58();
     return `${address.slice(0, 6)}…${address.slice(-6)}`;
   } catch {
-    return "Unavailable";
+    return unavailable;
   }
 }
 
@@ -211,8 +214,8 @@ function allowed(snapshot: AuthorizationSnapshot, capability: string): boolean {
   return snapshot.state === "server-allowed" && snapshot.capabilities?.[capability]?.kind === "allow";
 }
 
-function friendlyStatus(status: PlanStatus): string {
-  return status === "proposed" ? "Needs review" : status === "approved" ? "Approved" : status === "active" ? "Receiving accruals" : status === "paused" ? "Paused" : status[0].toUpperCase() + status.slice(1);
+function friendlyStatus(status: PlanStatus, messages: RevenueStreamingMessages): string {
+  return messages.status[status];
 }
 
 function available(plan: Plan): string {
@@ -223,7 +226,8 @@ function available(plan: Plan): string {
   }
 }
 
-export default function RevenueStreamingPanel({ accessToken, authorizationSnapshot, authorizationError }: Props) {
+export default function RevenueStreamingPanel({ accessToken, authorizationSnapshot, authorizationError, locale = DEFAULT_LOCALE }: Props) {
+  const messages = revenueStreamingMessagesFor(locale);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [references, setReferences] = useState<ReferenceCatalog | null>(null);
   const [referenceState, setReferenceState] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -265,10 +269,10 @@ export default function RevenueStreamingPanel({ accessToken, authorizationSnapsh
     try {
       const response = await fetchWithTimeout(`${API_BASE}/v1/revenue-streaming/plans`, { headers: { authorization: `Bearer ${accessToken.trim()}` }, signal }, REQUEST_TIMEOUT_MS.default);
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(responseError(response, payload, "Payout plans could not be loaded."));
+      if (!response.ok) throw operatorResponseError(response, payload, messages.errors.httpError(messages.errors.plansLoad, response.status));
       setPlans(parsePlans(payload));
     } catch (cause) {
-      if (!(cause instanceof DOMException && cause.name === "AbortError")) setError(cause instanceof Error ? cause.message : "Payout plans could not be loaded.");
+      if (!(cause instanceof DOMException && cause.name === "AbortError")) setError(operatorErrorMessage(cause, messages.errors.plansLoad));
     } finally {
       setIsLoading(false);
     }
@@ -285,7 +289,7 @@ export default function RevenueStreamingPanel({ accessToken, authorizationSnapsh
     try {
       const response = await fetchWithTimeout(`${API_BASE}/v1/revenue-streaming/references`, { headers: { authorization: `Bearer ${accessToken.trim()}` }, signal }, REQUEST_TIMEOUT_MS.default);
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(responseError(response, payload, "Approved payout setup options could not be loaded."));
+      if (!response.ok) throw operatorResponseError(response, payload, messages.errors.httpError(messages.errors.referencesLoad, response.status));
       const catalog = parseReferenceCatalog(payload);
       setReferences(catalog);
       setDestinationRouteId((current) => catalog.destinations.some((destination) => destination.id === current) ? current : catalog.destinations[0]?.id || "");
@@ -295,7 +299,7 @@ export default function RevenueStreamingPanel({ accessToken, authorizationSnapsh
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === "AbortError") return;
       setReferenceState("error");
-      setReferenceError(cause instanceof Error ? cause.message : "Approved payout setup options could not be loaded.");
+      setReferenceError(operatorErrorMessage(cause, messages.errors.referencesLoad));
     }
   }
 
@@ -333,13 +337,13 @@ export default function RevenueStreamingPanel({ accessToken, authorizationSnapsh
         }),
       }, REQUEST_TIMEOUT_MS.default);
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(responseError(response, payload, "The payout plan could not be saved."));
+      if (!response.ok) throw operatorResponseError(response, payload, messages.errors.httpError(messages.errors.save, response.status));
       const plan = parsePlan(payload);
       setPlans((current) => [plan, ...current.filter((item) => item.id !== plan.id)]);
-      setNotice("The payout plan is recorded and waiting for its required review.");
+      setNotice(messages.notices.created);
       setDestinationRouteId(""); setSplitPlanId(""); setPolicyId(""); setOperatorSubject(""); setStartSlot(""); setEndSlot(""); setMaxTotal(""); setMaxClaim("");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The payout plan could not be saved.");
+      setError(operatorErrorMessage(cause, messages.errors.save));
     } finally {
       setIsSaving(false);
     }
@@ -354,11 +358,11 @@ export default function RevenueStreamingPanel({ accessToken, authorizationSnapsh
         body: JSON.stringify({ to_status: toStatus, observed_slot: toStatus === "completed" ? completeSlot[plan.id]?.trim() || null : null, evidence: { source: "operator_workflow", confirmation: "The operator reviewed this payout plan state." } }),
       }, REQUEST_TIMEOUT_MS.default);
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(responseError(response, payload, "The payout plan could not be updated."));
-      setNotice("The new payout plan state is recorded in the audit trail.");
+      if (!response.ok) throw operatorResponseError(response, payload, messages.errors.httpError(messages.errors.update, response.status));
+      setNotice(messages.notices.updated);
       await loadPlans();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The payout plan could not be updated.");
+      setError(operatorErrorMessage(cause, messages.errors.update));
     } finally {
       setIsSaving(false);
     }
@@ -375,71 +379,71 @@ export default function RevenueStreamingPanel({ accessToken, authorizationSnapsh
         body: JSON.stringify({ idempotency_key: requestReference, amount_atomic: claimAmount[plan.id]?.trim() || "" }),
       }, REQUEST_TIMEOUT_MS.default);
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(responseError(response, payload, "The payout release could not be prepared."));
-      setNotice("The payout release is reserved. A verified signer and finalized chain evidence are still required before money moves.");
+      if (!response.ok) throw operatorResponseError(response, payload, messages.errors.httpError(messages.errors.prepare, response.status));
+      setNotice(messages.notices.prepared);
       await loadPlans();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The payout release could not be prepared.");
+      setError(operatorErrorMessage(cause, messages.errors.prepare));
     } finally {
       setIsSaving(false);
     }
   }
 
   if (!accessToken.trim() || authorizationSnapshot.state !== "server-allowed") {
-    return <section className="panel empty-state" aria-live="polite"><div className="empty-icon" aria-hidden="true">✓</div><strong>Sign in to review partner payouts</strong><p>{authorizationError ?? "Your account access is checked before payout plans or balances are shown."}</p></section>;
+    return <section className="panel empty-state" aria-live="polite"><div className="empty-icon" aria-hidden="true">✓</div><strong>{messages.access.signIn}</strong><p>{authorizationError ?? messages.access.signInCopy}</p></section>;
   }
   if (!canRead) {
-    return <section className="panel empty-state" aria-live="polite"><div className="empty-icon" aria-hidden="true">i</div><strong>This workspace is not available to your account</strong><p>The service did not grant access to partner payout plans. Ask an administrator for the appropriate responsibility.</p></section>;
+    return <section className="panel empty-state" aria-live="polite"><div className="empty-icon" aria-hidden="true">i</div><strong>{messages.access.unavailable}</strong><p>{messages.access.unavailableCopy}</p></section>;
   }
 
   return <div className="revenue-stream-layout">
-    <section className="revenue-stream-overview" aria-label="Partner payout summary">
-      <div className="metric-card"><span>Active plans</span><strong>{activeCount}</strong><small>Currently accepting finalized accruals</small></div>
-      <div className="metric-card"><span>Payout plans</span><strong>{plans.length}</strong><small>Scoped to this account</small></div>
-      <div className="metric-card"><span>Available to pay</span><strong>{formatInteger(totalAvailable)}</strong><small>After finalized earnings, before pending releases</small></div>
+    <section className="revenue-stream-overview" aria-label={messages.shell.ariaLabel}>
+      <div className="metric-card"><span>{messages.overview.activePlans}</span><strong>{activeCount}</strong><small>{messages.overview.activeHelp}</small></div>
+      <div className="metric-card"><span>{messages.overview.payoutPlans}</span><strong>{plans.length}</strong><small>{messages.overview.payoutHelp}</small></div>
+      <div className="metric-card"><span>{messages.overview.availableToPay}</span><strong>{formatInteger(totalAvailable, locale)}</strong><small>{messages.overview.availableHelp}</small></div>
     </section>
     {error && <p className="inline-error" role="alert">{error}</p>}
     {notice && <p className="inline-success" role="status">{notice}</p>}
     <div className="revenue-stream-columns">
       <section className="panel" aria-labelledby="payout-plans-title">
-        <div className="panel-heading"><div><p className="eyebrow">Verified balances</p><h2 id="payout-plans-title">Partner payout plans</h2></div><span className="status-pill">{isLoading ? "Refreshing" : "Live view"}</span></div>
-        <p className="panel-copy">Each plan has one partner, one asset, a clear limit, and a recorded approval trail. Balances come from finalized settlement evidence.</p>
-        {plans.length === 0 && !isLoading ? <div className="empty-state"><div className="empty-icon" aria-hidden="true">＋</div><strong>No payout plans yet</strong><p>Create a plan when a partner should receive a governed share of finalized settlements.</p></div> : <div className="revenue-plan-list">
+        <div className="panel-heading"><div><p className="eyebrow">{messages.shell.eyebrow}</p><h2 id="payout-plans-title">{messages.shell.title}</h2></div><span className="status-pill">{isLoading ? messages.shell.badgeRefreshing : messages.shell.badgeLive}</span></div>
+        <p className="panel-copy">{messages.shell.copy}</p>
+        {plans.length === 0 && !isLoading ? <div className="empty-state"><div className="empty-icon" aria-hidden="true">＋</div><strong>{messages.plan.noPlans}</strong><p>{messages.plan.noPlansCopy}</p></div> : <div className="revenue-plan-list">
           {plans.map((plan) => <article className="revenue-plan-card" key={plan.id}>
-            <div className="revenue-plan-topline"><div><strong>Partner payout</strong><small>Destination {shortAddress(plan.recipient)} · asset {shortAddress(plan.asset)}</small></div><span className={`status-pill ${plan.status === "cancelled" ? "status-pill-danger" : plan.status === "proposed" ? "status-pill-warning" : ""}`}>{friendlyStatus(plan.status)}</span></div>
-            <dl className="summary-list"><div><dt>Ready to pay</dt><dd>{formatInteger(available(plan))}</dd></div><div><dt>Total payout limit</dt><dd>{formatInteger(plan.maxTotalAtomic)}</dd></div><div><dt>Maximum single payout</dt><dd>{formatInteger(plan.maxClaimAtomic)}</dd></div><div><dt>Earned / paid</dt><dd>{formatInteger(plan.accruedTotalAtomic)} / {formatInteger(plan.releasedTotalAtomic)}</dd></div><div><dt>Payout preparer</dt><dd>{plan.operatorSubject ?? "Needs assignment"}</dd></div><div><dt>Destination check</dt><dd><span className={`status-pill ${plan.destinationRouteId ? "" : "status-pill-warning"}`}>{plan.destinationRouteId ? "Verified" : "Setup required"}</span></dd></div></dl>
-            {canGovern && <div className="status-actions" aria-label={`Actions for payout plan ${plan.id}`}>
-              {plan.status === "proposed" && <button type="button" disabled={isSaving} onClick={() => void transition(plan, "approved")}>Approve plan</button>}
-              {plan.status === "approved" && <button type="button" disabled={isSaving} onClick={() => void transition(plan, "active")}>Start accruals</button>}
-              {plan.status === "active" && <button type="button" disabled={isSaving} onClick={() => void transition(plan, "paused")}>Pause new accruals</button>}
-              {plan.status === "paused" && <button type="button" disabled={isSaving} onClick={() => void transition(plan, "active")}>Resume accruals</button>}
-              {(plan.status === "active" || plan.status === "paused") && <><label className="revenue-inline-field"><span>Finalized position to close the plan</span><input value={completeSlot[plan.id] ?? ""} onChange={(event) => setCompleteSlot((current) => ({ ...current, [plan.id]: event.target.value }))} inputMode="numeric" placeholder="Required to complete" /></label><button type="button" disabled={isSaving || !completeSlot[plan.id]?.trim()} onClick={() => void transition(plan, "completed")}>Complete plan</button></>}
+            <div className="revenue-plan-topline"><div><strong>{messages.plan.partnerPayout}</strong><small>{messages.plan.destination} {shortAddress(plan.recipient, messages.details.unavailable)} · {messages.plan.asset} {shortAddress(plan.asset, messages.details.unavailable)}</small></div><span className={`status-pill ${plan.status === "cancelled" ? "status-pill-danger" : plan.status === "proposed" ? "status-pill-warning" : ""}`}>{friendlyStatus(plan.status, messages)}</span></div>
+            <dl className="summary-list"><div><dt>{messages.plan.readyToPay}</dt><dd>{formatInteger(available(plan), locale)}</dd></div><div><dt>{messages.plan.totalLimit}</dt><dd>{formatInteger(plan.maxTotalAtomic, locale)}</dd></div><div><dt>{messages.plan.maxSingle}</dt><dd>{formatInteger(plan.maxClaimAtomic, locale)}</dd></div><div><dt>{messages.plan.earnedPaid}</dt><dd>{formatInteger(plan.accruedTotalAtomic, locale)} / {formatInteger(plan.releasedTotalAtomic, locale)}</dd></div><div><dt>{messages.plan.preparer}</dt><dd>{plan.operatorSubject ?? messages.plan.needsAssignment}</dd></div><div><dt>{messages.plan.destinationCheck}</dt><dd><span className={`status-pill ${plan.destinationRouteId ? "" : "status-pill-warning"}`}>{plan.destinationRouteId ? messages.plan.verified : messages.plan.setupRequired}</span></dd></div></dl>
+            {canGovern && <div className="status-actions" aria-label={messages.plan.actions(plan.id)}>
+              {plan.status === "proposed" && <button type="button" disabled={isSaving} onClick={() => void transition(plan, messages.enumValues.approved)}>{messages.actions.approve}</button>}
+              {plan.status === "approved" && <button type="button" disabled={isSaving} onClick={() => void transition(plan, messages.enumValues.active)}>{messages.actions.start}</button>}
+              {plan.status === "active" && <button type="button" disabled={isSaving} onClick={() => void transition(plan, messages.enumValues.paused)}>{messages.actions.pause}</button>}
+              {plan.status === "paused" && <button type="button" disabled={isSaving} onClick={() => void transition(plan, messages.enumValues.active)}>{messages.actions.resume}</button>}
+              {(plan.status === "active" || plan.status === "paused") && <><label className="revenue-inline-field"><span>{messages.actions.completeSlot}</span><input value={completeSlot[plan.id] ?? ""} onChange={(event) => setCompleteSlot((current) => ({ ...current, [plan.id]: event.target.value }))} inputMode="numeric" placeholder={messages.actions.completePlaceholder} /></label><button type="button" disabled={isSaving || !completeSlot[plan.id]?.trim()} onClick={() => void transition(plan, messages.enumValues.completed)}>{messages.actions.complete}</button></>}
             </div>}
-            {canClaim && plan.status === "active" && <form className="revenue-claim-form" onSubmit={(event) => { event.preventDefault(); void prepareClaim(plan); }}><div><strong>Prepare a payout</strong><small>Sets aside the amount for review. It does not move money.</small></div><label><span>Payout amount</span><input required value={claimAmount[plan.id] ?? ""} onChange={(event) => setClaimAmount((current) => ({ ...current, [plan.id]: event.target.value }))} inputMode="numeric" placeholder={`Up to ${plan.maxClaimAtomic}`} /><small>Enter the exact amount used by this payment asset.</small></label><button type="submit" disabled={isSaving}>Prepare payout for review</button></form>}
-            <details className="technical-details"><summary>View plan evidence</summary><p>Partner address: <code>{shortAddress(plan.recipient)}</code>. Asset: <code>{shortAddress(plan.asset)}</code>. Settlement route: <code>{plan.settlementRouteId}</code>. Payout destination: <code>{plan.destinationRouteId ?? "not bound"}</code>. Next release reference: <code>{plan.nextNonce}</code>.</p></details>
+            {canClaim && plan.status === "active" && <form className="revenue-claim-form" onSubmit={(event) => { event.preventDefault(); void prepareClaim(plan); }}><div><strong>{messages.actions.preparePayout}</strong><small>{messages.actions.prepareCopy}</small></div><label><span>{messages.actions.amount}</span><input required value={claimAmount[plan.id] ?? ""} onChange={(event) => setClaimAmount((current) => ({ ...current, [plan.id]: event.target.value }))} inputMode="numeric" placeholder={messages.actions.upTo(plan.maxClaimAtomic)} /><small>{messages.actions.amountHelp}</small></label><button type="submit" disabled={isSaving}>{messages.actions.prepare}</button></form>}
+            <details className="technical-details"><summary>{messages.details.summary}</summary><p>{messages.details.partnerAddress}: <code>{shortAddress(plan.recipient, messages.details.unavailable)}</code>. {messages.details.asset}: <code>{shortAddress(plan.asset, messages.details.unavailable)}</code>. {messages.details.route}: <code>{plan.settlementRouteId}</code>. {messages.details.destination}: <code>{plan.destinationRouteId ?? messages.details.unbound}</code>. {messages.details.nextReference}: <code>{plan.nextNonce}</code>.</p></details>
           </article>)}
         </div>}
       </section>
       {canPropose ? <section className="panel" aria-labelledby="create-payout-title">
-        <div className="panel-heading"><div><p className="eyebrow">Controlled setup</p><h2 id="create-payout-title">Create a payout plan</h2></div><span className="status-pill status-pill-warning">Review required</span></div>
-        <p className="panel-copy">Choose records that have already been approved and verified. The plan becomes active only after another authorized person reviews it.</p>
-        {referenceState === "loading" && <p className="field-help" role="status">Loading approved payout setup options…</p>}
+        <div className="panel-heading"><div><p className="eyebrow">{messages.setup.eyebrow}</p><h2 id="create-payout-title">{messages.setup.title}</h2></div><span className="status-pill status-pill-warning">{messages.setup.badge}</span></div>
+        <p className="panel-copy">{messages.setup.copy}</p>
+        {referenceState === "loading" && <p className="field-help" role="status">{messages.setup.loading}</p>}
         {referenceError && <p className="inline-error" role="alert">{referenceError}</p>}
-        {referenceState === "ready" && references && (references.destinations.length === 0 || references.splitPlans.length === 0 || references.policies.length === 0) && <div className="empty-state"><div className="empty-icon" aria-hidden="true">i</div><strong>Approved setup is not ready</strong><p>Ask an administrator to verify a payout destination, activate a settlement split, and publish a tax policy before creating this plan.</p></div>}
+        {referenceState === "ready" && references && (references.destinations.length === 0 || references.splitPlans.length === 0 || references.policies.length === 0) && <div className="empty-state"><div className="empty-icon" aria-hidden="true">i</div><strong>{messages.setup.incomplete}</strong><p>{messages.setup.incompleteCopy}</p></div>}
         {referenceState === "ready" && references && references.destinations.length > 0 && references.splitPlans.length > 0 && references.policies.length > 0 && <form className="form-grid" onSubmit={(event) => void submitPlan(event)}>
-          <label><span>Verified payout destination</span><select required value={destinationRouteId} onChange={(event) => setDestinationRouteId(event.target.value)}><option value="">Choose a verified partner destination</option>{references.destinations.map((destination) => <option key={destination.id} value={destination.id}>{destination.routeKey} · partner {shortPublicKey(destination.recipientOwner)} · asset {shortPublicKey(destination.mint)}</option>)}</select><small className="field-help">Only finalized-verified destinations are offered. The receiving token account is controlled by the service record.</small></label>
-          <label><span>Settlement split</span><select required value={splitPlanId} onChange={(event) => setSplitPlanId(event.target.value)}><option value="">Choose an active settlement split</option>{compatibleSplitPlans.map((splitPlan) => <option key={splitPlan.id} value={splitPlan.id}>{splitPlan.planKey} · version {splitPlan.version} · asset {shortPublicKey(splitPlan.mint)}</option>)}</select><small className="field-help">The service records the exact approved split and checks that its asset matches the destination.</small></label>
-          <label><span>Published tax policy</span><select required value={policyId} onChange={(event) => setPolicyId(event.target.value)}><option value="">Choose a published tax policy</option>{references.policies.map((policy) => <option key={policy.id} value={policy.id}>{policy.jurisdiction} · {policy.regime} · {policy.ruleExternalId} v{policy.ruleVersion}</option>)}</select><small className="field-help">Only an effective, published policy can be attached to a new plan.</small></label>
-          <label><span>Who prepares payouts?</span><input required value={operatorSubject} onChange={(event) => setOperatorSubject(event.target.value)} placeholder="Their sign-in identity" autoComplete="off" /><small className="field-help">They will later connect an approved wallet. This plan never accepts a wallet address here.</small></label>
-          <label><span>Start after settlement</span><input required value={startSlot} onChange={(event) => setStartSlot(event.target.value)} inputMode="numeric" placeholder="Finalized settlement position" /></label>
-          <label><span>Stop after settlement</span><input value={endSlot} onChange={(event) => setEndSlot(event.target.value)} inputMode="numeric" placeholder="Leave open-ended if allowed" /></label>
-          <label><span>Maximum lifetime payout</span><input required value={maxTotal} onChange={(event) => setMaxTotal(event.target.value)} inputMode="numeric" placeholder="Exact payment-asset amount" /><small className="field-help">This cannot be exceeded by earnings or corrections.</small></label>
-          <label><span>Maximum payout at one time</span><input required value={maxClaim} onChange={(event) => setMaxClaim(event.target.value)} inputMode="numeric" placeholder="Exact payment-asset amount" /></label>
-          <details className="technical-details full-field"><summary>View selected record evidence</summary><p>Destination reference: <code>{destinationRouteId || "not selected"}</code>. Settlement split reference: <code>{splitPlanId || "not selected"}</code>. Tax policy reference: <code>{policyId || "not selected"}</code>.</p></details>
-          <button type="submit" disabled={isSaving || !destinationRouteId || !splitPlanId || !policyId}>{isSaving ? "Saving securely…" : "Create plan for review"}</button>
+          <label><span>{messages.setup.destination}</span><select required value={destinationRouteId} onChange={(event) => setDestinationRouteId(event.target.value)}><option value="">{messages.setup.destinationPlaceholder}</option>{references.destinations.map((destination) => <option key={destination.id} value={destination.id}>{destination.routeKey} · {messages.plan.destination} {shortPublicKey(destination.recipientOwner, messages.details.unavailable)} · {messages.plan.asset} {shortPublicKey(destination.mint, messages.details.unavailable)}</option>)}</select><small className="field-help">{messages.setup.destinationHelp}</small></label>
+          <label><span>{messages.setup.split}</span><select required value={splitPlanId} onChange={(event) => setSplitPlanId(event.target.value)}><option value="">{messages.setup.splitPlaceholder}</option>{compatibleSplitPlans.map((splitPlan) => <option key={splitPlan.id} value={splitPlan.id}>{splitPlan.planKey} · {splitPlan.version} · {messages.plan.asset} {shortPublicKey(splitPlan.mint, messages.details.unavailable)}</option>)}</select><small className="field-help">{messages.setup.splitHelp}</small></label>
+          <label><span>{messages.setup.policy}</span><select required value={policyId} onChange={(event) => setPolicyId(event.target.value)}><option value="">{messages.setup.policyPlaceholder}</option>{references.policies.map((policy) => <option key={policy.id} value={policy.id}>{policy.jurisdiction} · {policy.regime} · {policy.ruleExternalId} v{policy.ruleVersion}</option>)}</select><small className="field-help">{messages.setup.policyHelp}</small></label>
+          <label><span>{messages.setup.operator}</span><input required value={operatorSubject} onChange={(event) => setOperatorSubject(event.target.value)} placeholder={messages.setup.operatorPlaceholder} autoComplete="off" /><small className="field-help">{messages.setup.operatorHelp}</small></label>
+          <label><span>{messages.setup.start}</span><input required value={startSlot} onChange={(event) => setStartSlot(event.target.value)} inputMode="numeric" placeholder={messages.setup.startPlaceholder} /></label>
+          <label><span>{messages.setup.end}</span><input value={endSlot} onChange={(event) => setEndSlot(event.target.value)} inputMode="numeric" placeholder={messages.setup.endPlaceholder} /></label>
+          <label><span>{messages.setup.maxTotal}</span><input required value={maxTotal} onChange={(event) => setMaxTotal(event.target.value)} inputMode="numeric" placeholder={messages.setup.maxTotalPlaceholder} /><small className="field-help">{messages.setup.maxTotalHelp}</small></label>
+          <label><span>{messages.setup.maxClaim}</span><input required value={maxClaim} onChange={(event) => setMaxClaim(event.target.value)} inputMode="numeric" placeholder={messages.setup.maxClaimPlaceholder} /></label>
+          <details className="technical-details full-field"><summary>{messages.setup.evidence}</summary><p>{messages.details.destinationReference}: <code>{destinationRouteId || messages.setup.notSelected}</code>. {messages.details.splitReference}: <code>{splitPlanId || messages.setup.notSelected}</code>. {messages.details.policyReference}: <code>{policyId || messages.setup.notSelected}</code>.</p></details>
+          <button type="submit" disabled={isSaving || !destinationRouteId || !splitPlanId || !policyId}>{isSaving ? messages.actions.saving : messages.setup.create}</button>
         </form>}
-      </section> : <section className="panel empty-state"><div className="empty-icon" aria-hidden="true">i</div><strong>Plan creation needs a specific responsibility</strong><p>Your account can review payout plans, but it cannot propose new ones.</p></section>}
+      </section> : <section className="panel empty-state"><div className="empty-icon" aria-hidden="true">i</div><strong>{messages.setup.createDenied}</strong><p>{messages.setup.createDeniedCopy}</p></section>}
     </div>
-    <p className="revenue-disclaimer">A prepared release is not a transfer. A wallet or governed signer must approve the exact instruction, and the service must observe finalized Solana evidence before the release is shown as paid.</p>
+    <p className="revenue-disclaimer">{messages.boundary.disclaimer}</p>
   </div>;
 }

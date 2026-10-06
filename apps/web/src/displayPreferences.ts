@@ -84,3 +84,30 @@ export function saveDisplayPreferences(
     // Browser persistence is an enhancement; never block the product shell.
   }
 }
+
+export type ResolvedDisplayTheme = "light" | "dark";
+
+export function resolveDisplayTheme(theme: DisplayTheme, prefersLight: boolean): ResolvedDisplayTheme {
+  return theme === "light" || (theme === "system" && prefersLight) ? "light" : "dark";
+}
+
+export function syncBrowserThemeColor(
+  theme: DisplayTheme,
+  documentRef: Document = document,
+): () => void {
+  const darkMetadata = documentRef.querySelector<HTMLMetaElement>('meta[name="theme-color"][data-theme-color="dark"]');
+  const lightMetadata = documentRef.querySelector<HTMLMetaElement>('meta[name="theme-color"][data-theme-color="light"]');
+  if (!darkMetadata || !lightMetadata) return () => undefined;
+
+  if (theme === "system") {
+    darkMetadata.media = "(prefers-color-scheme: dark)";
+    lightMetadata.media = "(prefers-color-scheme: light)";
+  } else if (theme === "dark") {
+    darkMetadata.media = "all";
+    lightMetadata.media = "not all";
+  } else {
+    darkMetadata.media = "not all";
+    lightMetadata.media = "all";
+  }
+  return () => undefined;
+}

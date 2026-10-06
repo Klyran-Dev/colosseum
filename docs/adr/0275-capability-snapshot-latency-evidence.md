@@ -34,7 +34,7 @@ Add `scripts/benchmark_authorization_capabilities.sh` and the
    both replicas with bounded request, concurrency, timeout, and response-file
    limits.
 4. Verifies every response is HTTP 200, has the expected schema, subject,
-   tenant, bounded expiry, fourteen known capability IDs, and the exact expected
+   tenant, bounded expiry, nineteen known capability IDs, and the exact expected
    allow/indeterminate decisions. A successful HTTP response with malformed or
    incomplete authorization data is a benchmark failure.
 5. Emits p50/p95/p99 milliseconds, request count, concurrency, replica count,
@@ -50,10 +50,11 @@ credentials in output.
 
 ## Local evidence
 
-On 2026-10-03, the default workload completed 256/256 HTTP 200 responses at
-concurrency 32 across two pinned local arm64 API containers. With the complete
-fourteen-capability catalog, the observed p50/p95/p99 latency was
-`1.052/1.915/3.114 ms`; the 25 ms p95 diagnostic budget was met. This remains
+On 2026-10-05, the default workload completed 256/256 HTTP 200 responses at
+concurrency 32 across two pinned local arm64 API containers with the complete
+nineteen-capability catalog. The observed p50/p95/p99 latency was
+`1.141/3.276/4.943 ms`; the 25 ms p95 diagnostic budget was met. The earlier
+2026-10-03 fourteen-capability result remains historical context only. This is
 synthetic service evidence and is not a regional or production SLO approval.
 
 ## Alternatives considered

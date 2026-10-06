@@ -19,8 +19,8 @@ const snapshot: AuthorizationSnapshot = {
   scopes: ["tax:stream:read", "tax:stream:propose"],
   attributes: {},
   capabilities: {
-    "revenue_stream.read": { kind: "allow", reasonCode: "allowed", reason: "Allowed" },
-    "revenue_stream.propose": { kind: "allow", reasonCode: "allowed", reason: "Allowed" },
+    "revenue_stream.read": { kind: "allow", reasonCode: "scope_and_role_satisfied", reason: "The service confirmed this action for the current account." },
+    "revenue_stream.propose": { kind: "allow", reasonCode: "scope_and_role_satisfied", reason: "The service confirmed this action for the current account." },
     "revenue_stream.govern": { kind: "deny", reasonCode: "role_missing", reason: "Approval responsibility is not assigned." },
     "revenue_stream.claim.prepare": { kind: "deny", reasonCode: "role_missing", reason: "Payout preparation responsibility is not assigned." },
   },
@@ -117,5 +117,32 @@ describe("partner payout production selection flow", () => {
     });
     expect(JSON.parse(String(post?.[1]?.body))).not.toHaveProperty("plan_digest");
     expect(JSON.parse(String(post?.[1]?.body))).not.toHaveProperty("policy_digest");
+  });
+
+  it("localizes the payout operator surface without translating authority values", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/v1/revenue-streaming/plans")) return Promise.resolve(new Response("[]", { status: 200 }));
+      if (url.endsWith("/v1/revenue-streaming/references")) return Promise.resolve(new Response(JSON.stringify(catalog), { status: 200 }));
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    render(<RevenueStreamingPanel accessToken="payout-token" authorizationSnapshot={snapshot} authorizationError={null} locale="de-DE" />);
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Auszahlungsplan erstellen" })).toBeTruthy());
+    expect(screen.getByRole("heading", { name: "Partnerauszahlungspläne" })).toBeTruthy();
+    const destination = screen.getByRole("combobox", { name: /Verifiziertes Auszahlungsziel/ }) as HTMLSelectElement;
+    expect(destination.value).toBe(destinationId);
+    expect(screen.getByText("Prüfung erforderlich")).toBeTruthy();
+  });
+
+  it("redacts provider and transport exceptions from plan loading", async () => {
+    const providerDetail = "provider-internal payout plan diagnostic";
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error(providerDetail)));
+
+    render(<RevenueStreamingPanel accessToken="payout-token" authorizationSnapshot={snapshot} authorizationError={null} />);
+
+    await waitFor(() => expect(screen.getAllByRole("alert").some((alert) => alert.textContent?.includes("Payout plans could not be loaded.") ?? false)).toBe(true));
+    expect(screen.getAllByRole("alert").map((alert) => alert.textContent).join(" ")).not.toContain(providerDetail);
   });
 });

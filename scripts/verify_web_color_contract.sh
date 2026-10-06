@@ -4,7 +4,9 @@ set -eu
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 styles="$repo_root/apps/web/src/styles.css"
+shell="$repo_root/apps/web/src/ProductShell.tsx"
 marker='/* Material 3 Expressive final precedence layer.'
+source_root="$repo_root/apps/web/src"
 
 if ! grep -Fq "$marker" "$styles"; then
   echo "missing Material 3 Expressive final precedence layer marker" >&2
@@ -43,7 +45,20 @@ if printf '%s\n' "$component_styles" | grep -Eiq 'gradient\('; then
   exit 1
 fi
 
-for role in --app-primary --app-on-surface --app-on-variant --app-surface-container --app-outline-variant --app-error --app-warning; do
+# React components and helpers must not bypass the token boundary with inline
+# styles, CSS-in-JS, SVG presentation attributes, or generated class strings.
+# Tests may mention expected token values; production source may not introduce
+# a second palette. Keep this scan intentionally narrow to TypeScript/TSX
+# production files so fixtures remain free to assert the contract itself.
+production_source_files=$(find "$source_root" -type f \( -name '*.ts' -o -name '*.tsx' \) ! -name '*.test.ts' ! -name '*.test.tsx' -print)
+for source_file in $production_source_files; do
+  if grep -nE '#[0-9a-fA-F]{3,8}|rgba?\(|hsla?\(|gradient\(' "$source_file"; then
+    echo "raw or decorative color found in production source: $source_file" >&2
+    exit 1
+  fi
+done
+
+for role in --app-primary --app-on-surface --app-on-variant --app-surface-container --app-outline-variant --app-error --app-warning --app-success --app-attention --app-blocked --app-supporting; do
   if ! printf '%s\n' "$application_layer" | grep -Fq "var($role)"; then
     echo "Material 3 final precedence layer does not consume required semantic role: $role" >&2
     exit 1
@@ -54,11 +69,22 @@ done
 # diagnostics into native disclosures. Keep the retired persistent-badge
 # selectors out of the stylesheet so the old noisy chrome cannot return through
 # an accidental class reuse.
-for retired_selector in '.environment-badge' '.network-badge' '.context-unconfigured' '.context-warning' '.shell-service' '.service-status'; do
+for retired_selector in '.environment-badge' '.network-badge' '.context-unconfigured' '.context-warning' '.shell-service' '.service-status' '.nav-policy-mark' '.nav-risk'; do
   if grep -Fq "$retired_selector" "$styles"; then
     echo "retired persistent shell-status selector remains: $retired_selector" >&2
     exit 1
   fi
 done
+
+# Navigation glyphs are semantic, monochrome structure. They must not become
+# a data-dependent status surface or regress to first-letter avatars.
+if ! grep -Fq 'function NavigationGlyph' "$shell" || ! grep -Fq 'icon: NavigationIcon' "$shell"; then
+  echo "product navigation is missing the fixed semantic glyph contract" >&2
+  exit 1
+fi
+if grep -Fq 'item.label.slice(0, 1)' "$shell"; then
+  echo "product navigation reverted to first-letter avatars" >&2
+  exit 1
+fi
 
 echo "web Material 3 color contract passed"

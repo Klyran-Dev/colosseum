@@ -1,57 +1,62 @@
 import { useMemo } from "react";
 import { AuthorizationSnapshot, WORKSPACE_POLICIES, WorkspaceGroup, authorizationSnapshotForToken, policiesForGroup } from "./authorization";
+import { DEFAULT_LOCALE } from "./formatters";
+import { accessControlMessagesFor } from "./accessControlMessages";
 
 interface AccessControlPanelProps {
   accessToken: string;
   authorizationSnapshot?: AuthorizationSnapshot;
   authorizationError?: string | null;
+  locale?: string;
 }
 
 const GROUPS: readonly WorkspaceGroup[] = ["Daily work", "Rules & access", "Money movement", "Records & issues"];
 
-function join(values: readonly string[]): string {
-  return values.length > 0 ? values.join(", ") : "None";
+function join(values: readonly string[], none: string): string {
+  return values.length > 0 ? values.join(", ") : none;
 }
 
-export default function AccessControlPanel({ accessToken, authorizationSnapshot, authorizationError }: AccessControlPanelProps) {
+export default function AccessControlPanel({ accessToken, authorizationSnapshot, authorizationError, locale = DEFAULT_LOCALE }: AccessControlPanelProps) {
+  const messages = accessControlMessagesFor(locale);
   const derivedSnapshot = useMemo(() => authorizationSnapshotForToken(accessToken), [accessToken]);
   const snapshot = authorizationSnapshot ?? derivedSnapshot;
-  const accessStatus = !accessToken ? "Sign in needed" : authorizationError ? "Access check unavailable" : snapshot.state === "server-allowed" ? "Access checked when you act" : "Checking access";
+  const accessStatus = !accessToken ? messages.overview.status.signInNeeded : authorizationError ? messages.overview.status.unavailable : snapshot.state === "server-allowed" ? messages.overview.status.checked : messages.overview.status.checking;
 
-  return <section className="access-control-layout" aria-label="Access and approvals workspace">
+  return <section className="access-control-layout" aria-label={messages.ariaLabel}>
     <article className="panel access-control-overview">
-      <div className="panel-heading"><div><p className="eyebrow">Access & approvals</p><h2>Who can do what</h2></div><span className={`status-pill ${accessToken && !authorizationError ? "status-pill-warning" : "status-pill-danger"}`}>{accessStatus}</span></div>
-      <p className="panel-copy">Your access is checked every time you open a protected action. People can have different responsibilities, some actions need a second approval, and access can depend on the account, environment, and record.</p>
+      <div className="panel-heading"><div><p className="eyebrow">{messages.overview.eyebrow}</p><h2>{messages.overview.title}</h2></div><span className={`status-pill ${accessToken && !authorizationError ? "status-pill-warning" : "status-pill-danger"}`}>{accessStatus}</span></div>
+      <p className="panel-copy">{messages.overview.copy}</p>
       <div className="authorization-posture" role="status">
-        <div><span>Signed-in person</span><strong>{snapshot.subject ?? "Not signed in"}</strong></div>
-        <div><span>Account</span><strong>{snapshot.tenantId ? "Confirmed for this account" : "Confirmed when you sign in"}</strong></div>
-        <div><span>Permission status</span><strong>{authorizationError ? "Unavailable; actions stay closed" : snapshot.state === "server-allowed" ? "Checked by the service" : accessToken ? "Waiting for the service" : "Waiting for sign-in"}</strong></div>
+        <div><span>{messages.overview.person}</span><strong>{snapshot.subject ?? messages.overview.notSignedIn}</strong></div>
+        <div><span>{messages.overview.account}</span><strong>{snapshot.tenantId ? messages.overview.accountConfirmed : messages.overview.accountNeedsSignIn}</strong></div>
+        <div><span>{messages.overview.permission}</span><strong>{authorizationError ? messages.overview.permissionUnavailable : snapshot.state === "server-allowed" ? messages.overview.permissionChecked : accessToken ? messages.overview.permissionWaiting : messages.overview.permissionSignIn}</strong></div>
       </div>
       <div className="policy-dimension-grid">
-        <article><span className="dimension-icon">R</span><div><strong>Roles</strong><p>Your responsibilities determine which work you can own or approve.</p></div></article>
-        <article><span className="dimension-icon">P</span><div><strong>Permissions</strong><p>Each action has a specific permission instead of broad access.</p></div></article>
-        <article><span className="dimension-icon">C</span><div><strong>Conditions</strong><p>Account, environment, record status, and risk can change the decision.</p></div></article>
+        <article><span className="dimension-icon">R</span><div><strong>{messages.overview.dimensions.roles}</strong><p>{messages.overview.dimensions.rolesCopy}</p></div></article>
+        <article><span className="dimension-icon">P</span><div><strong>{messages.overview.dimensions.permissions}</strong><p>{messages.overview.dimensions.permissionsCopy}</p></div></article>
+        <article><span className="dimension-icon">C</span><div><strong>{messages.overview.dimensions.conditions}</strong><p>{messages.overview.dimensions.conditionsCopy}</p></div></article>
       </div>
-      <details className="technical-details"><summary>How access is decided</summary><p><strong>RBAC</strong> checks responsibilities, <strong>PBAC</strong> checks named permissions, and <strong>ABAC</strong> checks the account and record conditions. These are technical names for the three plain-language checks above.</p></details>
-      <div className="inline-warning"><strong>Safe by default.</strong> {authorizationError ? "The access check is unavailable, so protected actions stay unavailable." : "If the service cannot confirm access, the action stays unavailable."} No approval, payment, or record is created in the browser.</div>
+      <details className="technical-details"><summary>{messages.overview.technicalSummary}</summary><p>{messages.overview.technicalCopy}</p></details>
+      <div className="inline-warning"><strong>{messages.overview.safeTitle}</strong> {authorizationError ? messages.overview.safeUnavailable : messages.overview.safeDefault} {messages.overview.noBrowserAuthority}</div>
     </article>
     <article className="panel permission-matrix-panel">
-      <div className="panel-heading"><div><p className="eyebrow">Access rules</p><h2>Actions and approvals</h2></div><span className="status-pill">{WORKSPACE_POLICIES.length} rules</span></div>
-      <p className="panel-copy">These rules explain which work is available and where another person or a verified record is required.</p>
+      <div className="panel-heading"><div><p className="eyebrow">{messages.rules.eyebrow}</p><h2>{messages.rules.title}</h2></div><span className="status-pill">{messages.rules.count(WORKSPACE_POLICIES.length)}</span></div>
+      <p className="panel-copy">{messages.rules.copy}</p>
       <div className="permission-groups">
         {GROUPS.map((group) => <section key={group} className="permission-group" aria-labelledby={`permission-${group}`}>
-          <h3 id={`permission-${group}`}>{group}</h3>
+          <h3 id={`permission-${group}`}>{messages.groups[group]}</h3>
           {policiesForGroup(group).map((policy) => {
             const decision = snapshot.capabilities?.[policy.id];
-            const decisionLabel = decision?.kind === "allow" ? "Available" : decision?.kind === "deny" ? "Not available" : decision?.kind === "indeterminate" ? "Needs context" : accessToken ? "Checking" : "Sign in to check";
+            const decisionLabel = decision?.kind === "allow" ? messages.decisions.available : decision?.kind === "deny" ? messages.decisions.unavailable : decision?.kind === "indeterminate" ? messages.decisions.needsContext : accessToken ? messages.decisions.checking : messages.decisions.signIn;
+            const copy = messages.policies[policy.id] ?? { label: policy.label, description: policy.description };
             return <div className="permission-row" key={policy.id}>
-            <div><strong>{policy.label}</strong><small>{policy.description}</small></div>
-            <div className="permission-requirements"><span className={`decision-chip decision-${decision?.kind ?? "indeterminate"}`}>{decisionLabel}</span><b className={`risk-chip risk-${policy.risk}`}>{policy.risk === "financial" ? "Sensitive" : policy.risk === "governance" ? "Approval" : policy.risk === "write" ? "Change" : "View"}</b></div>
+            <div><strong>{copy.label}</strong><small>{copy.description}</small></div>
+            <div className="permission-requirements"><span className={`decision-chip decision-${decision?.kind ?? "indeterminate"}`}>{decisionLabel}</span><b className={`risk-chip risk-${policy.risk}`}>{policy.risk === "financial" ? messages.risks.financial : policy.risk === "governance" ? messages.risks.governance : policy.risk === "write" ? messages.risks.write : messages.risks.read}</b></div>
           </div>;
           })}
         </section>)}
       </div>
-      <details className="technical-details access-technical-details"><summary>Technical details for administrators</summary><div className="technical-policy-list">{WORKSPACE_POLICIES.map((policy) => <div key={policy.id}><strong>{policy.label}</strong><small><code>{join(policy.requiredScopes)}</code> · {join(policy.requiredRoles)} · {policy.risk}</small></div>)}</div></details>
+      <details className="technical-details access-technical-details"><summary>{messages.rules.technicalSummary}</summary><div className="technical-policy-list">{WORKSPACE_POLICIES.map((policy) => <div key={policy.id}><strong>{messages.policies[policy.id]?.label ?? policy.label}</strong><small><code>{join(policy.requiredScopes, messages.rules.none)}</code> · {join(policy.requiredRoles, messages.rules.none)} · {policy.risk}</small></div>)}</div></details>
     </article>
   </section>;
 }

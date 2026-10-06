@@ -4,9 +4,15 @@ export const MAX_REPLAY_LIST_LIMIT = 100;
 export const MAX_REPLAY_ATTEMPTS = 8;
 export const MAX_OPERATOR_NOTE_LENGTH = 1024;
 export const MAX_TARGETED_RECOVERY_PAGES = 64;
+export const MAX_ROUTE_VERIFICATION_RUNS = 50;
 
 export type ReplayGapStatus = (typeof REPLAY_STATUSES)[number];
 export type ReplayGapAction = (typeof REPLAY_ACTIONS)[number];
+
+export const ROUTE_VERIFICATION_RUN_KINDS = ["scheduled", "backfill"] as const;
+export const ROUTE_VERIFICATION_RUN_STATUSES = ["running", "completed", "completed_with_failures", "failed"] as const;
+export type RouteVerificationRunKind = (typeof ROUTE_VERIFICATION_RUN_KINDS)[number];
+export type RouteVerificationRunStatus = (typeof ROUTE_VERIFICATION_RUN_STATUSES)[number];
 
 export type TargetedRecoveryResult = {
   status: "recovered";
@@ -36,10 +42,27 @@ export type ReplayGap = {
   operator_acknowledgement: string | null;
 };
 
+export type RouteVerificationRun = {
+  id: string;
+  run_kind: RouteVerificationRunKind;
+  status: RouteVerificationRunStatus;
+  batch_size: number;
+  examined_count: number;
+  activated_count: number;
+  already_active_count: number;
+  failed_count: number;
+  failure_code: string | null;
+  operator_approval_id: string | null;
+  started_at: string;
+  completed_at: string | null;
+};
+
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DECIMAL = /^(0|[1-9][0-9]*)$/;
 const MAX_U64 = (1n << 64n) - 1n;
 const STATUS_SET = new Set<string>(REPLAY_STATUSES);
+const ROUTE_RUN_KIND_SET = new Set<string>(ROUTE_VERIFICATION_RUN_KINDS);
+const ROUTE_RUN_STATUS_SET = new Set<string>(ROUTE_VERIFICATION_RUN_STATUSES);
 
 function malformed(): Error {
   return new Error("The replay-gap response is malformed and cannot be displayed safely.");
@@ -82,6 +105,75 @@ function decimalString(value: unknown, field: string, maximum: bigint = MAX_U64)
 function parseStatus(value: unknown): ReplayGapStatus {
   if (typeof value !== "string" || !STATUS_SET.has(value)) throw malformed();
   return value as ReplayGapStatus;
+}
+
+function parseRouteRunCount(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 64) {
+    throw new Error(`${field} is malformed.`);
+  }
+  return value;
+}
+
+function parseOptionalUuidV7(value: unknown, field: string): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string" || !UUID_V7.test(value)) throw new Error(`${field} is malformed.`);
+  return value;
+}
+
+function parseRouteRunTimestamp(value: unknown, field: string, nullable: boolean): string | null {
+  if (nullable && value === null) return null;
+  return timestamp(value, field);
+}
+
+export function parseRouteVerificationRun(value: unknown): RouteVerificationRun {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("The route-verification response is malformed and cannot be displayed safely.");
+  const run = value as Record<string, unknown>;
+  if (typeof run.id !== "string" || !UUID_V7.test(run.id)) throw new Error("The route-verification response is malformed and cannot be displayed safely.");
+  if (typeof run.run_kind !== "string" || !ROUTE_RUN_KIND_SET.has(run.run_kind)) throw new Error("The route-verification response is malformed and cannot be displayed safely.");
+  if (typeof run.status !== "string" || !ROUTE_RUN_STATUS_SET.has(run.status)) throw new Error("The route-verification response is malformed and cannot be displayed safely.");
+  const runKind = run.run_kind as RouteVerificationRunKind;
+  const status = run.status as RouteVerificationRunStatus;
+  const batchSize = parseRouteRunCount(run.batch_size, "batch_size");
+  if (batchSize < 1) throw new Error("The route-verification response is malformed and cannot be displayed safely.");
+  const examinedCount = parseRouteRunCount(run.examined_count, "examined_count");
+  const activatedCount = parseRouteRunCount(run.activated_count, "activated_count");
+  const alreadyActiveCount = parseRouteRunCount(run.already_active_count, "already_active_count");
+  const failedCount = parseRouteRunCount(run.failed_count, "failed_count");
+  const failureCode = run.failure_code === null ? null : boundedString(run.failure_code, "failure_code", 128);
+  const operatorApprovalId = parseOptionalUuidV7(run.operator_approval_id, "operator_approval_id");
+  const startedAt = timestamp(run.started_at, "started_at");
+  const completedAt = parseRouteRunTimestamp(run.completed_at, "completed_at", true);
+  const startedMillis = Date.parse(startedAt);
+  const completedMillis = completedAt === null ? null : Date.parse(completedAt);
+  if (completedMillis !== null && completedMillis < startedMillis) throw new Error("The route-verification response is malformed and cannot be displayed safely.");
+  if ((runKind === "backfill") !== (operatorApprovalId !== null)) throw new Error("The route-verification response is malformed and cannot be displayed safely.");
+  if (status === "running") {
+    if (completedAt !== null) throw new Error("The route-verification response is malformed and cannot be displayed safely.");
+  } else {
+    if (completedAt === null || examinedCount !== activatedCount + alreadyActiveCount + failedCount) throw new Error("The route-verification response is malformed and cannot be displayed safely.");
+  }
+  if (status === "completed" && (failedCount !== 0 || failureCode !== null)) throw new Error("The route-verification response is malformed and cannot be displayed safely.");
+  if (status === "completed_with_failures" && (failedCount === 0 || failureCode === null)) throw new Error("The route-verification response is malformed and cannot be displayed safely.");
+  if (status === "failed" && failureCode === null) throw new Error("The route-verification response is malformed and cannot be displayed safely.");
+  return {
+    id: run.id,
+    run_kind: runKind,
+    status,
+    batch_size: batchSize,
+    examined_count: examinedCount,
+    activated_count: activatedCount,
+    already_active_count: alreadyActiveCount,
+    failed_count: failedCount,
+    failure_code: failureCode,
+    operator_approval_id: operatorApprovalId,
+    started_at: startedAt,
+    completed_at: completedAt,
+  };
+}
+
+export function parseRouteVerificationRunList(value: unknown): RouteVerificationRun[] {
+  if (!Array.isArray(value) || value.length > MAX_ROUTE_VERIFICATION_RUNS) throw new Error("The route-verification response is malformed and cannot be displayed safely.");
+  return value.map(parseRouteVerificationRun);
 }
 
 export function parseReplayGap(value: unknown): ReplayGap {
@@ -171,6 +263,11 @@ export function buildReplayGapActionUrl(apiBase: string, gapId: string, action: 
 
 export function buildTargetedRecoveryUrl(apiBase: string): string {
   return `${normalizedBase(apiBase)}/v1/indexer/targeted-recovery`;
+}
+
+export function buildRouteVerificationRunsUrl(apiBase: string, limit: number): string {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_ROUTE_VERIFICATION_RUNS) throw new Error("Route-verification run limit is out of bounds.");
+  return `${normalizedBase(apiBase)}/v1/indexer/route-verification-runs?limit=${limit}`;
 }
 
 export function parseTargetedRecoveryResult(value: unknown): TargetedRecoveryResult {

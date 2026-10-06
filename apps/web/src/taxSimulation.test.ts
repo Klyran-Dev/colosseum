@@ -8,6 +8,7 @@ const response = {
     rule_set_id: "new-sales-tax",
     rule_version: 1,
     engine_version: "0.1.0",
+    atomic_decimals: 6,
     currency: "USD",
     jurisdiction: "US-CA",
     facts_digest: Array.from({ length: 32 }, (_, index) => index),
@@ -15,6 +16,14 @@ const response = {
     gross_atomic: "1100",
     total_tax_atomic: "100",
     total_net_atomic: "1000",
+    treatment_outcome: {
+      treatment: "Taxable",
+      arithmetic_tax_atomic: "100",
+      collected_tax_atomic: "100",
+      self_assessed_tax_atomic: "0",
+      withheld_tax_atomic: "0",
+      taxable_base_atomic: "1000",
+    },
     components: [{ id: "sales-tax", label: "Sales tax", base_atomic: "1000", tax_atomic: "100", explanation: "10% of net" }],
   },
 };
@@ -22,6 +31,7 @@ const response = {
 describe("server-owned tax simulation response", () => {
   it("accepts the bounded calculation trace", () => {
     expect(parseTaxSimulation(response).result.components[0].tax_atomic).toBe("100");
+    expect(parseTaxSimulation(response).result.treatment_outcome?.collected_tax_atomic).toBe("100");
   });
 
   it("rejects a caller-shaped or unsafe response", () => {

@@ -1,4 +1,4 @@
-import { parseFxConversionEvidence, type FxConversionEvidence } from "./taxResponses";
+import { parseFxConversionEvidence, parseTreatmentOutcome, type FxConversionEvidence, type TreatmentOutcome } from "./taxResponses";
 
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ATOMIC = /^(0|[1-9][0-9]{0,19})$/;
@@ -10,6 +10,7 @@ export type TaxSimulation = {
     rule_set_id: string;
     rule_version: number;
     engine_version: string;
+    atomic_decimals: number;
     currency: string;
     jurisdiction: string;
     facts_digest: number[];
@@ -17,6 +18,7 @@ export type TaxSimulation = {
     gross_atomic: string;
     total_tax_atomic: string;
     total_net_atomic: string;
+    treatment_outcome?: TreatmentOutcome;
     fx_conversion?: FxConversionEvidence;
     components: Array<{
       id: string;
@@ -51,6 +53,7 @@ export function parseTaxSimulation(value: unknown): TaxSimulation {
     typeof result.rule_set_id !== "string" || result.rule_set_id.trim() === ""
     || typeof result.rule_version !== "number" || !Number.isSafeInteger(result.rule_version) || result.rule_version < 1
     || typeof result.engine_version !== "string" || result.engine_version.trim() === ""
+    || typeof result.atomic_decimals !== "number" || !Number.isInteger(result.atomic_decimals) || result.atomic_decimals < 0 || result.atomic_decimals > 9
     || typeof result.currency !== "string" || result.currency.trim() === ""
     || typeof result.jurisdiction !== "string" || result.jurisdiction.trim() === ""
     || typeof result.components !== "object" || !Array.isArray(result.components)
@@ -75,6 +78,7 @@ export function parseTaxSimulation(value: unknown): TaxSimulation {
       rule_set_id: result.rule_set_id,
       rule_version: result.rule_version,
       engine_version: result.engine_version,
+      atomic_decimals: result.atomic_decimals,
       currency: result.currency,
       jurisdiction: result.jurisdiction,
       facts_digest: digest(result.facts_digest),
@@ -82,6 +86,7 @@ export function parseTaxSimulation(value: unknown): TaxSimulation {
       gross_atomic: atomic(result.gross_atomic),
       total_tax_atomic: atomic(result.total_tax_atomic),
       total_net_atomic: atomic(result.total_net_atomic),
+      treatment_outcome: parseTreatmentOutcome(result.treatment_outcome, atomic(result.total_tax_atomic)),
       fx_conversion: result.fx_conversion === undefined || result.fx_conversion === null
         ? undefined
         : parseFxConversionEvidence(result.fx_conversion, result.currency),

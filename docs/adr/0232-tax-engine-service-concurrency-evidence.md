@@ -60,6 +60,11 @@ plan exists.
 
 - All measured requests use the authenticated service boundary.
 - Every response is `200` and preserves exact atomic tax/net values.
+- The bounded compiled-rule cache maintains exactly one LRU queue entry per
+  cached digest; a cache hit moves the digest once, and the least-recently-used
+  digest is the one evicted at capacity. The executable service test
+  `cache_hit_moves_a_digest_once_and_preserves_lru_queue_integrity` covers both
+  queue uniqueness and recency-based eviction.
 - No sample is silently dropped, retried, or converted into a success.
 - Request count, concurrency, timeout, cache capacity, and queue bounds are
   positive and bounded before the container starts.
@@ -79,6 +84,17 @@ plan exists.
   mTLS, resource-profile, and consumer-authorization gates as open.
 
 ## Current local measurement
+
+On 2026-10-05 at 10:00:42 UTC, `make benchmark-tax-engine-service` completed
+against image `sha256:7b224ef6fe993a809e42755cd2f16df36829fcd6ec248ed01b27f52341879ab9`
+on the native arm64 Docker runtime. The bounded workload returned 256/256 HTTP
+200 responses at concurrency 32 with a 10-second request timeout and cache
+capacity 64. The measured p50/p95/p99 latencies were 1.373/4.987/11.360 ms.
+The matched repeat at 10:01:27 UTC also returned 256/256 HTTP 200 responses,
+measuring 2.020/8.538/17.459 ms against image
+`sha256:c4467808bc4a6046f83051b7e2107046f0b1af833b257a56ba37f352dd5ff5c5`.
+The two-run tail variance is retained as an investigation signal; neither run
+is a regional production SLO or a Linux/amd64 resource-profile result.
 
 On 2026-10-03, `make benchmark-tax-engine-service` completed against the
 rebuilt pinned image on the native arm64 Docker runtime. The bounded workload

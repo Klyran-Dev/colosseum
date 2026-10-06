@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import DocumentQuotePanel from "./DocumentQuotePanel";
 import GovernancePanel from "./GovernancePanel";
+import { DISPLAY_PREFERENCES_STORAGE_KEY } from "./displayPreferences";
 
 describe("quote workspace financial-input boundary", () => {
   afterEach(() => {
@@ -19,6 +20,7 @@ describe("quote workspace financial-input boundary", () => {
     expect((screen.getByLabelText("Total before tax") as HTMLInputElement).value).toBe("");
     expect((screen.getByLabelText("Amount subject to tax") as HTMLInputElement).value).toBe("");
     expect((screen.getByLabelText("Currency") as HTMLInputElement).value).toBe("");
+    expect((screen.getByRole("textbox", { name: /Asset precision/ }) as HTMLInputElement).value).toBe("");
     expect((screen.getByLabelText("Approved tax rule") as HTMLInputElement).value).toBe("");
     expect((screen.getByLabelText("Rule version") as HTMLInputElement).value).toBe("");
     expect((screen.getAllByLabelText("Jurisdiction")[0] as HTMLInputElement).value).toBe("");
@@ -26,6 +28,30 @@ describe("quote workspace financial-input boundary", () => {
     expect(screen.queryByLabelText("Request reference")).toBeNull();
     expect(screen.getByText(/secure retry reference is assigned automatically/i)).toBeTruthy();
     expect(screen.queryByText("Acme Treasury")).toBeNull();
+  });
+
+  it("localizes the quote workspace without translating financial or rule values", () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 200 })));
+    const previousPreferences = window.localStorage.getItem(DISPLAY_PREFERENCES_STORAGE_KEY);
+    window.localStorage.setItem(DISPLAY_PREFERENCES_STORAGE_KEY, JSON.stringify({
+      version: 1,
+      locale: "de-DE",
+      timeZone: "UTC",
+      theme: "system",
+    }));
+
+    try {
+      render(<App />);
+
+      expect(screen.getByRole("heading", { name: "Steuerangebot erstellen" })).toBeTruthy();
+      expect(screen.getByLabelText("Gesamt vor Steuer")).toBeTruthy();
+      expect(screen.getByPlaceholderText("Währungscode eingeben")).toBeTruthy();
+      expect(screen.queryByText("USD")).toBeNull();
+      expect(screen.queryByText("019")).toBeNull();
+    } finally {
+      if (previousPreferences === null) window.localStorage.removeItem(DISPLAY_PREFERENCES_STORAGE_KEY);
+      else window.localStorage.setItem(DISPLAY_PREFERENCES_STORAGE_KEY, previousPreferences);
+    }
   });
 
   it("does not present an example invoice as the operator's document", () => {
@@ -46,6 +72,7 @@ describe("quote workspace financial-input boundary", () => {
     expect((screen.getByLabelText("Rule version") as HTMLInputElement).value).toBe("");
     expect((screen.getByLabelText("Amount before tax") as HTMLInputElement).value).toBe("");
     expect((screen.getByLabelText("Amount after tax") as HTMLInputElement).value).toBe("");
+    expect((screen.getByRole("textbox", { name: /Asset precision/ }) as HTMLInputElement).value).toBe("");
     expect(screen.queryByLabelText("Request reference")).toBeNull();
     expect(screen.getByText(/secure retry reference is assigned automatically/i)).toBeTruthy();
   });
@@ -56,5 +83,6 @@ describe("quote workspace financial-input boundary", () => {
     expect(screen.getAllByLabelText("Amount before tax").every((field) => (field as HTMLInputElement).value === "")).toBe(true);
     expect(screen.getAllByLabelText("Amount subject to tax").every((field) => (field as HTMLInputElement).value === "")).toBe(true);
     expect(screen.getAllByLabelText("Currency").every((field) => (field as HTMLInputElement).value === "")).toBe(true);
+    expect(screen.getAllByRole("textbox", { name: /Asset precision/ }).every((field) => (field as HTMLInputElement).value === "")).toBe(true);
   });
 });
