@@ -423,3 +423,4 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0420](0420-applicability-governance-workspace.md) — Dedicated applicability governance workspace
 - [ADR-0421](0421-workspace-container-queries.md) — Workspace container queries for responsive layout
 - [ADR-0422](0422-material-baseline-palette-and-expressive-tokens.md) — Material baseline palette and full Expressive token families
+- [ADR-0423](0423-canonical-navigation-and-panel-skin.md) — Canonical navigation and panel skin

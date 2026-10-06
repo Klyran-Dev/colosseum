@@ -3549,3 +3549,15 @@ The selected boundary is recorded in ADR-0293.
 | Supply-chain cost | None | None | None | One pinned dev-only dependency |
 
 Revisit if the library drops TonalSpot, or if tenants require brand theming.
+
+### Canonical navigation and panel skin (ADR-0423)
+
+| Criterion | Append another override layer | Rewrite whole stylesheet | **Replace repeated skin with one canonical block** |
+| --- | --- | --- | --- |
+| Auditability | Worse (ninth copy) | Best | **Good: one definition per skin** |
+| Risk to compact rail, mobile, forced colors | Low | High | **Low: geometry untouched** |
+| Verifiable in one change | Yes | No | **Yes: tests, contracts, e2e** |
+| M3 drawer-item fidelity | Partial | Full | **Full** |
+
+Revisit when the remaining legacy surfaces are migrated, at which point a full
+token-first rewrite becomes cheaper.

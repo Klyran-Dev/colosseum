@@ -27,7 +27,7 @@ describe("Material 3 Expressive shell contract", () => {
     const finalLayer = stylesheet.slice(stylesheet.lastIndexOf("/* Material 3 Expressive final precedence layer."));
     expect(finalLayer).not.toMatch(/#[0-9a-f]{3,8}|rgba?\(/i);
     expect(finalLayer).not.toMatch(/gradient\(/i);
-    expect(finalLayer).toContain("background: var(--app-primary-container);");
+    expect(finalLayer).toContain("background: var(--app-secondary-container);");
     expect(finalLayer).toContain("background: var(--app-surface-container-low);");
     expect(finalLayer).toContain("background: var(--app-warning-container);");
   });
@@ -35,7 +35,6 @@ describe("Material 3 Expressive shell contract", () => {
   it("keeps the expressive shell quiet through tonal layering instead of stacked chrome", () => {
     const finalLayer = stylesheet.slice(stylesheet.lastIndexOf("/* Material 3 Expressive final precedence layer."));
     expect(finalLayer).toContain(".product-shell .product-topbar { background: var(--app-surface-container); }");
-    expect(finalLayer).toContain(".product-shell .panel, .product-shell .metric-card { background: var(--app-surface-container-low); box-shadow: none; }");
     expect(finalLayer).toContain(".product-shell .product-content { width: min(1200px, calc(100% - 3rem)); }");
     expect(finalLayer).toContain(".product-shell .system-status > summary { background: var(--app-surface-container-low); }");
     expect(finalLayer).not.toContain("backdrop-filter");
@@ -46,8 +45,6 @@ describe("Material 3 Expressive shell contract", () => {
     expect(finalLayer).toContain(".product-shell .status-pill { color: var(--app-on-variant); background: var(--app-surface-container); }");
     expect(finalLayer).toContain(".product-shell .status-pill-success { color: var(--app-on-success-container); background: var(--app-success-container); }");
     expect(finalLayer).toContain(".product-shell .status-pill-danger { color: var(--app-on-blocked-container); background: var(--app-blocked-container); }");
-    expect(finalLayer).toContain(".product-shell .panel, .product-shell .metric-card { border-color: transparent; box-shadow: none; }");
-    expect(finalLayer).toContain(".product-shell .nav-item-icon { border-color: transparent; }");
   });
 
   it("keeps workflow risk taxonomy neutral instead of presenting it as an incident", () => {
@@ -59,7 +56,6 @@ describe("Material 3 Expressive shell contract", () => {
 
   it("keeps active navigation tonal and free of a second border emphasis", () => {
     const finalLayer = stylesheet.slice(stylesheet.lastIndexOf("/* Material 3 Expressive final precedence layer."));
-    expect(finalLayer).toContain(".product-shell .nav-item-active { border-color: transparent; color: var(--app-on-primary-container); background: var(--app-primary-container); box-shadow: none; }");
   });
 
   it("does not retain styling for the removed duplicate sidebar account context", () => {
@@ -104,5 +100,62 @@ describe("Material 3 Expressive shell contract", () => {
     const layer = stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0422:"));
     expect(layer).toContain("color: color-mix(in srgb, var(--app-on-surface) 38%, transparent);");
     expect(layer).toContain("background: color-mix(in srgb, var(--app-on-surface) 12%, transparent);");
+  });
+
+  describe("canonical navigation and panel skin (ADR-0423)", () => {
+    const canonical = () => stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0423:"));
+    const outsideForcedColors = () => stylesheet.replace(/@media \(forced-colors: active\) \{[\s\S]*?\n\}\n/g, "");
+
+    it("uses the M3 navigation drawer item: pill, secondary-container indicator, plain icon", () => {
+      const layer = canonical();
+      expect(layer).toContain(".product-shell .nav-item-active {\n  color: var(--app-on-secondary-container);\n  background: var(--app-secondary-container);");
+      expect(layer).toContain("border-radius: var(--md-sys-shape-corner-full);");
+      expect(layer).toContain("min-height: 3.5rem;");
+      expect(layer).toContain("calc(var(--md-sys-state-hover-opacity) * 100%), transparent)");
+      expect(layer).toContain(".product-shell .nav-item-icon,\n.product-shell .nav-item-active .nav-item-icon {\n  border-color: transparent;\n  color: inherit;\n  background: transparent;");
+      expect(layer).toContain("var(--md-sys-typescale-title-small-size)");
+      expect(layer).not.toMatch(/inset 3px|inset 4px|text-transform: uppercase/);
+      expect(layer).not.toMatch(/#[0-9a-f]{3,8}|rgba?\(|gradient\(|backdrop-filter/i);
+    });
+
+    it("keeps navigation geometry owned by the compact-rail and mobile rules", () => {
+      expect(canonical()).not.toMatch(/\.nav-item[^{]*\{[^}]*(grid-template-columns|padding)/);
+    });
+
+    it("uses tonal cards without borders or shadows", () => {
+      const layer = canonical();
+      expect(layer).toContain(".product-shell .panel,\n.product-shell .metric-card {\n  border-color: transparent;");
+      expect(layer).toContain("background: var(--app-surface-container-low);\n  box-shadow: none;");
+      expect(layer).toContain(".product-shell .panel { border-radius: var(--md-sys-shape-corner-extra-large); }");
+      expect(layer).toContain(".product-shell .metric-card { border-radius: var(--md-sys-shape-corner-large); }");
+      expect(layer).toContain("border-radius: var(--md-sys-shape-corner-medium);");
+    });
+
+    it("defines each navigation and panel skin exactly once", () => {
+      const css = outsideForcedColors();
+      const count = (pattern: RegExp) => (css.match(pattern) ?? []).length;
+      expect(count(/^(?:\.product-shell )?\.nav-item-active \{/gm)).toBe(1);
+      expect(count(/^(?:\.product-shell )?\.nav-item:hover/gm)).toBe(1);
+      expect(count(/^(?:\.product-shell )?\.nav-item-icon \{/gm)).toBeLessThanOrEqual(2);
+      expect(count(/^\.product-shell \.panel,\s*$/gm)).toBe(1);
+      expect(count(/^\.product-shell \.app-sidebar \{/gm)).toBe(1);
+    });
+
+    it("keeps the forced-colors layer last so system colours win (ADR-0338)", () => {
+      const forced = stylesheet.lastIndexOf("/* Forced-colors must remain the final cascade layer");
+      expect(forced).toBeGreaterThan(stylesheet.lastIndexOf("/* ADR-0423:"));
+      expect(forced).toBeGreaterThan(stylesheet.lastIndexOf("/* ADR-0422:"));
+      expect(forced).toBeGreaterThan(stylesheet.lastIndexOf("/* ADR-0421:"));
+      expect(stylesheet.slice(forced).match(/@media/g)).toHaveLength(1);
+    });
+  });
+
+  it("does not apply content-button shape and padding to shell chrome controls (ADR-0422)", () => {
+    const layer = stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0422:"), stylesheet.lastIndexOf("/* ADR-0423:"));
+    const buttonRules = layer.match(/^\.product-shell button:not\([^{]*\{/gm) ?? [];
+    expect(buttonRules.length).toBeGreaterThan(0);
+    for (const rule of buttonRules) {
+      expect(rule, "chrome toggle must stay out of the content-button rules").toContain(":not(.navigation-compact-toggle)");
+    }
   });
 });

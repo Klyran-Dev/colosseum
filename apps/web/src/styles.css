@@ -704,18 +704,10 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
    semantic role from the token block above; component styles do not invent
    another palette. */
 .product-shell { color: var(--app-on-surface); background: var(--app-bg); }
-.product-shell .app-sidebar { border-color: var(--app-outline-variant); background: var(--app-surface-lowest); }
 .product-shell .sidebar-header, .product-shell .sidebar-footer { border-color: var(--app-outline-variant); }
 .product-shell .brand-mark { color: var(--md-sys-color-on-primary); background: var(--app-primary); }
 .product-shell .sidebar-brand small, .product-shell .sidebar-legal { color: var(--app-on-variant); }
-.product-shell .nav-group-label, .product-shell .context-card-label { color: var(--app-tertiary); }
-.product-shell .nav-item-copy strong { color: var(--app-on-surface); }
-.product-shell .nav-item { grid-template-columns: 1.65rem minmax(0, 1fr) auto; color: var(--app-on-variant); }
-.product-shell .nav-item:hover:not(:disabled) { border-color: var(--app-outline-variant); background: var(--app-surface-container-low); }
-.product-shell .nav-item-active { border-color: var(--app-primary); color: var(--app-on-surface); background: var(--app-primary-container); box-shadow: inset 3px 0 var(--app-primary); }
-.product-shell .nav-item-icon { border-color: var(--app-outline-variant); color: var(--app-on-variant); background: var(--app-surface-container-low); }
-.product-shell .nav-item-active .nav-item-icon { border-color: var(--app-primary); color: var(--app-on-primary); background: var(--app-primary); }
-.product-shell .nav-item-copy small { color: var(--app-on-variant); }
+.product-shell .nav-item { grid-template-columns: 1.65rem minmax(0, 1fr) auto; }
 .product-shell .identity-state { background: var(--app-surface-dim); }
 .product-shell .identity-avatar { color: var(--app-on-primary); background: var(--app-primary); }
 .product-shell .identity-server-evaluation-required .identity-avatar { color: var(--app-on-primary); background: var(--app-secondary); }
@@ -749,7 +741,6 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .product-shell .protection-details-panel { border-color: var(--app-outline-variant); background: var(--app-surface-lowest); }
 .product-shell .protection-details-panel strong { color: var(--app-on-surface); }
 .product-shell .protection-details-panel small { color: var(--app-on-variant); }
-.product-shell .panel, .product-shell .metric-card { border-color: var(--app-outline-variant); color: var(--app-on-surface); background: var(--app-surface-container); box-shadow: var(--md-elevation-1); }
 .product-shell .panel h2, .product-shell .panel h3, .product-shell .panel strong, .product-shell .metric-card strong { color: var(--app-on-surface); }
 .product-shell .panel-copy, .product-shell .panel p, .product-shell .metric-card span, .product-shell .metric-card small { color: var(--app-on-variant); }
 .product-shell .status-pill { color: var(--app-on-success-container); background: var(--app-primary-container); }
@@ -815,21 +806,13 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 /* ADR-0317: use the complete M3 tonal hierarchy to reduce visual noise. The
    shell does not invent a second palette or rely on translucent decoration. */
 .product-shell { grid-template-columns: 18.25rem minmax(0, 1fr); }
-.product-shell .app-sidebar { background: var(--app-surface-lowest); }
 .product-shell .sidebar-header,
 .product-shell .sidebar-footer { border-color: var(--app-outline-variant); }
 .product-shell .primary-nav { gap: .82rem; padding: .65rem .75rem; }
 .product-shell .nav-group { gap: .12rem; }
-.product-shell .nav-group-label { margin-inline: .55rem; color: var(--app-on-variant); }
-.product-shell .nav-item { min-height: 2.7rem; border-radius: var(--md-shape-medium); }
-.product-shell .nav-item:hover:not(:disabled) { border-color: var(--app-outline-variant); background: var(--app-surface-container-low); }
-.product-shell .nav-item-active { border-color: var(--app-primary); background: var(--app-primary-container); box-shadow: inset 3px 0 var(--app-primary); }
-.product-shell .nav-item-icon { border-color: var(--app-outline-variant); background: var(--app-surface-container-low); }
 .product-shell .identity-state { background: var(--app-surface-dim); }
 .product-shell .product-topbar { border-color: var(--app-outline-variant); background: var(--app-surface-container); backdrop-filter: none; }
 .product-shell .display-settings summary { border-color: var(--app-outline); background: var(--app-surface-container-low); }
-.product-shell .panel,
-.product-shell .metric-card { background: var(--app-surface-container-low); }
 .product-shell .page-context-card { background: var(--app-surface-container); }
 .product-shell .protection-details-panel { background: var(--app-surface-container-lowest); }
 .product-shell .product-content { padding-top: clamp(2rem, 4vw, 3.75rem); }
@@ -850,16 +833,11 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .sidebar-brand small { font-size: .66rem; color: var(--app-on-variant); }
 .mobile-nav-toggle { display: none; grid-column: auto; align-self: center; width: auto; margin: .6rem .7rem; padding: .55rem .65rem; border: 1px solid color-mix(in srgb, var(--app-primary) 28%, transparent); color: var(--app-primary); background: color-mix(in srgb, var(--app-primary) 08%, transparent); font-size: .68rem; white-space: nowrap; }
 .navigation-compact-toggle { display: grid; place-items: center; align-self: center; width: 2rem; height: 2rem; margin: .6rem .7rem .6rem 0; padding: 0; border: 1px solid var(--app-outline); border-radius: 50%; color: var(--app-on-variant); background: var(--app-surface-container-low); font-size: .95rem; line-height: 1; }
-.nav-group-label, .context-card-label { color: var(--app-tertiary); font-size: .63rem; font-weight: 850; letter-spacing: .1em; text-transform: uppercase; }
 .primary-nav { display: grid; gap: 1.05rem; padding: .45rem .65rem; }
 .nav-group { display: grid; gap: .25rem; }
-.nav-group-label { margin: 0 .45rem .25rem; color: var(--app-on-variant); }
 .nav-item { display: grid; grid-template-columns: 1.65rem minmax(0, 1fr) auto auto; align-items: center; gap: .45rem; width: 100%; min-height: 2.55rem; padding: .5rem .55rem; border: 1px solid transparent; border-radius: .6rem; color: var(--app-on-variant); background: transparent; text-align: start; }
-.nav-item:hover:not(:disabled) { border-color: color-mix(in srgb, var(--app-outline-variant) 14%, transparent); background: color-mix(in srgb, var(--app-outline-variant) 06%, transparent); transform: none; }
-.nav-item-active { border-color: var(--app-primary); color: var(--app-on-primary-container); background: var(--app-primary-container); box-shadow: inset 3px 0 var(--app-primary); }
 .nav-item-icon { display: grid; place-items: center; width: 1.5rem; height: 1.5rem; border: 1px solid color-mix(in srgb, var(--app-outline-variant) 16%, transparent); border-radius: .45rem; color: var(--app-on-variant); background: color-mix(in srgb, var(--app-outline-variant) 05%, transparent); font-size: .67rem; font-weight: 900; }
 .nav-item-glyph { width: .92rem; height: .92rem; pointer-events: none; }
-.nav-item-active .nav-item-icon { border-color: color-mix(in srgb, var(--app-primary) 35%, transparent); color: var(--app-on-primary); background: var(--app-primary); }
 .nav-item-copy { display: grid; min-width: 0; gap: .1rem; }
 .nav-item-copy strong { overflow: hidden; font-size: .73rem; text-overflow: ellipsis; white-space: nowrap; }
 .nav-item-copy small { overflow: hidden; color: var(--app-on-variant); font-size: .61rem; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
@@ -1026,17 +1004,8 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
    last visual layer so legacy component declarations cannot reintroduce an
    ad-hoc palette. Every color is a semantic role or a role-derived blend. */
 .product-shell { background: var(--app-bg); color: var(--app-on-surface); }
-.product-shell .app-sidebar { border-color: var(--app-outline-variant); background: var(--app-surface-container-low); }
 .product-shell .sidebar-header, .product-shell .sidebar-footer { border-color: var(--app-outline-variant); }
 .product-shell .sidebar-brand small, .product-shell .sidebar-legal { color: var(--app-on-variant); }
-.product-shell .nav-group-label, .product-shell .context-card-label { color: var(--app-tertiary); }
-.product-shell .nav-item-copy strong { color: var(--app-on-surface); }
-.product-shell .nav-item { color: var(--app-on-variant); background: transparent; }
-.product-shell .nav-item:hover:not(:disabled) { border-color: var(--app-outline-variant); background: var(--app-surface-container); }
-.product-shell .nav-item-active { border-color: var(--app-outline-variant); color: var(--app-on-surface); background: var(--app-surface-container-high); box-shadow: inset 4px 0 var(--app-primary); }
-.product-shell .nav-item-icon { border-color: var(--app-outline-variant); color: var(--app-on-variant); background: var(--app-surface-container); }
-.product-shell .nav-item-active .nav-item-icon { border-color: var(--app-primary); color: var(--app-on-primary); background: var(--app-primary); }
-.product-shell .nav-item-copy small { color: var(--app-on-variant); }
 .product-shell .identity-state { background: var(--app-surface-container); }
 .product-shell .identity-avatar { color: var(--app-on-primary); background: var(--app-primary); }
 .product-shell .identity-server-evaluation-required .identity-avatar { color: var(--app-on-primary); background: var(--app-secondary); }
@@ -1050,59 +1019,6 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .product-shell .session-control-unconfigured > summary { border-color: var(--app-attention); color: var(--app-on-attention-container); background: var(--app-warning-container); }
 .product-shell .session-control-unconfigured .session-state { color: var(--app-on-attention-container); }
 
-/* Forced-colors must remain the final cascade layer so the accessible system
-   palette wins over every component-specific Material role declaration. */
-@media (forced-colors: active) {
-  .product-shell,
-  .product-shell * {
-    forced-color-adjust: auto;
-  }
-
-  .product-shell button:not(:disabled),
-  .product-shell input,
-  .product-shell textarea,
-  .product-shell select {
-    color: ButtonText;
-    background: ButtonFace;
-    border-color: ButtonText;
-  }
-
-  .product-shell .nav-item-active,
-  .product-shell .nav-item-active .nav-item-icon,
-  .product-shell .nav-item-active .nav-item-copy strong {
-    color: HighlightText;
-    background: Highlight;
-    border-color: Highlight;
-  }
-
-  .product-shell .status-pill,
-  .product-shell .status-pill-warning,
-  .product-shell .route-evidence,
-  .product-shell .inline-success,
-  .product-shell .inline-warning,
-  .product-shell .inline-error,
-  .product-shell .decision-chip,
-  .product-shell .risk-chip,
-  .product-shell .empty-icon {
-    color: CanvasText;
-    background: Canvas;
-    border-color: GrayText;
-  }
-
-  .product-shell .inline-error,
-  .product-shell .risk-financial,
-  .product-shell .decision-deny {
-    color: Mark;
-    border-color: Mark;
-  }
-
-  .product-shell .route-evidence > strong,
-  .product-shell .route-evidence > small,
-  .product-shell .status-pill,
-  .product-shell .status-pill-warning {
-    color: CanvasText;
-  }
-}
 .product-shell .session-control-unconfigured .status-dot { background: var(--app-attention); }
 .product-shell .session-control-unconfigured-details { border-color: var(--app-outline); background: var(--app-surface-container-high); box-shadow: var(--md-elevation-2); }
 .product-shell .account-menu-trigger:focus-visible, .product-shell .technical-details summary:focus-visible { outline-color: var(--app-primary); }
@@ -1182,24 +1098,16 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
    canvas calm by assigning each surface one M3 tonal role. State containers
    are explicit roles; opacity blends are not used to invent new colors. */
 .product-shell { grid-template-columns: 16.5rem minmax(0, 1fr); }
-.product-shell .app-sidebar { background: var(--app-surface); }
 .product-shell .primary-nav { gap: .55rem; padding: .7rem .7rem; }
 .product-shell .nav-group-disclosure { border-bottom-color: var(--app-outline-variant); }
 .product-shell .nav-group-summary { min-height: 2.4rem; padding-inline: .65rem; }
 .product-shell .nav-group-summary:hover { background: var(--app-surface-container-low); }
-.product-shell .nav-item { min-height: 2.65rem; border-radius: 999px; }
-.product-shell .nav-item:hover:not(:disabled) { background: var(--app-surface-container-low); }
-.product-shell .nav-item-active { border-color: var(--app-primary); color: var(--app-on-primary-container); background: var(--app-primary-container); box-shadow: none; }
-.product-shell .nav-item-active .nav-item-icon { border-color: var(--app-primary); color: var(--app-on-primary); background: var(--app-primary); }
 .product-shell .identity-state { background: var(--app-surface-container-low); }
 .product-shell .product-topbar { min-height: 4rem; background: var(--app-surface); }
 .product-shell .product-content { width: min(1320px, calc(100% - 3rem)); padding-top: clamp(2rem, 4vw, 3.5rem); }
 .product-shell .page-heading { margin-bottom: 1.75rem; }
 .product-shell .page-heading h1 { font-size: clamp(2.15rem, 4vw, 3.4rem); }
 .product-shell .page-context-card { border-color: var(--app-outline-variant); background: var(--app-surface-container-low); }
-.product-shell .panel, .product-shell .metric-card { border-color: var(--app-outline-variant); background: var(--app-surface-container-low); box-shadow: var(--md-elevation-1); }
-.product-shell .panel { border-radius: var(--md-shape-extra-large); }
-.product-shell .metric-card { border-radius: var(--md-shape-large); }
 .product-shell .status-pill, .product-shell .decision-allow, .product-shell .risk-read { color: var(--app-on-success-container); background: var(--app-success-container); }
 .product-shell .status-pill-warning, .product-shell .decision-indeterminate, .product-shell .risk-write { color: var(--app-on-attention-container); background: var(--app-attention-container); }
 .product-shell .decision-deny, .product-shell .risk-financial { color: var(--app-on-blocked-container); background: var(--app-blocked-container); }
@@ -1313,16 +1221,9 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
    semantic palette. No component may introduce a literal hue or decorative
    blend here; Material roles carry the hierarchy and state meaning. */
 .product-shell .skip-link { color: var(--app-on-primary); background: var(--app-primary); }
-.product-shell .app-sidebar { border-color: var(--app-outline-variant); background: var(--app-surface-container-lowest); }
 .product-shell .sidebar-header, .product-shell .sidebar-footer { border-color: var(--app-outline-variant); }
 .product-shell .identity-state { border-color: var(--app-outline-variant); background: var(--app-surface-container); }
-.product-shell .nav-item { color: var(--app-on-variant); background: transparent; }
-.product-shell .nav-item:hover:not(:disabled), .product-shell .nav-group-summary:hover { border-color: var(--app-outline-variant); background: var(--app-surface-container-low); }
-.product-shell .nav-item-active { border-color: var(--app-primary); color: var(--app-on-primary-container); background: var(--app-primary-container); box-shadow: inset 4px 0 var(--app-primary); }
-.product-shell .nav-item-icon { border-color: var(--app-outline-variant); color: var(--app-on-variant); background: var(--app-surface-container-low); }
-.product-shell .nav-item-active .nav-item-icon { border-color: var(--app-primary); color: var(--app-on-primary); background: var(--app-primary); }
 .product-shell .product-topbar { border-color: var(--app-outline-variant); background: var(--app-surface); }
-.product-shell .panel, .product-shell .metric-card { border-color: var(--app-outline-variant); background: var(--app-surface-container); }
 .product-shell .page-context-card, .product-shell .display-settings-menu, .product-shell .account-menu-panel { border-color: var(--app-outline); background: var(--app-surface-container-high); }
 .product-shell .status-pill, .product-shell .decision-allow, .product-shell .risk-read { color: var(--app-on-success-container); background: var(--app-success-container); }
 .product-shell .status-pill-warning, .product-shell .decision-indeterminate, .product-shell .risk-write { color: var(--app-on-attention-container); background: var(--app-attention-container); }
@@ -1369,7 +1270,6 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .product-shell .sidebar-header, .product-shell .sidebar-footer { border-color: var(--app-outline-variant); }
 .product-shell .system-status > summary { background: var(--app-surface-container-low); }
 .product-shell .system-status-attention > summary { border-color: var(--app-warning); color: var(--app-on-attention-container); background: var(--app-warning-container); box-shadow: 0 0 0 1px var(--app-attention); }
-.product-shell .panel, .product-shell .metric-card { background: var(--app-surface-container-low); box-shadow: none; }
 .product-shell .product-content { width: min(1200px, calc(100% - 3rem)); }
 .product-shell .page-heading { align-items: start; margin-bottom: 2rem; }
 .product-shell .page-heading h1 { max-width: 36rem; font-size: clamp(2rem, 3.4vw, 3rem); line-height: 1.04; }
@@ -1380,9 +1280,6 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .product-shell .nav-group-disclosure { border-bottom: 0; }
 .product-shell .nav-group-summary { color: var(--app-on-variant); }
 .product-shell .nav-group-summary:hover { background: var(--app-surface-container); }
-.product-shell .nav-item { min-height: 2.55rem; border-radius: 999px; }
-.product-shell .nav-item-copy strong { font-size: .75rem; font-weight: 700; }
-.product-shell .nav-item-active { border-color: transparent; color: var(--app-on-primary-container); background: var(--app-primary-container); box-shadow: none; }
 .product-shell .identity-state { background: var(--app-surface-container-low); }
 .product-shell .display-settings summary, .product-shell .session-control-local > summary { background: var(--app-surface-container-low); }
 .product-shell .display-settings-menu, .product-shell .account-menu-panel, .product-shell .system-status-panel { box-shadow: var(--md-elevation-2); }
@@ -1409,9 +1306,7 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .product-shell .status-pill-success { color: var(--app-on-success-container); background: var(--app-success-container); }
 .product-shell .status-pill-danger { color: var(--app-on-blocked-container); background: var(--app-blocked-container); }
 .product-shell .status-pill-warning { color: var(--app-on-attention-container); background: var(--app-attention-container); }
-.product-shell .panel, .product-shell .metric-card { border-color: transparent; box-shadow: none; }
 .product-shell .page-context-card { border-color: transparent; }
-.product-shell .nav-item-icon { border-color: transparent; }
 .product-shell .risk-read, .product-shell .risk-write, .product-shell .risk-financial, .product-shell .risk-governance { color: var(--app-on-variant); background: var(--app-surface-container); border-color: transparent; }
 
 @media (max-width: 760px) {
@@ -1457,7 +1352,7 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
    colour is a semantic role or a role-derived mix; state layers use the
    documented hover/focus/pressed opacities. Reduced-motion users get no
    transitions from the earlier reduced-motion rules. */
-.product-shell button:not(.nav-item):not(.mobile-nav-toggle):not(.secondary-button):not(.session-action):not(.account-menu-signout):not(.vault-target-card) {
+.product-shell button:not(.nav-item):not(.mobile-nav-toggle):not(.secondary-button):not(.session-action):not(.account-menu-signout):not(.vault-target-card):not(.navigation-compact-toggle) {
   border-radius: var(--md-sys-shape-corner-full);
   padding-inline: 1.5rem;
   font-size: var(--md-sys-typescale-label-large-size);
@@ -1470,14 +1365,14 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
     border-radius var(--md-sys-motion-spring-fast-spatial-duration) var(--md-sys-motion-spring-fast-spatial-easing),
     background-color var(--md-motion-short);
 }
-.product-shell button:not(.nav-item):not(.mobile-nav-toggle):not(.secondary-button):not(.session-action):not(.account-menu-signout):not(.vault-target-card):not(:disabled):hover {
+.product-shell button:not(.nav-item):not(.mobile-nav-toggle):not(.secondary-button):not(.session-action):not(.account-menu-signout):not(.vault-target-card):not(.navigation-compact-toggle):not(:disabled):hover {
   transform: none;
   background: color-mix(in srgb, var(--app-on-primary) calc(var(--md-sys-state-hover-opacity) * 100%), var(--app-primary));
 }
-.product-shell button:not(.nav-item):not(.mobile-nav-toggle):not(.secondary-button):not(.session-action):not(.account-menu-signout):not(.vault-target-card):not(:disabled):focus-visible {
+.product-shell button:not(.nav-item):not(.mobile-nav-toggle):not(.secondary-button):not(.session-action):not(.account-menu-signout):not(.vault-target-card):not(.navigation-compact-toggle):not(:disabled):focus-visible {
   background: color-mix(in srgb, var(--app-on-primary) calc(var(--md-sys-state-focus-opacity) * 100%), var(--app-primary));
 }
-.product-shell button:not(.nav-item):not(.mobile-nav-toggle):not(.secondary-button):not(.session-action):not(.account-menu-signout):not(.vault-target-card):not(:disabled):active {
+.product-shell button:not(.nav-item):not(.mobile-nav-toggle):not(.secondary-button):not(.session-action):not(.account-menu-signout):not(.vault-target-card):not(.navigation-compact-toggle):not(:disabled):active {
   border-radius: var(--md-sys-shape-corner-medium);
   background: color-mix(in srgb, var(--app-on-primary) calc(var(--md-sys-state-pressed-opacity) * 100%), var(--app-primary));
 }
@@ -1493,7 +1388,7 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .product-shell .product-content button.secondary-button:active:not(:disabled) {
   background: color-mix(in srgb, var(--app-on-secondary-container) calc(var(--md-sys-state-pressed-opacity) * 100%), var(--app-secondary-container));
 }
-.product-shell button:not(.nav-item):not(.mobile-nav-toggle):not(.secondary-button):not(.session-action):not(.account-menu-signout):not(.vault-target-card):disabled {
+.product-shell button:not(.nav-item):not(.mobile-nav-toggle):not(.secondary-button):not(.session-action):not(.account-menu-signout):not(.vault-target-card):not(.navigation-compact-toggle):disabled {
   opacity: 1;
   color: color-mix(in srgb, var(--app-on-surface) 38%, transparent);
   background: color-mix(in srgb, var(--app-on-surface) 12%, transparent);
@@ -1544,4 +1439,134 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
   line-height: var(--md-sys-typescale-label-medium-line-height);
   font-weight: var(--md-sys-typescale-label-medium-weight);
   letter-spacing: var(--md-sys-typescale-label-medium-tracking);
+}
+
+/* ADR-0423: canonical navigation and panel skin, replacing the colour/shape
+   declarations that earlier layers repeated for the same selectors. Geometry
+   (grid columns, padding, compact rail, mobile) stays owned by the layout rules
+   above so the rail and mobile shell are unchanged. Navigation follows the M3
+   drawer item: a full-radius secondary-container active indicator, plain icons,
+   and role-derived state layers. Cards are tonal, without border or shadow. */
+.product-shell .app-sidebar { border-color: transparent; background: var(--app-surface-container-low); }
+.product-shell .nav-group-label,
+.product-shell .context-card-label {
+  color: var(--app-on-variant);
+  font-size: var(--md-sys-typescale-title-small-size);
+  line-height: var(--md-sys-typescale-title-small-line-height);
+  font-weight: var(--md-sys-typescale-title-small-weight);
+  letter-spacing: var(--md-sys-typescale-title-small-tracking);
+  text-transform: none;
+}
+.product-shell .nav-item {
+  min-height: 3.5rem;
+  border-color: transparent;
+  border-radius: var(--md-sys-shape-corner-full);
+  color: var(--app-on-variant);
+  background: transparent;
+  transition:
+    border-radius var(--md-sys-motion-spring-fast-spatial-duration) var(--md-sys-motion-spring-fast-spatial-easing),
+    background-color var(--md-motion-short);
+}
+.product-shell .nav-item:hover:not(:disabled),
+.product-shell .nav-group-summary:hover {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--app-on-surface) calc(var(--md-sys-state-hover-opacity) * 100%), transparent);
+}
+.product-shell .nav-item:active:not(:disabled) {
+  background: color-mix(in srgb, var(--app-on-surface) calc(var(--md-sys-state-pressed-opacity) * 100%), transparent);
+}
+.product-shell .nav-item-active {
+  color: var(--app-on-secondary-container);
+  background: var(--app-secondary-container);
+  border-color: transparent;
+  box-shadow: none;
+}
+.product-shell .nav-item-active:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--app-on-secondary-container) calc(var(--md-sys-state-hover-opacity) * 100%), var(--app-secondary-container));
+}
+.product-shell .nav-item-icon,
+.product-shell .nav-item-active .nav-item-icon {
+  border-color: transparent;
+  color: inherit;
+  background: transparent;
+}
+.product-shell .nav-item-copy strong {
+  color: inherit;
+  font-size: var(--md-sys-typescale-label-large-size);
+  font-weight: var(--md-sys-typescale-label-large-weight);
+  letter-spacing: var(--md-sys-typescale-label-large-tracking);
+}
+.product-shell .nav-item-active .nav-item-copy strong { font-weight: var(--md-sys-typescale-label-large-emphasized-weight); }
+.product-shell .nav-item-copy small {
+  color: inherit;
+  font-size: var(--md-sys-typescale-body-small-size);
+  line-height: var(--md-sys-typescale-body-small-line-height);
+  letter-spacing: var(--md-sys-typescale-body-small-tracking);
+}
+.product-shell .panel,
+.product-shell .metric-card {
+  border-color: transparent;
+  color: var(--app-on-surface);
+  background: var(--app-surface-container-low);
+  box-shadow: none;
+}
+.product-shell .panel { border-radius: var(--md-sys-shape-corner-extra-large); }
+.product-shell .metric-card { border-radius: var(--md-sys-shape-corner-large); }
+.product-shell .panel .route-evidence,
+.product-shell .panel .inline-warning,
+.product-shell .panel .inline-error,
+.product-shell .panel .inline-success { border-radius: var(--md-sys-shape-corner-medium); }
+
+/* Forced-colors must remain the final cascade layer so the accessible system
+   palette wins over every component-specific Material role declaration. */
+@media (forced-colors: active) {
+  .product-shell,
+  .product-shell * {
+    forced-color-adjust: auto;
+  }
+
+  .product-shell button:not(:disabled),
+  .product-shell input,
+  .product-shell textarea,
+  .product-shell select {
+    color: ButtonText;
+    background: ButtonFace;
+    border-color: ButtonText;
+  }
+
+  .product-shell .nav-item-active,
+  .product-shell .nav-item-active .nav-item-icon,
+  .product-shell .nav-item-active .nav-item-copy strong {
+    color: HighlightText;
+    background: Highlight;
+    border-color: Highlight;
+  }
+
+  .product-shell .status-pill,
+  .product-shell .status-pill-warning,
+  .product-shell .route-evidence,
+  .product-shell .inline-success,
+  .product-shell .inline-warning,
+  .product-shell .inline-error,
+  .product-shell .decision-chip,
+  .product-shell .risk-chip,
+  .product-shell .empty-icon {
+    color: CanvasText;
+    background: Canvas;
+    border-color: GrayText;
+  }
+
+  .product-shell .inline-error,
+  .product-shell .risk-financial,
+  .product-shell .decision-deny {
+    color: Mark;
+    border-color: Mark;
+  }
+
+  .product-shell .route-evidence > strong,
+  .product-shell .route-evidence > small,
+  .product-shell .status-pill,
+  .product-shell .status-pill-warning {
+    color: CanvasText;
+  }
 }
