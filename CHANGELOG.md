@@ -1,5 +1,10 @@
 # Changelog
 
+- Added ADR-0434: the full M3 elevation scale (levels 0-5) and a 4px-grid spacing
+  scale now replace the last hard-coded shadows and 344 ad-hoc padding, margin and
+  gap declarations (37 distinct values). Tests reject raw shadows and spacing;
+  snapshot runs can run journeys in parallel (about 3 minutes for all variants).
+
 - Added ADR-0433: a real-browser test now proves forced hover/press/focus states
   equal real mouse and keyboard interaction (and that springs drive transitions;
   reduced motion removes them). It found that pressed and keyboard-focus snapshots

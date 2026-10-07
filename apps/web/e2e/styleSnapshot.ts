@@ -204,6 +204,11 @@ export async function captureStyleSnapshot(page: Page, title: string, label: str
 
 export function attachStyleSnapshots(testApi: TestType<any, any>): void {
   if (!process.env.STYLE_SNAPSHOT_DIR) return;
+  // A journey with many checkpoints (each recording interactive variants in two
+  // themes) can exceed the 30 s default, especially under parallel load.
+  testApi.beforeEach(async ({}, testInfo) => {
+    testInfo.setTimeout(Math.max(testInfo.timeout, 120_000));
+  });
   testApi.afterEach(async ({ page }, testInfo) => {
     if (testInfo.status !== "passed") return;
     await captureStyleSnapshot(page, testInfo.title, "end");

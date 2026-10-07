@@ -176,7 +176,7 @@ describe("Material 3 Expressive shell contract", () => {
     it("renders menus as elevated tonal surfaces without borders", () => {
       const layer = canonical();
       expect(layer).toContain("background: var(--app-surface-container-high);");
-      expect(layer).toContain("box-shadow: var(--md-elevation-2);");
+      expect(layer).toContain("box-shadow: var(--md-sys-elevation-level2);");
       expect(layer).toContain("border-color: transparent;");
       expect(layer).toContain("border-radius: var(--md-sys-shape-corner-large);");
     });
@@ -339,6 +339,72 @@ describe("Material 3 Expressive shell contract", () => {
       expect(layer).toMatch(/\.product-shell \.workbench-inline-row > label \{[^}]*flex: 1 1 7rem;[^}]*min-width: 0;/);
       expect(layer).toMatch(/\.product-shell \.base-share-fraction \{[^}]*display: flex;[^}]*flex: 1 1 11rem;[^}]*min-width: 0;/);
       expect(layer).toMatch(/\.product-shell \.base-share-fraction > label \{[^}]*flex: 1 1 0;[^}]*min-width: 0;/);
+    });
+  });
+
+  describe("elevation tokens (ADR-0434)", () => {
+    const css = () => stylesheet.replace(/\/\*[\s\S]*?\*\//g, "");
+
+    it("declares the M3 elevation scale from level 0 to level 5", () => {
+      const expected: Record<number, string> = {
+        0: "none",
+        1: "0 1px 2px 0 rgba(0, 0, 0, .3), 0 1px 3px 1px rgba(0, 0, 0, .15)",
+        2: "0 1px 2px 0 rgba(0, 0, 0, .3), 0 2px 6px 2px rgba(0, 0, 0, .15)",
+        3: "0 1px 3px 0 rgba(0, 0, 0, .3), 0 4px 8px 3px rgba(0, 0, 0, .15)",
+        4: "0 2px 3px 0 rgba(0, 0, 0, .3), 0 6px 10px 4px rgba(0, 0, 0, .15)",
+        5: "0 4px 4px 0 rgba(0, 0, 0, .3), 0 8px 12px 6px rgba(0, 0, 0, .15)",
+      };
+      for (const [level, value] of Object.entries(expected)) {
+        expect(css(), `level ${level}`).toContain(`--md-sys-elevation-level${level}: ${value};`);
+      }
+      expect(css()).not.toMatch(/--md-elevation-[12]\b/);
+    });
+
+    it("restricts every component shadow to a token, none, or a one-pixel state ring", () => {
+      const offenders: string[] = [];
+      for (const match of css().matchAll(/box-shadow:\s*([^;}]+)[;}]/g)) {
+        const value = match[1].trim();
+        const allowed = value === "none"
+          || /^var\(--md-sys-elevation-level[0-5]\)$/.test(value)
+          || /^0 0 0 1px var\(--app-[\w-]+\)$/.test(value);
+        if (!allowed) offenders.push(value);
+      }
+      expect(offenders).toEqual([]);
+    });
+
+    it("keeps menus and popovers at elevation level 2", () => {
+      const menus = css().slice(css().lastIndexOf(".product-shell .display-settings-menu,"));
+      expect(menus.slice(0, menus.indexOf("}"))).toContain("box-shadow: var(--md-sys-elevation-level2);");
+    });
+  });
+
+  describe("spacing scale (ADR-0434)", () => {
+    const css = () => stylesheet.replace(/\/\*[\s\S]*?\*\//g, "");
+
+    it("declares a 4px-grid spacing scale as repository-owned tokens", () => {
+      const expected: Record<string, string> = {
+        half: ".125rem", 1: ".25rem", 2: ".5rem", 3: ".75rem", 4: "1rem", 5: "1.25rem", 6: "1.5rem", 8: "2rem", 10: "2.5rem",
+      };
+      for (const [name, value] of Object.entries(expected)) {
+        expect(css(), `--app-space-${name}`).toContain(`--app-space-${name}: ${value};`);
+      }
+    });
+
+    it("spells every padding, margin, and gap through the scale (or a function, 0, auto, %)", () => {
+      const spacing = /^(?:padding|margin)(?:-(?:top|right|bottom|left|inline|block)(?:-(?:start|end))?)?$|^(?:row-|column-)?gap$/;
+      const offenders: string[] = [];
+      for (const match of css().matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        if (match[1].trim().startsWith("--") || match[1].includes(":root")) continue;
+        // The visually-hidden utility is a 1px clip technique, not layout spacing.
+        if (match[1].trim() === ".sr-only") continue;
+        for (const declaration of match[2].split(";")) {
+          const [property, ...rest] = declaration.split(":");
+          const value = rest.join(":").trim();
+          if (!spacing.test(property.trim()) || /(?:calc|clamp|min|max)\(/.test(value)) continue;
+          if (/[\d.]+rem|[\d.]+px/.test(value)) offenders.push(`${match[1].trim().replace(/\s+/g, " ").slice(0, 60)} { ${property.trim()}: ${value} }`);
+        }
+      }
+      expect(offenders).toEqual([]);
     });
   });
 });

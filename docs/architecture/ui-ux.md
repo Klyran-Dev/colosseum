@@ -288,9 +288,11 @@ Expressive with one repository-owned token set:
   pinned `@material/material-color-utilities`), with a harmonized amber warning
   role; light and dark roles are pinned by a generation test and a 4.5:1
   contrast contract (ADR-0422).
-- **Shape, motion, type, state:** the ten-step corner scale, six spring motion
-  tokens (sampled to CSS `linear()`), the M3 type scale with emphasized weights,
-  and hover/focus/pressed/dragged state layers. Components consume these tokens;
+- **Shape, motion, type, state, elevation:** the ten-step corner scale, six spring
+  motion tokens (sampled to CSS `linear()`), the M3 type scale with emphasized
+  weights, hover/focus/pressed/dragged state layers, and the level 0-5 elevation
+  scale. Spacing uses a repository-owned 4px-grid scale (`--app-space-*`), since
+  Material defines none (ADR-0434). Components consume these tokens;
   the stylesheet has no hard-coded font sizes or corner radii, and a test fails
   if one is reintroduced (ADR-0428, ADR-0429).
 - **Layout:** workspace layouts respond to the width the workspace has, via
@@ -303,7 +305,7 @@ Expressive with one repository-owned token set:
 A stylesheet change is verified by computed-style snapshots of 245 real-browser
 states in both themes (journeys plus markup captured from unit tests), each also
 recorded with hover, keyboard-focus, and pressed states forced and with every
-disclosure open (1,182 files per run):
+disclosure open (about 1,400 files per run):
 
 ```sh
 scripts/web_style_fixtures.sh              # capture unit-test markup (once per markup change)
@@ -315,6 +317,6 @@ node scripts/diff_style_snapshots.mjs test-results/style-snapshots/before test-r
 
 Identical CSS yields zero differences; an intentional change lists exactly which
 properties moved. Set `STYLE_SNAPSHOT_NO_STATES=1` to skip the interactive
-variants and `STYLE_SNAPSHOT_WORKERS=4` to run the fixture states in parallel
-(about 3.5 minutes for a resting-state run); every state is compared in full
+variants and `STYLE_SNAPSHOT_WORKERS=4` to run journeys and fixture states in parallel
+(about 3 minutes for a full run); every state is compared in full
 (ADR-0431, ADR-0432).

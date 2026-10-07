@@ -18,9 +18,9 @@ if [ -d "test-results/style-fixtures" ]; then
   # Markup captured from unit tests by scripts/web_style_fixtures.sh (ADR-0429).
   fixture_args="-e STYLE_FIXTURE_INPUT_DIR=/workspace/artifacts/style-fixtures"
 fi
-# Optional parallelism (STYLE_SNAPSHOT_WORKERS=N): the fixture states are independent,
-# so they can run concurrently; the journeys stay serial. Default is the repository
-# configuration (one worker).
+# Optional parallelism (STYLE_SNAPSHOT_WORKERS=N): journeys and fixture states are
+# independent (every API call is mocked per test), so they can run concurrently.
+# Default is the repository configuration (one worker, serial).
 workers="${STYLE_SNAPSHOT_WORKERS:-}"
 case "$workers" in *[!0-9]*) echo "STYLE_SNAPSHOT_WORKERS must be a number" >&2; exit 2;; esac
 run_e2e() {
@@ -31,7 +31,7 @@ run_e2e() {
     $fixture_args web-e2e "$@"
 }
 if [ -n "$workers" ]; then
-  run_e2e /bin/sh -c "/workspace/apps/web/node_modules/.bin/tsc --noEmit -p /workspace/apps/web/tsconfig.e2e.json && node /workspace/apps/web/node_modules/@playwright/test/cli.js test --config /workspace/apps/web/playwright.config.ts --workers=$workers"
+  run_e2e /bin/sh -c "/workspace/apps/web/node_modules/.bin/tsc --noEmit -p /workspace/apps/web/tsconfig.e2e.json && node /workspace/apps/web/node_modules/@playwright/test/cli.js test --config /workspace/apps/web/playwright.config.ts --workers=$workers --fully-parallel"
 else
   run_e2e
 fi
