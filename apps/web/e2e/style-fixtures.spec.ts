@@ -28,6 +28,8 @@ const fixtures: Fixture[] = enabled && inputDirectory
 
 test.describe("style fixtures from unit-test markup", () => {
   test.skip(!enabled, "set STYLE_FIXTURE_INPUT_DIR and STYLE_SNAPSHOT_DIR (scripts/web_style_snapshot.sh)");
+  // Each fixture is independent; this only takes effect with --workers > 1.
+  test.describe.configure({ mode: "parallel" });
 
   for (const fixture of fixtures) {
     test(`fixture ${fixture.name}`, async ({ page }) => {

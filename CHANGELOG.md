@@ -1,5 +1,10 @@
 # Changelog
 
+- Added ADR-0432: style snapshots wait for the page to settle, which removed the
+  two geometry-exempt states (they were capture races); the diff tool now
+  compares every state and has its own tests. `STYLE_SNAPSHOT_WORKERS` runs the
+  fixture states in parallel (serial and parallel runs are identical).
+
 - Added ADR-0431: style snapshots now also record forced hover, keyboard-focus
   and pressed states and every disclosure opened (1,182 files per run, 0
   differences between identical runs). The workbench base-share fraction is

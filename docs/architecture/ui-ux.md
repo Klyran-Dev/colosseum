@@ -315,4 +315,6 @@ node scripts/diff_style_snapshots.mjs test-results/style-snapshots/before test-r
 
 Identical CSS yields zero differences; an intentional change lists exactly which
 properties moved. Set `STYLE_SNAPSHOT_NO_STATES=1` to skip the interactive
-variants for a faster resting-state comparison (ADR-0431).
+variants and `STYLE_SNAPSHOT_WORKERS=4` to run the fixture states in parallel
+(about 3.5 minutes for a resting-state run); every state is compared in full
+(ADR-0431, ADR-0432).

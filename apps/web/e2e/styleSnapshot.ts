@@ -116,12 +116,33 @@ async function captureOpenDisclosures(page: Page): Promise<Omit<Snapshot, "title
   return result;
 }
 
+/** Resolve once the shell has had no DOM mutations for a quiet period (or a cap), so async loads and ticks cannot race a capture. */
+async function settle(page: Page): Promise<void> {
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    const target = document.querySelector(".product-shell") ?? document.body;
+    let timer = window.setTimeout(finish, 350);
+    const cap = window.setTimeout(finish, 4000);
+    const observer = new MutationObserver(() => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(finish, 350);
+    });
+    observer.observe(target, { childList: true, subtree: true, attributes: true, characterData: true });
+    function finish() {
+      observer.disconnect();
+      window.clearTimeout(timer);
+      window.clearTimeout(cap);
+      resolve();
+    }
+  }));
+}
+
 const counters = new Map<string, number>();
 
 /** Record a snapshot at a labelled state inside a journey (no-op unless enabled). */
 export async function captureStyleSnapshot(page: Page, title: string, label: string): Promise<void> {
   const directory = process.env.STYLE_SNAPSHOT_DIR;
   if (!directory || page.isClosed()) return;
+  await settle(page);
   const captured = await capture(page);
   if (!captured) return;
   const key = `${title} @ ${label}`;
