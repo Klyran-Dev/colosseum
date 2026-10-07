@@ -1,5 +1,11 @@
 # Changelog
 
+- Added ADR-0433: a real-browser test now proves forced hover/press/focus states
+  equal real mouse and keyboard interaction (and that springs drive transitions;
+  reduced motion removes them). It found that pressed and keyboard-focus snapshots
+  were missing the implied hover and `:focus` states, now fixed. Snapshots are
+  versioned (format 3) and unsettled captures are reported.
+
 - Added ADR-0432: style snapshots wait for the page to settle, which removed the
   two geometry-exempt states (they were capture races); the diff tool now
   compares every state and has its own tests. `STYLE_SNAPSHOT_WORKERS` runs the

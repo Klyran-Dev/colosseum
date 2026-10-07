@@ -7,7 +7,16 @@ import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 const PROPS = ["color","backgroundColor","borderTopColor","borderRightColor","borderBottomColor","borderLeftColor","borderTopWidth","borderLeftWidth","borderTopLeftRadius","borderTopRightRadius","borderBottomLeftRadius","borderBottomRightRadius","boxShadow","fontSize","fontWeight","lineHeight","letterSpacing","textTransform","paddingTop","paddingRight","paddingBottom","paddingLeft","marginTop","marginRight","marginBottom","marginLeft","display","opacity","gridTemplateColumns","gap","position","textDecorationLine","outlineStyle","size"];
-const load = (dir) => Object.fromEntries(readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => [f, JSON.parse(readFileSync(join(dir, f), "utf8"))]));
+const SNAPSHOT_FORMAT = 3;
+const load = (dir) => {
+  const snaps = Object.fromEntries(readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => [f, JSON.parse(readFileSync(join(dir, f), "utf8"))]));
+  const stale = Object.entries(snaps).filter(([, snap]) => snap.format !== SNAPSHOT_FORMAT).map(([name]) => name);
+  if (stale.length) {
+    console.error(`${dir}: ${stale.length} snapshot(s) are not format ${SNAPSHOT_FORMAT} (e.g. ${stale[0]}). Re-take this baseline with scripts/web_style_snapshot.sh; snapshots are not comparable across formats.`);
+    process.exit(2);
+  }
+  return snaps;
+};
 
 function coverage(dir, stylesheetPath = "apps/web/src/styles.css") {
   const rendered = new Set();
@@ -51,6 +60,7 @@ function diff(a, b, limit) {
   for (const [file, x] of Object.entries(A)) {
     const y = B[file];
     if (!y) { issues.push(`missing in after: ${file}`); continue; }
+    if (x.settled === false || y.settled === false) issues.push(`unsettled capture (page still changing at the 4s cap): ${file}`);
     for (const theme of ["dark", "light"]) {
       const p = x[theme], q = y[theme];
       if (p.ids.length !== q.ids.length) { issues.push(`${file} ${theme}: element count ${p.ids.length} -> ${q.ids.length}`); continue; }

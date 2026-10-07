@@ -16,10 +16,10 @@ function row(overrides: Record<number, string> = {}, size = "100x20"): string {
   return [...Array.from({ length: PROPS }, (_, index) => overrides[index] ?? `v${index}`), size].join("|");
 }
 
-function writeSnapshot(directory: string, name: string, rows: string[], classes = ["panel"]): void {
+function writeSnapshot(directory: string, name: string, rows: string[], classes = ["panel"], extra: Record<string, unknown> = {}): void {
   mkdirSync(directory, { recursive: true });
   const theme = { keys: rows.map((_, index) => `div.item${index}`), ids: rows.map((_, index) => index), strs: rows };
-  writeFileSync(join(directory, name), JSON.stringify({ title: name, url: "/", classes, dark: theme, light: theme }));
+  writeFileSync(join(directory, name), JSON.stringify({ format: 3, settled: true, title: name, url: "/", classes, dark: theme, light: theme, ...extra }));
 }
 
 function run(...args: string[]) {
@@ -68,5 +68,22 @@ describe("style snapshot diff tool (ADR-0428)", () => {
     const result = run("--coverage", join(root, "c1"), sheet);
     expect(result.output).toContain("never rendered: 1");
     expect(result.output).toContain("orphaned-card");
+  });
+
+  it("refuses to compare snapshots taken with a different capture format", () => {
+    writeSnapshot(join(root, "a5"), "state.json", [row()], ["panel"], { format: 2 });
+    writeSnapshot(join(root, "b5"), "state.json", [row()]);
+    const result = run(join(root, "a5"), join(root, "b5"));
+    expect(result.status).toBe(2);
+    expect(result.output).toMatch(/not format 3/);
+    expect(result.output).toMatch(/Re-take this baseline/);
+  });
+
+  it("reports a capture that never settled instead of silently comparing it", () => {
+    writeSnapshot(join(root, "a6"), "state.json", [row()], ["panel"], { settled: false });
+    writeSnapshot(join(root, "b6"), "state.json", [row()]);
+    const result = run(join(root, "a6"), join(root, "b6"));
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("unsettled capture");
   });
 });

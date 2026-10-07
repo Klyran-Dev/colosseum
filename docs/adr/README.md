@@ -433,3 +433,4 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0430](0430-motion-tokens-meaningful-tints-and-wrapping-rows.md) — Motion tokens, meaningful tints, and wrapping rows
 - [ADR-0431](0431-interactive-state-snapshots-and-grouped-fractions.md) — Interactive-state snapshots and grouped fractions
 - [ADR-0432](0432-settled-snapshots-and-parallel-capture.md) — Settled snapshots, no exempt states, and opt-in parallel capture
+- [ADR-0433](0433-interaction-fidelity-and-snapshot-format.md) — Interaction fidelity, snapshot format, and honest capture

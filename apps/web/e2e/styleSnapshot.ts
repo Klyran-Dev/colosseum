@@ -26,7 +26,12 @@ interface SnapshotTheme {
   strs: string[];
 }
 
+/** Bump when the recorded properties or capture semantics change; the diff tool refuses to compare across versions. */
+export const SNAPSHOT_FORMAT = 3;
+
 interface Snapshot {
+  format: number;
+  settled: boolean;
   title: string;
   url: string;
   classes: string[];
@@ -38,7 +43,7 @@ function fileName(title: string): string {
   return `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 200)}.json`;
 }
 
-async function capture(page: Page, selector = ".product-shell, .product-shell *"): Promise<Omit<Snapshot, "title" | "url"> | null> {
+async function capture(page: Page, selector = ".product-shell, .product-shell *"): Promise<Omit<Snapshot, "title" | "url" | "format" | "settled"> | null> {
   const captured = await page.evaluate(async ({ props, selector: scope }: { props: string[]; selector: string }) => {
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     if (!document.getElementById("__style_snapshot_nt")) {
@@ -80,23 +85,36 @@ async function capture(page: Page, selector = ".product-shell, .product-shell *"
     if (previousShell === null) shell.removeAttribute("data-theme"); else shell.setAttribute("data-theme", previousShell);
     return { ...result, classes: [...classes].sort() };
   }, { props: [...PROPS], selector });
-  return captured as Omit<Snapshot, "title" | "url"> | null;
+  return captured as Omit<Snapshot, "title" | "url" | "format" | "settled"> | null;
 }
 
 // Elements a user can hover, focus, or press. Forced-state snapshots restrict
 // themselves to these so the files stay small.
 const INTERACTIVE = ".product-shell :is(a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex='-1']))";
 const FORCED_STATES = ["hover", "focus-visible", "active"] as const;
+/**
+ * What a real user triggers: a press also hovers the control, and keyboard focus
+ * matches both :focus and :focus-visible. Forcing only the named pseudo-class
+ * under-reports those styles (found by e2e/interaction-fidelity.spec.ts, ADR-0433).
+ */
+export function forcedClassesFor(state: string): string[] {
+  if (state === "active") return ["hover", "active"];
+  if (state === "focus-visible") return ["focus", "focus-visible"];
+  return [state];
+}
 
-async function captureForcedState(page: Page, state: (typeof FORCED_STATES)[number]): Promise<Omit<Snapshot, "title" | "url"> | null> {
+// Containers that restyle when a descendant has focus (field groups, menus, disclosures).
+const FOCUS_GROUPS = ".product-shell :is(label, fieldset, form, details, .panel, .account-menu-panel, .display-settings-menu, .system-status-panel)";
+
+async function captureForcedState(page: Page, state: (typeof FORCED_STATES)[number] | "focus-within", scope = INTERACTIVE): Promise<Omit<Snapshot, "title" | "url" | "format" | "settled"> | null> {
   const client = await page.context().newCDPSession(page);
   try {
     await client.send("DOM.enable");
     await client.send("CSS.enable");
     const { root } = await client.send("DOM.getDocument", { depth: 0 });
-    const { nodeIds } = await client.send("DOM.querySelectorAll", { nodeId: root.nodeId, selector: INTERACTIVE });
-    for (const nodeId of nodeIds) await client.send("CSS.forcePseudoState", { nodeId, forcedPseudoClasses: [state] });
-    const result = await capture(page, INTERACTIVE);
+    const { nodeIds } = await client.send("DOM.querySelectorAll", { nodeId: root.nodeId, selector: scope });
+    for (const nodeId of nodeIds) await client.send("CSS.forcePseudoState", { nodeId, forcedPseudoClasses: forcedClassesFor(state) });
+    const result = await capture(page, scope);
     for (const nodeId of nodeIds) await client.send("CSS.forcePseudoState", { nodeId, forcedPseudoClasses: [] });
     return result;
   } finally {
@@ -104,7 +122,7 @@ async function captureForcedState(page: Page, state: (typeof FORCED_STATES)[numb
   }
 }
 
-async function captureOpenDisclosures(page: Page): Promise<Omit<Snapshot, "title" | "url"> | null> {
+async function captureOpenDisclosures(page: Page): Promise<Omit<Snapshot, "title" | "url" | "format" | "settled"> | null> {
   const opened = await page.evaluate(() => {
     const closed = [...document.querySelectorAll<HTMLDetailsElement>(".product-shell details:not([open])")];
     closed.forEach((element) => { element.setAttribute("open", ""); element.setAttribute("data-style-snapshot-opened", ""); });
@@ -117,21 +135,21 @@ async function captureOpenDisclosures(page: Page): Promise<Omit<Snapshot, "title
 }
 
 /** Resolve once the shell has had no DOM mutations for a quiet period (or a cap), so async loads and ticks cannot race a capture. */
-async function settle(page: Page): Promise<void> {
-  await page.evaluate(() => new Promise<void>((resolve) => {
+async function settle(page: Page): Promise<boolean> {
+  return page.evaluate(() => new Promise<boolean>((resolve) => {
     const target = document.querySelector(".product-shell") ?? document.body;
-    let timer = window.setTimeout(finish, 350);
-    const cap = window.setTimeout(finish, 4000);
+    let timer = window.setTimeout(() => finish(true), 350);
+    const cap = window.setTimeout(() => finish(false), 4000);
     const observer = new MutationObserver(() => {
       window.clearTimeout(timer);
-      timer = window.setTimeout(finish, 350);
+      timer = window.setTimeout(() => finish(true), 350);
     });
     observer.observe(target, { childList: true, subtree: true, attributes: true, characterData: true });
-    function finish() {
+    function finish(quiet: boolean) {
       observer.disconnect();
       window.clearTimeout(timer);
       window.clearTimeout(cap);
-      resolve();
+      resolve(quiet);
     }
   }));
 }
@@ -142,23 +160,25 @@ const counters = new Map<string, number>();
 export async function captureStyleSnapshot(page: Page, title: string, label: string): Promise<void> {
   const directory = process.env.STYLE_SNAPSHOT_DIR;
   if (!directory || page.isClosed()) return;
-  await settle(page);
+  const settled = await settle(page);
   const captured = await capture(page);
   if (!captured) return;
   const key = `${title} @ ${label}`;
   const count = (counters.get(key) ?? 0) + 1;
   counters.set(key, count);
   await mkdir(directory, { recursive: true });
-  const snapshot: Snapshot = { title: key, url: page.url(), ...captured };
+  const snapshot: Snapshot = { format: SNAPSHOT_FORMAT, settled, title: key, url: page.url(), ...captured };
   const base = fileName(count > 1 ? `${key} ${count}` : key);
   await writeFile(join(directory, base), JSON.stringify(snapshot));
   if (!process.env.STYLE_SNAPSHOT_NO_STATES) {
     for (const state of FORCED_STATES) {
       const forced = await captureForcedState(page, state);
-      if (forced) await writeFile(join(directory, base.replace(/\.json$/, `.${state}.json`)), JSON.stringify({ title: `${key} [${state}]`, url: page.url(), ...forced } satisfies Snapshot));
+      if (forced) await writeFile(join(directory, base.replace(/\.json$/, `.${state}.json`)), JSON.stringify({ format: SNAPSHOT_FORMAT, settled, title: `${key} [${state}]`, url: page.url(), ...forced } satisfies Snapshot));
     }
+    const within = await captureForcedState(page, "focus-within", FOCUS_GROUPS);
+    if (within) await writeFile(join(directory, base.replace(/\.json$/, ".focus-within.json")), JSON.stringify({ format: SNAPSHOT_FORMAT, settled, title: `${key} [focus-within]`, url: page.url(), ...within } satisfies Snapshot));
     const open = await captureOpenDisclosures(page);
-    if (open) await writeFile(join(directory, base.replace(/\.json$/, ".open.json")), JSON.stringify({ title: `${key} [open]`, url: page.url(), ...open } satisfies Snapshot));
+    if (open) await writeFile(join(directory, base.replace(/\.json$/, ".open.json")), JSON.stringify({ format: SNAPSHOT_FORMAT, settled, title: `${key} [open]`, url: page.url(), ...open } satisfies Snapshot));
   }
   if (process.env.STYLE_SNAPSHOT_SCREENSHOTS) {
     // A full-page image of the same state, in both themes, for human review.
