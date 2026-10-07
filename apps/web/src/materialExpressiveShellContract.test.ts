@@ -318,4 +318,25 @@ describe("Material 3 Expressive shell contract", () => {
       expect(count).toBe(1);
     });
   });
+
+  describe("motion tokens, meaningful tints, and wrapping rows (ADR-0430)", () => {
+    const css = () => stylesheet.replace(/\/\*[\s\S]*?\*\//g, "");
+
+    it("expresses every transition and animation through motion tokens", () => {
+      const raw = css().split("\n").filter((line) => /(?:transition|animation)\s*:/.test(line) && /[\d.]+m?s\b|\bease(?:-in|-out|-in-out)?\b|cubic-bezier/.test(line) && !line.includes("--md-"));
+      expect(raw).toEqual([]);
+      expect(css()).not.toMatch(/transform:\s*translateY\(-1px\)/);
+    });
+
+    it("has no near-invisible colour-mix tints (3% or less) pretending to be a role", () => {
+      const invisible = css().match(/color-mix\(in srgb, var\(--[\w-]+\) 0?[0-3]%, transparent\)/g) ?? [];
+      expect(invisible).toEqual([]);
+    });
+
+    it("lets the rule-workbench source row wrap instead of clipping its fields", () => {
+      const layer = css();
+      expect(layer).toMatch(/\.product-shell \.workbench-inline-row \{[^}]*flex-wrap: wrap;/);
+      expect(layer).toMatch(/\.product-shell \.workbench-inline-row > label \{[^}]*flex: 1 1 7rem;[^}]*min-width: 0;/);
+    });
+  });
 });

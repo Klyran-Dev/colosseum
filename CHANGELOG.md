@@ -1,5 +1,9 @@
 # Changelog
 
+- Added ADR-0430: the base button transition uses motion tokens (no hover lift),
+  21 invisible 1-3% tints became `transparent`, and the rule-workbench source
+  row wraps so its fields are no longer clipped. Tests reject each regression.
+
 - Added ADR-0429: markup captured from unit tests is loaded into the real
   browser as style fixtures (125 states; 243 snapshots in total). Added unit
   tests for replay gaps, the governance decision trail, rate bands, document
