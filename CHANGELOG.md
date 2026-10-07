@@ -1,5 +1,12 @@
 # Changelog
 
+- Added ADR-0427: access-control permission rows, risk/decision chips, policy
+  captions, technical details, empty states and release evidence use the type
+  scale and tonal cards, so decision-bearing text is no longer 9-11px. The
+  authorization posture strip wraps instead of truncating its values, and the
+  access-control layout now follows workspace width. Surfaces that only render
+  with live data are explicitly not migrated yet.
+
 - Added ADR-0426: form fields are M3 outlined text fields with hover, invalid
   and disabled states; labels, supporting text, notices and legends use the
   type scale, so form text no longer falls below 11px. A test rejects `rem`

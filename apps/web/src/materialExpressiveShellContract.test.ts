@@ -65,7 +65,7 @@ describe("Material 3 Expressive shell contract", () => {
   it("sizes workspace layouts from the available workspace, not the viewport (ADR-0421)", () => {
     const layer = stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0421:"));
     expect(layer).toContain("container: workspace / inline-size;");
-    for (const layout of ["workspace-grid", "checkout-layout", "governance-layout", "replay-layout", "vault-layout", "adjustment-layout"]) {
+    for (const layout of ["workspace-grid", "checkout-layout", "governance-layout", "replay-layout", "vault-layout", "adjustment-layout", "access-control-layout"]) {
       expect(layer).toContain(`.product-shell .${layout}`);
     }
     expect(layer).toMatch(/@container workspace \(max-width: 56rem\)/);
@@ -260,6 +260,62 @@ describe("Material 3 Expressive shell contract", () => {
       const css = stylesheet.replace(/@media \(forced-colors: active\) \{[\s\S]*?\n\}\n/g, "");
       expect(css).not.toMatch(/^\.product-shell \.product-content input/m);
       expect((css.match(/^\.product-shell input,$/gm) ?? []).length).toBe(1);
+    });
+  });
+
+  describe("canonical access-control, evidence, and empty-state surfaces (ADR-0427)", () => {
+    const canonical = () => stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0427:"), stylesheet.lastIndexOf("/* Forced-colors must remain"));
+    const withoutForcedColors = () => stylesheet.replace(/@media \(forced-colors: active\) \{[\s\S]*?\n\}\n/g, "");
+
+    it("renders inner cards as borderless tonal containers with a medium corner", () => {
+      const layer = canonical();
+      expect(layer).toContain(".product-shell .permission-group {");
+      expect(layer).toContain("border-color: transparent;");
+      expect(layer).toContain("border-radius: var(--md-sys-shape-corner-medium);");
+    });
+
+    it("sets permission, policy, and technical text on the type scale", () => {
+      const layer = canonical();
+      for (const token of [
+        "var(--md-sys-typescale-body-medium-size)",
+        "var(--md-sys-typescale-body-small-size)",
+        "var(--md-sys-typescale-title-small-size)",
+        "var(--md-sys-typescale-label-large-size)",
+        "var(--md-sys-typescale-label-medium-size)",
+        "var(--md-sys-typescale-label-small-size)",
+        "var(--md-sys-typescale-headline-small-size)",
+      ]) expect(layer, token).toContain(token);
+    });
+
+    it("renders risk and decision chips at label-small, in sentence case, with a small corner", () => {
+      const layer = canonical();
+      expect(layer).toContain(".product-shell .risk-chip,\n.product-shell .decision-chip {");
+      expect(layer).toContain("border-radius: var(--md-sys-shape-corner-small);");
+      expect(layer).toContain("text-transform: none;");
+      expect(layer).not.toMatch(/text-transform: uppercase/);
+      expect(layer).not.toMatch(/font-size: [0-9.]+rem|border-radius: [0-9.]+rem/);
+      expect(layer).not.toMatch(/#[0-9a-f]{3,8}|rgba?\(|gradient\(|backdrop-filter/i);
+    });
+
+    it("keeps these surfaces off rem font-size and radius literals", () => {
+      const surfaces = /^(?:\.product-shell )?\.(?:empty-(?:state|icon)|permission-[\w-]+|policy-dimension-grid|technical-(?:details|policy-list)|authorization-posture|risk-chip|decision-chip|release-evidence)\b[^{]*\{[^}]*\}/gm;
+      const offenders = (withoutForcedColors().match(surfaces) ?? []).filter((rule) => /font-size: [0-9.]+rem|border-radius: [0-9.]+rem/.test(rule));
+      expect(offenders).toEqual([]);
+    });
+
+    it("never truncates authorization posture values and wraps the strip to the workspace width", () => {
+      const css = withoutForcedColors();
+      const posture = css.slice(css.lastIndexOf(".product-shell .authorization-posture {"));
+      expect(posture).toContain("repeat(auto-fit, minmax(min(100%, 9rem), 1fr))");
+      const strong = css.slice(css.lastIndexOf(".product-shell .authorization-posture strong {"));
+      expect(strong.slice(0, strong.indexOf("}"))).toContain("white-space: normal;");
+      expect(strong.slice(0, strong.indexOf("}"))).toContain("overflow-wrap: anywhere;");
+      expect(css).not.toMatch(/^\.authorization-posture strong \{[^}]*(?:text-overflow|white-space: nowrap)/m);
+    });
+
+    it("keeps permission-group skin declared once", () => {
+      const count = (withoutForcedColors().match(/^\.product-shell \.permission-group \{/gm) ?? []).length;
+      expect(count).toBe(1);
     });
   });
 });

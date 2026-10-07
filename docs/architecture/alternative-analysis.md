@@ -3585,3 +3585,14 @@ accents for the active item.
 
 Chosen: outlined fields. Revisit if usability testing shows filled fields are
 easier to locate in dense forms.
+
+### Canonical access-control and evidence surfaces (ADR-0427)
+
+| Criterion | Migrate every legacy surface now | **Migrate only verifiable surfaces** | Leave all legacy styles |
+| --- | --- | --- | --- |
+| Proof that nothing regressed | None for data-only surfaces | **Snapshot diff for rendered surfaces** | N/A |
+| Readability gain | Highest | **High where decisions are shown** | None |
+| Risk | High | **Low** | Persistent 9-11px text |
+
+Chosen: verifiable surfaces only. Revisit once style snapshots run inside the
+Playwright journeys that render the data-dependent surfaces.
