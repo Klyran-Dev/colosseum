@@ -519,6 +519,27 @@ describe("operator-first product shell", () => {
     expect(document.querySelector(".product-shell")?.classList.contains("navigation-compact")).toBe(false);
   });
 
+  it("stays in the compact rail while the operator keeps working", () => {
+    render(<ProductShell
+      workspace="quote"
+      onNavigate={() => undefined}
+      serviceState="online"
+      accessToken=""
+      locale="en-US"
+      timeZone="UTC"
+      onLocaleChange={() => undefined}
+      onTimeZoneChange={() => undefined}
+    >
+      <div>Workspace content</div>
+    </ProductShell>);
+
+    fireEvent.click(screen.getByRole("button", { name: "Collapse navigation" }));
+
+    expect(document.querySelector(".product-shell.navigation-compact")).toBeTruthy();
+    expect(document.querySelector(".product-shell.navigation-compact .nav-item-glyph")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Tax quotes" })).toBeTruthy();
+  });
+
   it("turns the account control into a safe session menu", () => {
     const onSignOut = vi.fn();
     const snapshot: AuthorizationSnapshot = {

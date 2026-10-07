@@ -3608,3 +3608,15 @@ Playwright journeys that render the data-dependent surfaces.
 
 Chosen: computed-style snapshots. Revisit if journeys stop covering new
 surfaces, or if pixel-level regressions (images, canvas) appear.
+
+### Unit-test markup as style fixtures (ADR-0429)
+
+| Criterion | Re-mock every API payload in Playwright | Storybook-style gallery app | **Capture markup from existing unit tests** |
+| --- | --- | --- | --- |
+| Reuses validated fixtures | No (duplicate) | No | **Yes** |
+| New dependency or app | No | Yes | **No** |
+| Markup fidelity | Exact | Approximate | **Exact (real components)** |
+| Also adds behaviour tests | Partly | No | **Yes (gap states get tests)** |
+
+Chosen: capture from unit tests. Revisit when a surface needs interaction
+states (hover, focus) in its snapshot.

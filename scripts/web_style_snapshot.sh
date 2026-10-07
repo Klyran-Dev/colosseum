@@ -13,7 +13,13 @@ mkdir -p "test-results/style-snapshots"
 rm -rf "test-results/style-snapshots/$label"
 cleanup() { docker compose -p "$project" -f compose.yaml -f compose.browser.yaml down -v --remove-orphans >/dev/null 2>&1 || true; }
 trap cleanup EXIT INT TERM
+fixture_args=""
+if [ -d "test-results/style-fixtures" ]; then
+  # Markup captured from unit tests by scripts/web_style_fixtures.sh (ADR-0429).
+  fixture_args="-e STYLE_FIXTURE_INPUT_DIR=/workspace/artifacts/style-fixtures"
+fi
 docker compose -p "$project" -f compose.yaml -f compose.browser.yaml --profile browser run --build --rm \
   -e "STYLE_SNAPSHOT_DIR=/workspace/artifacts/style-snapshots/$label" \
-  -e "STYLE_SNAPSHOT_SCREENSHOTS=${STYLE_SNAPSHOT_SCREENSHOTS:-}" web-e2e
+  -e "STYLE_SNAPSHOT_SCREENSHOTS=${STYLE_SNAPSHOT_SCREENSHOTS:-}" \
+  $fixture_args web-e2e
 echo "snapshots: test-results/style-snapshots/$label ($(ls "test-results/style-snapshots/$label" | wc -l | tr -d ' ') journeys)"

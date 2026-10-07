@@ -7,6 +7,11 @@ import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 const PROPS = ["color","backgroundColor","borderTopColor","borderRightColor","borderBottomColor","borderLeftColor","borderTopWidth","borderLeftWidth","borderTopLeftRadius","borderTopRightRadius","borderBottomLeftRadius","borderBottomRightRadius","boxShadow","fontSize","fontWeight","lineHeight","letterSpacing","textTransform","paddingTop","paddingRight","paddingBottom","paddingLeft","marginTop","marginRight","marginBottom","marginLeft","display","opacity","gridTemplateColumns","gap","position","textDecorationLine","outlineStyle","size"];
+// Snapshots whose markup or text is time-derived (countdowns, relative ages).
+// Geometry and structure are ignored for them; every other property still counts.
+const VOLATILE = ["expired-quote-checkout-state", "vault-reconciliation-mismatch-state"];
+const isVolatile = (file) => VOLATILE.some((fragment) => file.includes(fragment));
+const GEOMETRY = new Set(["size", "gridTemplateColumns"]);
 const load = (dir) => Object.fromEntries(readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => [f, JSON.parse(readFileSync(join(dir, f), "utf8"))]));
 
 function coverage(dir, stylesheetPath = "apps/web/src/styles.css") {
@@ -29,9 +34,11 @@ function propsReport(a, b, expect) {
       const p = x[theme], q = y[theme]; if (p.ids.length !== q.ids.length) continue;
       for (let i = 0; i < p.ids.length; i++) {
         const sa = p.strs[p.ids[i]], sb = q.strs[q.ids[i]]; if (sa === sb) continue;
-        const pa = sa.split("|"), pb = sb.split("|"); total++;
+        const pa = sa.split("|"), pb = sb.split("|");
+        if (isVolatile(file) && pa.every((v, j) => v === pb[j] || GEOMETRY.has(PROPS[j]))) continue;
+        total++;
         pa.forEach((v, j) => {
-          if (v === pb[j]) return; const name = PROPS[j]; hist[name] = (hist[name] || 0) + 1;
+          if (v === pb[j]) return; const name = PROPS[j]; if (isVolatile(file) && GEOMETRY.has(name)) return; hist[name] = (hist[name] || 0) + 1;
           if (expect && !expect.has(name)) { const k = `${name} ${v}->${pb[j]} on ${p.keys[i]} [${file.slice(0, 48)}]`; unexpected[k] = (unexpected[k] || 0) + 1; }
         });
       }
@@ -52,11 +59,12 @@ function diff(a, b, limit) {
     if (!y) { issues.push(`missing in after: ${file}`); continue; }
     for (const theme of ["dark", "light"]) {
       const p = x[theme], q = y[theme];
-      if (p.ids.length !== q.ids.length) { issues.push(`${file} ${theme}: element count ${p.ids.length} -> ${q.ids.length}`); continue; }
+      if (p.ids.length !== q.ids.length) { if (!isVolatile(file)) issues.push(`${file} ${theme}: element count ${p.ids.length} -> ${q.ids.length}`); continue; }
       for (let i = 0; i < p.ids.length; i++) {
         const sa = p.strs[p.ids[i]], sb = q.strs[q.ids[i]]; if (sa === sb) continue;
         const pa = sa.split("|"), pb = sb.split("|"), ch = [];
-        pa.forEach((v, j) => { if (v !== pb[j]) ch.push(`${PROPS[j]} ${v}->${pb[j]}`); });
+        pa.forEach((v, j) => { if (v !== pb[j] && !(isVolatile(file) && GEOMETRY.has(PROPS[j]))) ch.push(`${PROPS[j]} ${v}->${pb[j]}`); });
+        if (ch.length === 0) continue;
         const key = `${theme} ${p.keys[i]} :: ${ch.join("; ")}`; agg[key] = (agg[key] || 0) + 1; total++;
       }
     }

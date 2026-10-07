@@ -202,4 +202,63 @@ describe("governance workbench submission boundary", () => {
     await screen.findByText("Governance lookup failed");
     expect(screen.queryByText(providerDetail)).toBeNull();
   });
+
+  it("shows the decision trail with who did what and when after the snapshot loads", async () => {
+    const draftResponse = {
+      rule_set_id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d15",
+      external_id: "new-sales-tax",
+      version: 1,
+      jurisdiction: "US-CA",
+      regime: "sales-tax",
+      status: "draft",
+      rule_digest: Array.from({ length: 32 }, (_, index) => index),
+      effective_from: "2026-09-27T00:00:00.000Z",
+      effective_until: null,
+      governance_revision: 0,
+    };
+    const governanceResponse = {
+      rule_set_id: draftResponse.rule_set_id,
+      external_id: draftResponse.external_id,
+      version: 1,
+      jurisdiction: "US-CA",
+      regime: "sales-tax",
+      status: "approved",
+      rule_digest_hex: "ab".repeat(32),
+      author_subject: "author",
+      reviewer_subject: "reviewer",
+      approver_subject: "approver",
+      governance_revision: 2,
+      effective_from: draftResponse.effective_from,
+      effective_until: null,
+      events: [
+        { id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d31", actor_subject: "author", action: "create", from_status: "none", to_status: "draft", evidence: { source: "controlled-record://test/rule-001" }, occurred_at: "2026-09-27T10:00:00.000Z" },
+        { id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d32", actor_subject: "reviewer", action: "review", from_status: "draft", to_status: "reviewed", evidence: { review: "review://test/rule-001" }, occurred_at: "2026-09-27T11:00:00.000Z" },
+        { id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d33", actor_subject: "approver", action: "approve", from_status: "reviewed", to_status: "approved", evidence: { approval: "approval://test/rule-001" }, occurred_at: "2026-09-27T12:00:00.000Z" },
+      ],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(draftResponse), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(governanceResponse), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = render(<GovernancePanel apiBase="/api" serviceOnline accessToken="author-token" />);
+    fillReleaseEvidence();
+    fireEvent.click(screen.getByRole("button", { name: "Create governed draft" }));
+
+    await waitFor(() => expect(container.querySelectorAll(".governance-timeline > li")).toHaveLength(3));
+    expect(container.querySelectorAll(".timeline-marker")).toHaveLength(3);
+    expect(container.querySelector(".governance-timeline")?.textContent).toMatch(/reviewer/);
+    expect(container.querySelector(".governance-timeline")?.textContent).toMatch(/approver/);
+  });
+
+  it("shows editable rate bands when the rate is made progressive", () => {
+    const { container } = render(<GovernancePanel apiBase="/api" serviceOnline accessToken="author-token" />);
+
+    expect(container.querySelectorAll(".bracket-row")).toHaveLength(0);
+    fireEvent.change(screen.getByLabelText("How the rate changes"), { target: { value: "progressive" } });
+
+    expect(container.querySelector(".bracket-list")).toBeTruthy();
+    expect(container.querySelectorAll(".bracket-row").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByLabelText("Lower amount").length).toBeGreaterThanOrEqual(1);
+  });
 });

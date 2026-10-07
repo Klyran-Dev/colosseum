@@ -35,7 +35,7 @@ interface Snapshot {
 }
 
 function fileName(title: string): string {
-  return `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 120)}.json`;
+  return `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 200)}.json`;
 }
 
 async function capture(page: Page): Promise<Omit<Snapshot, "title" | "url"> | null> {
@@ -61,7 +61,7 @@ async function capture(page: Page): Promise<Omit<Snapshot, "title" | "url"> | nu
         const text = props.map((prop: string) => (computed as unknown as Record<string, string>)[prop]).join("|") + `|${Math.round(box.width)}x${Math.round(box.height)}`;
         if (!strs.has(text)) strs.set(text, strs.size);
         ids.push(strs.get(text) as number);
-        const tokens = (typeof element.className === "string" ? element.className : "").split(/\s+/).filter(Boolean);
+        const tokens = (element.getAttribute("class") ?? "").split(/\s+/).filter(Boolean);
         tokens.forEach((token) => classes.add(token));
         keys.push(`${element.tagName.toLowerCase()}.${tokens.slice(0, 2).join(".")}`);
       }

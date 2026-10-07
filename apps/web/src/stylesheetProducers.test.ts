@@ -35,68 +35,16 @@ describe("stylesheet class producers (ADR-0428)", () => {
 });
 
 /**
- * Classes that no real-browser journey renders yet, so a stylesheet change to
+ * Classes that no real-browser journey or captured fixture renders yet (see
+ * e2e/unverified-surfaces.json), so a stylesheet change to
  * them cannot be proven neutral by scripts/diff_style_snapshots.mjs. Rules that
  * target only these classes may keep hard-coded rem/px type and corner sizes.
  * Remove a class from this list as soon as a journey renders it and its rules
  * are on tokens; adding to it needs a reason in the ADR (ADR-0428).
  */
-const UNVERIFIED_SURFACES = new Set([
-  "adjustment-chain-card",
-  "adjustment-record-card",
-  "adjustment-status-line",
-  "adjustment-transition-form",
-  "bracket-list",
-  "bracket-row",
-  "document-result",
-  "document-result-line",
-  "document-result-lines",
-  "evidence-actions",
-  "evidence-event-card",
-  "evidence-event-heading",
-  "evidence-event-list",
-  "evidence-summary",
-  "governance-action-form",
-  "governance-current-state",
-  "governance-evidence-content",
-  "governance-timeline",
-  "inline-retry",
-  "nav-item-glyph",
-  "navigation-compact",
-  "replay-action-box",
-  "replay-action-buttons",
-  "replay-gap-card",
-  "replay-gap-list",
-  "result-content",
-  "route-evidence-warning",
-  "session-action",
-  "session-control-oidc",
-  "session-control-signed-in",
-  "session-control-unconfigured",
-  "session-control-unconfigured-details",
-  "session-state",
-  "simulation-result",
-  "split-review",
-  "split-review-row",
-  "state-dead_lettered",
-  "state-not_applicable",
-  "state-pending",
-  "state-retrying",
-  "state-verified",
-  "subheading",
-  "system-status-checking",
-  "system-status-warning",
-  "tax-explanation",
-  "timeline-marker",
-  "total-card",
-  "trace-list",
-  "trace-row",
-  "treatment-channels",
-  "treatment-outcome",
-  "treatment-outcome-heading",
-  "vault-claim-card",
-  "vault-route-summary",
-]);
+const UNVERIFIED_SURFACES = new Set<string>(
+  JSON.parse(readFileSync(resolve(process.cwd(), "e2e/unverified-surfaces.json"), "utf8")),
+);
 
 describe("type scale and shape tokens everywhere verifiable (ADR-0428)", () => {
   it("keeps hard-coded font sizes and corner radii only on unverified surfaces", () => {

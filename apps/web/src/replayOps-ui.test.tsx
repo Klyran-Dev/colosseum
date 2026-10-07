@@ -76,4 +76,45 @@ describe("route-verification operator evidence UI", () => {
     await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Route-verification evidence lookup failed"));
     expect(screen.getByRole("alert").textContent).not.toContain(providerDetail);
   });
+
+  it("lists queued and dead-lettered gaps and offers recovery actions only for dead-lettered ones", async () => {
+    const base = {
+      stream_key: "mainnet/settlement",
+      start_slot: "410",
+      end_slot: "420",
+      observed_finalized_slot: "430",
+      reason: "subscription_gap",
+      created_at: "2026-10-05T10:00:00.000Z",
+      last_error_code: null,
+      dead_lettered_at: null,
+      operator_acknowledged_at: null,
+      operator_acknowledged_by: null,
+      operator_acknowledgement: null,
+    };
+    const gaps = [
+      { ...base, id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d20", status: "queued", attempts: 1 },
+      { ...base, id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d21", status: "dead_lettered", attempts: 8, last_error_code: "rpc_unavailable", dead_lettered_at: "2026-10-05T10:05:00.000Z" },
+      {
+        ...base,
+        id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d22",
+        status: "dead_lettered",
+        attempts: 8,
+        dead_lettered_at: "2026-10-05T10:06:00.000Z",
+        operator_acknowledged_at: "2026-10-05T10:20:00.000Z",
+        operator_acknowledged_by: "operator-1",
+        operator_acknowledgement: "Reviewed against finalized RPC evidence; retry scheduled.",
+      },
+    ];
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(gaps), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(<ReplayOpsPanel apiBase="/api" serviceOnline accessToken="operator-token" />);
+
+    fireEvent.change(screen.getByPlaceholderText("mainnet/settlement"), { target: { value: "mainnet/settlement" } });
+    fireEvent.click(screen.getByRole("button", { name: "Load recovery items" }));
+    await waitFor(() => expect(container.querySelectorAll(".replay-gap-card")).toHaveLength(3));
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/api/v1/indexer/replay-gaps");
+    expect(container.querySelectorAll(".replay-action-box")).toHaveLength(2);
+    expect(container.querySelectorAll(".replay-gap-card .evidence-note").length).toBeGreaterThanOrEqual(1);
+  });
 });
