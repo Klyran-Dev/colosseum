@@ -1,5 +1,10 @@
 # Changelog
 
+- Added ADR-0435: the real-browser gate now runs axe with WCAG 2.2 AA rules in both
+  the dark and light themes (previously WCAG 2.0, dark only) and checks reflow at
+  320px on all 16 workspaces. It found and we fixed topbar popovers that ran off the
+  screen on phones and a rule-workbench grid that overflowed a 320px viewport.
+
 - Added ADR-0434: the full M3 elevation scale (levels 0-5) and a 4px-grid spacing
   scale now replace the last hard-coded shadows and 344 ad-hoc padding, margin and
   gap declarations (37 distinct values). Tests reject raw shadows and spacing;

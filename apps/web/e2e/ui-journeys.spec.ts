@@ -1,8 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { Buffer } from "node:buffer";
-import axe from "axe-core";
 import { PublicKey } from "@solana/web3.js";
 import { documentQuoteMessagesFor } from "../src/documentQuoteMessages";
+import { axeViolationsInAllThemes, type AxeAuditOptions } from "./axeAudit";
 import { attachStyleSnapshots, captureStyleSnapshot } from "./styleSnapshot";
 
 attachStyleSnapshots(test);
@@ -10,39 +10,11 @@ attachStyleSnapshots(test);
 async function expectNoBrowserAxeViolations(
   page: Page,
   surface: string,
+  options: AxeAuditOptions = {},
 ): Promise<void> {
   await captureStyleSnapshot(page, test.info().title, surface);
-  const violations = await page.evaluate(async (axeSource) => {
-    if (!("axe" in window)) {
-      const script = document.createElement("script");
-      script.textContent = axeSource;
-      document.head.appendChild(script);
-    }
-    const browserAxe = (window as unknown as {
-      axe?: {
-        run: (context: Document, options: { runOnly: { type: "tag"; values: string[] } }) => Promise<{
-          violations: Array<{
-            id: string;
-            impact: string | null;
-            help: string;
-            nodes: Array<{ target: string[]; html: string }>;
-          }>;
-        }>;
-      };
-    }).axe;
-    if (!browserAxe) throw new Error("axe-core did not initialize in the real browser");
-    const result = await browserAxe.run(document, {
-      runOnly: { type: "tag", values: ["wcag2a", "wcag2aa"] },
-    });
-    return result.violations.map(({ id, impact, help, nodes }) => ({
-      id,
-      impact,
-      help,
-      nodes: nodes.map(({ target, html }) => ({ target, html })),
-    }));
-  }, axe.source);
-
-  expect(violations, `${surface} has real-browser axe violations`).toEqual([]);
+  const violations = await axeViolationsInAllThemes(page, options);
+  expect(violations, `${surface} has real-browser WCAG 2.2 AA violations (dark and light themes)`).toEqual([]);
 }
 
 const CAPABILITY_IDS = [
@@ -208,7 +180,12 @@ test.describe("real-browser SPA journeys", () => {
       onPrimary: "HighlightText",
     });
     await page.getByRole("button", { name: "Tax quotes", exact: true }).focus();
-    await expectNoBrowserAxeViolations(page, "forced-colors presentation");
+    // axe pairs an element's authored text colour with the OS-forced background in
+    // forced-colors mode (for example #4d3d75 on black, which only passes in dark
+    // by coincidence), while users see the browser's high-contrast pair (measured
+    // yellow on black, about 19:1). Contrast there belongs to the OS palette, so
+    // only this rule is off; every other WCAG 2.2 AA rule still runs in both themes.
+    await expectNoBrowserAxeViolations(page, "forced-colors presentation", { disabledRules: ["color-contrast"] });
   });
 
   test("supports keyboard context and real lazy workspace loading", async ({ page }) => {

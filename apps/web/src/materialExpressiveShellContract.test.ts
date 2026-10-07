@@ -373,7 +373,9 @@ describe("Material 3 Expressive shell contract", () => {
     });
 
     it("keeps menus and popovers at elevation level 2", () => {
-      const menus = css().slice(css().lastIndexOf(".product-shell .display-settings-menu,"));
+      const start = css().indexOf(".product-shell .display-settings-menu,\n.product-shell .account-menu-panel,\n.product-shell .system-status-panel,\n.product-shell .session-control-unconfigured-details,\n.product-shell .session-control-local-fields {");
+      expect(start).toBeGreaterThan(-1);
+      const menus = css().slice(start);
       expect(menus.slice(0, menus.indexOf("}"))).toContain("box-shadow: var(--md-sys-elevation-level2);");
     });
   });
@@ -406,5 +408,37 @@ describe("Material 3 Expressive shell contract", () => {
       }
       expect(offenders).toEqual([]);
     });
+  });
+
+  describe("small-viewport popovers (ADR-0435)", () => {
+    const block = () => {
+      const css = stylesheet.replace(/\/\*[\s\S]*?\*\//g, "");
+      const start = css.lastIndexOf("@media (max-width: 760px) {\n  .product-shell .system-status,");
+      return start === -1 ? "" : css.slice(start, css.indexOf("\n}\n", start));
+    };
+
+    it("anchors every topbar popover to the topbar and fits it inside the viewport on narrow screens", () => {
+      const layer = block();
+      expect(layer).toContain(".product-shell .system-status,");
+      expect(layer).toContain(".product-shell .account-menu { position: static; }");
+      expect(layer).toContain("position: static;");
+      expect(layer).toContain(".product-shell .system-status-panel,");
+      expect(layer).toContain(".product-shell .display-settings-menu,");
+      expect(layer).toContain(".product-shell .account-menu-panel,");
+      expect(layer).toContain("inset-inline: var(--app-space-2);");
+      expect(layer).toContain("width: auto;");
+      expect(layer).toContain("overflow-y: auto;");
+    });
+
+    it("keeps the topbar the containing block for those popovers", () => {
+      expect(stylesheet).toMatch(/\.product-topbar \{[^}]*position: sticky;/);
+    });
+  });
+
+  it("lets nested workbench grids shrink below the intrinsic width of their fields (WCAG 1.4.10)", () => {
+    const css = stylesheet.replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(css).toMatch(/\.product-shell :is\(\.full-field, \.rule-workbench, \.workbench-component\) \{[^}]*grid-template-columns: minmax\(0, 1fr\);/);
+    expect(css).toMatch(/\.product-shell :is\(\.full-field, \.rule-workbench, \.workbench-component\) > \* \{[^}]*min-width: 0;/);
+    expect(css).toMatch(/\.product-shell select \{[^}]*max-width: 100%;/);
   });
 });

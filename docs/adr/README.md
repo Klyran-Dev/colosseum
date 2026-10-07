@@ -435,3 +435,4 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0432](0432-settled-snapshots-and-parallel-capture.md) — Settled snapshots, no exempt states, and opt-in parallel capture
 - [ADR-0433](0433-interaction-fidelity-and-snapshot-format.md) — Interaction fidelity, snapshot format, and honest capture
 - [ADR-0434](0434-elevation-scale-spacing-scale-and-parallel-capture.md) — Elevation scale, spacing scale, and fully parallel capture
+- [ADR-0435](0435-wcag-22-both-themes-and-reflow.md) — WCAG 2.2 AA in both themes, and reflow at 320px

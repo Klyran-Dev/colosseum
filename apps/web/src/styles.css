@@ -1668,6 +1668,33 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .product-shell .base-share-fraction > label { flex: 1 1 0; min-width: 0; }
 .product-shell .base-share-divider { flex: 0 0 auto; padding-bottom: var(--app-space-3); }
 
+/* ADR-0435: on narrow screens a popover anchored to its chip runs off the screen
+   edge (the status panel spanned -101px to 187px at 320px). Make the topbar the
+   containing block instead, so each popover fits the viewport, and let a tall one
+   scroll within itself rather than force page scrolling (WCAG 1.4.10 Reflow). */
+@media (max-width: 760px) {
+  .product-shell .system-status,
+  .product-shell .display-settings,
+  .product-shell .session-control,
+  .product-shell .account-menu { position: static; }
+  .product-shell .system-status-panel,
+  .product-shell .display-settings-menu,
+  .product-shell .account-menu-panel,
+  .product-shell .session-control-unconfigured-details {
+    inset-inline: var(--app-space-2);
+    width: auto;
+    max-height: min(70vh, 32rem);
+    overflow-y: auto;
+  }
+}
+
+/* ADR-0435 (continued): a grid column sized to its content is as wide as the widest
+   <select> option, which overflowed a 320px viewport inside the rule workbench. Give
+   nested workbench grids a shrinkable track and let their items shrink. */
+.product-shell :is(.full-field, .rule-workbench, .workbench-component) { grid-template-columns: minmax(0, 1fr); }
+.product-shell :is(.full-field, .rule-workbench, .workbench-component) > * { min-width: 0; }
+.product-shell select { max-width: 100%; }
+
 /* Forced-colors must remain the final cascade layer so the accessible system
    palette wins over every component-specific Material role declaration. */
 @media (forced-colors: active) {
