@@ -96,6 +96,49 @@ test.describe("forced pseudo-states match real interaction", () => {
   }
 });
 
+test.describe("form fields: forced states match real interaction", () => {
+  test.use({ reducedMotion: "no-preference", viewport: { width: 1280, height: 900 } });
+
+  const FIELDS: Array<{ name: string; locator: (page: Page) => Locator }> = [
+    { name: "text field (time zone)", locator: (page) => page.locator(".display-settings-menu input").first() },
+    { name: "select (language)", locator: (page) => page.locator(".display-settings-menu select").first() },
+  ];
+
+  for (const field of FIELDS) {
+    test(`${field.name}: real hover and real click-focus equal the forced states`, async ({ page }) => {
+      await page.goto("/");
+      await page.waitForLoadState("networkidle");
+      await page.getByRole("button", { name: /display settings/i }).click();
+      const target = field.locator(page);
+      await expect(target).toBeVisible();
+      await page.mouse.move(2, 2);
+      await settleTransitions(page);
+      const resting = await computed(target);
+
+      await target.hover();
+      await settleTransitions(page);
+      const realHover = await computed(target);
+      await page.mouse.move(2, 2);
+      await settleTransitions(page);
+      expect(await computed(target), "leaving the field restores its resting style").toEqual(resting);
+      expect(realHover, "real hover equals forced :hover").toEqual(await forced(page, target, "hover"));
+
+      // A click focuses a field with :focus and :focus-visible (text input) and with :focus
+      // (select, by browser heuristic); the forced focus state must equal whichever the
+      // browser actually applied, so compare against the pseudo-classes that really matched.
+      await target.click({ position: { x: 4, y: 4 } });
+      await page.mouse.move(2, 2);
+      await settleTransitions(page);
+      const matches = await target.evaluate((element) => ({ focus: element.matches(":focus"), visible: element.matches(":focus-visible") }));
+      expect(matches.focus, "the click focused the field").toBe(true);
+      const realFocus = await computed(target);
+      await target.evaluate((element) => (element as HTMLElement).blur());
+      await settleTransitions(page);
+      expect(realFocus, "real focus equals the forced focus state").toEqual(await forced(page, target, "focus-visible"));
+    });
+  }
+});
+
 test.describe("motion tokens drive real transitions", () => {
   test.use({ reducedMotion: "no-preference" });
 

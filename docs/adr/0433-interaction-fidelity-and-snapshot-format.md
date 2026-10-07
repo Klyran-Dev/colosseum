@@ -16,8 +16,8 @@ snapshots from different capture versions could be compared.
 ## Decision
 
 1. **Prove the approximation.** `e2e/interaction-fidelity.spec.ts` is part of the
-   normal real-browser gate. For four representative controls (navigation item,
-   two topbar chips, account trigger) it performs real mouse hover, a real press
+   normal real-browser gate. For six representative controls (navigation item,
+   two topbar chips, account trigger, a text field, and a select) it performs real mouse hover, a real press
    (released off the control so it is not a click), and real keyboard focus with
    transitions running, waits for them to finish, and requires the computed style
    to equal the forced-state style, and the resting style to return after leaving.
@@ -36,7 +36,7 @@ snapshots from different capture versions could be compared.
 
 ## Evidence
 
-- 55 real-browser tests pass (49 journeys, 4 fidelity, 2 motion) with the
+- 57 real-browser tests pass (49 journeys, 6 fidelity, 2 motion) with the
   corrected forced states; 408 unit tests, including the diff tool's format and
   unsettled cases.
 - Before the fix the fidelity test failed on the pressed state for three
@@ -44,7 +44,7 @@ snapshots from different capture versions could be compared.
 
 ## Limits
 
-- Four controls are checked in real interaction; other controls rely on sharing
-  the same state-layer rules, which the snapshots then cover in forced form.
+- Six controls are checked in real interaction; other controls share the same
+  state-layer and field rules, which the snapshots then cover in forced form.
 - Real touch input, multi-pointer, and drag are not exercised.
 - Snapshots from before format 3 cannot be compared; take a fresh baseline.
