@@ -1,5 +1,11 @@
 # Changelog
 
+- Added ADR-0440: pinned overrides (`source-map-js` 1.2.2, `uuid` 11.1.1) cut `pnpm audit`
+  findings for apps/web from 6 to 4, and a fail-closed audit gate enforces the AGENTS.md
+  rule (fail on high/critical unless a time-bounded, approved exception). The remaining
+  high finding (`bigint-buffer`, dev-only, no patch) is recorded as a proposed exception
+  awaiting its owner's approval.
+
 - Added ADR-0439: the product now runs in real Firefox and WebKit (`scripts/web_cross_browser_check.sh`,
   16 tests): CSS feature support, token resolution, spring transitions and reduced motion,
   and WCAG 2.2 AA plus 320px reflow in both themes on four workspaces.

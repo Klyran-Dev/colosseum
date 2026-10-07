@@ -46,3 +46,13 @@ production gates are tracked in
 Do not include credentials, seed phrases, private keys, raw jurisdiction
 evidence, or production data in bug reports. Use synthetic fixtures and redact
 logs before sharing them.
+
+## Dependency findings and exceptions
+
+`node scripts/verify_web_audit_contract.mjs` runs `pnpm audit` for `apps/web` and fails on
+any high or critical finding that lacks an approved, time-bounded exception in
+[`docs/security/dependency-exceptions.json`](docs/security/dependency-exceptions.json).
+An exception names an accountable approver and owner, expires within 180 days, and may
+cover only packages absent from the shipped browser bundle; stale or expired entries fail
+the check (see ADR-0440). Patched versions are applied as pinned overrides in
+`apps/web/pnpm-workspace.yaml`.

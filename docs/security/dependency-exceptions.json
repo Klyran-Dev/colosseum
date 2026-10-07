@@ -1,0 +1,18 @@
+{
+  "$comment": "Time-bounded exceptions for high/critical dependency findings in apps/web (AGENTS.md, ADR-0440). An exception must name an owner, expire within 180 days, and cover only code that is not in the shipped browser bundle. scripts/verify_web_audit_contract.mjs enforces this and fails on stale entries. An entry counts only when approvedBy names the accountable owner; until then it is a proposal and the gate fails (use --allow-pending to report it as a warning).",
+  "exceptions": [
+    {
+      "ghsa": "GHSA-3gc7-fjrx-p6mg",
+      "package": "bigint-buffer",
+      "severity": "high",
+      "path": "@solana/spl-token > @solana/buffer-layout-utils > bigint-buffer",
+      "reason": "Buffer-overflow advisory in toBigIntLE with no patched release. Reachable only through @solana/spl-token, a devDependency used by localnet tests and fixtures; it is not imported by the browser bundle (verified absent from dist) and processes only synthetic test data. Mitigation: do not use spl-token helpers on untrusted input; revisit when a patched release or a maintained alternative exists.",
+      "owner": "security",
+      "expires": "2027-01-05",
+      "reachableInShippedBundle": false,
+      "status": "proposed",
+      "proposedOn": "2026-10-07",
+      "approvedBy": ""
+    }
+  ]
+}

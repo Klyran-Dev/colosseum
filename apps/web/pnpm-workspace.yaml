@@ -7,3 +7,7 @@ minimumReleaseAgeExclude:
   - '@vitest/spy@5.0.2'
   - vitest@5.0.2
   - '@types/node@26.6.3'
+overrides:
+  # Security overrides (ADR-0440): patched versions of build/test-time transitive packages.
+  source-map-js: 1.2.2
+  uuid: 11.1.1

@@ -440,3 +440,4 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0437](0437-hover-only-where-hover-exists-and-touch-tests.md) — Hover only where hover exists, and real touch tests
 - [ADR-0438](0438-interaction-sweep-and-element-aware-forced-states.md) — Interaction sweep and element-aware forced states
 - [ADR-0439](0439-cross-engine-browser-suite.md) — Cross-engine browser suite
+- [ADR-0440](0440-dependency-audit-gate-and-exceptions.md) — Dependency audit gate and time-bounded exceptions
