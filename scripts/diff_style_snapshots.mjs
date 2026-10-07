@@ -7,7 +7,7 @@ import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 const PROPS = ["color","backgroundColor","borderTopColor","borderRightColor","borderBottomColor","borderLeftColor","borderTopWidth","borderLeftWidth","borderTopLeftRadius","borderTopRightRadius","borderBottomLeftRadius","borderBottomRightRadius","boxShadow","fontSize","fontWeight","lineHeight","letterSpacing","textTransform","paddingTop","paddingRight","paddingBottom","paddingLeft","marginTop","marginRight","marginBottom","marginLeft","display","opacity","gridTemplateColumns","gap","position","textDecorationLine","outlineStyle","size"];
-const SNAPSHOT_FORMAT = 3;
+const SNAPSHOT_FORMAT = 5;
 const load = (dir) => {
   const snaps = Object.fromEntries(readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => [f, JSON.parse(readFileSync(join(dir, f), "utf8"))]));
   const stale = Object.entries(snaps).filter(([, snap]) => snap.format !== SNAPSHOT_FORMAT).map(([name]) => name);

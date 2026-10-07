@@ -1,5 +1,11 @@
 # Changelog
 
+- Added ADR-0438: real hover and press are now verified against the forced states for
+  every distinct interactive kind (15 on the workspaces plus 18 in captured states,
+  0 mismatches) instead of six samples. The sweep found that a press also focuses
+  controls and that text fields and selects match `:focus-visible`; forced states are
+  now element-aware (snapshot format 5).
+
 - Added ADR-0437: hover styling now exists only under `@media (hover: hover)`, so a
   tap on a phone no longer leaves a control looking hovered. New touch-emulation tests
   cover taps, navigation, no stuck hover (proved with a negative control), and WCAG 2.2

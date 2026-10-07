@@ -27,7 +27,7 @@ interface SnapshotTheme {
 }
 
 /** Bump when the recorded properties or capture semantics change; the diff tool refuses to compare across versions. */
-export const SNAPSHOT_FORMAT = 3;
+export const SNAPSHOT_FORMAT = 5;
 
 interface Snapshot {
   format: number;
@@ -93,12 +93,19 @@ async function capture(page: Page, selector = ".product-shell, .product-shell *"
 const INTERACTIVE = ".product-shell :is(a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex='-1']))";
 const FORCED_STATES = ["hover", "focus-visible", "active"] as const;
 /**
- * What a real user triggers: a press also hovers the control, and keyboard focus
- * matches both :focus and :focus-visible. Forcing only the named pseudo-class
- * under-reports those styles (found by e2e/interaction-fidelity.spec.ts, ADR-0433).
+ * Text-entry controls and selects match :focus-visible whenever they are focused,
+ * including by a mouse press (Chromium); buttons and links only after keyboard focus.
  */
-export function forcedClassesFor(state: string): string[] {
-  if (state === "active") return ["hover", "active"];
+export const TEXT_ENTRY = "input:is(:not([type]), [type=text], [type=search], [type=email], [type=url], [type=tel], [type=password], [type=number], [type=date], [type=datetime-local], [type=month], [type=week], [type=time]), textarea, select";
+
+/**
+ * What a real user triggers: a press also hovers and focuses the control (and, for
+ * text entry, focus-visible), and keyboard focus matches both :focus and
+ * :focus-visible. Forcing only the named pseudo-class under-reports those styles
+ * (found by e2e/interaction-fidelity.spec.ts and interaction-sweep.spec.ts, ADR-0433).
+ */
+export function forcedClassesFor(state: string, textEntry = false): string[] {
+  if (state === "active") return textEntry ? ["hover", "active", "focus", "focus-visible"] : ["hover", "active", "focus"];
   if (state === "focus-visible") return ["focus", "focus-visible"];
   return [state];
 }
@@ -113,7 +120,9 @@ async function captureForcedState(page: Page, state: (typeof FORCED_STATES)[numb
     await client.send("CSS.enable");
     const { root } = await client.send("DOM.getDocument", { depth: 0 });
     const { nodeIds } = await client.send("DOM.querySelectorAll", { nodeId: root.nodeId, selector: scope });
-    for (const nodeId of nodeIds) await client.send("CSS.forcePseudoState", { nodeId, forcedPseudoClasses: forcedClassesFor(state) });
+    const { nodeIds: textNodeIds } = await client.send("DOM.querySelectorAll", { nodeId: root.nodeId, selector: `.product-shell :is(${TEXT_ENTRY})` });
+    const textEntry = new Set(textNodeIds);
+    for (const nodeId of nodeIds) await client.send("CSS.forcePseudoState", { nodeId, forcedPseudoClasses: forcedClassesFor(state, textEntry.has(nodeId)) });
     const result = await capture(page, scope);
     for (const nodeId of nodeIds) await client.send("CSS.forcePseudoState", { nodeId, forcedPseudoClasses: [] });
     return result;

@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { interactiveCandidates, verifyInteractiveKind, type SweepResult } from "./interactionSupport";
 import { captureStyleSnapshot } from "./styleSnapshot";
 
 /**
@@ -44,4 +45,36 @@ test.describe("style fixtures from unit-test markup", () => {
       await captureStyleSnapshot(page, "fixtures", fixture.name);
     });
   }
+});
+
+test.describe("fixture interaction sweep", () => {
+  test.skip(!enabled, "set STYLE_FIXTURE_INPUT_DIR and STYLE_SNAPSHOT_DIR (scripts/web_style_snapshot.sh)");
+  test.use({ reducedMotion: "no-preference", viewport: { width: 1280, height: 900 } });
+
+  // Every captured state contains enabled primary buttons, fields, and links that the
+  // signed-out workspaces do not (ADR-0438). Each distinct kind is verified once.
+  test("real hover and press equal the forced states for every interactive kind in every fixture", async ({ page }) => {
+    test.setTimeout(900_000);
+    await page.goto("/");
+    await page.waitForLoadState("networkidle");
+    const seen = new Set<string>();
+    const result: SweepResult = { verified: 0, skipped: [], mismatches: [] };
+    for (const fixture of fixtures) {
+      await page.evaluate((html: string) => {
+        const alreadyShell = /class="[^"]*\bproduct-shell\b/.test(html);
+        document.body.innerHTML = alreadyShell
+          ? html
+          : `<div class="app-shell product-shell" data-theme="system" dir="ltr"><aside class="app-sidebar" aria-hidden="true"></aside><div class="app-main-column"><main class="content product-content" id="main-content">${html}</main></div></div>`;
+      }, fixture.html);
+      for (const candidate of await interactiveCandidates(page)) {
+        if (seen.has(candidate.signature)) continue;
+        const outcome = await verifyInteractiveKind(page, candidate, `${fixture.name.slice(0, 60)} ${candidate.signature}`, result);
+        if (outcome !== "hidden") seen.add(candidate.signature);
+      }
+    }
+    expect(result.mismatches, "forced states must equal real interaction").toEqual([]);
+    expect(result.verified, "distinct interactive kinds verified across fixtures").toBeGreaterThanOrEqual(15);
+    expect(result.skipped.length / Math.max(1, result.verified + result.skipped.length), `unreachable kinds: ${result.skipped.join("; ")}`).toBeLessThanOrEqual(0.35);
+    console.log(`FIXTURE_INTERACTION_SWEEP verified=${result.verified} skipped=${result.skipped.length}\n${result.skipped.join("\n")}`);
+  });
 });

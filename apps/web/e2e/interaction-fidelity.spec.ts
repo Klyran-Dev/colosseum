@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { forcedClassesFor } from "./styleSnapshot";
+import { computed, forced, settleTransitions } from "./interactionSupport";
 
 /**
  * Proves that the forced pseudo-state snapshots (e2e/styleSnapshot.ts) match what
@@ -8,41 +8,6 @@ import { forcedClassesFor } from "./styleSnapshot";
  * checks the spring motion tokens are what the controls actually transition with,
  * and that reduced motion switches them off.
  */
-const STYLE_PROPS = [
-  "color", "backgroundColor", "borderTopColor", "borderRightColor", "borderBottomColor", "borderLeftColor",
-  "borderTopLeftRadius", "boxShadow", "outlineStyle", "outlineWidth", "outlineColor", "textDecorationLine",
-] as const;
-
-async function computed(locator: Locator): Promise<Record<string, string>> {
-  return locator.evaluate((element, props) => {
-    const style = getComputedStyle(element);
-    return Object.fromEntries(props.map((prop) => [prop, (style as unknown as Record<string, string>)[prop]]));
-  }, [...STYLE_PROPS]);
-}
-
-async function settleTransitions(page: Page): Promise<void> {
-  await page.waitForFunction(() => document.getAnimations().length === 0, undefined, { timeout: 3_000 });
-}
-
-async function forced(page: Page, locator: Locator, state: "hover" | "active" | "focus-visible"): Promise<Record<string, string>> {
-  const client = await page.context().newCDPSession(page);
-  try {
-    await client.send("DOM.enable");
-    await client.send("CSS.enable");
-    await locator.evaluate((element) => element.setAttribute("data-fidelity-target", ""));
-    const { root } = await client.send("DOM.getDocument", { depth: 0 });
-    const { nodeId } = await client.send("DOM.querySelector", { nodeId: root.nodeId, selector: "[data-fidelity-target]" });
-    await client.send("CSS.forcePseudoState", { nodeId, forcedPseudoClasses: forcedClassesFor(state) });
-    await settleTransitions(page);
-    const result = await computed(locator);
-    await client.send("CSS.forcePseudoState", { nodeId, forcedPseudoClasses: [] });
-    await locator.evaluate((element) => element.removeAttribute("data-fidelity-target"));
-    return result;
-  } finally {
-    await client.detach().catch(() => undefined);
-  }
-}
-
 const CONTROLS: Array<{ name: string; locator: (page: Page) => Locator }> = [
   { name: "navigation item", locator: (page) => page.getByRole("button", { name: "Tax simulator", exact: true }) },
   { name: "display settings chip", locator: (page) => page.locator(".display-settings > summary") },

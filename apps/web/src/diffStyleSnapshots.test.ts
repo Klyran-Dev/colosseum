@@ -19,7 +19,7 @@ function row(overrides: Record<number, string> = {}, size = "100x20"): string {
 function writeSnapshot(directory: string, name: string, rows: string[], classes = ["panel"], extra: Record<string, unknown> = {}): void {
   mkdirSync(directory, { recursive: true });
   const theme = { keys: rows.map((_, index) => `div.item${index}`), ids: rows.map((_, index) => index), strs: rows };
-  writeFileSync(join(directory, name), JSON.stringify({ format: 3, settled: true, title: name, url: "/", classes, dark: theme, light: theme, ...extra }));
+  writeFileSync(join(directory, name), JSON.stringify({ format: 5, settled: true, title: name, url: "/", classes, dark: theme, light: theme, ...extra }));
 }
 
 function run(...args: string[]) {
@@ -71,11 +71,11 @@ describe("style snapshot diff tool (ADR-0428)", () => {
   });
 
   it("refuses to compare snapshots taken with a different capture format", () => {
-    writeSnapshot(join(root, "a5"), "state.json", [row()], ["panel"], { format: 2 });
+    writeSnapshot(join(root, "a5"), "state.json", [row()], ["panel"], { format: 4 });
     writeSnapshot(join(root, "b5"), "state.json", [row()]);
     const result = run(join(root, "a5"), join(root, "b5"));
     expect(result.status).toBe(2);
-    expect(result.output).toMatch(/not format 3/);
+    expect(result.output).toMatch(/not format 5/);
     expect(result.output).toMatch(/Re-take this baseline/);
   });
 
