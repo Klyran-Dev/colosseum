@@ -35,8 +35,8 @@ describe("stylesheet class producers (ADR-0428)", () => {
 });
 
 /**
- * Classes that no real-browser journey or captured fixture renders yet (see
- * e2e/unverified-surfaces.json), so a stylesheet change to
+ * Classes that neither a real-browser journey nor a captured unit-test fixture
+ * renders yet (e2e/unverified-surfaces.json, currently empty), so a stylesheet change to
  * them cannot be proven neutral by scripts/diff_style_snapshots.mjs. Rules that
  * target only these classes may keep hard-coded rem/px type and corner sizes.
  * Remove a class from this list as soon as a journey renders it and its rules

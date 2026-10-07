@@ -1,6 +1,6 @@
 // Test-only (ADR-0429): when STYLE_FIXTURE_DIR is set, save the real DOM that a
 // unit test rendered, the first time each class listed in
-// e2e/unverified-surfaces.json appears during the test and again at its end
+// e2e/fixture-targets.json appears during the test and again at its end
 // (or every state with STYLE_FIXTURE_ALL=1). scripts/web_style_fixtures.sh runs
 // this with `--sequence.hooks=list` so the final capture happens before each
 // test file's own cleanup. The saved markup is loaded into the real browser with
@@ -12,7 +12,7 @@ import { afterEach, beforeEach, expect } from "vitest";
 const directory = process.env.STYLE_FIXTURE_DIR;
 
 if (directory) {
-  const unverified: string[] = JSON.parse(readFileSync(resolve(process.cwd(), "e2e/unverified-surfaces.json"), "utf8"));
+  const targets: string[] = JSON.parse(readFileSync(resolve(process.cwd(), "e2e/fixture-targets.json"), "utf8"));
   const everything = Boolean(process.env.STYLE_FIXTURE_ALL);
   let seen = new Set<string>();
   let counter = 0;
@@ -33,7 +33,7 @@ if (directory) {
   const check = (): void => {
     const html = document.body.innerHTML;
     if (html.length < 40) return;
-    const hits = unverified.filter((token) => classesIn(html).has(token));
+    const hits = targets.filter((token) => classesIn(html).has(token));
     const fresh = hits.filter((token) => !seen.has(token));
     if (fresh.length === 0) return;
     fresh.forEach((token) => seen.add(token));
@@ -54,7 +54,7 @@ if (directory) {
     if (typeof document === "undefined") return;
     const html = document.body.innerHTML;
     if (html.length < 40) return;
-    const hits = unverified.filter((token) => classesIn(html).has(token));
+    const hits = targets.filter((token) => classesIn(html).has(token));
     if (!everything && hits.length === 0) return;
     save("end", hits, html);
   });

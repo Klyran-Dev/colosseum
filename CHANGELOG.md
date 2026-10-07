@@ -4,8 +4,9 @@
   browser as style fixtures (125 states; 243 snapshots in total). Added unit
   tests for replay gaps, the governance decision trail, rate bands, document
   simulation results, applicability states, split-plan mismatch, and the
-  compact rail. 45 more rules moved onto the M3 type-scale and shape tokens;
-  only two classes (split-review) still keep literals.
+  compact rail, and the compiled split-plan review. Every styled class now
+  renders in at least one of 245 snapshot states, and the stylesheet has no
+  hard-coded font sizes or corner radii.
 
 - Added ADR-0428: opt-in computed-style snapshots inside the real-browser
   journeys (118 states, both themes) with a diff tool, so CSS refactors of

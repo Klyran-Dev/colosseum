@@ -86,10 +86,10 @@ The shell uses native Material 3 Expressive disclosure groups to keep the
 current task prominent without hiding production capability. Daily work is
 open by default; lower-frequency groups remain one keyboard action away, and
 the active group opens automatically for direct links and route changes. Group
-state is presentation-only: it is never an authorization decision. The Solana
-Aurora role palette remains the only production palette, so navigation does
-not add per-item colors or badges that compete with financial and error
-semantics. See ADR-0323 for the composition decision and alternatives.
+state is presentation-only: it is never an authorization decision. The
+Material baseline role palette (ADR-0422) is the only production palette, so
+navigation does not add per-item colors or badges that compete with financial
+and error semantics. See ADR-0323 for the composition decision and alternatives.
 
 Every workspace follows the same review rhythm:
 
@@ -278,3 +278,38 @@ shared/
 ```
 
 Use generated API/IDL types, a single money-formatting package, server-authoritative calculation results, and an optional Rust/WASM preview that is visibly labeled as a preview until the API attestation is returned.
+
+## Visual system and how it is verified
+
+The SPA's single stylesheet (`apps/web/src/styles.css`) follows Material 3
+Expressive with one repository-owned token set:
+
+- **Palette:** generated from the Material baseline seed `#6750A4` (TonalSpot,
+  pinned `@material/material-color-utilities`), with a harmonized amber warning
+  role; light and dark roles are pinned by a generation test and a 4.5:1
+  contrast contract (ADR-0422).
+- **Shape, motion, type, state:** the ten-step corner scale, six spring motion
+  tokens (sampled to CSS `linear()`), the M3 type scale with emphasized weights,
+  and hover/focus/pressed/dragged state layers. Components consume these tokens;
+  the stylesheet has no hard-coded font sizes or corner radii, and a test fails
+  if one is reintroduced (ADR-0428, ADR-0429).
+- **Layout:** workspace layouts respond to the width the workspace has, via
+  container queries, not to the viewport (ADR-0421).
+- **Canonical blocks:** navigation, panels, topbar, form controls, and the
+  access-control/evidence surfaces each have one canonical style block
+  (ADR-0423 to ADR-0427) so a change is made in one place. Dead declarations and
+  selectors are removed and guarded by tests (ADR-0424, ADR-0428).
+
+A stylesheet change is verified by computed-style snapshots of 245 real-browser
+states in both themes (journeys plus markup captured from unit tests):
+
+```sh
+scripts/web_style_fixtures.sh              # capture unit-test markup (once per markup change)
+scripts/web_style_snapshot.sh before       # snapshot the current stylesheet
+# ...edit styles.css...
+scripts/web_style_snapshot.sh after
+node scripts/diff_style_snapshots.mjs test-results/style-snapshots/before test-results/style-snapshots/after --props
+```
+
+Identical CSS yields zero differences; an intentional change lists exactly which
+properties moved. Hover, focus, and open-menu states are not in the snapshots.
