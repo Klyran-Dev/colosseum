@@ -11,7 +11,11 @@ export default defineConfig({
   },
   build: {
     sourcemap: false,
-    target: "es2022"
+    target: "es2022",
+    // The stylesheet uses color-mix(), container queries, :is() and linear()
+    // easing. State the supported browsers so the CSS minifier never lowers or
+    // drops them (ADR-0436): Chrome/Edge 113+, Firefox 113+, Safari 17.2+.
+    cssTarget: ["chrome113", "edge113", "firefox113", "safari17.2"]
   },
   test: {
     exclude: ["e2e/**", "node_modules/**", "dist/**"],

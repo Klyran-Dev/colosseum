@@ -1,5 +1,11 @@
 # Changelog
 
+- Added ADR-0436: the non-custodial wallet contract no longer passes silently when
+  ripgrep is missing (it now scans with `grep`, fails on scanner errors, and has a
+  regression test run by `pnpm test`); the stylesheet has a size and rule-count
+  budget; and the supported-browser baseline (Chrome/Edge 113+, Firefox 113+,
+  Safari 17.2+) is pinned in the build and tested.
+
 - Added ADR-0435: the real-browser gate now runs axe with WCAG 2.2 AA rules in both
   the dark and light themes (previously WCAG 2.0, dark only) and checks reflow at
   320px on all 16 workspaces. It found and we fixed topbar popovers that ran off the

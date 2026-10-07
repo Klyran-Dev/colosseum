@@ -320,3 +320,15 @@ properties moved. Set `STYLE_SNAPSHOT_NO_STATES=1` to skip the interactive
 variants and `STYLE_SNAPSHOT_WORKERS=4` to run journeys and fixture states in parallel
 (about 3 minutes for a full run); every state is compared in full
 (ADR-0431, ADR-0432).
+
+## Browser support, budgets, and accessibility gates
+
+- **Browser baseline** (ADR-0436): Chrome and Edge 113+, Firefox 113+, Safari 17.2+,
+  enforced as the Vite `cssTarget` and by a test that rejects newer CSS features.
+- **Stylesheet budget**: at most 155 KB source, 26 KB gzipped, and 950 rule blocks,
+  enforced by `src/stylesheetBudget.test.ts` (measured 123 KB, 17.9 KB, 736).
+- **Accessibility gate** (ADR-0435): axe with the WCAG 2.0, 2.1, and 2.2 A/AA rules
+  runs in the dark and light themes at every journey checkpoint, and every
+  workspace must fit a 320px viewport without horizontal scrolling. This is
+  automated evidence, not a compliance claim; manual and assistive-technology
+  review remain release gates.
