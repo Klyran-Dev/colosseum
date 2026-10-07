@@ -135,7 +135,7 @@ describe("Material 3 Expressive shell contract", () => {
       const css = outsideForcedColors();
       const count = (pattern: RegExp) => (css.match(pattern) ?? []).length;
       expect(count(/^(?:\.product-shell )?\.nav-item-active \{/gm)).toBe(1);
-      expect(count(/^(?:\.product-shell )?\.nav-item:hover/gm)).toBe(1);
+      expect(count(/^\s*(?:\.product-shell )?\.nav-item:hover/gm)).toBe(1);
       expect(count(/^(?:\.product-shell )?\.nav-item-icon \{/gm)).toBeLessThanOrEqual(2);
       expect(count(/^\.product-shell \.panel,\s*$/gm)).toBe(1);
       expect(count(/^\.product-shell \.app-sidebar \{/gm)).toBe(1);
@@ -440,5 +440,46 @@ describe("Material 3 Expressive shell contract", () => {
     expect(css).toMatch(/\.product-shell :is\(\.full-field, \.rule-workbench, \.workbench-component\) \{[^}]*grid-template-columns: minmax\(0, 1fr\);/);
     expect(css).toMatch(/\.product-shell :is\(\.full-field, \.rule-workbench, \.workbench-component\) > \* \{[^}]*min-width: 0;/);
     expect(css).toMatch(/\.product-shell select \{[^}]*max-width: 100%;/);
+  });
+
+  describe("hover only where hover exists (ADR-0437)", () => {
+    // Split the stylesheet into top-level items so we know which rules sit inside @media (hover: hover).
+    const items = (() => {
+      const css = stylesheet.replace(/\/\*[\s\S]*?\*\//g, "");
+      const result: Array<{ header: string; body: string }> = [];
+      let index = 0;
+      while (index < css.length) {
+        const open = css.indexOf("{", index);
+        if (open === -1) break;
+        let depth = 1;
+        let cursor = open + 1;
+        while (cursor < css.length && depth > 0) {
+          if (css[cursor] === "{") depth += 1;
+          else if (css[cursor] === "}") depth -= 1;
+          cursor += 1;
+        }
+        result.push({ header: css.slice(index, open).trim(), body: css.slice(open + 1, cursor - 1) });
+        index = cursor;
+      }
+      return result;
+    })();
+
+    it("keeps every :hover rule inside @media (hover: hover) so taps never leave a stuck hover state", () => {
+      const outside = items.filter((item) => !item.header.startsWith("@") && item.header.includes(":hover")).map((item) => item.header.replace(/\s+/g, " ").slice(0, 80));
+      expect(outside).toEqual([]);
+      const guarded = items.filter((item) => item.header === "@media (hover: hover)");
+      expect(guarded.length).toBeGreaterThan(0);
+    });
+
+    it("never mixes hover and non-hover selectors in one rule", () => {
+      const mixed: string[] = [];
+      for (const item of items.filter((entry) => entry.header === "@media (hover: hover)")) {
+        for (const match of item.body.matchAll(/([^{}]+)\{[^{}]*\}/g)) {
+          const components = match[1].split(",").map((part) => part.trim());
+          if (components.some((component) => !component.includes(":hover"))) mixed.push(match[1].trim().replace(/\s+/g, " ").slice(0, 80));
+        }
+      }
+      expect(mixed).toEqual([]);
+    });
   });
 });

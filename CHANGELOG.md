@@ -1,5 +1,10 @@
 # Changelog
 
+- Added ADR-0437: hover styling now exists only under `@media (hover: hover)`, so a
+  tap on a phone no longer leaves a control looking hovered. New touch-emulation tests
+  cover taps, navigation, no stuck hover (proved with a negative control), and WCAG 2.2
+  AA on the mobile layout in both themes. Desktop is unchanged (0 snapshot differences).
+
 - Added ADR-0436: the non-custodial wallet contract no longer passes silently when
   ripgrep is missing (it now scans with `grep`, fails on scanner errors, and has a
   regression test run by `pnpm test`); the stylesheet has a size and rule-count

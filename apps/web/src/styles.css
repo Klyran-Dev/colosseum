@@ -532,7 +532,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .vault-targets-panel, .vault-detail-panel { min-width: 0; }
 .vault-target-list { display: grid; gap: var(--app-space-3); }
 .vault-target-card { display: grid; gap: var(--app-space-1); width: 100%; padding: var(--app-space-4); border: 1px solid color-mix(in srgb, var(--app-outline-variant) 14%, transparent); border-radius: var(--md-sys-shape-corner-medium); text-align: left; cursor: pointer; }
-.vault-target-card:hover, .vault-target-card:focus-visible { border-color: color-mix(in srgb, var(--app-primary) 65%, transparent); outline: none; }
+.vault-target-card:focus-visible { border-color: color-mix(in srgb, var(--app-primary) 65%, transparent); outline: none; }
+@media (hover: hover) {
+  .vault-target-card:hover { border-color: color-mix(in srgb, var(--app-primary) 65%, transparent); outline: none; }
+}
 .vault-target-topline { display: flex; align-items: center; justify-content: space-between; gap: var(--app-space-3); }
 .vault-target-card small { overflow-wrap: anywhere; }
 .vault-summary { margin-top: var(--app-space-4); }
@@ -865,7 +868,9 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .session-control-signed-in, .session-control-oidc, .session-control-unconfigured { gap: var(--app-space-2); }
 .session-state { display: inline-flex; align-items: center; gap: var(--app-space-1); font-size: var(--md-sys-typescale-label-small-size); font-weight: 750; white-space: nowrap; }
 .session-action { grid-column: auto; padding: var(--app-space-2) var(--app-space-3); border: 1px solid transparent; border-radius: var(--md-sys-shape-corner-small); font-size: var(--md-sys-typescale-label-small-size); white-space: nowrap; }
-.session-action:hover:not(:disabled) { background: color-mix(in srgb, var(--app-primary) 16%, transparent); }
+@media (hover: hover) {
+  .session-action:hover:not(:disabled) { background: color-mix(in srgb, var(--app-primary) 16%, transparent); }
+}
 .session-control-unconfigured > summary { display: inline-flex; align-items: center; padding: var(--app-space-2) var(--app-space-2); cursor: pointer; list-style: none; }
 .session-control-unconfigured > summary::-webkit-details-marker { display: none; }
 .session-control-unconfigured > summary:focus-visible { outline: 3px solid color-mix(in srgb, var(--app-primary) 55%, transparent); outline-offset: 2px; }
@@ -1011,7 +1016,9 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .product-shell .route-evidence, .product-shell .inline-success { border-color: var(--app-primary); color: var(--app-on-primary-container); background: var(--app-success-container); }
 .product-shell .route-evidence-warning, .product-shell .inline-warning, .product-shell .revenue-disclaimer { border-color: var(--app-warning); color: var(--app-on-attention-container); background: var(--app-attention-container); }
 .product-shell .display-settings summary, .product-shell .session-control-local > summary { border-color: var(--app-outline); }
-.product-shell button:not(:disabled):hover { transform: none; }
+@media (hover: hover) {
+  .product-shell button:not(:disabled):hover { transform: none; }
+}
 
 @media (max-width: 1020px) {
   .product-shell { grid-template-columns: 4.2rem minmax(0, 1fr); }
@@ -1096,10 +1103,12 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
   color: var(--app-on-variant);
   background: var(--app-surface-container-low);
 }
-.product-shell .navigation-compact-toggle:hover:not(:disabled) {
-  border-color: var(--app-primary);
-  color: var(--app-on-primary-container);
-  background: var(--app-primary-container);
+@media (hover: hover) {
+  .product-shell .navigation-compact-toggle:hover:not(:disabled) {
+    border-color: var(--app-primary);
+    color: var(--app-on-primary-container);
+    background: var(--app-primary-container);
+  }
 }
 @media (max-width: 760px) {
   .product-shell .navigation-compact-toggle { display: none; }
@@ -1239,9 +1248,11 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
     border-radius var(--md-sys-motion-spring-fast-spatial-duration) var(--md-sys-motion-spring-fast-spatial-easing),
     background-color var(--md-motion-short);
 }
-.product-shell button:not(.nav-item):not(.mobile-nav-toggle):not(.secondary-button):not(.session-action):not(.account-menu-signout):not(.vault-target-card):not(.navigation-compact-toggle):not(:disabled):hover {
-  transform: none;
-  background: color-mix(in srgb, var(--app-on-primary) calc(var(--md-sys-state-hover-opacity) * 100%), var(--app-primary));
+@media (hover: hover) {
+  .product-shell button:not(.nav-item):not(.mobile-nav-toggle):not(.secondary-button):not(.session-action):not(.account-menu-signout):not(.vault-target-card):not(.navigation-compact-toggle):not(:disabled):hover {
+    transform: none;
+    background: color-mix(in srgb, var(--app-on-primary) calc(var(--md-sys-state-hover-opacity) * 100%), var(--app-primary));
+  }
 }
 .product-shell button:not(.nav-item):not(.mobile-nav-toggle):not(.secondary-button):not(.session-action):not(.account-menu-signout):not(.vault-target-card):not(.navigation-compact-toggle):not(:disabled):focus-visible {
   background: color-mix(in srgb, var(--app-on-primary) calc(var(--md-sys-state-focus-opacity) * 100%), var(--app-primary));
@@ -1256,8 +1267,10 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
   color: var(--app-on-secondary-container);
   background: var(--app-secondary-container);
 }
-.product-shell .product-content button.secondary-button:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--app-on-secondary-container) calc(var(--md-sys-state-hover-opacity) * 100%), var(--app-secondary-container));
+@media (hover: hover) {
+  .product-shell .product-content button.secondary-button:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--app-on-secondary-container) calc(var(--md-sys-state-hover-opacity) * 100%), var(--app-secondary-container));
+  }
 }
 .product-shell .product-content button.secondary-button:active:not(:disabled) {
   background: color-mix(in srgb, var(--app-on-secondary-container) calc(var(--md-sys-state-pressed-opacity) * 100%), var(--app-secondary-container));
@@ -1323,10 +1336,12 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
     border-radius var(--md-sys-motion-spring-fast-spatial-duration) var(--md-sys-motion-spring-fast-spatial-easing),
     background-color var(--md-motion-short);
 }
-.product-shell .nav-item:hover:not(:disabled),
-.product-shell .nav-group-summary:hover {
-  border-color: transparent;
-  background: color-mix(in srgb, var(--app-on-surface) calc(var(--md-sys-state-hover-opacity) * 100%), transparent);
+@media (hover: hover) {
+  .product-shell .nav-item:hover:not(:disabled),
+  .product-shell .nav-group-summary:hover {
+    border-color: transparent;
+    background: color-mix(in srgb, var(--app-on-surface) calc(var(--md-sys-state-hover-opacity) * 100%), transparent);
+  }
 }
 .product-shell .nav-item:active:not(:disabled) {
   background: color-mix(in srgb, var(--app-on-surface) calc(var(--md-sys-state-pressed-opacity) * 100%), transparent);
@@ -1337,8 +1352,10 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
   border-color: transparent;
   box-shadow: none;
 }
-.product-shell .nav-item-active:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--app-on-primary-container) calc(var(--md-sys-state-hover-opacity) * 100%), var(--app-primary-container));
+@media (hover: hover) {
+  .product-shell .nav-item-active:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--app-on-primary-container) calc(var(--md-sys-state-hover-opacity) * 100%), var(--app-primary-container));
+  }
 }
 .product-shell .nav-item-icon,
 .product-shell .nav-item-active .nav-item-icon {
@@ -1404,11 +1421,13 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
   letter-spacing: var(--md-sys-typescale-label-medium-tracking);
   transition: background-color var(--md-motion-short);
 }
-.product-shell .system-status > summary:hover,
-.product-shell .display-settings summary:hover,
-.product-shell .session-control-local > summary:hover,
-.product-shell .session-control-unconfigured > summary:hover {
-  background: color-mix(in srgb, var(--app-on-surface) calc(var(--md-sys-state-hover-opacity) * 100%), transparent);
+@media (hover: hover) {
+  .product-shell .system-status > summary:hover,
+  .product-shell .display-settings summary:hover,
+  .product-shell .session-control-local > summary:hover,
+  .product-shell .session-control-unconfigured > summary:hover {
+    background: color-mix(in srgb, var(--app-on-surface) calc(var(--md-sys-state-hover-opacity) * 100%), transparent);
+  }
 }
 .product-shell .system-status > summary strong { color: inherit; font-size: inherit; }
 .product-shell .system-status-ready > summary {
@@ -1477,8 +1496,10 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
   font-weight: var(--md-sys-typescale-label-large-emphasized-weight);
   transition: background-color var(--md-motion-short);
 }
-.product-shell .account-menu-trigger:hover {
-  background: color-mix(in srgb, var(--app-on-primary-container) calc(var(--md-sys-state-hover-opacity) * 100%), var(--app-primary-container));
+@media (hover: hover) {
+  .product-shell .account-menu-trigger:hover {
+    background: color-mix(in srgb, var(--app-on-primary-container) calc(var(--md-sys-state-hover-opacity) * 100%), var(--app-primary-container));
+  }
 }
 .product-shell .status-pill {
   color: var(--app-on-variant);
@@ -1510,9 +1531,11 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
   letter-spacing: var(--md-sys-typescale-body-large-tracking);
   transition: border-color var(--md-motion-short);
 }
-.product-shell input:hover:not(:disabled),
-.product-shell textarea:hover:not(:disabled),
-.product-shell select:hover:not(:disabled) { border-color: var(--app-on-surface); }
+@media (hover: hover) {
+  .product-shell input:hover:not(:disabled),
+  .product-shell textarea:hover:not(:disabled),
+  .product-shell select:hover:not(:disabled) { border-color: var(--app-on-surface); }
+}
 .product-shell input:focus,
 .product-shell textarea:focus,
 .product-shell select:focus {

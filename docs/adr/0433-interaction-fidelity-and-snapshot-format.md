@@ -46,5 +46,5 @@ snapshots from different capture versions could be compared.
 
 - Six controls are checked in real interaction; other controls share the same
   state-layer and field rules, which the snapshots then cover in forced form.
-- Real touch input, multi-pointer, and drag are not exercised.
+- Real touch input is covered by ADR-0437; multi-pointer and drag are not exercised.
 - Snapshots from before format 3 cannot be compared; take a fresh baseline.
