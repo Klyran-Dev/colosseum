@@ -1,5 +1,9 @@
 # Changelog
 
+- Added ADR-0439: the product now runs in real Firefox and WebKit (`scripts/web_cross_browser_check.sh`,
+  16 tests): CSS feature support, token resolution, spring transitions and reduced motion,
+  and WCAG 2.2 AA plus 320px reflow in both themes on four workspaces.
+
 - Added ADR-0438: real hover and press are now verified against the forced states for
   every distinct interactive kind (15 on the workspaces plus 18 in captured states,
   0 mismatches) instead of six samples. The sweep found that a press also focuses

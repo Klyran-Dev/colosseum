@@ -332,3 +332,6 @@ variants and `STYLE_SNAPSHOT_WORKERS=4` to run journeys and fixture states in pa
   workspace must fit a 320px viewport without horizontal scrolling. This is
   automated evidence, not a compliance claim; manual and assistive-technology
   review remain release gates.
+- **Cross-engine check** (ADR-0439): `scripts/web_cross_browser_check.sh` runs a smoke
+  suite in Firefox and WebKit; the full interaction, touch, and snapshot suites run in
+  Chromium.
