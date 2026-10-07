@@ -431,3 +431,4 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0428](0428-in-journey-style-snapshots-and-token-migration.md) — In-journey style snapshots, dead selectors, and token migration
 - [ADR-0429](0429-unit-test-markup-as-style-fixtures.md) — Unit-test markup as style fixtures, and near-complete token coverage
 - [ADR-0430](0430-motion-tokens-meaningful-tints-and-wrapping-rows.md) — Motion tokens, meaningful tints, and wrapping rows
+- [ADR-0431](0431-interactive-state-snapshots-and-grouped-fractions.md) — Interactive-state snapshots and grouped fractions

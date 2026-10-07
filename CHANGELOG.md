@@ -1,5 +1,10 @@
 # Changelog
 
+- Added ADR-0431: style snapshots now also record forced hover, keyboard-focus
+  and pressed states and every disclosure opened (1,182 files per run, 0
+  differences between identical runs). The workbench base-share fraction is
+  grouped so it can no longer be split across lines.
+
 - Added ADR-0430: the base button transition uses motion tokens (no hover lift),
   21 invisible 1-3% tints became `transparent`, and the rule-workbench source
   row wraps so its fields are no longer clipped. Tests reject each regression.

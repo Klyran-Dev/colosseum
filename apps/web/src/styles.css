@@ -1648,6 +1648,9 @@ code { color: var(--app-secondary); font-family: ui-monospace, SFMono-Regular, M
 .product-shell .workbench-inline-row { flex-wrap: wrap; }
 .product-shell .workbench-inline-row > label { flex: 1 1 7rem; min-width: 0; }
 .product-shell .workbench-inline-row > button { flex: 0 0 auto; }
+.product-shell .base-share-fraction { display: flex; flex: 1 1 11rem; align-items: end; gap: .55rem; min-width: 0; }
+.product-shell .base-share-fraction > label { flex: 1 1 0; min-width: 0; }
+.product-shell .base-share-divider { flex: 0 0 auto; padding-bottom: .8rem; }
 
 /* Forced-colors must remain the final cascade layer so the accessible system
    palette wins over every component-specific Material role declaration. */

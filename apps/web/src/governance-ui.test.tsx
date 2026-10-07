@@ -261,4 +261,15 @@ describe("governance workbench submission boundary", () => {
     expect(container.querySelectorAll(".bracket-row").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByLabelText("Lower amount").length).toBeGreaterThanOrEqual(1);
   });
+
+  it("keeps a base-source share fraction together as one unit", () => {
+    const { container } = render(<GovernancePanel apiBase="/api" serviceOnline accessToken="author-token" />);
+
+    const divider = container.querySelector(".base-share-divider");
+    expect(divider).toBeTruthy();
+    const group = divider?.parentElement as HTMLElement;
+    expect(group.classList.contains("base-share-fraction")).toBe(true);
+    expect(group.querySelectorAll("label")).toHaveLength(2);
+    expect(group.querySelector("input")).toBeTruthy();
+  });
 });

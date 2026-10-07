@@ -38,8 +38,8 @@ function fileName(title: string): string {
   return `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 200)}.json`;
 }
 
-async function capture(page: Page): Promise<Omit<Snapshot, "title" | "url"> | null> {
-  const captured = await page.evaluate(async (props: string[]) => {
+async function capture(page: Page, selector = ".product-shell, .product-shell *"): Promise<Omit<Snapshot, "title" | "url"> | null> {
+  const captured = await page.evaluate(async ({ props, selector: scope }: { props: string[]; selector: string }) => {
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     if (!document.getElementById("__style_snapshot_nt")) {
       const style = document.createElement("style");
@@ -51,7 +51,7 @@ async function capture(page: Page): Promise<Omit<Snapshot, "title" | "url"> | nu
     if (!shell) return null;
     const classes = new Set<string>();
     const snapshotTheme = () => {
-      const elements = [...document.querySelectorAll(".product-shell, .product-shell *")];
+      const elements = [...document.querySelectorAll(scope)];
       const strs = new Map<string, number>();
       const ids: number[] = [];
       const keys: string[] = [];
@@ -79,8 +79,41 @@ async function capture(page: Page): Promise<Omit<Snapshot, "title" | "url"> | nu
     if (previous === null) document.documentElement.removeAttribute("data-theme"); else document.documentElement.setAttribute("data-theme", previous);
     if (previousShell === null) shell.removeAttribute("data-theme"); else shell.setAttribute("data-theme", previousShell);
     return { ...result, classes: [...classes].sort() };
-  }, [...PROPS]);
+  }, { props: [...PROPS], selector });
   return captured as Omit<Snapshot, "title" | "url"> | null;
+}
+
+// Elements a user can hover, focus, or press. Forced-state snapshots restrict
+// themselves to these so the files stay small.
+const INTERACTIVE = ".product-shell :is(a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex='-1']))";
+const FORCED_STATES = ["hover", "focus-visible", "active"] as const;
+
+async function captureForcedState(page: Page, state: (typeof FORCED_STATES)[number]): Promise<Omit<Snapshot, "title" | "url"> | null> {
+  const client = await page.context().newCDPSession(page);
+  try {
+    await client.send("DOM.enable");
+    await client.send("CSS.enable");
+    const { root } = await client.send("DOM.getDocument", { depth: 0 });
+    const { nodeIds } = await client.send("DOM.querySelectorAll", { nodeId: root.nodeId, selector: INTERACTIVE });
+    for (const nodeId of nodeIds) await client.send("CSS.forcePseudoState", { nodeId, forcedPseudoClasses: [state] });
+    const result = await capture(page, INTERACTIVE);
+    for (const nodeId of nodeIds) await client.send("CSS.forcePseudoState", { nodeId, forcedPseudoClasses: [] });
+    return result;
+  } finally {
+    await client.detach().catch(() => undefined);
+  }
+}
+
+async function captureOpenDisclosures(page: Page): Promise<Omit<Snapshot, "title" | "url"> | null> {
+  const opened = await page.evaluate(() => {
+    const closed = [...document.querySelectorAll<HTMLDetailsElement>(".product-shell details:not([open])")];
+    closed.forEach((element) => { element.setAttribute("open", ""); element.setAttribute("data-style-snapshot-opened", ""); });
+    return closed.length;
+  });
+  if (opened === 0) return null;
+  const result = await capture(page);
+  await page.evaluate(() => document.querySelectorAll<HTMLDetailsElement>(".product-shell details[data-style-snapshot-opened]").forEach((element) => { element.removeAttribute("open"); element.removeAttribute("data-style-snapshot-opened"); }));
+  return result;
 }
 
 const counters = new Map<string, number>();
@@ -98,6 +131,14 @@ export async function captureStyleSnapshot(page: Page, title: string, label: str
   const snapshot: Snapshot = { title: key, url: page.url(), ...captured };
   const base = fileName(count > 1 ? `${key} ${count}` : key);
   await writeFile(join(directory, base), JSON.stringify(snapshot));
+  if (!process.env.STYLE_SNAPSHOT_NO_STATES) {
+    for (const state of FORCED_STATES) {
+      const forced = await captureForcedState(page, state);
+      if (forced) await writeFile(join(directory, base.replace(/\.json$/, `.${state}.json`)), JSON.stringify({ title: `${key} [${state}]`, url: page.url(), ...forced } satisfies Snapshot));
+    }
+    const open = await captureOpenDisclosures(page);
+    if (open) await writeFile(join(directory, base.replace(/\.json$/, ".open.json")), JSON.stringify({ title: `${key} [open]`, url: page.url(), ...open } satisfies Snapshot));
+  }
   if (process.env.STYLE_SNAPSHOT_SCREENSHOTS) {
     // A full-page image of the same state, in both themes, for human review.
     await mkdir(join(directory, "images"), { recursive: true });

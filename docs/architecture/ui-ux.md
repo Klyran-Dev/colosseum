@@ -301,7 +301,9 @@ Expressive with one repository-owned token set:
   selectors are removed and guarded by tests (ADR-0424, ADR-0428).
 
 A stylesheet change is verified by computed-style snapshots of 245 real-browser
-states in both themes (journeys plus markup captured from unit tests):
+states in both themes (journeys plus markup captured from unit tests), each also
+recorded with hover, keyboard-focus, and pressed states forced and with every
+disclosure open (1,182 files per run):
 
 ```sh
 scripts/web_style_fixtures.sh              # capture unit-test markup (once per markup change)
@@ -312,4 +314,5 @@ node scripts/diff_style_snapshots.mjs test-results/style-snapshots/before test-r
 ```
 
 Identical CSS yields zero differences; an intentional change lists exactly which
-properties moved. Hover, focus, and open-menu states are not in the snapshots.
+properties moved. Set `STYLE_SNAPSHOT_NO_STATES=1` to skip the interactive
+variants for a faster resting-state comparison (ADR-0431).

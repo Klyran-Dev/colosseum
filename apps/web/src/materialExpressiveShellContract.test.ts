@@ -337,6 +337,8 @@ describe("Material 3 Expressive shell contract", () => {
       const layer = css();
       expect(layer).toMatch(/\.product-shell \.workbench-inline-row \{[^}]*flex-wrap: wrap;/);
       expect(layer).toMatch(/\.product-shell \.workbench-inline-row > label \{[^}]*flex: 1 1 7rem;[^}]*min-width: 0;/);
+      expect(layer).toMatch(/\.product-shell \.base-share-fraction \{[^}]*display: flex;[^}]*flex: 1 1 11rem;[^}]*min-width: 0;/);
+      expect(layer).toMatch(/\.product-shell \.base-share-fraction > label \{[^}]*flex: 1 1 0;[^}]*min-width: 0;/);
     });
   });
 });
