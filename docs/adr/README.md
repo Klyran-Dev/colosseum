@@ -428,3 +428,4 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0425](0425-canonical-topbar-and-active-navigation.md) — Canonical topbar, status chips, menus, and active navigation
 - [ADR-0426](0426-canonical-form-controls-and-supporting-text.md) — Canonical form controls, supporting text, and notices
 - [ADR-0427](0427-canonical-access-control-and-evidence-surfaces.md) — Canonical access-control, evidence, and empty-state surfaces
+- [ADR-0428](0428-in-journey-style-snapshots-and-token-migration.md) — In-journey style snapshots, dead selectors, and token migration

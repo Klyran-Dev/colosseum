@@ -1,5 +1,12 @@
 # Changelog
 
+- Added ADR-0428: opt-in computed-style snapshots inside the real-browser
+  journeys (118 states, both themes) with a diff tool, so CSS refactors of
+  data-dependent surfaces can be proven. Used it to remove 8 dead selectors,
+  guard against future ones, and move 73 more rules onto the M3 type-scale and
+  shape tokens. 54 classes no journey renders yet remain an explicit,
+  test-enforced list.
+
 - Added ADR-0427: access-control permission rows, risk/decision chips, policy
   captions, technical details, empty states and release evidence use the type
   scale and tonal cards, so decision-bearing text is no longer 9-11px. The

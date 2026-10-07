@@ -3596,3 +3596,15 @@ easier to locate in dense forms.
 
 Chosen: verifiable surfaces only. Revisit once style snapshots run inside the
 Playwright journeys that render the data-dependent surfaces.
+
+### In-journey style snapshots (ADR-0428)
+
+| Criterion | Visual regression screenshots | Mock more data in the signed-out routes | **Computed-style snapshots in existing journeys** |
+| --- | --- | --- | --- |
+| Reuses existing mocked states | Yes | No | **Yes** |
+| Detects intentional vs accidental changes | Pixel noise | N/A | **Per-property, per-element** |
+| Determinism | Font/AA dependent | N/A | **0 diffs on identical CSS** |
+| Cost to maintain | High (baselines) | High | **Low (one helper, one diff tool)** |
+
+Chosen: computed-style snapshots. Revisit if journeys stop covering new
+surfaces, or if pixel-level regressions (images, canvas) appear.

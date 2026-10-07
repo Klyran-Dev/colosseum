@@ -3,11 +3,15 @@ import { Buffer } from "node:buffer";
 import axe from "axe-core";
 import { PublicKey } from "@solana/web3.js";
 import { documentQuoteMessagesFor } from "../src/documentQuoteMessages";
+import { attachStyleSnapshots, captureStyleSnapshot } from "./styleSnapshot";
+
+attachStyleSnapshots(test);
 
 async function expectNoBrowserAxeViolations(
   page: Page,
   surface: string,
 ): Promise<void> {
+  await captureStyleSnapshot(page, test.info().title, surface);
   const violations = await page.evaluate(async (axeSource) => {
     if (!("axe" in window)) {
       const script = document.createElement("script");
