@@ -33,7 +33,9 @@ pub enum MigrationError {
     ReadSql(String),
     #[error("migration database operation failed: {0}")]
     Database(#[from] tokio_postgres::Error),
-    #[error("applied migration checksum drift detected for {migration_id}")]
+    #[error(
+        "applied migration checksum drift detected for {migration_id}; applied migrations are immutable — restore the matching artifact or add a forward migration"
+    )]
     ChecksumDrift { migration_id: String },
     #[error("migration statement timeout must be between 1000 and 900000 milliseconds")]
     InvalidTimeout,
@@ -322,6 +324,18 @@ mod tests {
             <[u8; 32]>::from(Sha256::digest(b"SELECT 1;"))
         );
         remove_dir_all(directory).expect("remove migration test directory");
+    }
+
+    #[test]
+    fn checksum_drift_diagnostic_preserves_forward_only_recovery() {
+        let message = MigrationError::ChecksumDrift {
+            migration_id: "0060_revenue_streaming_bounded_context".to_string(),
+        }
+        .to_string();
+
+        assert!(message.contains("applied migrations are immutable"));
+        assert!(message.contains("restore the matching artifact"));
+        assert!(message.contains("add a forward migration"));
     }
 
     #[test]

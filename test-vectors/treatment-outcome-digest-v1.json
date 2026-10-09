@@ -1,0 +1,10 @@
+{
+  "schema": "solana-tax-protocol/treatment-outcome/v1",
+  "treatment": "ReverseCharge",
+  "arithmetic_tax_atomic": "155",
+  "collected_tax_atomic": "0",
+  "self_assessed_tax_atomic": "155",
+  "withheld_tax_atomic": "0",
+  "taxable_base_atomic": "1155",
+  "digest_hex": "c90e99791a1cf84f002679eb9927c986276983a772a3ae3d99a90d245a83fca7"
+}

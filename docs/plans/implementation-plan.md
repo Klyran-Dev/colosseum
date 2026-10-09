@@ -1,5 +1,188 @@
 # Implementation plan
 
+## ADR-0360 versioned document-simulation localization
+
+- [x] Add immutable typed catalogs for English, German, Arabic RTL, and
+  Japanese document-simulation presentation copy.
+- [x] Localize form labels, line actions, unavailable/error/result states, and
+  accessible region labels without translating protocol or server-owned values.
+- [x] Add catalog and component coverage for German rendering and fail-closed
+  service unavailability.
+- [ ] Retain manual linguistic, RTL, assistive-technology, and tax-owner review
+  evidence before a production UI claim.
+
+See [ADR-0360](../adr/0360-versioned-document-simulation-localization.md).
+
+## ADR-0359 explicit fee-payer binding
+
+- [x] Verify the first static signed-message account is the first compiled
+  account, a signer, and writable as the Solana fee payer.
+- [x] Apply the bounded check across settlement, adjustment, refund,
+  cancellation, and revenue-stream wallet-submission profiles.
+- [x] Add a real two-key regression test that rejects a sponsored fee payer
+  even when the compiled payer signs the instruction.
+- [ ] Retain Linux validator, staging wallet, and independent security-review
+  evidence before enabling production submission.
+
+See [ADR-0359](../adr/0359-explicit-fee-payer-binding.md).
+
+## ADR-0358 versioned lazy-workspace and recovery-state localization
+
+- [x] Localize lazy workspace fallbacks through the shell-operational catalog
+  without translating workspace identities or protocol values.
+- [x] Localize the error boundary recovery state while redacting exception
+  details and preserving the fail-closed no-authority behavior.
+- [x] Add German recovery-state coverage and preserve the full browser
+  failure-path gate.
+- [ ] Retain manual assistive-technology, linguistic, and incident-response
+  review evidence for degraded frontend states.
+
+See [ADR-0358](../adr/0358-versioned-lazy-workspace-recovery-localization.md).
+
+## ADR-0357 versioned shell operational localization
+
+- [x] Add immutable typed catalogs for system status, account context,
+  protection disclosures, and footer presentation in English, German, Arabic
+  RTL, and Japanese.
+- [x] Preserve build/runtime labels, network values, configuration warnings,
+  subjects, tenant IDs, capability decisions, and server-owned reason text.
+- [x] Add catalog tests and retain the shell's existing localized browser,
+  RTL, responsive, and accessibility journeys.
+- [ ] Retain manual operator, screen-reader, high-contrast, linguistic, and
+  security review evidence before a production shell claim.
+
+See [ADR-0357](../adr/0357-versioned-shell-operational-localization.md).
+
+## ADR-0356 versioned access-control workspace localization
+
+- [x] Add immutable typed catalogs for access explanations, authorization
+  states, policy labels, groups, decisions, and risk labels in English,
+  German, Arabic RTL, and Japanese.
+- [x] Preserve capability IDs, decision kinds, reason codes, scope names,
+  role names, tenant IDs, subjects, and server-owned snapshots exactly.
+- [x] Pass the shell locale into the access-control workspace and cover
+  catalog completeness, German component rendering, and Arabic RTL browser
+  accessibility.
+- [ ] Retain manual security-operator, linguistic, screen-reader, RTL, and
+  multi-tenant review evidence before a production authorization claim.
+
+See [ADR-0356](../adr/0356-versioned-access-control-localization.md).
+
+## ADR-0355 versioned revenue-streaming operator localization
+
+- [x] Add immutable typed catalogs for partner-payout balances, governed plan
+  lifecycle, setup references, claim preparation, and release-stop language in
+  English, German, Arabic RTL, and Japanese.
+- [x] Preserve plan IDs, status values, route/reference IDs, slots, atomic
+  amounts, Solana addresses, digests, capability decisions, and request bodies
+  while localizing presentation copy.
+- [x] Pass the active shell locale into the lazy revenue-streaming workspace and
+  retain locale-aware integer display.
+- [x] Add component catalog/flow tests and a German/Arabic RTL browser journey
+  with axe checks.
+- [ ] Retain manual payout-operator, tax-owner, linguistic, and assistive
+  technology review evidence before a production UI claim.
+
+See [ADR-0355](../adr/0355-versioned-revenue-streaming-localization.md).
+
+## ADR-0354 versioned rule-governance and authoring localization
+
+- [x] Add immutable typed catalogs for the governance workspace and structured
+  rule workbench in English, German, Arabic RTL, and Japanese.
+- [x] Localize authoring, provenance, lifecycle, simulation, loading, empty,
+  and fail-closed validation states while preserving canonical rule values,
+  status discriminators, evidence, digests, and request bodies.
+- [x] Pass the active shell locale into the workbench and cover exact enum
+  values with catalog and component tests.
+- [x] Add German and Arabic RTL browser coverage with axe checks for the
+  high-consequence tax-rule authoring path.
+- [ ] Retain manual tax-owner, linguistic, screen-reader, RTL, and operator
+  usability review evidence before a production UI claim.
+
+See [ADR-0354](../adr/0354-versioned-rule-governance-authoring-localization.md).
+
+## ADR-0353 Material 3 Expressive Aurora v2 shell
+
+- [x] Replace the blue-heavy v1 surface matrix with a versioned, neutral-tonal
+  Aurora v2 role matrix derived from the single approved seed.
+- [x] Add explicit semantic success, attention, blocked, and supporting
+  containers so state presentation cannot drift through component-local blends.
+- [x] Apply one calm active-navigation treatment, lower the shell's competing
+  surface emphasis, and preserve all grouped workspaces, responsive behavior,
+  RTL, forced-colors, and reduced-motion semantics.
+- [x] Add failing-first stylesheet coverage and retain the palette/color
+  contracts as release gates.
+- [ ] Retain manual wide/narrow operator, screen-reader, high-contrast, and
+  linguistic review evidence before any production UI claim.
+
+See [ADR-0353](../adr/0353-material-3-expressive-aurora-v2-shell.md).
+
+## ADR-0352 versioned vault-reconciliation localization
+
+- [x] Add a typed immutable catalog for read-only balance checks, active source
+  selection, evidence detail, stale/mismatch/error release-stop states, and
+  append-only history in English, German, Arabic RTL, and Japanese.
+- [x] Preserve exact atomic balances, slots, account/mint identities, route and
+  run IDs, statuses, error codes, and release authority while localizing only
+  presentation copy.
+- [x] Keep amount and timestamp formatting on the validated locale/time-zone
+  path without changing persisted or server-owned values.
+- [x] Add failing-first catalog/component tests and German/Arabic RTL browser
+  coverage with axe checks.
+- [ ] Retain manual treasury-operator, linguistic, assistive-technology, and
+  incident-response review evidence.
+
+## ADR-0351 versioned replay-operations localization
+
+- [x] Add a typed immutable catalog for replay-gap review, bounded requeue,
+  targeted finalized-evidence recovery, route-verification evidence, and
+  explicit non-authority language in English, German, Arabic RTL, and Japanese.
+- [x] Preserve stream keys, statuses, slots, signatures, addresses, operator
+  notes, action discriminators, route evidence IDs, and API payloads exactly.
+- [x] Keep locale/time-zone presentation separate from recovery and indexer
+  state, including localized status labels and durable timestamp formatting.
+- [x] Add failing-first catalog/component tests and German/Arabic RTL browser
+  coverage with axe checks.
+- [ ] Retain manual incident-response, linguistic, assistive-technology, and
+  operator-usability review evidence.
+
+## ADR-0350 versioned settlement-adjustment localization
+
+- [x] Add a typed immutable catalog for correction proposal, approval, recovery,
+  wallet-bound record evidence, provider uncertainty, and finalized evidence in
+  English, German, Arabic RTL, and Japanese.
+- [x] Keep financial values, adjustment kinds, UUIDv7 identifiers, evidence
+  digests, signed bytes, request payloads, and server-owned statuses unchanged;
+  localize only presentation labels and user guidance.
+- [x] Pass the active locale through the correction workspace and reusable
+  wallet picker without adding work to the signing or settlement path.
+- [x] Add failing-first catalog/component coverage and a German/Arabic RTL real
+  browser journey with axe checks.
+- [ ] Retain manual linguistic, assistive-technology, operator-usability, and
+  legal/merchant-term review evidence for correction workflows.
+
+## ADR-0335 Material 3 Expressive quiet state hierarchy
+
+- [x] Add failing-first coverage for the compact sign-in configuration state
+  while preserving the expanded error alert.
+- [x] Use governed semantic state aliases and a tonal active-route treatment;
+  no new component color literals or gradients were introduced.
+- [x] Record the hierarchy, alternatives, invariants, and verification in
+  [ADR-0335](../adr/0335-material-expressive-quiet-state-hierarchy.md).
+- [ ] Retain manual operator-usability, screen-reader, high-contrast, and
+  production theme review evidence.
+
+## ADR-0334 capability snapshot expiry boundary
+
+- [x] Add failing-first tests for render-time expiry, missing expiry, and
+  bounded refresh scheduling.
+- [x] Make stale and missing capability snapshots indeterminate and trigger a
+  bounded capability refresh at the server-provided expiry.
+- [x] Record alternatives, invariants, latency boundaries, and verification in
+  [ADR-0334](../adr/0334-capability-snapshot-expiry-boundary.md).
+- [ ] Retain staging identity-provider, clock-skew, screen-reader,
+  multi-tenant, and production authorization evidence.
+
 ## UI language and navigation quality gate
 
 The product shell is organized around operator tasks: daily work, rules and
@@ -148,8 +331,9 @@ pause, authorization, or evidence controls.
   navigation behavior.
 - [x] Update real-browser journeys to exercise the production group
   interaction before activating a lower-frequency route.
-- [x] Verify the composition with 199 passing React tests, the semantic color
-  and Material palette contracts, and 25/25 Docker-backed browser journeys.
+- [x] Verify the composition with the current 62-file web suite (255 passing
+  tests, 10 intentionally skipped), the semantic color and Material palette
+  contracts, and the current Docker-backed browser journeys.
 - [ ] Complete manual wide/narrow, screen-reader, keyboard-only, RTL,
   reduced-motion, and operator usability review before making production UX
   claims.
@@ -167,8 +351,311 @@ pause, authorization, or evidence controls.
 - [x] Replace free-form merchant-side account inputs with a Material 3
   route selector and read-only route evidence, with fail-closed loading and
   empty-state behavior.
+- [x] Preserve exact idempotent replay of an accepted claim after route
+  suspension while rejecting new proposals; verify the no-duplicate-event and
+  no-duplicate-outbox invariant in the Docker integration harness.
 - [ ] Add production staging evidence for route suspension during proposal
   creation and retain a successful Linux/amd64 integration artifact.
+
+### ADR-0325 — typed asset-admission projection
+
+- [x] Add typed `AssetConfig` identity, classification, enabled state, and
+  PDA-bump columns to the settlement route projection with expand/contract
+  constraints.
+- [x] Bind route activation and active-route reads to the typed projection;
+  preserve raw immutable evidence for replay and forensics.
+- [x] Add migration, fixture, route-verifier, storage, and direct-SQL negative
+  tests before implementation.
+- [ ] Backfill and re-verify all non-local routes, retaining counts and
+  rollback evidence before enabling paid-state movement.
+
+### ADR-0326 — Material 3 Expressive semantic state hierarchy
+
+- [x] Record the visual/accessibility decision and compare repeated badges,
+  repeated availability text, hidden state, and accessible row context.
+- [x] Add a failing-first UI contract for removing persistent navigation state
+  badges while retaining access and action-risk semantics.
+- [x] Implement the semantic row context and remove redundant visual badges
+  from wide, narrow, and mobile navigation rules.
+- [x] Replace first-letter navigation avatars with a fixed monochrome semantic
+  glyph set; glyph identity never communicates authorization, risk, tenant, or
+  service state.
+- [ ] Complete manual screen-reader, keyboard-only, RTL, reduced-motion, and
+  light/dark visual evidence for the release candidate.
+
+### ADR-0327 — fail-closed public release claims
+
+- [x] Compare reviewer-only prose, blocking all release evidence, automatic
+  licensing, and an executable negative contract before implementation.
+- [x] Add baseline and mutation tests for unsupported production claims,
+  unapproved license files, and release-workflow deployment authority.
+- [x] Add the contract to `make check` and the public-repository contract.
+- [ ] Obtain repository-owner license approval, independent release review,
+  and all external production-readiness evidence before public source or
+  production release.
+
+### ADR-0328 — durable route-verification run evidence
+
+- [x] Compare logs/metrics, a mutable singleton, per-route audit rows, and a
+  bounded append-only run ledger before implementation.
+- [x] Add UUIDv7 run persistence with bounded counters, explicit running,
+  completed, completed-with-failures, and failed lifecycle states.
+- [x] Wire non-empty scheduled route-verification passes to durable summary
+  completion; idle polls create no evidence rows.
+- [x] Add direct-SQL negative coverage for counter conservation and terminal
+  immutability, plus a public operational runbook.
+- [ ] Execute an approved backfill against a representative non-local
+  snapshot and retain the exact run IDs, route evidence, and independent
+  review before paid-state enablement.
+
+### ADR-0329 — approval-bound route-verification backfill mode
+
+- [x] Compare daemon timing, an unauthenticated run-once flag, a separate
+  service, and an approval-bound one-shot mode before implementation.
+- [x] Add UUIDv7 approval binding to backfill run evidence and reject missing,
+  malformed, or mode-inconsistent approval configuration before any listener,
+  database connection, or RPC transport is created.
+- [x] Execute exactly one bounded settlement-route batch in backfill mode and
+  exit without running unrelated verifier loops or the health listener.
+- [x] Add configuration, storage, direct-SQL, and executable one-shot contract
+  coverage, then update the operator runbook and public documentation index.
+- [ ] Execute an approved backfill against a representative non-local
+  snapshot and retain the approval ID, run ID, exact route evidence, and
+  independent review before paid-state enablement.
+
+### ADR-0336 — bounded route-verification operator evidence view
+
+- [x] Add failing-first storage/API parser tests for bounded run evidence,
+  UUIDv7 identity, terminal count conservation, and approval binding.
+- [x] Add an authenticated read-only endpoint using the existing system
+  operator boundary; no merchant identifier or route account is accepted.
+- [x] Add an explicit disclosure in the recovery workspace with loading,
+  empty, unauthorized, unavailable, malformed, and read-only evidence states.
+- [x] Add real-browser coverage proving the evidence is loaded only after an
+  operator action and never implies route activation or finalized settlement.
+- [x] Add authenticated Docker integration coverage against PostgreSQL for a
+  synthetic terminal run, bounded response parsing, failure classification,
+  and invalid-limit rejection.
+- [ ] Retain non-local backfill, Linux/amd64 validator, audit, and production
+  operator evidence separately from this local UI/API proof.
+
+### ADR-0337 — single-open Material 3 navigation group
+
+- [x] Add a failing-first shell test proving that opening a second group closes
+  the previous group while preserving the active-workspace context.
+- [x] Replace accumulating disclosure state with one explicit open group and
+  keep route changes synchronized with the current workspace group.
+- [x] Record the alternatives, presentation/authorization invariants, and
+  latency boundary in [ADR-0337](../adr/0337-single-open-material-navigation-group.md).
+- [ ] Retain manual wide/narrow, keyboard-only, screen-reader, RTL, and
+  production theme review evidence.
+
+### ADR-0338 — forced-colors accessibility layer
+
+- [x] Add a failing-first static contract requiring system colors,
+  `forced-color-adjust: auto`, and no palette literals in the accessibility
+  layer.
+- [x] Map Material semantic roles to operating-system system colors without
+  adding a second persisted product theme or touching authorization/financial
+  behavior.
+- [x] Add forced-colors Playwright emulation and WCAG browser coverage.
+- [x] Record alternatives, invariants, and resource impact in
+  [ADR-0338](../adr/0338-forced-colors-accessibility-layer.md).
+- [ ] Retain manual OS high-contrast, screen-reader, and operator usability
+  review evidence before production release.
+
+### ADR-0339 — polite workspace navigation announcement
+
+- [x] Add a failing-first shell test for a bounded `role="status"` workspace
+  announcement that contains no authorization, financial, or technical data.
+- [x] Implement the non-interruptive live region without adding a network,
+  timer, dependency, or financial-path operation.
+- [x] Add real-browser and axe coverage for direct routes and normal workspace
+  navigation, then update the public evidence matrix.
+- [ ] Retain manual screen-reader and operator usability review evidence before
+  production release.
+
+### ADR-0340 — versioned shell and navigation localization
+
+- [x] Add failing-first catalog tests for every supported locale and workspace
+  with deterministic English fallback.
+- [x] Localize shell navigation labels, descriptions, groups, risk context, and workspace
+  status announcements using a typed bounded catalog.
+- [x] Add UI/browser RTL and axe coverage without changing authority or
+  financial data; keep full panel translation as a separately tracked slice.
+- [ ] Retain linguistic, legal/tax terminology, screen-reader, and operator
+  review evidence before claiming full localization.
+
+### ADR-0341 — versioned shell chrome and session localization
+
+- [x] Add failing-first catalog coverage for bounded shell controls, display
+  preferences, session actions, dynamic timezone help, and deterministic
+  English fallback across all supported locales.
+- [x] Localize navigation disclosure, display settings, theme options, time
+  zone warnings, and the local/OIDC session-control labels without passing or
+  rendering credentials through the catalog.
+- [x] Update accessibility and real-browser journeys for translated labels,
+  RTL behavior, credential non-persistence, and axe coverage through NGINX.
+- [ ] Complete workspace-panel catalogs and retain linguistic, legal/tax,
+  screen-reader, and operator review evidence before claiming full
+  localization.
+
+### ADR-0342 — versioned quote workspace localization
+
+- [x] Add failing-first catalog coverage for quote, simulator, location,
+  retry-protection, result, evidence, and deterministic fallback copy in every
+  supported locale.
+- [x] Localize the customer quote and scenario workspaces without translating
+  amounts, currencies, rule identifiers, jurisdiction values, fingerprints,
+  component explanations, or server-owned evidence.
+- [x] Add component and real-browser German/Arabic coverage with RTL and axe
+  assertions through the NGINX-served SPA.
+- [ ] Retain linguistic, legal/tax terminology, screen-reader, and operator
+  review evidence before claiming full workspace localization.
+
+### ADR-0343 — versioned document-quote localization
+
+- [x] Add failing-first catalog coverage for invoice quote form, line items,
+  location evidence, retry protection, result, notices, and deterministic
+  fallback in every supported locale.
+- [x] Localize the invoice quote workspace without translating document IDs,
+  line IDs, amounts, currencies, jurisdictions, rule references, digests, or
+  server-owned evidence values.
+- [x] Add component and real-browser German/Arabic coverage with RTL and axe
+  assertions through the NGINX-served SPA.
+- [ ] Retain linguistic, legal/tax terminology, screen-reader, and operator
+  review evidence before claiming full workspace localization.
+
+### ADR-0344 — versioned document-checkout localization
+
+- [x] Add typed `en-US`, `de-DE`, `ar-EG`, and `ja-JP` catalogs for invoice
+  evidence, route selection, payment scope, review, signing, settlement
+  status, recovery, and withholding/legal language boundaries.
+- [x] Localize the reusable wallet picker with a separate bounded catalog;
+  wallet addresses, route IDs, mints, amounts, digests, signatures, and
+  server-owned status values remain unchanged.
+- [x] Add failing-first catalog/component tests and real-browser German,
+  Arabic RTL, and axe coverage through the production route.
+- [ ] Retain linguistic, legal/tax terminology, screen-reader, and operator
+  review evidence before claiming full workspace localization.
+
+### ADR-0345 — versioned aggregate-checkout localization
+
+- [x] Add typed `en-US`, `de-DE`, `ar-EG`, and `ja-JP` catalogs for aggregate
+  route review, recipient-plan selection, safeguards, quote expiry, amount
+  review, technical disclosure, wallet approval, and settlement recovery.
+- [x] Preserve financial values, route/account identifiers, mints, basis
+  points, digests, intent IDs, signatures, server statuses, and request
+  payloads exactly while translating only presentation copy.
+- [x] Add failing-first catalog/component tests and real-browser German,
+  Arabic RTL, and axe coverage through the NGINX-served payment-review route.
+- [ ] Retain linguistic, legal/tax terminology, screen-reader, and operator
+  review evidence before claiming full workspace localization.
+
+### ADR-0346 — versioned Treasury and vault-release localization
+
+- [x] Add a typed `en-US`, `de-DE`, `ar-EG`, and `ja-JP` catalog for governed
+  release proposal, verified-route, lifecycle, transition, evidence, and
+  authority-boundary copy.
+- [x] Preserve route IDs, destination accounts, mints, token programs, nonces,
+  amounts, timestamps, digests, transaction references, slots, request
+  payloads, and server-owned claim statuses exactly while translating only
+  presentation copy.
+- [x] Add failing-first catalog/component coverage and real-browser German,
+  Arabic RTL, and axe coverage through the NGINX-served Treasury route.
+- [ ] Retain linguistic, legal/tax terminology, screen-reader, and operator
+  review evidence before claiming full workspace localization.
+
+### ADR-0347 — versioned refund-claim localization at the wallet boundary
+
+- [x] Add a typed `en-US`, `de-DE`, `ar-EG`, and `ja-JP` catalog for refund
+  preparation, immutable artifact review, wallet roles, recovery, finalized
+  evidence, and reconciliation copy.
+- [x] Preserve claim/correction identifiers, amounts, destinations, account
+  keys, signatures, transaction bytes, status values, evidence digests, and
+  request payloads exactly while translating only presentation copy.
+- [x] Add failing-first catalog/component coverage and pass the existing
+  unchanged-byte wallet/state-machine tests.
+- [x] Add real-browser German, Arabic RTL, and axe coverage through the
+  NGINX-served refund-request route while preserving the existing finalized
+  evidence journey.
+- [ ] Retain linguistic, legal/tax, screen-reader, and operator review
+  evidence before claiming full refund-workspace localization.
+
+### ADR-0348 — versioned refund-execution localization at the final release boundary
+
+- [x] Add a typed `en-US`, `de-DE`, `ar-EG`, and `ja-JP` catalog for final
+  refund-release preparation, immutable artifact review, two-wallet approval,
+  recovery, proof-pending, and finalized movement evidence.
+- [x] Preserve release/request identifiers, amounts, mints, destinations,
+  signatures, transaction bytes, status values, evidence digests, and request
+  payloads exactly while translating only presentation copy.
+- [x] Add failing-first catalog/component coverage and preserve the existing
+  unchanged-byte refund execution state-machine tests.
+- [x] Add real-browser German, Arabic RTL, and axe coverage through the
+  NGINX-served refund-payment route.
+- [ ] Retain linguistic, legal/tax, screen-reader, and operator review
+  evidence before claiming full refund-workspace localization.
+
+### ADR-0349 — versioned refund-cancellation localization at the governance boundary
+
+- [x] Add a typed `en-US`, `de-DE`, `ar-EG`, and `ja-JP` catalog for controlled
+  cancellation, immutable artifact review, governance-wallet signing,
+  recovery, provider uncertainty, and finalized cancellation evidence.
+- [x] Preserve claim/request identifiers, authority accounts, signatures,
+  transaction bytes, status values, evidence digests, and request payloads
+  exactly while translating only presentation copy.
+- [x] Pass the active locale into the shared wallet picker and keep recovery
+  data memory-only and byte-for-byte unchanged.
+- [x] Add failing-first catalog/component coverage and real-browser German,
+  Arabic RTL, and axe coverage through the NGINX-served cancellation route.
+- [ ] Retain linguistic, legal/tax, screen-reader, and operator review
+  evidence before claiming full refund-workspace localization.
+
+### ADR-0330 — server-owned document evidence status for checkout
+
+- [x] Compare raw JSON paste, raw evidence reads, browser-selected evidence,
+  and a server-owned route-bound status contract before implementation.
+- [x] Add the authenticated route-bound evidence status endpoint while keeping
+  issuer ingestion and settlement compilation as separate authority boundaries.
+- [x] Replace the visible attestation JSON textarea with a plain-language
+  status card and collapsed technical details; keep all failure states
+  fail-closed and accessible.
+- [x] Add API, parser, browser, accessibility, and public-documentation
+  contract coverage before reviewing this payment flow as production-grade.
+
+### ADR-0331 — canonical authorization policy catalog
+
+- [x] Compare independent catalogs, browser-fetched metadata, generated
+  projections, and a versioned shared contract before implementation.
+- [x] Make the versioned catalog the single metadata source for API capability
+  evaluation and React access-review/navigation affordances.
+- [x] Validate bounded shape, uniqueness, scope/role/attribute semantics, and
+  fail-closed behavior before any capability snapshot is issued.
+- [x] Add Docker build-context, API, frontend, browser, and public-document
+  contract coverage and verify no RBAC/PBAC/ABAC drift remains.
+
+### ADR-0332 — server-decision-only browser authorization affordances
+
+- [x] Add a failing-first regression proving copied browser roles, scopes, and
+  attributes cannot authorize an action without the exact server decision.
+- [x] Make missing policy decisions remain indeterminate while preserving
+  explicit server allow/deny/indeterminate outcomes.
+- [x] Record the authority boundary, alternatives, latency impact, and
+  verification gates in ADR-0332.
+- [ ] Retain staging identity-provider, screen-reader, multi-tenant, and
+  production authorization evidence.
+
+### ADR-0333 — capability decision and reason consistency
+
+- [x] Add failing-first parser cases for unknown and contradictory capability
+  decision/reason pairs.
+- [x] Enforce the explicit allow/deny/indeterminate reason matrix before a
+  capability snapshot enters React state.
+- [x] Record alternatives, invariants, latency impact, and verification in
+  ADR-0333.
+- [ ] Retain staging identity-provider, screen-reader, multi-tenant, and
+  production authorization evidence.
 
 ### ADR-0318 — workflow handoff URL integrity
 
@@ -998,6 +1485,56 @@ validator release gate.
 - [ ] Retain a successful Linux/amd64 validator artifact for the exact release
   commit; the workflow contract protects the gate but cannot create validator,
   provider, identity, or production-operational evidence.
+
+## ADR-0376 — Linux/amd64 conformance host preflight
+
+- [x] Add a shared fail-closed host preflight for local, CI, and release
+  conformance execution; retain a versioned host record with OS, architecture,
+  Docker engine, and failure reason.
+- [x] Require the preflight before SBF build/validator startup and require it
+  again in the retained evidence verifier; preserve validator startup as the
+  authority for kernel capabilities such as `io_uring`.
+- [x] Add workflow-order and public-repository contracts, with actionable
+  local ARM diagnostics.
+- [ ] Retain successful Linux/amd64 validator evidence for the exact release
+  revision; preflight makes the gate explicit but cannot manufacture external
+  runner evidence.
+
+## ADR-0377 — Dedicated Solana conformance evidence workflow
+
+- [x] Add a manually or tag-triggered dedicated workflow with pinned runner,
+  actions, Dockerized SBF build, validator suite, host preflight, evidence
+  verifier, and fail-closed artifact retention.
+- [x] Bind artifact naming and retained metadata to the exact source SHA and
+  add a public workflow-shape contract.
+- [ ] Execute the workflow on native Linux/amd64 and independently review the
+  successful artifact before checking the validator release gate.
+
+## ADR-0378 — Non-custodial Solidity receipt mirror
+
+- [x] Add a separate Solidity 0.8.37 package that mirrors finalized Solana
+  receipt evidence without custody, tax recomputation, external calls, or
+  settlement authority.
+- [x] Add exact amount-conservation, issuer/governance, pause, idempotency,
+  conflict, two-step governance, and bounded amount-conservation fuzz tests.
+- [x] Run the adapter tests through a pinned Docker Foundry image and add the
+  package to public documentation and the repository check contract.
+- [ ] Complete an independent EVM audit and approve a chain-specific deployment
+  before accepting any real receipt data; this adapter is not production
+  enabled by code alone.
+
+## ADR-0379 — Bounded tax-base clamps
+
+- [x] Add exact optional floor/cap bounds to the v2 `TaxBase` DSL while
+  preserving v1 canonical bytes for unbounded legacy rules.
+- [x] Add failing-first golden/property/replay tests for floor, cap, both
+  bounds, negative adjusted bases, and boundary equality.
+- [x] Add a public tax-coverage row and localized rule-workbench controls only
+  after the domain/API contract is stable.
+- [ ] Retain tax-owner/legal review and jurisdiction-specific provenance before
+  treating any bounded-base regime as production-supported.
+
+See [ADR-0379](../adr/0379-bounded-tax-base-clamps.md).
 
 ## ADR-0242 — protocol pause gates vault-release execution
 
@@ -2168,6 +2705,14 @@ architecture, timeout, and service-limit metadata. This is local synthetic
 service evidence; regional, resource-profile, mTLS, consumer-authorization,
 and production SLO evidence remain separate gates.
 
+ADR-0381 adds bounded process-local single-flight compilation keyed by the
+canonical rule digest. Same-digest cache misses now share one immutable graph
+compilation and one typed failure while unrelated digests retain independent
+cache work. The semaphore bounds the in-flight map; a concurrent TDD contract
+proves one compilation, result sharing, cleanup, and subsequent LRU reuse.
+Cross-replica coalescing, invalidation, regional resource profiles, and
+production SLO evidence remain separate gates.
+
 ADR-0078 adds `make benchmark-quote-service`, a bounded Docker-isolated HTTP
 workload with ephemeral EdDSA credentials, unique idempotency keys, explicit
 status/error accounting, PostgreSQL duplicate-prevention checks, and p50/p95/p99
@@ -2685,9 +3230,10 @@ disclosure/reload journey. It also injects the locked dev-only `axe-core`
 source into the real browser and audits the quote, API-unavailable state,
 every lazy workspace, and the refund-proof surface against WCAG A/AA tags. Use
 `make web-browser-check`; the current Docker run type-checks the e2e project
-before launching and passes 23/23 test cases while auditing the covered
-surfaces. This evidence uses synthetic API fixtures and does not claim live
-wallet or chain finality.
+before launching and passes 48/48 test cases, including expired capability
+snapshot and bounded reconciliation timeout handling, while auditing the
+covered surfaces. This evidence uses
+synthetic API fixtures and does not claim live wallet or chain finality.
 CI retains failure traces, screenshots, videos,
 and JSON results under the ignored `test-results/web-e2e` path. This automated
 contract complements the fast axe-core baseline and does not claim
@@ -2839,9 +3385,11 @@ gates above.
   snapshot. It verifies authenticated semantic responses, bounded concurrent
   load, and p50/p95/p99 output; regional staging SLO, identity-provider, and
   production evidence remain separate gates.
-- [x] Execute the default local workload on 2026-10-03: 256/256 HTTP 200
-  responses at concurrency 32 on the pinned local arm64 image, with p50/p95/p99
-  of 1.052/1.915/3.114 ms with the complete fourteen-capability catalog.
+- [x] Execute the default local workload on 2026-10-05: 256/256 HTTP 200
+  responses at concurrency 32 on the pinned local arm64 image with the complete
+  nineteen-capability catalog, with p50/p95/p99 of 1.141/3.276/4.943 ms; the
+  25 ms local p95 diagnostic budget was met. The earlier 2026-10-03
+  fourteen-capability result remains historical context only.
 - [ ] Retain Linux/amd64 CI evidence, resource-profile samples, regional
   measurements, identity-provider integration, and production SLO approval.
 
@@ -2937,7 +3485,19 @@ gates above.
 
 ## Version and dependency governance
 
-As of 2026-09-25, the documentation sources report Rust stable 1.98, Agave/Solana CLI 4.3.0, React 19.3, Node.js 24.21.0 LTS, pnpm 12.3.4, Solidity 0.8.37, Anchor CLI 1.2.0, and NGINX stable 1.30.5. Confirm availability and Solana compatibility during bootstrap, then pin exact versions in source and CI. Do not use a floating `stable` or `latest` channel in production CI. The off-chain workspace remains on Rust 1.98.1; the on-chain package explicitly declares Rust 1.95 compatibility because Agave 4.3.0's platform-tools v1.57 SBF compiler reports rustc 1.95.0-dev. See [ADR-0067](../adr/0067-sbf-compiler-compatibility-boundary.md).
+As of 2026-10-06, the official release channels still support the approved
+baseline: Rust stable 1.98, Agave/Solana 4.3.0, React 19.3, Node.js 24.21.0
+LTS, pnpm 12.3.4, Solidity 0.8.37, Anchor CLI 1.2.0, and NGINX stable 1.30.5.
+Node 26 is current but is not selected because the production policy requires
+an active or maintenance LTS runtime; Agave 4.4/4.5 are not selected while
+their release channels remain non-stable. Confirm availability and Solana
+compatibility during bootstrap, then pin exact versions in source and CI. Do
+not use a floating `stable` or `latest` channel in production CI. The
+off-chain workspace remains on Rust 1.98.1; the on-chain package explicitly
+declares Rust 1.95 compatibility because Agave 4.3.0's platform-tools v1.57
+SBF compiler reports rustc 1.95.0-dev. See
+[ADR-0067](../adr/0067-sbf-compiler-compatibility-boundary.md) and the
+[toolchain compatibility matrix](../architecture/toolchain-compatibility.md).
 
 References:
 
@@ -2955,4 +3515,689 @@ References:
 - [PostgreSQL 18 documentation](https://www.postgresql.org/docs/18/)
 - [PostgreSQL UUID functions](https://www.postgresql.org/docs/18/functions-uuid.html)
 - [RFC 9562 UUIDs](https://www.rfc-editor.org/rfc/rfc9562.html)
-# Implementation plan
+
+## ADR-0361 distinct tax-base validation hardening
+
+- Reject repeated `Gross`, `Net`, or component references in additive tax
+  bases during rule compilation; see ADR-0361.
+- Preserve distinct multi-source bases for explicit tax-on-tax composition.
+- Keep weighted, subtractive, and general expression bases out of v1 until a
+  separately bounded DSL and golden-vector decision exists.
+
+## ADR-0362 explicit inclusive threshold equation
+
+- Add the versioned `GrossExcess` equation for inclusive thresholds.
+- Preserve fail-closed rejection for undeclared and unsupported threshold
+  meanings.
+- Add executable unit and golden-vector evidence before exposing the choice in
+  rule-authoring UI.
+
+## ADR-0364 collapsed secondary rule simulation
+
+- Keep governed-draft authoring open as the primary Tax Rules task.
+- Collapse the saved-rule simulation by default and expose it through a native,
+  keyboard-operable “Try the saved rule” disclosure.
+- Preserve the existing authenticated, persisted-rule, server-owned simulation
+  boundary; disclosure state is presentation-only.
+- Verify the density decision with the governance component test and the full
+  real-browser accessibility journey.
+
+## ADR-0365 plain-language authorization recovery copy
+
+- [x] Keep parser diagnostics typed and independent of React/localization.
+- [x] Map expiry, missing-expiry, and generic capability failures through the
+  localized shell catalog without rendering raw technical errors.
+- [x] Add parser, catalog, component, and real-browser accessibility coverage
+  for the expired capability state.
+- [ ] Retain staging identity-provider, clock-skew, screen-reader, and support
+  evidence before a production authorization claim.
+
+See [ADR-0365](../adr/0365-plain-language-authorization-recovery-copy.md).
+
+## ADR-0366 localized wallet-provider error redaction
+
+- [x] Keep arbitrary provider exception details out of the primary wallet UI.
+- [x] Preserve the typed multi-account recovery path and do not retry or infer
+  wallet authorization in the browser.
+- [x] Add component and real-browser rejection coverage with localized copy and
+  accessibility assertions.
+- [ ] Retain live injected-wallet, screen-reader, provider-matrix, and staging
+  support evidence before a production wallet claim.
+
+See [ADR-0366](../adr/0366-wallet-provider-error-redaction.md).
+
+## ADR-0367 financial-workspace error redaction boundary
+
+- [x] Add the typed operator-error boundary and fail-closed fallback mapping
+  without changing settlement, wallet, or reconciliation authority.
+- [x] Apply it to aggregate/document checkout and refund claim, cancellation,
+  and execution first, with unit and browser evidence for API and provider
+  diagnostics.
+- [x] Extend the boundary to tax-document simulation, rule governance, and
+  document quote workspaces with localized operator copy and failing-first
+  provider/transport exception tests.
+- [x] Extend the boundary to treasury/vault release and reconciliation,
+  settlement adjustment, replay operations, revenue streaming, and the
+  application shell with localized operator copy and failing-first exception
+  tests.
+- [ ] Retain live-provider, staging, manual assistive-technology, and support
+  evidence before making a production UX claim.
+
+See [ADR-0367](../adr/0367-financial-workspace-error-redaction.md).
+
+## ADR-0368 non-interruptive system-status disclosure
+
+- [x] Keep system configuration and service warnings inside the expandable
+  status disclosure without presenting them as assertive financial alerts.
+- [x] Preserve actionable workspace failures as reviewed `role="alert"`
+  content and keep system context available as ordinary disclosure text.
+- [x] Add failing-first shell coverage for the status-role boundary.
+- [ ] Retain manual screen-reader and operator-usability evidence before a
+  production accessibility claim.
+
+See [ADR-0368](../adr/0368-non-interruptive-system-status-disclosure.md).
+
+## ADR-0369 explicit CI toolchain bootstrap
+
+- [x] Add a failing-closed workflow contract for the exact Rust 1.98.1
+  installation, `RUSTUP_TOOLCHAIN` export, and compiler-version evidence.
+- [x] Install and select the pinned toolchain before host-side Cargo commands
+  in the Rust, adversarial settlement, and release-candidate workflows.
+- [x] Include `make ci-toolchain-contract` in `make check` so workflow drift is
+  detected locally and in CI.
+- [ ] Retain a successful Linux release-candidate run and independently review
+  its complete evidence bundle before production enablement.
+
+See [ADR-0369](../adr/0369-explicit-ci-toolchain-bootstrap.md).
+
+## ADR-0370 explicit frontend CI toolchain evidence
+
+- [x] Record resolved Node.js and pnpm versions after pinned setup and before
+  dependency installation in CI and release-candidate workflows.
+- [x] Extend `make ci-toolchain-contract` to reject missing Node/pnpm pins or
+  missing version evidence.
+- [ ] Retain a successful Linux release-candidate run and independently review
+  its complete evidence bundle before production enablement.
+
+See [ADR-0370](../adr/0370-explicit-frontend-ci-toolchain-evidence.md).
+
+## ADR-0371 production-source Material color boundary
+
+- [x] Extend the Material color contract beyond CSS to production TypeScript
+  and TSX source, rejecting raw color functions, literals, and gradients while
+  leaving test expectations available for contract coverage.
+- [x] Prove the contract fails on a temporary production-source color probe,
+  then remove the probe and re-run the clean contract.
+- [ ] Retain manual visual, screen-reader, localization, and forced-colors
+  review evidence before making a production UX claim.
+
+See [ADR-0371](../adr/0371-production-source-material-color-boundary.md).
+
+## ADR-0372 bounded operational observability dashboard
+
+- [x] Add pause, replay, database-pool, tax-cache, and settlement-provider
+  signals to the repository-provisioned read-only Grafana dashboard.
+- [x] Add a fixed-cardinality dashboard contract that rejects variables and
+  sensitive identity labels, and include it in `make check`.
+- [ ] Retain authenticated production scrape, dashboard retention, alert
+  delivery, ownership, and load-derived SLO evidence.
+
+See [ADR-0372](../adr/0372-bounded-operational-observability-dashboard.md).
+
+## ADR-0373 tenant-scoped evidence-access explorer
+
+- [x] Add the authenticated, tenant-derived `GET /v1/audit/evidence-access`
+  contract with bounded latest-N retrieval and optional UUIDv7 calculation
+  filtering.
+- [x] Add the read-only Evidence & audit workspace, localized catalogs,
+  progressive technical disclosure, and explicit empty/error/unauthorized
+  states to the Records & issues navigation group.
+- [x] Add TDD, tenant-isolation boundary, serialization, accessibility, and
+  real-browser journey coverage in the repository.
+- [ ] Retain staging identity, privacy, retention, and manual audit-operator
+  review before a production evidence claim.
+
+See [ADR-0373](../adr/0373-tenant-scoped-evidence-access-explorer.md).
+
+## ADR-0374 collapsible Material 3 navigation rail
+
+- [x] Add an expanded-by-default desktop rail with a session-only compact preference.
+- [x] Keep localized accessible names, active-workspace orientation, and server-owned authorization unchanged in compact mode.
+- [x] Verify keyboard, forced-colors, reduced-motion, typecheck, build, and real-browser behavior.
+- [ ] Retain manual RTL, reduced-motion, and assistive-technology review before a production UX claim.
+
+See [ADR-0374](../adr/0374-collapsible-material-navigation-rail.md).
+
+## ADR-0375 bounded linear tax-base operations
+
+- [x] Add the v2 rule envelope and explicit signed weighted base-reference
+  representation while preserving legacy additive v1 canonical bytes.
+- [x] Add exact rational base evaluation, dependency validation, and
+  fail-closed non-integral/overflow behavior.
+- [x] Add golden vectors, replay/serialization tests, API contract coverage,
+  and structured rule-workbench controls for weighted/subtractive terms.
+- [ ] Retain legal/tax-owner review of coefficient semantics and jurisdiction
+  releases before claiming production jurisdiction support.
+
+See [ADR-0375](../adr/0375-bounded-linear-tax-base-operations.md).
+
+## ADR-0381 bounded single-flight Tax Engine rule compilation
+
+- [x] Add a failing-first same-digest concurrency test with bounded barrier,
+  one-compilation instrumentation, shared result, cleanup, and LRU reuse.
+- [x] Add a bounded repeated-distinct-digest test proving completed single-flight
+  entries are removed and cannot accumulate under cache churn.
+- [x] Add the bounded process-local single-flight map without holding the LRU
+  mutex across compilation or introducing a network dependency.
+- [x] Run the complete Tax Engine service suite, workspace checks, and the
+  bounded Docker service benchmark; retain synthetic scope and tail variance.
+
+See [ADR-0381](../adr/0381-single-flight-tax-rule-compilation.md).
+
+## ADR-0382 Tax Engine v2 golden-vector coverage manifest
+
+- [x] Add the failing-first required-ID manifest and duplicate/unknown-ID
+  rejection to the versioned Rust vector tests.
+- [x] Add the v2 weighted-component cascade vector with exact aggregate and
+  component expectations.
+- [x] Update the public tax coverage matrix and run the full workspace/public
+  documentation gates.
+
+See [ADR-0382](../adr/0382-tax-engine-v2-golden-vector-coverage-manifest.md).
+
+## ADR-0383 explicit atomic display scale at the browser boundary
+
+- [x] Add the failing-first formatter contract that rejects omitted or invalid
+  display precision without converting atomic values through JavaScript
+  `Number`.
+- [x] Require every production formatter call site to pass an explicit scale;
+  keep route-bound checkout values on finalized server-owned mint precision.
+- [x] Carry quote/document result scale from the versioned facts contract;
+  route-bound checkout remains on finalized server-owned mint precision.
+- [x] Run the browser, palette, and full repository gates.
+
+See [ADR-0383](../adr/0383-explicit-atomic-display-scale.md).
+
+## ADR-0384 authoritative atomic scale in the quote contract
+
+- [x] Add required bounded `atomic_decimals` to tax facts and document facts,
+  bind it into canonical evidence, and carry it into calculation results.
+- [x] Reject missing or invalid scale at Rust and browser boundaries; remove
+  the interim two-decimal quote/document convention.
+- [x] Compare quote/document result scale with the finalized server-owned route
+  before every settlement compiler can create an instruction or intent.
+- [x] Add failing-first vectors, replay/serialization/API/browser coverage and
+  run the full repository gates.
+
+See [ADR-0384](../adr/0384-authoritative-atomic-scale-in-quote-contract.md).
+
+## ADR-0385 versioned asset-precision UI language
+
+- [x] Add one localized semantic catalog for the explicit asset precision
+  control and use it in quote, document quote, document simulation, and rule
+  governance workspaces.
+- [x] Prove every supported locale, unknown-locale fallback, and absence of
+  repeated hard-coded production copy before implementation is accepted.
+- [x] Re-run frontend tests, typecheck, build, browser journeys, and
+  accessibility/color contracts.
+
+See [ADR-0385](../adr/0385-versioned-asset-precision-ui-language.md).
+
+## ADR-0386 versioned financial-workspace error language
+
+- [x] Add reviewed error catalogs for document quote and aggregate checkout in
+  every supported locale.
+- [x] Replace inline financial-workspace error copy with typed catalog values;
+  preserve redaction, bounded dynamic values, and server-owned state.
+- [x] Prove the catalog and fallback contract with frontend tests, typecheck,
+  production build, accessibility/color contracts, and real-browser journeys.
+
+See [ADR-0386](../adr/0386-versioned-financial-error-language.md).
+
+## ADR-0387 versioned document-settlement error language
+
+- [x] Add reviewed document-checkout error catalogs for every supported
+  locale, including route, evidence, compilation, wallet, submission,
+  status-refresh, and reconciliation recovery states.
+- [x] Replace inline document-checkout operator copy with typed catalog
+  values; bound HTTP status and durable-intent interpolation and preserve
+  fail-closed repeat-signing behavior.
+- [x] Prove the catalog and component contract with failing-first tests,
+  typecheck, production build, accessibility/color contracts, and real-browser
+  journeys.
+
+See [ADR-0387](../adr/0387-versioned-document-settlement-error-language.md).
+
+## ADR-0388 versioned refund-execution recovery language
+
+- [x] Add reviewed refund-execution error and safety-recovery catalogs for all
+  supported locales, including two-person signing and proof-pending states.
+- [x] Replace inline refund-execution authorization, preparation, recovery,
+  signing, and submission copy with typed catalog values and bounded HTTP
+  status interpolation.
+- [x] Preserve unknown-outcome fail-closed behavior and prove the catalog,
+  typecheck, production build, accessibility/color contracts, and browser
+  journey behavior.
+
+See [ADR-0388](../adr/0388-versioned-refund-execution-recovery-language.md).
+
+## ADR-0389 versioned refund-claim recovery language
+
+- [x] Add reviewed refund-claim error and safety-recovery catalogs for all
+  supported locales, including two-person signing and finalized reconciliation.
+- [x] Replace inline refund-claim authorization, preparation, recovery,
+  signing, submission, and reconciliation copy with typed catalog values and
+  bounded HTTP status interpolation.
+- [x] Preserve unknown-outcome fail-closed behavior and prove the catalog,
+  typecheck, production build, accessibility/color contracts, and browser
+  journey behavior.
+
+See [ADR-0389](../adr/0389-versioned-refund-claim-recovery-language.md).
+
+## ADR-0390 versioned vault-release recovery language
+
+- [x] Add reviewed vault-release error and recovery catalogs for all supported
+  locales, including route loading, malformed response, proposal, lookup,
+  transition, mismatch, and refresh-reconciliation states.
+- [x] Replace inline vault-release authorization, route, proposal, lookup, and
+  transition copy with typed catalog values and bounded HTTP status
+  interpolation.
+- [x] Preserve server-owned route selection, two-person governance, and
+  fail-closed malformed-response behavior; prove the catalog, UI tests,
+  typecheck, production build, accessibility/color contracts, and browser
+  journey behavior.
+
+See [ADR-0390](../adr/0390-versioned-vault-release-recovery-language.md).
+
+## ADR-0391 versioned replay-operations recovery language
+
+- [x] Add reviewed replay-operations messages for bounded HTTP status,
+  page-budget validation, action failure, projection reload recovery, and
+  malformed route-verification evidence in every supported locale.
+- [x] Replace inline replay recovery copy with typed catalog values while
+  preserving redaction, bounded retry semantics, explicit reconciliation
+  states, and server-owned route-verification evidence.
+- [x] Prove the catalog, focused UI behavior, typecheck, production build,
+  accessibility/color contracts, and browser journey behavior.
+
+See [ADR-0391](../adr/0391-versioned-replay-operations-recovery-language.md).
+
+## ADR-0392 versioned settlement-adjustment recovery language
+
+- [x] Add reviewed validation, authentication, transport, and reconciliation
+  messages for every supported locale.
+- [x] Replace inline Settlement Adjustments recovery copy and unbounded HTTP
+  status interpolation with typed catalog values and bounded display status.
+- [x] Preserve tenant authorization, server-owned adjustment state, exact
+  wallet evidence instructions, unknown-outcome fail-closed behavior, and
+  finalized reconciliation semantics.
+- [x] Prove the catalog and panel contract with failing-first tests and
+  typecheck; run the full frontend, browser, accessibility, and repository
+  gates.
+
+See [ADR-0392](../adr/0392-versioned-settlement-adjustment-recovery-language.md).
+
+## ADR-0393 versioned revenue-streaming recovery language
+
+- [x] Add reviewed recovery/status and secondary evidence-label messages for
+  every supported locale.
+- [x] Replace inline Revenue Streaming HTTP status, unavailable-address,
+  amount-placeholder, and setup-evidence copy with typed catalog values.
+- [x] Preserve server-owned reference selection, finalized-balance authority,
+  authorization, idempotency, claim bounds, and fail-closed payout semantics.
+- [x] Prove the catalog and component contract with failing-first tests and
+  typecheck; run the full frontend, browser, accessibility, and repository
+  gates.
+
+See [ADR-0393](../adr/0393-versioned-revenue-streaming-recovery-language.md).
+
+## ADR-0394 versioned vault-reconciliation recovery language
+
+- [x] Add reviewed bounded HTTP recovery messages for every supported locale.
+- [x] Replace inline Vault Reconciliation status interpolation with a typed
+  catalog formatter bounded to valid HTTP status values.
+- [x] Preserve release-stop semantics, finalized observation authority,
+  evidence-derived balances, tenant authorization, and read-only behavior.
+- [x] Prove the catalog and panel contract with failing-first tests and
+  typecheck; run the full frontend, browser, accessibility, and repository
+  gates.
+
+See [ADR-0394](../adr/0394-versioned-vault-reconciliation-recovery-language.md).
+
+## ADR-0395 versioned governance recovery language
+
+- [x] Add reviewed bounded HTTP recovery messages for every supported locale.
+- [x] Replace inline Governance HTTP status interpolation across lookup, draft,
+  transition, and simulation paths with the typed catalog formatter.
+- [x] Preserve tenant authorization, idempotent immutable drafts, provenance,
+  lifecycle approval gates, server-owned simulation, and redacted diagnostics.
+- [x] Prove the catalog and component contract with failing-first tests and
+  typecheck; run the full frontend, browser, accessibility, and repository
+  gates.
+
+See [ADR-0395](../adr/0395-versioned-governance-recovery-language.md).
+
+## ADR-0396 versioned evidence-access recovery language
+
+- [x] Add reviewed bounded HTTP recovery messages for every supported locale.
+- [x] Replace inline Evidence Access HTTP status interpolation with a typed
+  catalog formatter bounded to valid HTTP status values.
+- [x] Preserve tenant-scoped authorization, bounded filters, UUIDv7 identity
+  validation, read-only behavior, exact audit evidence, and redacted errors.
+- [x] Prove the catalog and panel contract with failing-first tests and
+  typecheck; run the full frontend, browser, accessibility, and repository
+  gates.
+
+See [ADR-0396](../adr/0396-versioned-evidence-access-recovery-language.md).
+
+## ADR-0397 versioned refund-cancellation recovery language
+
+- [x] Add reviewed bounded HTTP recovery messages for every supported locale.
+- [x] Replace inline Refund Cancellation status interpolation across prepare,
+  recovery, submit, and reconciliation with the typed catalog formatter.
+- [x] Preserve unchanged signed bytes, explicit confirmation, governance-wallet
+  authority, unknown outcomes, finalized event reconciliation, and redacted
+  diagnostics.
+- [x] Prove the catalog and panel contract with failing-first tests and
+  typecheck; run the full frontend, browser, accessibility, and repository
+  gates.
+
+See [ADR-0397](../adr/0397-versioned-refund-cancellation-recovery-language.md).
+
+## ADR-0398 Material shell landmark and role boundary
+
+- [x] Correct the keyboard skip link to the stable main workspace landmark.
+- [x] Add an executable rendered-shell contract for the skip-link/main
+  landmark relationship.
+- [x] Establish a final shell application layer that uses semantic Material 3
+  roles for surfaces, navigation, identity, popovers, and state containers.
+- [x] Keep raw color literals, gradients, arbitrary hues, and authorization or
+  protocol state out of the role boundary.
+- [ ] Retain manual keyboard, screen-reader, forced-colors, responsive, RTL,
+  and design-system review evidence before a production UI claim.
+
+See [ADR-0398](../adr/0398-material-shell-landmark-and-role-boundary.md).
+
+## ADR-0399 versioned navigation access language
+
+- [x] Add bounded access-status messages for English, German, Arabic RTL, and
+  Japanese shell catalogs.
+- [x] Replace hard-coded navigation access labels and the local unknown-policy
+  fallback with the active locale catalog.
+- [x] Preserve server-owned authorization reasons, reason codes, capability
+  IDs, tenant IDs, roles, scopes, and risk classifications exactly.
+- [x] Prove catalog completeness and German rendered status language with
+  failing-first tests and typecheck.
+- [ ] Retain manual linguistic, screen-reader, RTL, and authorization-operator
+  review evidence before a production UI claim.
+
+See [ADR-0399](../adr/0399-versioned-navigation-access-language.md).
+
+## ADR-0400 no implicit asset precision in financial workspaces
+
+- [x] Remove the implicit two-decimal initialization from aggregate quote,
+  document quote, document simulation, and governed-rule simulation forms.
+- [x] Add one shared exact parser that rejects blank/coerced, fractional,
+  signed, multi-digit, and whitespace precision values while accepting explicit
+  zero through nine.
+- [x] Add failing-first input-boundary and parser tests; update submission
+  fixtures to provide precision explicitly.
+- [ ] Retain manual operator, localization, assistive-technology, route-asset,
+  and live-wallet review evidence before a production financial-workspace claim.
+
+See [ADR-0400](../adr/0400-no-implicit-asset-precision.md).
+
+## ADR-0401 complete authorization benchmark catalog
+
+- [x] Extend the capability benchmark's exact semantic key set to include all
+  nineteen server-owned policies, including revenue-streaming decisions.
+- [x] Preserve explicit `deny/scope_missing` and
+  `indeterminate/resource_context_required` assertions for the synthetic
+  principal; no browser or benchmark decision authorizes protected work.
+- [x] Add `authorization-benchmark-contract` to `make check` so a future
+  catalog addition cannot silently reduce benchmark coverage.
+- [ ] Retain Linux/amd64, regional, identity-provider, resource-profile, and
+  production SLO evidence under ADR-0275 before making a production latency
+  claim.
+
+See [ADR-0401](../adr/0401-complete-authorization-benchmark-catalog.md).
+
+## ADR-0402 single tax-trace disclosure in the result workspace
+
+- [x] Remove the duplicate aggregate result trace while preserving the
+  server-owned component explanation and exact displayed values.
+- [x] Add a failing-first UI regression proving one rendered trace per
+  validated component.
+- [x] Record the alternatives, progressive-disclosure invariant, and bounded
+  render/resource impact in [ADR-0402](../adr/0402-single-tax-trace-disclosure.md).
+- [ ] Retain manual operator, screen-reader, responsive, localization, and
+  design-system review evidence before a production UI claim.
+
+See [ADR-0402](../adr/0402-single-tax-trace-disclosure.md).
+
+## ADR-0403 single persistent account context in the navigation shell
+
+- [x] Remove the duplicate tenant/subject context from the persistent sidebar
+  while retaining the compact access-state surface.
+- [x] Keep verified identity details in the account menu and current access
+  details in the page context; do not change server-owned authorization data.
+- [x] Add failing-first rendered-shell coverage proving one persistent account
+  identity presentation and preserve the browser/accessibility contracts.
+- [x] Remove obsolete duplicate-account styling and enforce the Material shell
+  stylesheet contract so the retired presentation surface cannot return.
+- [ ] Retain manual keyboard, screen-reader, responsive, RTL, and
+  authorization-operator review evidence before a production UI claim.
+
+See [ADR-0403](../adr/0403-single-persistent-account-context.md).
+
+## ADR-0404 typed localized authorization affordance reasons
+
+- [x] Classify browser authorization states with bounded reason codes rather
+  than rendering raw server reason strings in navigation or accessibility
+  descriptions.
+- [x] Cover all supported locales in the shell catalog and preserve the
+  server-owned authorization decision and tenant boundary.
+- [x] Prove localized rendering, raw-reason absence, typecheck, full frontend,
+  accessibility, and Docker/NGINX browser behavior.
+- [ ] Retain staging identity-provider, clock-skew, screen-reader, and
+  authorization-operator review evidence before a production UX claim.
+
+See [ADR-0404](../adr/0404-localized-authorization-affordance-reasons.md).
+
+## ADR-0405 Material theme-color synchronization
+
+- [x] Move browser chrome from the legacy literal to the two approved Material
+  3 Aurora background-role values in the HTML metadata boundary.
+- [x] Synchronize explicit light/dark preferences by changing only bounded
+  media conditions; preserve native `prefers-color-scheme` behavior for
+  `system` without introducing palette literals into TypeScript.
+- [x] Add failing-first unit/source-contract coverage and real Docker/NGINX
+  Playwright assertions for system, light, and dark metadata activation.
+- [ ] Retain manual OS/browser chrome, screen-reader, forced-colors, RTL, and
+  design-system review evidence before a production UI claim.
+
+See [ADR-0405](../adr/0405-material-theme-color-synchronization.md).
+
+## ADR-0406 Material 3 mobile shell action row
+
+- [x] Add a failing-first Docker/NGINX Playwright regression at 568 CSS pixels
+  proving the top bar uses a two-row identity/action composition, wrapped
+  horizontal actions, and bounded mobile height.
+- [x] Replace the inherited mobile flex-column action layout with a semantic
+  Material action row while preserving DOM order, accessible names, popover
+  anchoring, and all authorization/session behavior.
+- [x] Record the alternatives, invariants, and presentation-only boundary in
+  ADR-0406 and the requirements traceability matrix.
+- [ ] Retain manual screen-reader, keyboard-only, RTL, reduced-motion, and
+  operator-usability evidence before a production UI claim.
+
+See [ADR-0406](../adr/0406-material-mobile-shell-action-row.md).
+
+## ADR-0407 evidence-bound tax applicability context
+
+- [x] Freeze the boundary between arithmetic tax evaluation, jurisdiction
+  evidence, and product/tax applicability in [ADR-0407](../adr/0407-evidence-bound-tax-applicability-context.md).
+- [x] Record alternatives, bounded latency constraints, treatment outcomes,
+  historical replay compatibility, and legal/tax ownership requirements.
+- [x] Define the versioned signed applicability-attestation schema and
+  canonical domain in the policy boundary before changing quote or
+  document-quote contracts.
+- [ ] Define the complete server-owned API applicability-context schema and
+  compatibility contract before changing quote or document-quote contracts.
+- [x] Add the first pure Rust applicability slice in `crates/tax-applicability`
+  with bounded classification facts, explicit treatment outcomes, precedence,
+  stale-evidence rejection, ambiguity rejection, and a versioned golden vector.
+- [x] Bind an optional server-owned `ApplicabilityDecision` into aggregate and
+  document Tax Engine facts/results with a pre-applicability digest, additive
+  canonical suffix, replay preservation, and fail-closed treatment gates.
+- [x] Add the signed `ApplicabilityAttestation` verification kernel with
+  evidence-window enforcement, jurisdiction-resolution binding, rule-release
+  binding, and explicit API error mappings.
+- [x] Implement the pure-engine arithmetic/reporting semantics for zero-rated,
+  exempt, reverse-charge, withholding, and out-of-scope treatments under
+  [ADR-0416](../adr/0416-applicability-treatment-settlement-semantics.md);
+  unresolved treatment remains fail-closed and no path reinterprets it as zero
+  tax.
+- [x] Add the versioned v2 signed treatment-outcome digest contract for
+  aggregate and document attestation verification, with legacy v1 byte
+  compatibility and a shared golden vector under ADR-0417.
+- [ ] Complete issuer rollout, production rejection telemetry, and independent
+  security review for v2 before enabling non-`Taxable` settlement routes.
+- [ ] Obtain jurisdiction-owner/legal approval for the treatment semantics and
+  publish jurisdiction-specific provenance before enabling production routes.
+- [x] Extend the signed kernel into the complete server-owned applicability
+  context with bounded predicates, replay-compatible evidence, and policy
+  persistence.
+- [x] Add tenant-scoped PostgreSQL 18 policy/evidence persistence, UUIDv7 IDs,
+  effective-window constraints, and append-only governance events.
+- [x] Integrate server-owned applicability resolution into quote, document
+  quote, attestation, and settlement binding paths.
+- [ ] Add UI progressive disclosure for treatment, evidence, limitations, and
+  review-required states across supported locales.
+- [ ] Retain jurisdiction/product legal-owner, provenance, staging, and manual
+  accessibility evidence before publishing production coverage.
+
+The current repository deliberately remains arithmetic-capable but has no
+production-supported jurisdiction or applicability treatment. The free-form
+`regime` selector remains a rule-release identity and must not be treated as a
+product category.
+
+## ADR-0409 server-owned applicability-context persistence and quote binding
+
+- [x] Freeze the server-owned context lifecycle, persistence invariants,
+  bounded cache boundary, quote reference, and alternatives in
+  [ADR-0409](../adr/0409-server-owned-applicability-context-persistence.md).
+- [x] Add the PostgreSQL 18 immutable context projection, append-only
+  governance events, UUIDv7 constraints, and verification SQL.
+- [x] Add typed storage create/load/transition validation and idempotency
+  boundaries with tenant-bound attestation checks before exposing a quote
+  reference.
+- [x] Add the server-owned context reference to quote/document-quote contracts
+  and persist the exact attestation digest with each calculation. The context
+  is verified as published, tenant-scoped, current, and evidence-live; the
+  arithmetic-only compatibility path remains explicit until legal ownership
+  enables governed treatment semantics.
+- [x] Bind context and attestation digests into versioned settlement-client
+  compilation and Solana applicability-binding PDAs/instruction invariants;
+  finalized indexer evidence and production treatment gates remain open under
+  [ADR-0411](../adr/0411-versioned-solana-applicability-settlement-binding.md).
+- [x] Add the bounded finalized-account verifier port for the receipt-scoped
+  applicability PDA, including deterministic PDA derivation, exact Anchor
+  layout/discriminator, owner, field-substitution, response-size, and finalized
+  commitment checks under [ADR-0412](../adr/0412-finalized-applicability-binding-verifier.md).
+- [x] Add the serializable, idempotent PostgreSQL 18 verification projection
+  and storage boundary that locks the raw event, compares the typed verifier
+  result field-for-field, and rejects conflicting replays under
+  [ADR-0413](../adr/0413-atomic-applicability-binding-projection.md).
+- [x] Add the UUIDv7 lease-fenced verification job table and bounded worker
+  lifecycle under [ADR-0414](../adr/0414-bounded-applicability-binding-verifier-worker.md).
+- [x] Schedule the verifier worker outside quote, compile, signing, and submit
+  hot paths; retain the authorized read contract as a separate gate.
+- [x] Expose the authorized read contract
+  before presenting an applicability binding as finalized; keep account RPC out
+  of quote, compile, signing, and submit hot paths.
+- [x] Add the tenant-scoped evidence read contract and explicit lifecycle
+  statuses under [ADR-0415](../adr/0415-tenant-scoped-applicability-verification-read-model.md).
+- [x] Add the localized, non-final applicability evidence card and strict
+  response parser to the document-checkout flow; bind its stream selector at
+  build time without making it an authorization boundary.
+- [ ] Add localized UI treatment, evidence, limitation, and review-required
+  disclosure review, including manual RTL, reduced-motion, screen-reader, and
+  legal/tax-owner approval before production enablement.
+
+## ADR-0408 quiet tonal Material 3 Expressive shell
+
+- [x] Freeze the shell hierarchy around the audited Aurora role matrix: surface
+  roles for structure, primary for active/high-emphasis actions, secondary for
+  supporting controls, tertiary for limited expressive emphasis, and explicit
+  warning/error/verified state aliases.
+- [x] Add a failing-first shell contract for semantic final-layer rules, no
+  decorative gradients/raw component colors, quiet tonal panels, bounded reading
+  width, and compact system status.
+- [x] Apply the quiet tonal shell: remove panel shadows, reduce redundant
+  surface contrast, keep diagnostics and sign-in detail behind disclosures, and
+  preserve keyboard/forced-colors/mobile behavior.
+- [ ] Retain Docker/NGINX browser evidence at 1440px and 390px plus manual
+  screen-reader, RTL, reduced-motion, and operator-usability review before a
+  production UX claim.
+
+See [ADR-0408](../adr/0408-material-expressive-quiet-tonal-shell.md).
+
+## ADR-0410 Material state emphasis and border budget
+
+- [x] Define neutral informational badges and explicit success, warning, and
+  danger state classes.
+- [x] Remove shared panel borders and elevation from the final shell layer;
+  retain outlines for controls, focus, and dialogs.
+- [x] Add the executable Material role contract and preserve forced-colors,
+  reduced-motion, responsive, and keyboard behavior.
+- [ ] Retain Docker/NGINX browser screenshots at 1440px and 390px plus manual
+  assistive-technology and operator-usability evidence before a production UX
+  claim.
+
+See [ADR-0410](../adr/0410-material-state-emphasis-and-border-budget.md).
+
+## ADR-0419 neutral risk taxonomy and calm active navigation
+
+- [x] Separate workflow risk labels from operational outcomes so ordinary
+  `read`, `write`, `financial`, and `governance` metadata stays neutral.
+- [x] Keep verified, attention, blocked, and error treatments on explicit
+  semantic state roles with paired content roles and non-color labels.
+- [x] Remove the active navigation border/inset treatment and use one quiet
+  primary-container selection surface.
+- [ ] Retain wide/narrow browser screenshots plus manual operator, screen-reader,
+  forced-colors, RTL, and reduced-motion review before a production UX claim.
+
+See [ADR-0419](../adr/0419-neutral-risk-taxonomy-and-active-navigation.md).
+
+## ADR-0418 applicability-context management API
+
+- [x] Add strict authenticated create/read/transition routes over the
+  server-owned applicability projection.
+- [x] Derive tenant and actor identity from the authenticated principal and
+  enforce the explicit author/reviewer/approver role matrix.
+- [x] Add an isolated signed-attestation Docker fixture and exercise create,
+  idempotent replay, tenant isolation, four-eyes publication, append-only
+  lifecycle evidence, and published-row immutability through
+  `make integration-check`.
+- [ ] Add the production governance UI review/import workflow without making
+  browser-authored treatment or attestation data authoritative; retain manual
+  accessibility, legal/tax-owner, staging identity, and production evidence
+  gates.
+
+See [ADR-0418](../adr/0418-applicability-context-management-api.md).
+
+## ADR-0420 applicability governance workspace
+
+- [ ] Separate signed treatment-evidence governance from tax-rule authoring in
+  the product navigation and workspace model.
+- [ ] Keep the browser as an issuer-signed evidence importer and lifecycle
+  operator only; all treatment, tenant, digest, and authorization decisions
+  remain server-owned.
+- [ ] Add localized, accessible create/read/transition states with bounded
+  loading, timeout, retry, stale-data, and reconciliation-required language.
+- [ ] Retain real-browser wide/narrow evidence and manual screen-reader, RTL,
+  reduced-motion, legal/tax-owner, and staging identity review before a
+  production treatment enablement claim.
+
+See [ADR-0420](../adr/0420-applicability-governance-workspace.md).

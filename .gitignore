@@ -88,6 +88,10 @@ deployments/
 *.so
 *.dylib
 
+# Generated Foundry artifacts
+/evm-adapter/out/
+/evm-adapter/cache/
+
 # Generated API and build metadata
 openapi.generated.*
 idl.generated.*

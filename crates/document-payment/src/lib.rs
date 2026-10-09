@@ -224,7 +224,7 @@ fn put_text(bytes: &mut Vec<u8>, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tax_engine::{ComponentResult, TaxLineResult};
+    use tax_engine::{ComponentResult, TaxLineResult, Treatment, TreatmentOutcome};
 
     fn digest(value: u8) -> Digest32 {
         [value; 32]
@@ -258,15 +258,25 @@ mod tests {
             rule_set_id: "rule-1".to_string(),
             rule_version: 1,
             engine_version: "test".to_string(),
+            atomic_decimals: 2,
             currency: "USD".to_string(),
             jurisdiction: "US-CA".to_string(),
             jurisdiction_resolution: None,
             fx_conversion: None,
+            applicability: None,
             facts_digest: digest(9),
             rule_digest: digest(8),
             gross_atomic: 1500,
             total_tax_atomic: 150,
             total_net_atomic: 1350,
+            treatment_outcome: TreatmentOutcome {
+                treatment: Treatment::Taxable,
+                arithmetic_tax_atomic: 150,
+                collected_tax_atomic: 150,
+                self_assessed_tax_atomic: 0,
+                withheld_tax_atomic: 0,
+                taxable_base_atomic: 1500,
+            },
             lines: vec![line("a", 1000, 100), line("b", 500, 50)],
         }
     }

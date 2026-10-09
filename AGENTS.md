@@ -275,7 +275,7 @@ The implementation must provide a Compose profile for:
 
 ## Toolchain and dependency policy
 
-- Current baseline (recorded 2026-09-25; re-validate compatibility at bootstrap): Rust stable 1.98, Agave/Solana CLI 4.3.0, Anchor CLI 1.2.0, Node.js 24.21.0 LTS, React 19.3, Solidity 0.8.37 for the optional EVM adapter, and NGINX 1.30.5 stable.
+- Current baseline (revalidated 2026-10-06; re-validate compatibility at bootstrap): Rust stable 1.98.1, Agave/Solana CLI 4.3.0, Anchor CLI 1.2.0, Node.js 24.21.0 LTS, React 19.3.0, PostgreSQL 18.6, Solidity 0.8.37 for the optional EVM adapter, and NGINX 1.30.5 stable.
 - Pin Rust, Agave/Solana CLI, Anchor/AVM, Node.js, package manager, React, Solidity compiler, NGINX, Docker base images, and all production dependencies.
 - Commit lockfiles and CI image digests. Use a compatibility matrix for Rust/Anchor/Agave/SDK versions.
 - Prefer stable releases; do not use nightly, alpha, beta, or floating channels in production without a documented exception.

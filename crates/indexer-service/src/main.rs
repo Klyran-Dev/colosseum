@@ -16,6 +16,7 @@ use indexer_service::{
     prove_one_refund_balance_once, provider_health, reconcile_one_refund_claim_cancellation_once,
     reconcile_one_refund_claim_once, reconcile_one_revenue_stream_accrual_once,
     reconcile_vaults_once, refresh_replay_metrics, replay_once, run_once,
+    verify_one_applicability_binding_once,
 };
 use observability::ServiceMetrics;
 use std::{
@@ -94,6 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = IndexerConfig::from_env()?;
     let source = config.build_source()?;
     wait_for_provider(&source, config.start_slot).await?;
+    let applicability_binding_source = config.build_applicability_binding_source()?;
     let (refund_claim_signature_source, refund_claim_transaction_source) =
         config.build_targeted_recovery_sources()?;
     let vault_source = config.build_vault_balance_source()?;
@@ -118,6 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 "refund_claim_cancellation_reconcile",
                 "refund_claim_reconcile",
                 "refund_proof",
+                "applicability_binding_verify",
             ],
         )?),
         replay_metrics,
@@ -179,6 +182,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 }
             }
             _ = vault_ticks.tick() => {
+                let applicability_started = Instant::now();
+                let applicability_result = verify_one_applicability_binding_once(
+                    &store,
+                    &applicability_binding_source,
+                    &config.stream_key,
+                )
+                .await;
+                health_state.metrics.observe_or_log(
+                    "applicability_binding_verify",
+                    applicability_started.elapsed(),
+                    applicability_result.is_err(),
+                );
+                match applicability_result {
+                    Ok(true) => info!("one finalized applicability binding verified"),
+                    Ok(false) => {}
+                    Err(error) => warn!(%error, "applicability binding verification cycle failed; retaining the bounded lease state"),
+                }
                 let revenue_started = Instant::now();
                 let revenue_result = reconcile_one_revenue_stream_accrual_once(
                     &store,

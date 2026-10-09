@@ -82,6 +82,20 @@ pub struct DocumentSettlementCompileRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ApplicabilitySettlementCompileRequest {
+    pub settlement: SettlementCompileRequest,
+    pub context_id: [u8; 16],
+    pub attestation_digest: [u8; 32],
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ApplicabilityDocumentSettlementCompileRequest {
+    pub settlement: DocumentSettlementCompileRequest,
+    pub context_id: [u8; 16],
+    pub attestation_digest: [u8; 32],
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SplitSettlementCompileRequest {
     pub program_id: String,
     pub payer: String,
@@ -185,6 +199,12 @@ pub struct CompiledSettlementInstruction {
     pub policy_attestation: String,
     pub receipt: String,
     pub asset_config: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub applicability_context_id: Option<Vec<u8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub applicability_attestation_digest: Option<Vec<u8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub applicability_binding: Option<String>,
     pub compute_budget_policy: ComputeBudgetPolicy,
 }
 
@@ -201,6 +221,12 @@ pub struct CompiledDocumentSettlementInstruction {
     pub asset_config: String,
     pub document_attestation_digest: Vec<u8>,
     pub payment_scope_digest: Vec<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub applicability_context_id: Option<Vec<u8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub applicability_attestation_digest: Option<Vec<u8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub applicability_binding: Option<String>,
     pub compute_budget_policy: ComputeBudgetPolicy,
 }
 
@@ -416,6 +442,12 @@ pub enum SettlementCompileError {
     EmptyDocumentAttestationDigest,
     #[error("payment scope digest must not be all zeroes")]
     EmptyPaymentScopeDigest,
+    #[error("applicability context id must not be all zeroes")]
+    EmptyApplicabilityContextId,
+    #[error("applicability attestation digest must not be all zeroes")]
+    EmptyApplicabilityAttestationDigest,
+    #[error("compiled settlement instruction encoding is invalid")]
+    InvalidCompiledInstructionEncoding,
     #[error("settlement nonce must be positive")]
     InvalidNonce,
     #[error("policy sequence must be positive")]
@@ -495,10 +527,8 @@ pub fn spl_token_program_id() -> Pubkey {
 /// different account in a prepared transaction.
 pub fn asset_config_pda(mint: &str) -> Result<(String, u8), SettlementCompileError> {
     let mint = parse_pubkey("mint", mint)?;
-    let (address, bump) = Pubkey::find_program_address(
-        &[b"asset-config", mint.as_ref()],
-        &settlement_program_id(),
-    );
+    let (address, bump) =
+        Pubkey::find_program_address(&[b"asset-config", mint.as_ref()], &settlement_program_id());
     Ok((address.to_string(), bump))
 }
 
@@ -611,10 +641,8 @@ pub fn compile_settlement_instruction(
         ],
         &program_id,
     );
-    let (asset_config, _) = Pubkey::find_program_address(
-        &[b"asset-config", mint.as_ref()],
-        &program_id,
-    );
+    let (asset_config, _) =
+        Pubkey::find_program_address(&[b"asset-config", mint.as_ref()], &program_id);
 
     let accounts = vec![
         account(payer, true, true),
@@ -659,6 +687,9 @@ pub fn compile_settlement_instruction(
         policy_attestation: policy_attestation.to_string(),
         receipt: receipt.to_string(),
         asset_config: asset_config.to_string(),
+        applicability_context_id: None,
+        applicability_attestation_digest: None,
+        applicability_binding: None,
         compute_budget_policy,
     })
 }
@@ -730,10 +761,8 @@ pub fn compile_document_settlement_instruction(
         ],
         &program_id,
     );
-    let (asset_config, _) = Pubkey::find_program_address(
-        &[b"asset-config", mint.as_ref()],
-        &program_id,
-    );
+    let (asset_config, _) =
+        Pubkey::find_program_address(&[b"asset-config", mint.as_ref()], &program_id);
     let accounts = vec![
         account(payer, true, true),
         account(protocol_config, false, false),
@@ -779,8 +808,101 @@ pub fn compile_document_settlement_instruction(
         asset_config: asset_config.to_string(),
         document_attestation_digest: request.document_attestation_digest.to_vec(),
         payment_scope_digest: request.payment_scope_digest.to_vec(),
+        applicability_context_id: None,
+        applicability_attestation_digest: None,
+        applicability_binding: None,
         compute_budget_policy,
     })
+}
+
+/// Derive the immutable binding account used by the versioned applicability
+/// settlement instructions. The binding is receipt-scoped so a context cannot
+/// be reused to authorize a different payer/merchant/nonce tuple.
+pub fn applicability_binding_pda(receipt: &str) -> Result<String, SettlementCompileError> {
+    let receipt = parse_pubkey("receipt", receipt)?;
+    let (binding, _) = Pubkey::find_program_address(
+        &[b"applicability-binding", receipt.as_ref()],
+        &settlement_program_id(),
+    );
+    Ok(binding.to_string())
+}
+
+pub fn compile_applicability_settlement_instruction(
+    request: &ApplicabilitySettlementCompileRequest,
+) -> Result<CompiledSettlementInstruction, SettlementCompileError> {
+    if request.context_id == [0; 16] {
+        return Err(SettlementCompileError::EmptyApplicabilityContextId);
+    }
+    if request.attestation_digest == [0; 32] {
+        return Err(SettlementCompileError::EmptyApplicabilityAttestationDigest);
+    }
+
+    let mut compiled = compile_settlement_instruction(&request.settlement)?;
+    let binding = applicability_binding_pda(&compiled.receipt)?;
+    let mut data = BASE64_STANDARD
+        .decode(&compiled.instruction_data_base64)
+        .map_err(|_| SettlementCompileError::InvalidCompiledInstructionEncoding)?;
+    if data.len() < 8 {
+        return Err(SettlementCompileError::InvalidCompiledInstructionEncoding);
+    }
+    data[..8].copy_from_slice(&instruction_discriminator(
+        "global:settle_with_applicability",
+    ));
+    data.extend_from_slice(&request.context_id);
+    data.extend_from_slice(&request.attestation_digest);
+    compiled.accounts.insert(
+        10,
+        account(
+            parse_pubkey("applicability_binding", &binding)?,
+            false,
+            true,
+        ),
+    );
+    estimate_legacy_settlement_wire_bytes_with_compute_budget(compiled.accounts.len(), data.len())?;
+    compiled.instruction_data_base64 = BASE64_STANDARD.encode(data);
+    compiled.applicability_context_id = Some(request.context_id.to_vec());
+    compiled.applicability_attestation_digest = Some(request.attestation_digest.to_vec());
+    compiled.applicability_binding = Some(binding);
+    Ok(compiled)
+}
+
+pub fn compile_applicability_document_settlement_instruction(
+    request: &ApplicabilityDocumentSettlementCompileRequest,
+) -> Result<CompiledDocumentSettlementInstruction, SettlementCompileError> {
+    if request.context_id == [0; 16] {
+        return Err(SettlementCompileError::EmptyApplicabilityContextId);
+    }
+    if request.attestation_digest == [0; 32] {
+        return Err(SettlementCompileError::EmptyApplicabilityAttestationDigest);
+    }
+
+    let mut compiled = compile_document_settlement_instruction(&request.settlement)?;
+    let binding = applicability_binding_pda(&compiled.receipt)?;
+    let mut data = BASE64_STANDARD
+        .decode(&compiled.instruction_data_base64)
+        .map_err(|_| SettlementCompileError::InvalidCompiledInstructionEncoding)?;
+    if data.len() < 8 {
+        return Err(SettlementCompileError::InvalidCompiledInstructionEncoding);
+    }
+    data[..8].copy_from_slice(&instruction_discriminator(
+        "global:settle_document_with_applicability",
+    ));
+    data.extend_from_slice(&request.context_id);
+    data.extend_from_slice(&request.attestation_digest);
+    compiled.accounts.insert(
+        10,
+        account(
+            parse_pubkey("applicability_binding", &binding)?,
+            false,
+            true,
+        ),
+    );
+    estimate_legacy_settlement_wire_bytes_with_compute_budget(compiled.accounts.len(), data.len())?;
+    compiled.instruction_data_base64 = BASE64_STANDARD.encode(data);
+    compiled.applicability_context_id = Some(request.context_id.to_vec());
+    compiled.applicability_attestation_digest = Some(request.attestation_digest.to_vec());
+    compiled.applicability_binding = Some(binding);
+    Ok(compiled)
 }
 
 pub fn compile_settlement_adjustment_instruction(
@@ -1575,10 +1697,8 @@ pub fn compile_split_settlement_instruction(
         ],
         &program_id,
     );
-    let (asset_config, _) = Pubkey::find_program_address(
-        &[b"asset-config", mint.as_ref()],
-        &program_id,
-    );
+    let (asset_config, _) =
+        Pubkey::find_program_address(&[b"asset-config", mint.as_ref()], &program_id);
 
     let mut accounts = vec![
         account(payer, true, true),
@@ -1906,12 +2026,14 @@ mod tests {
     fn derives_the_mint_scoped_asset_admission_pda() {
         let mint = "GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq";
         let (asset_config, bump) = asset_config_pda(mint).expect("valid mint");
-        assert_eq!(
-            asset_config,
-            "2nqeGnn1BrXoKjG6H5cSFReSEuDxpb18GH3g8bkt3YVy"
-        );
+        assert_eq!(asset_config, "2nqeGnn1BrXoKjG6H5cSFReSEuDxpb18GH3g8bkt3YVy");
         assert!(bump > 0);
-        assert_ne!(asset_config_pda("11111111111111111111111111111111").unwrap().0, asset_config);
+        assert_ne!(
+            asset_config_pda("11111111111111111111111111111111")
+                .unwrap()
+                .0,
+            asset_config
+        );
     }
 
     #[test]
@@ -2007,6 +2129,59 @@ mod tests {
             &instruction_discriminator("global:settle_document")
         );
         assert_eq!(data.len(), 8 + (8 * 5) + (32 * 3));
+    }
+
+    #[test]
+    fn compiles_applicability_bound_settlement_with_distinct_wire_contract() {
+        let request = ApplicabilitySettlementCompileRequest {
+            settlement: valid_request(),
+            context_id: [0x11; 16],
+            attestation_digest: [0x22; 32],
+        };
+        let compiled = compile_applicability_settlement_instruction(&request)
+            .expect("valid applicability-bound settlement");
+        assert_eq!(compiled.accounts.len(), 14);
+        assert_eq!(
+            Some(compiled.accounts[10].pubkey.clone()),
+            compiled.applicability_binding
+        );
+        assert_eq!(compiled.applicability_context_id, Some(vec![0x11; 16]));
+        assert_eq!(
+            compiled.applicability_attestation_digest,
+            Some(vec![0x22; 32])
+        );
+        let data = BASE64_STANDARD
+            .decode(compiled.instruction_data_base64)
+            .expect("instruction data");
+        assert_eq!(
+            &data[..8],
+            &instruction_discriminator("global:settle_with_applicability")
+        );
+        assert_eq!(data.len(), 8 + (8 * 5) + 32 + 16 + 32);
+    }
+
+    #[test]
+    fn compiles_applicability_bound_document_settlement_with_distinct_wire_contract() {
+        let request = ApplicabilityDocumentSettlementCompileRequest {
+            settlement: document_request(),
+            context_id: [0x33; 16],
+            attestation_digest: [0x44; 32],
+        };
+        let compiled = compile_applicability_document_settlement_instruction(&request)
+            .expect("valid applicability-bound document settlement");
+        assert_eq!(compiled.accounts.len(), 14);
+        assert_eq!(
+            Some(compiled.accounts[10].pubkey.clone()),
+            compiled.applicability_binding
+        );
+        let data = BASE64_STANDARD
+            .decode(compiled.instruction_data_base64)
+            .expect("instruction data");
+        assert_eq!(
+            &data[..8],
+            &instruction_discriminator("global:settle_document_with_applicability")
+        );
+        assert_eq!(data.len(), 8 + (8 * 5) + (32 * 3) + 16 + 32);
     }
 
     #[test]

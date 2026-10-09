@@ -6,13 +6,16 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 project_name="${COMPOSE_PROJECT_NAME:-solana-tax-protocol-pool-drill}"
 
+# Keep the lock below the service's 250ms lock-timeout contract while leaving
+# enough time for the bounded Docker readiness probe to observe queueing on
+# developer laptops and shared CI runners.
 output="$(
     COMPOSE_PROJECT_NAME="$project_name" \
     API_DATABASE_POOL_SIZE=1 \
     LOAD_REQUESTS=256 \
     LOAD_CONCURRENCY=64 \
     CONTENTION_REQUESTS=256 \
-    POOL_HOLD_TABLE_LOCK_MILLISECONDS=50 \
+    POOL_HOLD_TABLE_LOCK_MILLISECONDS=200 \
     API_PORT=28082 \
     POSTGRES_PORT=25436 \
     NATS_PORT=25437 \

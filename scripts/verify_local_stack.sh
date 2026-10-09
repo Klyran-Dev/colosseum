@@ -187,6 +187,13 @@ if ! docker compose -p "$project_name" exec -T postgres \
     exit 1
 fi
 
+if ! docker compose -p "$project_name" exec -T postgres \
+    psql -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
+    < db/verification/settlement_route_asset_projection.sql >/dev/null; then
+    echo "settlement-route typed asset projection contract failed" >&2
+    exit 1
+fi
+
 pause_event_table=$(docker compose -p "$project_name" exec -T postgres \
     psql -qAt -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
     -c "SELECT to_regclass('public.protocol_pause_events') IS NOT NULL" | tr -d '[:space:]')
@@ -296,6 +303,7 @@ docker compose -p "$project_name" exec -T postgres \
         (id, merchant_id, route_key, version, status,
          merchant_account, mint, tax_vault, net_destination, token_program,
          mint_decimals,
+         asset_config, asset_kind, asset_enabled, asset_config_bump,
          verification_digest, verification_slot, verification_commitment,
          verification_schema, verification_evidence, verified_at)
        VALUES
@@ -306,9 +314,10 @@ docker compose -p "$project_name" exec -T postgres \
          'Sysvar1nstructions1111111111111111111111111',
          'SysvarRecentB1ockHashes11111111111111111111',
          'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
-         2, decode(repeat('08', 32), 'hex'), 0, 'local_synthetic',
+         2, 'AL5PDSRbT5yyhtjQrTmh11rTShZXS9x6QMo9YCMs499d', 1, true, 254,
+         decode(repeat('08', 32), 'hex'), 0, 'local_synthetic',
          'settlement-route-verification/v2',
-         '{\"source\":\"synthetic-local-fixture\",\"warning\":\"not chain verified\",\"verification_schema\":\"settlement-route-verification/v2\",\"asset_config\":\"AL5PDSRbT5yyhtjQrTmh11rTShZXS9x6QMo9YCMs499d\",\"accounts\":[{}, {}, {}, {}, {}],\"mint_decimals\":2}'::jsonb,
+         '{\"source\":\"synthetic-local-fixture\",\"warning\":\"not chain verified\",\"verification_schema\":\"settlement-route-verification/v2\",\"asset_config\":\"AL5PDSRbT5yyhtjQrTmh11rTShZXS9x6QMo9YCMs499d\",\"asset_kind\":1,\"asset_enabled\":true,\"asset_config_bump\":254,\"accounts\":[{}, {}, {}, {}, {}],\"mint_decimals\":2}'::jsonb,
          now())
        ON CONFLICT (id) DO NOTHING"
 stale_reconciliation_target_id=$(docker compose -p "$project_name" exec -T postgres \
@@ -419,6 +428,17 @@ if [ "$suspended_replay_create_status" -lt 200 ] || [ "$suspended_replay_create_
     exit 1
 fi
 suspended_replay_response=$(sed -n '1p' "$suspended_replay_response_file")
+suspended_replay_claim_id=$(printf '%s' "$suspended_replay_response" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+if [ -z "$suspended_replay_claim_id" ]; then
+    echo "vault release suspended-route replay fixture did not return a claim id" >&2
+    exit 1
+fi
+suspended_replay_event_count_before=$(docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -Atc \
+    "select count(*) from vault_release_claim_events where claim_id = '$suspended_replay_claim_id';")
+suspended_replay_outbox_count_before=$(docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -Atc \
+    "select count(*) from outbox_events where aggregate_type = 'vault_release_claim' and aggregate_id = '$suspended_replay_claim_id';")
 docker compose -p "$project_name" exec -T postgres psql -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol -Atc \
     "update settlement_routes set status = 'suspended' where id = '$release_route_id';" >/dev/null
 suspended_replay_http_status=$(printf '%s' "$suspended_replay_request" | curl --silent --show-error \
@@ -432,6 +452,17 @@ if [ "$suspended_replay_http_status" != "200" ] || \
     ! cmp -s "$suspended_replay_response_file" "$integration_dir/release-suspended-replay-retry-response"; then
     echo "vault release idempotent replay failed while its route was suspended (HTTP $suspended_replay_http_status)" >&2
     sed -n '1,160p' "$integration_dir/release-suspended-replay-retry-response" >&2
+    exit 1
+fi
+suspended_replay_event_count_after=$(docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -Atc \
+    "select count(*) from vault_release_claim_events where claim_id = '$suspended_replay_claim_id';")
+suspended_replay_outbox_count_after=$(docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -Atc \
+    "select count(*) from outbox_events where aggregate_type = 'vault_release_claim' and aggregate_id = '$suspended_replay_claim_id';")
+if [ "$suspended_replay_event_count_before" != "$suspended_replay_event_count_after" ] || \
+    [ "$suspended_replay_outbox_count_before" != "$suspended_replay_outbox_count_after" ]; then
+    echo "vault release suspended-route replay emitted duplicate lifecycle evidence" >&2
     exit 1
 fi
 release_conflict_status=$(printf '%s' "${release_claim_request/250000/250001}" | curl --silent --show-error \
@@ -513,15 +544,112 @@ if docker compose -p "$project_name" exec -T postgres \
 fi
 
 request_fixture="$integration_dir/jurisdiction-request.json"
-printf '%s' '{"facts":{"gross_atomic":"1100","net_atomic":"1000","currency":"USD","jurisdiction":"US-CA"}}' > "$request_fixture"
+printf '%s' '{"facts":{"gross_atomic":"1100","net_atomic":"1000","atomic_decimals":2,"currency":"USD","jurisdiction":"US-CA"}}' > "$request_fixture"
 issuer_image="$project_name-attestation-fixture"
 docker build --file ops/docker/Dockerfile.attestation-fixture --tag "$issuer_image" . >/dev/null
+
+# Exercise the authenticated applicability-context governance boundary against
+# the real PostgreSQL projection. The issuer fixture is intentionally isolated
+# from the API container; the API must verify the signed evidence, derive the
+# tenant from the JWT, and persist the lifecycle through its own ports.
+applicability_attestation=$(docker run --rm --read-only --network none --cap-drop ALL \
+    --security-opt no-new-privileges:true \
+    "$issuer_image" applicability-attestation "$merchant_id" \
+    0707070707070707070707070707070707070707070707070707070707070707)
+applicability_effective_from="$(date +%s)"
+applicability_body="{\"idempotency_key\":\"integration-applicability-01\",\"attestation\":$applicability_attestation,\"effective_from_unix\":$applicability_effective_from,\"effective_until_unix\":null,\"provenance\":{\"schema\":\"tax-applicability-provenance/v1\",\"source_reference\":\"controlled-record://integration/applicability-001\",\"legal_tax_owner\":\"tax-owner:integration\",\"review_reference\":\"review://integration/applicability-001\"}}"
+applicability_authorization="$(make_authorization applicability-author 'tax:applicability:author' '["tax_applicability_author"]')"
+applicability_create_response_file="$integration_dir/applicability-create-response.json"
+applicability_create_status=$(printf '%s' "$applicability_body" | curl --silent --show-error \
+    --output "$applicability_create_response_file" --write-out '%{http_code}' \
+    --header 'content-type: application/json' \
+    --header "authorization: $applicability_authorization" \
+    --data-binary @- "$base_url/v1/tax/applicability-contexts")
+if [ "$applicability_create_status" != "200" ] || \
+    ! grep -q '"status":"draft"' "$applicability_create_response_file"; then
+    echo "applicability context create failed (HTTP $applicability_create_status)" >&2
+    sed -n '1,160p' "$applicability_create_response_file" >&2
+    exit 1
+fi
+applicability_context_id=$(sed -n 's/.*"context_id":"\([^"]*\)".*/\1/p' "$applicability_create_response_file")
+if ! printf '%s' "$applicability_context_id" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$'; then
+    echo "applicability context create did not return a UUIDv7 context id" >&2
+    sed -n '1,160p' "$applicability_create_response_file" >&2
+    exit 1
+fi
+applicability_replay_response=$(printf '%s' "$applicability_body" | curl --fail --silent --show-error \
+    --header 'content-type: application/json' \
+    --header "authorization: $applicability_authorization" \
+    --data-binary @- "$base_url/v1/tax/applicability-contexts")
+if [ "$(sed -n '1p' "$applicability_create_response_file")" != "$applicability_replay_response" ]; then
+    echo "applicability context idempotency replay returned different evidence" >&2
+    exit 1
+fi
+
+applicability_read_response_file="$integration_dir/applicability-read-response.json"
+applicability_read_status=$(curl --silent --show-error \
+    --output "$applicability_read_response_file" --write-out '%{http_code}' \
+    --header "authorization: $(make_authorization applicability-reader 'tax:applicability:read' '[]')" \
+    "$base_url/v1/tax/applicability-contexts/$applicability_context_id")
+if [ "$applicability_read_status" != "200" ] || \
+    ! grep -q "\"context_id\":\"$applicability_context_id\"" "$applicability_read_response_file" || \
+    ! grep -q '"policy_id":"policy-us-ca-digital"' "$applicability_read_response_file"; then
+    echo "applicability context tenant-scoped read failed (HTTP $applicability_read_status)" >&2
+    sed -n '1,160p' "$applicability_read_response_file" >&2
+    exit 1
+fi
+applicability_cross_tenant_read_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --header "authorization: $(make_authorization applicability-cross-tenant-reader 'tax:applicability:read' '[]' "$other_merchant_id")" \
+    "$base_url/v1/tax/applicability-contexts/$applicability_context_id")
+if [ "$applicability_cross_tenant_read_status" != "404" ]; then
+    echo "expected cross-tenant applicability context read to return HTTP 404, received $applicability_cross_tenant_read_status" >&2
+    exit 1
+fi
+
+applicability_transition() {
+    transition_status="$1"
+    transition_authorization="$2"
+    transition_response_file="$integration_dir/applicability-transition-$transition_status.json"
+    transition_http_status=$(printf '%s' "{\"to_status\":\"$transition_status\",\"evidence\":{\"source\":\"integration-applicability\",\"ticket\":\"APP-001\"}}" | \
+        curl --silent --show-error --output "$transition_response_file" --write-out '%{http_code}' \
+        --header 'content-type: application/json' \
+        --header "authorization: $transition_authorization" \
+        --data-binary @- "$base_url/v1/tax/applicability-contexts/$applicability_context_id/transition")
+    if [ "$transition_http_status" != "200" ] || \
+        ! grep -q "\"status\":\"$transition_status\"" "$transition_response_file"; then
+        echo "applicability context transition to $transition_status failed (HTTP $transition_http_status)" >&2
+        sed -n '1,160p' "$transition_response_file" >&2
+        exit 1
+    fi
+}
+
+applicability_transition review "$applicability_authorization"
+applicability_transition approved "$(make_authorization applicability-reviewer 'tax:applicability:review' '["tax_applicability_reviewer"]')"
+applicability_transition published "$(make_authorization applicability-approver 'tax:applicability:publish' '["tax_applicability_approver"]')"
+applicability_event_count=$(docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -Atc \
+    "select count(*) from tax_applicability_context_events where context_id = '$applicability_context_id';")
+applicability_outbox_count=$(docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -Atc \
+    "select count(*) from outbox_events where aggregate_type = 'tax_applicability_context' and aggregate_id = '$applicability_context_id';")
+if [ "$applicability_event_count" != "4" ] || [ "$applicability_outbox_count" != "4" ]; then
+    echo "applicability context lifecycle did not persist four events and four outbox records" >&2
+    exit 1
+fi
+if docker compose -p "$project_name" exec -T postgres \
+    psql -U tax_protocol -d tax_protocol -v ON_ERROR_STOP=1 -Atc \
+    "update tax_applicability_contexts set provenance = '{}'::jsonb where id = '$applicability_context_id';" \
+    >/dev/null 2>&1; then
+    echo "published applicability context unexpectedly allowed provenance mutation" >&2
+    exit 1
+fi
+
 jurisdiction_evidence=$(docker run --rm --read-only --network none --cap-drop ALL \
     --security-opt no-new-privileges:true \
     --volume "$request_fixture:/fixtures/request.json:ro" \
     "$issuer_image" jurisdiction-evidence /fixtures/request.json "$merchant_id" \
     0909090909090909090909090909090909090909090909090909090909090909)
-request="{\"idempotency_key\":\"integration-01J8Q4J0M9M2G7YB8F5N3D6K5T\",\"rule_set_id\":\"operator-simulator-flat-rate\",\"rule_version\":1,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"facts\":{\"gross_atomic\":\"1100\",\"net_atomic\":\"1000\",\"currency\":\"USD\",\"jurisdiction\":\"US-CA\"},\"jurisdiction_evidence\":[$jurisdiction_evidence]}"
+request="{\"idempotency_key\":\"integration-01J8Q4J0M9M2G7YB8F5N3D6K5T\",\"rule_set_id\":\"operator-simulator-flat-rate\",\"rule_version\":1,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"facts\":{\"gross_atomic\":\"1100\",\"net_atomic\":\"1000\",\"atomic_decimals\":2,\"currency\":\"USD\",\"jurisdiction\":\"US-CA\"},\"jurisdiction_evidence\":[$jurisdiction_evidence]}"
 first_response=$(printf '%s' "$request" | curl --fail --silent --show-error \
     --header 'content-type: application/json' \
     --header "authorization: $authorization" \
@@ -548,7 +676,7 @@ other_jurisdiction_evidence=$(docker run --rm --read-only --network none --cap-d
     --volume "$request_fixture:/fixtures/request.json:ro" \
     "$issuer_image" jurisdiction-evidence /fixtures/request.json "$other_merchant_id" \
     0909090909090909090909090909090909090909090909090909090909090909)
-cross_tenant_request="{\"idempotency_key\":\"integration-cross-tenant-01J8Q4J0M9M2G7YB8F5N3D6K5U\",\"rule_set_id\":\"operator-simulator-flat-rate\",\"rule_version\":1,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"facts\":{\"gross_atomic\":\"1100\",\"net_atomic\":\"1000\",\"currency\":\"USD\",\"jurisdiction\":\"US-CA\"},\"jurisdiction_evidence\":[$other_jurisdiction_evidence]}"
+cross_tenant_request="{\"idempotency_key\":\"integration-cross-tenant-01J8Q4J0M9M2G7YB8F5N3D6K5U\",\"rule_set_id\":\"operator-simulator-flat-rate\",\"rule_version\":1,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"facts\":{\"gross_atomic\":\"1100\",\"net_atomic\":\"1000\",\"atomic_decimals\":2,\"currency\":\"USD\",\"jurisdiction\":\"US-CA\"},\"jurisdiction_evidence\":[$other_jurisdiction_evidence]}"
 cross_tenant_quote_status=$(printf '%s' "$cross_tenant_request" | \
     curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
     --header 'content-type: application/json' \
@@ -615,6 +743,47 @@ denied_replay_audit_count=$(docker compose -p "$project_name" exec -T postgres \
     "select count(*) from evidence_access_audit_events where merchant_id = '$other_merchant_id' and calculation_id = '$calculation_id' and purpose = 'tax_quote_replay' and outcome = 'denied';")
 if [ "$denied_replay_audit_count" != "1" ]; then
     echo "expected one denied cross-tenant evidence access audit event, found $denied_replay_audit_count" >&2
+    exit 1
+fi
+
+# Exercise the bounded tenant-scoped evidence-access explorer against the real
+# PostgreSQL ledger. The projection must expose the current tenant's audit
+# metadata without returning raw facts, and a different tenant must receive
+# only that tenant's own access activity rather than another tenant's rows.
+audit_read_authorization="$(make_authorization evidence-auditor 'audit:read' '[]')"
+evidence_access_response_file="$integration_dir/evidence-access-response.json"
+evidence_access_status=$(curl --silent --show-error \
+    --output "$evidence_access_response_file" --write-out '%{http_code}' \
+    --header "authorization: $audit_read_authorization" \
+    "$base_url/v1/audit/evidence-access?calculation_id=$calculation_id&limit=10")
+if [ "$evidence_access_status" != "200" ] || \
+    ! grep -q "\"calculation_id\":\"$calculation_id\"" "$evidence_access_response_file" || \
+    ! grep -q '"purpose":"tax_quote_replay"' "$evidence_access_response_file" || \
+    grep -q '"result_document"\|"facts_document"\|"request_body"' "$evidence_access_response_file"; then
+    echo "tenant-scoped evidence-access projection failed (HTTP $evidence_access_status)" >&2
+    sed -n '1,160p' "$evidence_access_response_file" >&2
+    exit 1
+fi
+cross_tenant_evidence_access_response_file="$integration_dir/cross-tenant-evidence-access-response.json"
+cross_tenant_evidence_access_status=$(curl --silent --show-error \
+    --output "$cross_tenant_evidence_access_response_file" --write-out '%{http_code}' \
+    --header "authorization: $(make_authorization cross-tenant-audit 'audit:read' '[]' "$other_merchant_id")" \
+    "$base_url/v1/audit/evidence-access?calculation_id=$calculation_id&limit=10")
+if [ "$cross_tenant_evidence_access_status" != "200" ] || \
+    ! grep -q '"actor_subject":"cross-tenant-replay"' "$cross_tenant_evidence_access_response_file" || \
+    ! grep -q '"outcome":"denied"' "$cross_tenant_evidence_access_response_file" || \
+    grep -q '"actor_subject":"integration-user"' "$cross_tenant_evidence_access_response_file" || \
+    grep -q '"result_document"\|"facts_document"\|"request_body"' "$cross_tenant_evidence_access_response_file"; then
+    echo "cross-tenant evidence-access projection was not isolated (HTTP $cross_tenant_evidence_access_status)" >&2
+    sed -n '1,160p' "$cross_tenant_evidence_access_response_file" >&2
+    exit 1
+fi
+evidence_access_invalid_limit_status=$(curl --silent --show-error \
+    --output "$integration_dir/evidence-access-invalid-limit-response.json" --write-out '%{http_code}' \
+    --header "authorization: $audit_read_authorization" \
+    "$base_url/v1/audit/evidence-access?limit=101")
+if [ "$evidence_access_invalid_limit_status" != "400" ]; then
+    echo "expected evidence-access limit validation HTTP 400, received $evidence_access_invalid_limit_status" >&2
     exit 1
 fi
 
@@ -801,7 +970,7 @@ fi
 # Exercise the authoritative document quote boundary through both API
 # replicas. Document calculations use their own rule/evidence/attestation
 # tables and must converge on one durable UUIDv7 calculation under replay.
-document_facts='{"id":"invoice-integration-1","currency":"USD","jurisdiction":"US-CA","lines":[{"id":"line-a","gross_atomic":"1000","net_atomic":"1000","exemption_codes":[]},{"id":"line-b","gross_atomic":"500","net_atomic":"500","exemption_codes":[]}]}'
+document_facts='{"id":"invoice-integration-1","atomic_decimals":2,"currency":"USD","jurisdiction":"US-CA","lines":[{"id":"line-a","gross_atomic":"1000","net_atomic":"1000","exemption_codes":[]},{"id":"line-b","gross_atomic":"500","net_atomic":"500","exemption_codes":[]}]}'
 document_request_fixture="$integration_dir/document-jurisdiction-request.json"
 printf '%s' "{\"facts\":$document_facts}" > "$document_request_fixture"
 document_jurisdiction_evidence=$(docker run --rm --read-only --network none --cap-drop ALL \
@@ -857,7 +1026,7 @@ if [ "$denied_document_replay_audit_count" != "1" ]; then
     exit 1
 fi
 
-document_conflict_facts='{"id":"invoice-integration-conflict","currency":"USD","jurisdiction":"US-CA","lines":[{"id":"line-a","gross_atomic":"1001","net_atomic":"1001","exemption_codes":[]},{"id":"line-b","gross_atomic":"500","net_atomic":"500","exemption_codes":[]}]}'
+document_conflict_facts='{"id":"invoice-integration-conflict","atomic_decimals":2,"currency":"USD","jurisdiction":"US-CA","lines":[{"id":"line-a","gross_atomic":"1001","net_atomic":"1001","exemption_codes":[]},{"id":"line-b","gross_atomic":"500","net_atomic":"500","exemption_codes":[]}]}'
 document_conflict_request_fixture="$integration_dir/document-jurisdiction-conflict-request.json"
 printf '%s' "{\"facts\":$document_conflict_facts}" > "$document_conflict_request_fixture"
 document_conflict_jurisdiction_evidence=$(docker run --rm --read-only --network none --cap-drop ALL \
@@ -911,6 +1080,30 @@ cross_tenant_document_attestation_status=$(printf '%s' "$document_attestation_re
     --data-binary @- "$base_url/v1/tax/document-quotes/$document_calculation_id/attestation/verify")
 if [ "$cross_tenant_document_attestation_status" != "404" ]; then
     echo "expected cross-tenant document attestation ingestion to return HTTP 404, received $cross_tenant_document_attestation_status" >&2
+    exit 1
+fi
+
+document_attestation_status_file="$integration_dir/document-attestation-status.json"
+document_attestation_status_http_status=$(curl --silent --show-error \
+    --output "$document_attestation_status_file" --write-out '%{http_code}' \
+    --get --header "authorization: $authorization" \
+    --data-urlencode "route_id=$route_id" \
+    "$base_url/v1/tax/document-quotes/$document_calculation_id/attestation/status")
+document_attestation_status_response=$(sed -n '1p' "$document_attestation_status_file")
+if [ "$document_attestation_status_http_status" != "200" ] || \
+    ! printf '%s' "$document_attestation_status_response" | grep -q '"status":"verified"' || \
+    ! printf '%s' "$document_attestation_status_response" | grep -q '"checked_at_unix"'; then
+    echo "server-owned document attestation status lookup failed (HTTP $document_attestation_status_http_status)" >&2
+    sed -n '1,160p' "$document_attestation_status_file" >&2
+    exit 1
+fi
+cross_tenant_document_attestation_status_read=$(curl --silent --show-error \
+    --output /dev/null --write-out '%{http_code}' \
+    --get --header "authorization: $(make_authorization cross-tenant-document-status 'tax:settlement:compile' '[]' "$other_merchant_id")" \
+    --data-urlencode "route_id=$route_id" \
+    "$base_url/v1/tax/document-quotes/$document_calculation_id/attestation/status")
+if [ "$cross_tenant_document_attestation_status_read" != "404" ]; then
+    echo "expected cross-tenant document attestation status lookup to return HTTP 404, received $cross_tenant_document_attestation_status_read" >&2
     exit 1
 fi
 
@@ -1289,13 +1482,13 @@ if [ "$rate_limited_count" -lt 1 ]; then
 fi
 
 conflict_request_fixture="$integration_dir/conflict-jurisdiction-request.json"
-printf '%s' '{"facts":{"gross_atomic":"1200","net_atomic":"1000","currency":"USD","jurisdiction":"US-CA"}}' > "$conflict_request_fixture"
+printf '%s' '{"facts":{"gross_atomic":"1200","net_atomic":"1000","atomic_decimals":2,"currency":"USD","jurisdiction":"US-CA"}}' > "$conflict_request_fixture"
 conflict_jurisdiction_evidence=$(docker run --rm --read-only --network none --cap-drop ALL \
     --security-opt no-new-privileges:true \
     --volume "$conflict_request_fixture:/fixtures/request.json:ro" \
     "$issuer_image" jurisdiction-evidence /fixtures/request.json "$merchant_id" \
     0909090909090909090909090909090909090909090909090909090909090909)
-conflict_request="{\"idempotency_key\":\"integration-01J8Q4J0M9M2G7YB8F5N3D6K5T\",\"rule_set_id\":\"operator-simulator-flat-rate\",\"rule_version\":1,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"facts\":{\"gross_atomic\":\"1200\",\"net_atomic\":\"1000\",\"currency\":\"USD\",\"jurisdiction\":\"US-CA\"},\"jurisdiction_evidence\":[$conflict_jurisdiction_evidence]}"
+conflict_request="{\"idempotency_key\":\"integration-01J8Q4J0M9M2G7YB8F5N3D6K5T\",\"rule_set_id\":\"operator-simulator-flat-rate\",\"rule_version\":1,\"jurisdiction\":\"US-CA\",\"regime\":\"sales-tax\",\"facts\":{\"gross_atomic\":\"1200\",\"net_atomic\":\"1000\",\"atomic_decimals\":2,\"currency\":\"USD\",\"jurisdiction\":\"US-CA\"},\"jurisdiction_evidence\":[$conflict_jurisdiction_evidence]}"
 conflict_status=$(printf '%s' "$conflict_request" | curl --silent --show-error \
     --output /dev/null --write-out '%{http_code}' \
     --header 'content-type: application/json' \
@@ -1406,6 +1599,49 @@ route_evidence_count=$(docker compose -p "$project_name" exec -T postgres \
     "select count(*) from settlement_routes where merchant_id = '$merchant_id' and status = 'active' and verification_commitment = 'local_synthetic' and verification_evidence is not null;")
 if [ "$route_evidence_count" != "1" ]; then
     echo "expected one explicitly synthetic local route evidence record, found $route_evidence_count" >&2
+    exit 1
+fi
+
+# Exercise the operator-only route-verification evidence read against the real
+# PostgreSQL projection. This is synthetic local evidence: it proves the
+# authenticated API/storage contract and parser invariants, not finalized
+# Solana account state or route activation authority.
+route_verification_operator_authorization="$(make_authorization integration-route-verification 'tax:indexer:read' '["indexer_operator"]')"
+route_verification_run_id=$(docker compose -p "$project_name" exec -T postgres \
+    psql -qAt -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
+    -c "INSERT INTO settlement_route_verification_runs
+        (run_kind, status, batch_size, examined_count, activated_count,
+         already_active_count, failed_count, failure_code, started_at,
+         completed_at)
+       VALUES
+        ('scheduled', 'completed_with_failures', 2, 2, 1, 0, 1,
+         'route_attempts_failed', now() - interval '2 seconds', now())
+       RETURNING id;" | tr -d '[:space:]')
+if [ -z "$route_verification_run_id" ]; then
+    echo "expected a seeded route-verification run evidence row" >&2
+    exit 1
+fi
+route_verification_evidence_response_file="$integration_dir/route-verification-evidence-response.json"
+route_verification_evidence_status=$(curl --silent --show-error \
+    --output "$route_verification_evidence_response_file" --write-out '%{http_code}' \
+    --header "authorization: $route_verification_operator_authorization" \
+    "$base_url/v1/indexer/route-verification-runs?limit=10")
+if [ "$route_verification_evidence_status" != "200" ] || \
+    ! grep -q "\"id\":\"$route_verification_run_id\"" "$route_verification_evidence_response_file" || \
+    ! grep -q '"status":"completed_with_failures"' "$route_verification_evidence_response_file" || \
+    ! grep -q '"examined_count":2' "$route_verification_evidence_response_file" || \
+    ! grep -q '"failure_code":"route_attempts_failed"' "$route_verification_evidence_response_file"; then
+    echo "route-verification operator evidence read model failed (HTTP $route_verification_evidence_status)" >&2
+    sed -n '1,160p' "$route_verification_evidence_response_file" >&2
+    exit 1
+fi
+
+route_verification_invalid_limit_status=$(curl --silent --show-error \
+    --output "$integration_dir/route-verification-invalid-limit-response.json" --write-out '%{http_code}' \
+    --header "authorization: $route_verification_operator_authorization" \
+    "$base_url/v1/indexer/route-verification-runs?limit=51")
+if [ "$route_verification_invalid_limit_status" != "400" ]; then
+    echo "expected route-verification evidence limit validation HTTP 400, received $route_verification_invalid_limit_status" >&2
     exit 1
 fi
 
@@ -1605,7 +1841,7 @@ if [ -z "$governed_rule_id" ]; then
 fi
 
 simulation_authorization="$(make_authorization integration-author 'tax:rule:read' '["tax_rule_author"]')"
-simulation_request='{"facts":{"gross_atomic":"1100","net_atomic":"1000","currency":"USD","jurisdiction":"US-CA"}}'
+simulation_request='{"facts":{"gross_atomic":"1100","net_atomic":"1000","atomic_decimals":2,"currency":"USD","jurisdiction":"US-CA"}}'
 simulation_response_file="$integration_dir/rule-simulation-response"
 simulation_status=$(printf '%s' "$simulation_request" | curl --silent --show-error \
     --output "$simulation_response_file" --write-out '%{http_code}' \
@@ -1621,7 +1857,7 @@ if [ "$simulation_status" != "200" ] \
 fi
 
 simulation_jurisdiction_status=$(printf '%s' \
-    '{"facts":{"gross_atomic":"1100","net_atomic":"1000","currency":"USD","jurisdiction":"GB"}}' | \
+    '{"facts":{"gross_atomic":"1100","net_atomic":"1000","atomic_decimals":2,"currency":"USD","jurisdiction":"GB"}}' | \
     curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
     --header 'content-type: application/json' \
     --header "authorization: $simulation_authorization" \
@@ -1632,7 +1868,7 @@ if [ "$simulation_jurisdiction_status" != "422" ]; then
 fi
 
 simulation_unknown_field_status=$(printf '%s' \
-    '{"facts":{"gross_atomic":"1100","net_atomic":"1000","currency":"USD","jurisdiction":"US-CA","unsupported":"must-reject"}}' | \
+    '{"facts":{"gross_atomic":"1100","net_atomic":"1000","atomic_decimals":2,"currency":"USD","jurisdiction":"US-CA","unsupported":"must-reject"}}' | \
     curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
     --header 'content-type: application/json' \
     --header "authorization: $simulation_authorization" \

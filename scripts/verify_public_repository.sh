@@ -94,6 +94,7 @@ for file in \
   docs/adr/0273-explicit-financial-inputs.md \
   docs/adr/0274-explicit-currency-input.md \
   docs/adr/0275-capability-snapshot-latency-evidence.md \
+  docs/adr/0401-complete-authorization-benchmark-catalog.md \
   docs/adr/0276-multi-tenant-capability-session-reset.md \
   docs/adr/0277-complete-workspace-capability-catalog.md \
   docs/adr/0278-addressable-workspace-navigation.md \
@@ -112,6 +113,24 @@ for file in \
   docs/adr/0314-non-custodial-wallet-source-contract.md \
   docs/adr/0315-executable-tax-responsibility-language.md \
   docs/adr/0316-versioned-rule-release-provenance.md \
+  docs/adr/0353-material-3-expressive-aurora-v2-shell.md \
+  docs/adr/0354-versioned-rule-governance-authoring-localization.md \
+  docs/adr/0355-versioned-revenue-streaming-localization.md \
+  docs/adr/0359-explicit-fee-payer-binding.md \
+  docs/adr/0360-versioned-document-simulation-localization.md \
+  docs/adr/0373-tenant-scoped-evidence-access-explorer.md \
+  docs/adr/0374-collapsible-material-navigation-rail.md \
+  docs/adr/0375-bounded-linear-tax-base-operations.md \
+  docs/adr/0378-non-custodial-solidity-receipt-mirror.md \
+  docs/adr/0379-bounded-tax-base-clamps.md \
+  docs/adr/0380-policy-issuer-and-asset-dependency-evidence.md \
+  docs/architecture/evm-adapter.md \
+  evm-adapter/foundry.toml \
+  evm-adapter/src/SolanaSettlementReceiptMirror.sol \
+  evm-adapter/test/SolanaSettlementReceiptMirror.t.sol \
+  ops/docker/Dockerfile.evm-adapter \
+  scripts/verify_evm_adapter_contract.sh \
+  test-vectors/tax-engine-v2.json \
   docs/adr/0323-material-expressive-operational-workspace-composition.md \
   docs/adr/0248-registry-bound-fx-issuance.md \
   docs/adr/0234-api-jwks-atomic-reload.md \
@@ -156,9 +175,15 @@ for file in \
   docs/operations/dependency-register.md \
   docs/runbooks/incident-severity-and-error-budget.md \
   docs/runbooks/tax-engine-mtls-rotation.md \
+  docs/runbooks/settlement-route-verification.md \
+  docs/adr/0329-approved-route-verification-backfill-mode.md \
+  docs/adr/0330-server-owned-document-evidence-status.md \
+  docs/adr/0331-canonical-authorization-policy-catalog.md \
+  contracts/authorization-capabilities-v1.json \
   docs/adr/0129-release-artifact-provenance-and-dependency-automation.md \
   .github/dependabot.yml \
   .github/workflows/release-candidate.yml \
+  .github/workflows/solana-conformance.yml \
   scripts/create_release_bundle.sh \
   ops/docker/Dockerfile.solana-conformance \
   scripts/generate_release_sbom.sh \
@@ -167,12 +192,17 @@ for file in \
   scripts/refund_proof_integration_drill.sh \
   scripts/benchmark_rule_simulation.sh \
   scripts/benchmark_authorization_capabilities.sh \
+  scripts/verify_authorization_benchmark_contract.sh \
   scripts/benchmark_tax_engine_service.sh \
   scripts/verify_tax_engine_mtls_runtime_contract.sh \
   scripts/verify_api_auth_jwks_reload_contract.sh \
   scripts/verify_api_jurisdiction_provider_reload_contract.sh \
   scripts/migration_integrity_drill.sh \
   db/verification/settlement_route_mint_precision.sql \
+  db/verification/settlement_route_asset_projection.sql \
+  db/verification/settlement_route_verification_runs.sql \
+  db/verification/settlement_route_verification_approval.sql \
+  scripts/verify_route_verifier_backfill_contract.sh \
   scripts/verify_deployment_config.sh \
   scripts/verify_deployment_config_contract.sh \
   scripts/verify_service_lifecycle_contract.sh \
@@ -180,6 +210,7 @@ for file in \
   scripts/verify_api_metric_registry_contract.sh \
   scripts/verify_rust_panic_safety_contract.sh \
   scripts/verify_container_pinning_contract.sh \
+  scripts/verify_solana_conformance_host.sh \
   scripts/verify_refund_claim_cancellation_reconciliation_contract.sh \
   scripts/refund_cancellation_reconciliation_drill.sh \
   apps/web/scripts/refund_cancellation_fixture.mjs \
@@ -194,7 +225,9 @@ for file in \
   scripts/verify_web_csp_contract.sh \
   scripts/verify_ui_language_contract.sh \
   scripts/verify_non_custodial_wallet_contract.sh \
-  scripts/verify_rule_release_provenance_contract.sh
+  scripts/verify_rule_release_provenance_contract.sh \
+  scripts/verify_release_claim_contract.sh \
+  scripts/release_claim_contract_test.sh
 do
   require_file "$file"
 done
@@ -237,12 +270,15 @@ require_text docs/README.md 'operations/slo-error-budget-policy.md'
 require_text docs/README.md 'operations/dependency-register.md'
 require_text docs/runbooks/README.md 'incident-severity-and-error-budget.md'
 require_text docs/runbooks/README.md 'tax-engine-mtls-rotation.md'
+require_text docs/runbooks/README.md 'settlement-route-verification.md'
 require_text docs/plans/production-readiness.md 'SLOs, error budgets, RTO/RPO, support ownership, and incident severity policy are published under ADR-0135'
 require_text Makefile 'public-docs-check'
+require_text Makefile 'release-claim-contract'
 require_text Makefile 'rust-panic-safety-contract'
 require_text Makefile 'container-pinning-contract'
 require_text Makefile 'api-metric-registry-contract'
 require_text Makefile 'solana-conformance-workflow-contract'
+require_text scripts/verify_solana_conformance_workflow_contract.sh 'verify_solana_conformance_host.sh'
 require_text Makefile 'program-pause-coverage-contract'
 require_text Makefile 'refund-cancellation-reconciliation-drill'
 require_text README.md 'refund-cancellation-reconciliation-drill'
@@ -285,6 +321,8 @@ require_text docs/adr/0318-workflow-handoff-url-integrity.md 'wallet material, t
 require_text docs/adr/README.md '0319-bounded-browser-error-disclosure.md'
 require_text docs/adr/0319-bounded-browser-error-disclosure.md '512 characters'
 require_text docs/adr/0319-bounded-browser-error-disclosure.md 'strict UUIDv7 support-reference check'
+require_text docs/adr/README.md '0329-approved-route-verification-backfill-mode.md'
+require_text docs/adr/0329-approved-route-verification-backfill-mode.md 'ROUTE_VERIFIER_MODE=backfill'
 require_text docs/adr/README.md '0320-on-chain-stablecoin-asset-admission.md'
 require_text docs/adr/0320-on-chain-stablecoin-asset-admission.md 'AssetConfig'
 require_text docs/adr/0320-on-chain-stablecoin-asset-admission.md 'No v1 token movement succeeds without an enabled stablecoin'
@@ -293,6 +331,7 @@ require_text apps/web/src/solana.localnet.test.ts 'initializeAssetConfigInstruct
 require_text apps/web/src/solana.localnet.test.ts 'setAssetEnabledInstruction'
 require_text apps/web/src/solana.localnet.test.ts 'TransferFeeConfig'
 require_text scripts/verify_local_stack.sh 'cross-tenant aggregate settlement compilation'
+require_text scripts/verify_local_stack.sh 'server-owned document attestation status lookup'
 require_text scripts/verify_solana_conformance_evidence.sh 'rejects disabled or substituted asset admission'
 require_text docs/adr/README.md '0321-finalized-asset-config-route-evidence.md'
 require_text docs/adr/0321-finalized-asset-config-route-evidence.md 'five accounts'
@@ -302,18 +341,48 @@ require_text docs/adr/0322-route-evidence-version-migration.md 'suspended'
 require_text docs/plans/implementation-plan.md 'thirteenth aggregate/document'
 require_text docs/plans/implementation-plan.md 'ADR-0321'
 require_text docs/plans/implementation-plan.md 'ADR-0322'
-require_text docs/operations/requirements-traceability.md 'On-chain/client/browser boundary and finalized asset-account proof are verified'
+require_text docs/plans/implementation-plan.md 'ADR-0329'
+require_text docs/adr/README.md '0330-server-owned-document-evidence-status.md'
+require_text docs/adr/0330-server-owned-document-evidence-status.md 'route-bound status read'
+require_text docs/api-contract.md '/v1/tax/document-quotes/{calculation_id}/attestation/status'
+require_text docs/plans/implementation-plan.md 'ADR-0330'
+require_text docs/plans/implementation-plan.md 'ADR-0331'
+require_text docs/adr/README.md '0331-canonical-authorization-policy-catalog.md'
+require_text docs/adr/0331-canonical-authorization-policy-catalog.md 'authorization-capabilities-v1.json'
+require_text docs/api-contract.md 'contracts/authorization-capabilities-v1.json'
+require_text ops/docker/Dockerfile.api 'COPY contracts ./contracts'
+require_text ops/docker/Dockerfile.web 'COPY contracts ./contracts'
+require_text ops/docker/Dockerfile.web-e2e 'COPY --chown=pwuser:pwuser contracts ./contracts'
+require_text docs/operations/requirements-traceability.md 'On-chain/client/browser boundary and typed finalized asset-account proof are verified'
 require_text Makefile 'rule-release-provenance-contract'
 require_text scripts/verify_rule_release_provenance_contract.sh 'rule release provenance contract passed'
 require_text Makefile 'web-color-contract'
 require_text Makefile 'material-palette-contract'
 require_text Makefile 'tier1-local-check-contract'
+require_text Makefile 'evm-adapter-check'
+require_text scripts/verify_evm_adapter_contract.sh 'EVM adapter contract passed'
+require_text ops/docker/Dockerfile.evm-adapter 'ghcr.io/foundry-rs/foundry:v1.8.1@sha256:'
+require_text docs/adr/README.md '0378-non-custodial-solidity-receipt-mirror.md'
+require_text docs/adr/README.md '0379-bounded-tax-base-clamps.md'
+require_text docs/adr/README.md '0380-policy-issuer-and-asset-dependency-evidence.md'
+require_text docs/adr/0379-bounded-tax-base-clamps.md 'bounded optional clamps'
+require_text docs/adr/0380-policy-issuer-and-asset-dependency-evidence.md 'typed authorities'
+require_text docs/adr/0380-policy-issuer-and-asset-dependency-evidence.md 'unknown'
+require_text docs/adr/0380-policy-issuer-and-asset-dependency-evidence.md 'redemption, legal, or tax-compliance approval'
+require_text docs/product/tax-coverage-matrix.md 'Bounded taxable bases'
+require_text test-vectors/tax-engine-v2.json 'capped-adjusted-base'
+require_text apps/web/src/ruleWorkbench.ts 'baseFloorAtomic'
+require_text apps/web/src/RuleWorkbenchPanel.tsx 'baseMinimum'
+require_text docs/architecture/evm-adapter.md 'non-custodial projection'
 require_file scripts/verify_web_color_contract.sh
 require_text docs/adr/0271-executable-ui-language-contract.md 'progressive disclosure'
 require_text docs/adr/0272-payment-review-progressive-disclosure.md 'Technical payment details'
 require_text docs/adr/0273-explicit-financial-inputs.md 'Start financial fields empty'
 require_text docs/adr/0274-explicit-currency-input.md 'required `Currency` field'
 require_text docs/adr/0275-capability-snapshot-latency-evidence.md 'two API replicas'
+require_text docs/adr/0401-complete-authorization-benchmark-catalog.md 'nineteen-capability catalog'
+require_text docs/adr/0401-complete-authorization-benchmark-catalog.md 'authorization-benchmark-contract'
+require_text Makefile 'authorization-benchmark-contract'
 require_text docs/adr/0276-multi-tenant-capability-session-reset.md 'tenant A'
 require_text docs/adr/0277-complete-workspace-capability-catalog.md 'refund.payment.release'
 require_text docs/adr/0278-addressable-workspace-navigation.md 'history.pushState'
@@ -352,8 +421,118 @@ require_text docs/plans/implementation-plan.md 'ADR-0317'
 require_text docs/plans/implementation-plan.md 'ADR-0318'
 require_text docs/plans/implementation-plan.md 'ADR-0319'
 require_text docs/plans/implementation-plan.md 'ADR-0320'
+require_text docs/plans/implementation-plan.md 'ADR-0338'
+require_text docs/operations/requirements-traceability.md 'make forced-colors-contract'
+require_text docs/adr/README.md '0338-forced-colors-accessibility-layer.md'
+require_text docs/adr/0338-forced-colors-accessibility-layer.md 'forced-color-adjust: auto'
+require_text docs/adr/README.md '0339-polite-workspace-navigation-announcement.md'
+require_text docs/plans/implementation-plan.md 'ADR-0339'
+require_text docs/adr/0339-polite-workspace-navigation-announcement.md 'role="status"'
+require_text docs/adr/README.md '0340-versioned-shell-navigation-localization.md'
+require_text docs/plans/implementation-plan.md 'ADR-0340'
+require_text docs/adr/0340-versioned-shell-navigation-localization.md 'typed, immutable, versioned shell message catalog'
+require_text CHANGELOG.md 'typed, bounded shell localization catalog'
+require_text docs/adr/README.md '0341-versioned-shell-chrome-and-session-localization.md'
+require_text docs/plans/implementation-plan.md 'ADR-0341'
+require_text docs/adr/0341-versioned-shell-chrome-and-session-localization.md 'typed, immutable, versioned catalog'
+require_text CHANGELOG.md 'shell chrome and session localization'
+require_text docs/adr/README.md '0342-versioned-quote-workspace-localization.md'
+require_text docs/plans/implementation-plan.md 'ADR-0342'
+require_text docs/adr/0342-versioned-quote-workspace-localization.md 'typed, immutable, versioned quote workspace catalog'
+require_text CHANGELOG.md 'typed quote-workspace catalog'
+require_text docs/adr/README.md '0343-versioned-document-quote-localization.md'
+require_text docs/plans/implementation-plan.md 'ADR-0343'
+require_text docs/adr/0343-versioned-document-quote-localization.md 'typed, immutable, versioned document-quote catalog'
+require_text docs/adr/README.md '0344-versioned-document-checkout-localization.md'
+require_text docs/plans/implementation-plan.md 'ADR-0344'
+require_text docs/adr/0344-versioned-document-checkout-localization.md 'typed, immutable, versioned document-checkout catalog'
+require_text docs/adr/README.md '0345-versioned-checkout-localization.md'
+require_text docs/plans/implementation-plan.md 'ADR-0345'
+require_text docs/adr/0345-versioned-checkout-localization.md 'typed immutable catalog'
+require_text docs/adr/README.md '0346-versioned-vault-release-localization.md'
+require_text docs/plans/implementation-plan.md 'ADR-0346'
+require_text docs/adr/0346-versioned-vault-release-localization.md 'typed, immutable in-bundle catalog'
+require_text CHANGELOG.md 'Treasury and vault-release localization'
+require_text docs/adr/README.md '0347-versioned-refund-claim-localization.md'
+require_text docs/plans/implementation-plan.md 'ADR-0347'
+require_text docs/adr/0347-versioned-refund-claim-localization.md 'typed immutable in-bundle catalog'
+require_text CHANGELOG.md 'refund-claim localization at the wallet boundary'
+require_text docs/adr/README.md '0348-versioned-refund-execution-localization.md'
+require_text docs/plans/implementation-plan.md 'ADR-0348'
+require_text docs/adr/0348-versioned-refund-execution-localization.md 'typed immutable in-bundle catalog'
+require_text CHANGELOG.md 'refund-execution localization at the final release'
+require_text docs/adr/README.md '0349-versioned-refund-cancellation-localization.md'
+require_text docs/plans/implementation-plan.md 'ADR-0349'
+require_text docs/adr/0349-versioned-refund-cancellation-localization.md 'typed, immutable in-bundle catalog'
+require_text CHANGELOG.md 'refund-cancellation localization at the governance'
+require_text docs/adr/README.md '0350-versioned-settlement-adjustment-localization.md'
+require_text docs/plans/implementation-plan.md 'ADR-0350'
+require_text docs/adr/0350-versioned-settlement-adjustment-localization.md 'typed immutable catalog'
+require_text CHANGELOG.md 'settlement-adjustment localization'
+require_text docs/adr/README.md '0351-versioned-replay-operations-localization.md'
+require_text docs/plans/implementation-plan.md 'ADR-0351'
+require_text docs/adr/0351-versioned-replay-operations-localization.md 'typed immutable catalog'
+require_text CHANGELOG.md 'replay-operations localization'
+require_text docs/adr/README.md '0352-versioned-vault-reconciliation-localization.md'
+require_text docs/plans/implementation-plan.md 'ADR-0352'
+require_text docs/adr/0352-versioned-vault-reconciliation-localization.md 'typed immutable catalog'
+require_text docs/adr/README.md '0353-material-3-expressive-aurora-v2-shell.md'
+require_text docs/plans/implementation-plan.md 'ADR-0353'
+require_text docs/adr/0353-material-3-expressive-aurora-v2-shell.md 'seed-derived M3 role matrix'
+require_text docs/adr/README.md '0354-versioned-rule-governance-authoring-localization.md'
+require_text docs/plans/implementation-plan.md 'ADR-0354'
+require_text docs/adr/0354-versioned-rule-governance-authoring-localization.md 'immutable, typed, versioned catalogs'
+require_text CHANGELOG.md 'ADR-0354 and typed localization'
+require_text docs/adr/README.md '0355-versioned-revenue-streaming-localization.md'
+require_text docs/plans/implementation-plan.md 'ADR-0355'
+require_text docs/adr/0355-versioned-revenue-streaming-localization.md 'typed, immutable, versioned presentation catalog'
+require_text CHANGELOG.md 'governed partner-payout'
+require_text docs/adr/README.md '0356-versioned-access-control-localization.md'
+require_text docs/plans/implementation-plan.md 'ADR-0356'
+require_text docs/adr/0356-versioned-access-control-localization.md 'immutable, typed presentation catalogs'
+require_text CHANGELOG.md 'ADR-0356 and typed access-control workspace localization'
+require_text docs/adr/README.md '0357-versioned-shell-operational-localization.md'
+require_text docs/plans/implementation-plan.md 'ADR-0357'
+require_text docs/adr/0357-versioned-shell-operational-localization.md 'immutable typed catalog'
+require_text CHANGELOG.md 'ADR-0357 and typed shell-operational localization'
+require_text docs/adr/README.md '0358-versioned-lazy-workspace-recovery-localization.md'
+require_text docs/plans/implementation-plan.md 'ADR-0358'
+require_text docs/adr/0358-versioned-lazy-workspace-recovery-localization.md 'shell-operational typed catalog'
+require_text CHANGELOG.md 'ADR-0358 and localized lazy-workspace loading'
+require_text docs/adr/README.md '0359-explicit-fee-payer-binding.md'
+require_text docs/plans/implementation-plan.md 'ADR-0359'
+require_text docs/adr/0359-explicit-fee-payer-binding.md 'first static account'
+require_text CHANGELOG.md 'ADR-0359 and an explicit fee-payer binding check'
+require_text docs/adr/README.md '0360-versioned-document-simulation-localization.md'
+require_text docs/plans/implementation-plan.md 'ADR-0360'
+require_text docs/adr/0360-versioned-document-simulation-localization.md 'immutable, typed presentation catalog'
+require_text CHANGELOG.md 'ADR-0360 and typed localization for the governance document-simulation'
+require_text docs/adr/README.md '0373-tenant-scoped-evidence-access-explorer.md'
+require_text docs/adr/README.md '0374-collapsible-material-navigation-rail.md'
+require_text docs/adr/README.md '0375-bounded-linear-tax-base-operations.md'
+require_text docs/plans/implementation-plan.md 'ADR-0373'
+require_text docs/adr/0373-tenant-scoped-evidence-access-explorer.md 'derives the merchant boundary'
+require_text CHANGELOG.md 'ADR-0373 and a tenant-scoped evidence-access explorer'
+require_text CHANGELOG.md 'ADR-0374 and an expanded-by-default'
+require_text docs/plans/implementation-plan.md 'ADR-0375'
+require_text docs/adr/0375-bounded-linear-tax-base-operations.md 'integral atomic units'
+require_text CHANGELOG.md 'ADR-0375 and the bounded linear tax-base v2 envelope'
+require_text CHANGELOG.md 'vault-reconciliation localization'
+require_text CHANGELOG.md 'typed document-quote catalog'
+require_text CHANGELOG.md 'polite, bounded workspace navigation status'
+require_text Makefile 'forced-colors-contract'
 require_text docs/operations/requirements-traceability.md 'Evidence levels'
 require_text docs/operations/requirements-traceability.md 'Linux/amd64 Agave validator conformance'
+require_text docs/operations/requirements-traceability.md 'apps/web/src/authorization.ts`'
+if grep -Fq 'apps/web/src/authorization.tsx' docs/operations/requirements-traceability.md; then
+  echo "requirements traceability references nonexistent authorization.tsx" >&2
+  failures=$((failures + 1))
+fi
+require_text docs/review/architecture-review-guide.md 'apps/web/src/wallet.ts`'
+if grep -Fq 'apps/web/src/solana.ts' docs/review/architecture-review-guide.md; then
+  echo "architecture review guide references nonexistent solana.ts" >&2
+  failures=$((failures + 1))
+fi
 require_text docs/product/tax-coverage-matrix.md 'Engine semantics evidence'
 require_text docs/product/tax-coverage-matrix.md 'progressive-marginal'
 require_text docs/product/tax-coverage-matrix.md 'Deliberate non-claims'

@@ -391,6 +391,7 @@ services:
         VITE_OIDC_REDIRECT_URI: ${VITE_OIDC_REDIRECT_URI:-}
         VITE_OIDC_SCOPE: ${VITE_OIDC_SCOPE:-}
         VITE_OIDC_AUDIENCE: ${VITE_OIDC_AUDIENCE:-}
+        VITE_INDEXER_STREAM_KEY: ${VITE_INDEXER_STREAM_KEY:-localnet/settlement/v1}
     ports:
       - "${EDGE_PORT:-8088}:8080"
     depends_on:

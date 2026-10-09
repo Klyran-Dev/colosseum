@@ -151,6 +151,24 @@ docker exec -i "$postgres_container" psql -v ON_ERROR_STOP=1 -U tax_protocol -d 
 docker exec -i "$postgres_container" psql -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
     < db/verification/settlement_route_mint_precision.sql >/dev/null
 
+docker exec -i "$postgres_container" psql -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
+    < db/verification/settlement_route_asset_projection.sql >/dev/null
+
+docker exec -i "$postgres_container" psql -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
+    < db/verification/settlement_route_verification_runs.sql >/dev/null
+
+docker exec -i "$postgres_container" psql -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
+    < db/verification/settlement_route_verification_approval.sql >/dev/null
+
+docker exec -i "$postgres_container" psql -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
+    < db/verification/tax_applicability_contexts.sql >/dev/null
+
+docker exec -i "$postgres_container" psql -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
+    < db/verification/applicability_binding_verifications.sql >/dev/null
+
+docker exec -i "$postgres_container" psql -v ON_ERROR_STOP=1 -U tax_protocol -d tax_protocol \
+    < db/verification/applicability_binding_verification_jobs.sql >/dev/null
+
 echo "migration-integrity-drill"
 echo "concurrent_run_a=$concurrent_a"
 echo "concurrent_run_b=$concurrent_b"
@@ -160,3 +178,9 @@ echo "checksum_drift=failed_closed"
 echo "ledger_count=$ledger_count"
 echo "refund_funding_verification_lease_contract=passed"
 echo "settlement_route_mint_precision_contract=passed"
+echo "settlement_route_asset_projection_contract=passed"
+echo "settlement_route_verification_runs_contract=passed"
+echo "settlement_route_verification_approval_contract=passed"
+echo "tax_applicability_context_contract=passed"
+echo "applicability_binding_verification_contract=passed"
+echo "applicability_binding_verification_job_contract=passed"

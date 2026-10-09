@@ -151,10 +151,15 @@ validate_response() {
         (.expires_at_unix > now and .expires_at_unix <= (now + 60)) and
         ((.capabilities | keys) == [
             "access.control",
+            "evidence.audit.read",
             "evidence.replay",
             "refund.claim.cancel",
             "refund.claim.create",
             "refund.payment.release",
+            "revenue_stream.claim.prepare",
+            "revenue_stream.govern",
+            "revenue_stream.propose",
+            "revenue_stream.read",
             "settlement.adjustment",
             "settlement.document.wallet",
             "settlement.wallet",
@@ -168,6 +173,10 @@ validate_response() {
         .capabilities["refund.claim.cancel"].decision == "allow" and
         .capabilities["refund.claim.create"].decision == "allow" and
         .capabilities["refund.payment.release"].decision == "allow" and
+        .capabilities["revenue_stream.claim.prepare"].decision == "deny" and
+        .capabilities["revenue_stream.govern"].decision == "deny" and
+        .capabilities["revenue_stream.propose"].decision == "deny" and
+        .capabilities["revenue_stream.read"].decision == "deny" and
         .capabilities["settlement.adjustment"].decision == "allow" and
         .capabilities["settlement.document.wallet"].decision == "allow" and
         .capabilities["tax.quote.create"].decision == "indeterminate" and
@@ -177,6 +186,7 @@ validate_response() {
         .capabilities["settlement.wallet"].decision == "allow" and
         .capabilities["vault.reconciliation"].decision == "allow" and
         .capabilities["vault.release"].decision == "allow" and
+        .capabilities["evidence.audit.read"].decision == "allow" and
         .capabilities["evidence.replay"].decision == "allow" and
         .capabilities["access.control"].decision == "allow"
     ' "$response_file" >/dev/null

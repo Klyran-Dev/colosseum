@@ -35,6 +35,8 @@ fn benchmark_rule() -> RuleSet {
                         BaseReference::Net,
                         BaseReference::Component("state".to_string()),
                     ],
+                    floor_atomic: None,
+                    cap_atomic: None,
                 },
                 rate: RateSpec::Flat(Rate::new(2, 100).expect("benchmark rate is valid")),
                 price_mode: PriceMode::Exclusive,
@@ -57,12 +59,14 @@ fn benchmark_facts() -> TaxFacts {
     TaxFacts {
         gross_atomic: 10_900,
         net_atomic: 10_000,
+        atomic_decimals: 2,
         currency: "USD".to_string(),
         jurisdiction: "US-CA".to_string(),
         jurisdiction_resolution: None,
         fx_conversion: None,
         exemption_codes: Vec::new(),
         cumulative_period: None,
+        applicability: None,
     }
 }
 
@@ -95,11 +99,13 @@ fn benchmark_document_rule() -> RuleSet {
 fn benchmark_document_facts() -> TaxDocumentFacts {
     TaxDocumentFacts {
         id: "benchmark-invoice-64".to_string(),
+        atomic_decimals: 2,
         currency: "USD".to_string(),
         jurisdiction: "US-CA".to_string(),
         jurisdiction_resolution: None,
         fx_conversion: None,
         cumulative_period: None,
+        applicability: None,
         lines: (0..64)
             .map(|index| TaxLineFacts {
                 id: format!("line-{index:03}"),

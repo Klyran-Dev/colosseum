@@ -15,6 +15,12 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install and select pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy --no-self-update
+          echo "RUSTUP_TOOLCHAIN=1.98.1" >> "$GITHUB_ENV"
+          rustc --version
+          cargo --version
       - name: Verify formatting
         run: cargo fmt --all -- --check
       - name: Lint
@@ -30,6 +36,12 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install and select pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy --no-self-update
+          echo "RUSTUP_TOOLCHAIN=1.98.1" >> "$GITHUB_ENV"
+          rustc --version
+          cargo --version
       - name: Run bounded signed-message property tests
         run: cargo test --locked -p settlement-coordinator --all-targets
       - name: Verify on-chain protocol pause coverage
@@ -46,7 +58,11 @@ jobs:
         with:
           node-version: 24.21.0
       - name: Activate pinned pnpm
-        run: corepack enable && corepack prepare pnpm@12.3.4 --activate
+        run: |
+          corepack enable
+          corepack prepare pnpm@12.3.4 --activate
+          node --version
+          pnpm --version
       - name: Install locked dependencies
         run: pnpm --dir apps/web install --frozen-lockfile
       - name: Verify UI contracts
@@ -80,6 +96,16 @@ jobs:
           path: test-results/web-e2e/
           if-no-files-found: warn
           retention-days: 14
+
+  evm-adapter:
+    name: Solidity adapter tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Run pinned Docker Solidity adapter tests
+        run: make evm-adapter-check
 
   compose:
     name: Compose contract
@@ -186,6 +212,8 @@ jobs:
             amd64|x86_64) ;;
             *) echo "unsupported Docker architecture" >&2; exit 1 ;;
           esac
+      - name: Retain authoritative host preflight
+        run: ./scripts/verify_solana_conformance_host.sh
       - name: Run validator-backed conformance
         env:
           SOLANA_USE_DOCKER_BUILDER: true
@@ -219,6 +247,8 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Verify public repository contract
         run: make public-docs-check
+      - name: Verify explicit host toolchain bootstrap contract
+        run: make ci-toolchain-contract
       - name: Verify authoritative Solana workflow contract
         run: make solana-conformance-workflow-contract
 

@@ -157,7 +157,7 @@ ready_with_token=$(curl --silent --show-error --output /dev/null --write-out '%{
   --header "authorization: Bearer $auth_token" --max-time 5 "$base_url/readyz" || true)
 [ "$ready_with_token" = '204' ] || fail "trusted mTLS readiness returned HTTP $ready_with_token"
 
-printf '%s' '{"rule_set":{"schema":"solana-tax-protocol/tax-rule/v1","rule_set":{"id":"mtls-runtime-flat-rate","version":1,"components":[{"id":"sales-tax","label":"Sales tax","base":{"sources":["Net"]},"rate":{"Flat":{"numerator":"10","denominator":"100"}},"price_mode":"Exclusive","credit_atomic":"0","floor_atomic":null,"cap_atomic":null,"rounding":{"mode":"HalfUp"},"threshold":null,"exemption_codes":[]}] }},"facts":{"gross_atomic":"1100","net_atomic":"1000","currency":"USD","jurisdiction":"US-CA","exemption_codes":[],"cumulative_period":null}}' > "$work_dir/calculate.json"
+printf '%s' '{"rule_set":{"schema":"solana-tax-protocol/tax-rule/v1","rule_set":{"id":"mtls-runtime-flat-rate","version":1,"components":[{"id":"sales-tax","label":"Sales tax","base":{"sources":["Net"]},"rate":{"Flat":{"numerator":"10","denominator":"100"}},"price_mode":"Exclusive","credit_atomic":"0","floor_atomic":null,"cap_atomic":null,"rounding":{"mode":"HalfUp"},"threshold":null,"exemption_codes":[]}] }},"facts":{"gross_atomic":"1100","net_atomic":"1000","atomic_decimals":2,"currency":"USD","jurisdiction":"US-CA","exemption_codes":[],"cumulative_period":null}}' > "$work_dir/calculate.json"
 calculation_status=$(curl --silent --show-error --output "$work_dir/calculation.json" --write-out '%{http_code}' \
   --cacert "$tls_dir/ca.crt" --cert "$tls_dir/client.crt" --key "$tls_dir/client.key" \
   --header 'content-type: application/json' --header "authorization: Bearer $auth_token" \

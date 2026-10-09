@@ -79,7 +79,7 @@ authenticated_ready_status=$(curl --silent --show-error --output /dev/null \
   "$base_url/readyz" || true)
 [ "$authenticated_ready_status" = '204' ] || fail "authenticated readiness returned HTTP $authenticated_ready_status"
 
-printf '%s' '{"rule_set":{"schema":"solana-tax-protocol/tax-rule/v1","rule_set":{"id":"runtime-flat-rate","version":1,"components":[{"id":"sales-tax","label":"Sales tax","base":{"sources":["Net"]},"rate":{"Flat":{"numerator":"10","denominator":"100"}},"price_mode":"Exclusive","credit_atomic":"0","floor_atomic":null,"cap_atomic":null,"rounding":{"mode":"HalfUp"},"threshold":null,"exemption_codes":[]}] }},"facts":{"gross_atomic":"1100","net_atomic":"1000","currency":"USD","jurisdiction":"US-CA","exemption_codes":[],"cumulative_period":null}}' > "$work_dir/calculate.json"
+printf '%s' '{"rule_set":{"schema":"solana-tax-protocol/tax-rule/v1","rule_set":{"id":"runtime-flat-rate","version":1,"components":[{"id":"sales-tax","label":"Sales tax","base":{"sources":["Net"]},"rate":{"Flat":{"numerator":"10","denominator":"100"}},"price_mode":"Exclusive","credit_atomic":"0","floor_atomic":null,"cap_atomic":null,"rounding":{"mode":"HalfUp"},"threshold":null,"exemption_codes":[]}] }},"facts":{"gross_atomic":"1100","net_atomic":"1000","atomic_decimals":2,"currency":"USD","jurisdiction":"US-CA","exemption_codes":[],"cumulative_period":null}}' > "$work_dir/calculate.json"
 
 calculation_status=$(curl --silent --show-error --output "$work_dir/calculation.json" \
   --write-out '%{http_code}' --request POST \

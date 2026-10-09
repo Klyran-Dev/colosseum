@@ -20,12 +20,23 @@ platform=Linux test-runner
 docker_server_architecture=amd64
 validator_image=agave-validator:4.3.0
 EOF
+cat > "$evidence_dir/preflight.txt" <<'EOF'
+schema_version=solana-tax-protocol/conformance-host/v1
+status=ready
+failure_reason=none
+host_os=Linux
+host_architecture=x86_64
+docker_ostype=linux
+docker_server_architecture=amd64
+EOF
 printf 'sbf_artifact_sha256=%s\n' "$program_hash" > "$evidence_dir/artifact.txt"
 printf '%s\n' 'container_id=integration-validator' 'image_id=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' > "$evidence_dir/container-digests.txt"
 printf '%s\n' 'agave-validator 4.3.0' > "$evidence_dir/validator.log"
 printf '%s\n' 'validator-compose: pinned' > "$evidence_dir/compose-config.yml"
 for expected_case in \
+    'stablecoin account topology' \
     'settles legacy SPL' \
+    'rejects disabled or substituted asset admission' \
     'payer-bound refund claim' \
     'governance cancellation' \
     'blocks paused vault release' \
@@ -36,6 +47,7 @@ for expected_case in \
     'extension-free Token-2022 two-recipient Split Plan' \
     'real Token-2022 TransferFeeConfig' \
     'revoked policy attestations' \
+    'non-stable asset classification' \
     'rejects wrong recipient order without balance drift' \
     'revenue-stream single-use claim'; do
     printf '%s\n' "$expected_case" >> "$evidence_dir/localnet-tests.log"

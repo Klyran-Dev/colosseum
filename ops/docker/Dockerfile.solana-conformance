@@ -12,6 +12,7 @@ RUN corepack enable && corepack prepare pnpm@12.3.4 --activate
 COPY --chown=node:node apps/web/package.json apps/web/pnpm-lock.yaml apps/web/pnpm-workspace.yaml ./apps/web/
 RUN pnpm --dir apps/web install --frozen-lockfile
 
+COPY --chown=node:node contracts ./contracts
 COPY --chown=node:node apps/web ./apps/web
 
 USER node

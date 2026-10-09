@@ -30,7 +30,11 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [Document quote, attestation, payment binding, and checkout contracts](adr/0204-authoritative-document-quote-boundary.md)
 - [Jurisdiction-resolution bounded context](architecture/jurisdiction-resolution.md)
 - [Gold-standard UI/UX](architecture/ui-ux.md)
+- [Architecture review guide](review/architecture-review-guide.md)
+- [Local architecture-review evidence — 2026-10-05](review/2026-10-05-local-evidence.md)
+- [Principal architecture review — 2026-10-06](review/2026-10-06-principal-architecture-review.md)
 - [Tier-1 decision register](operations/decision-register.md)
+- [Tier-1 release decision packet](operations/release-decision-packet.md)
 - [Requirements traceability and evidence matrix](operations/requirements-traceability.md)
 - [Architecture alternative analysis](architecture/alternative-analysis.md)
 - [Docker full-topology bootstrap](adr/0210-docker-full-topology-bootstrap.md)
@@ -91,6 +95,7 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [Settlement route verification architecture](architecture/settlement-route-verification.md)
 - [Low-latency and reliability architecture](architecture/low-latency.md)
 - [Toolchain compatibility matrix](architecture/toolchain-compatibility.md)
+- [Optional non-custodial EVM receipt adapter](architecture/evm-adapter.md)
 - [Security and threat model](architecture/security-threat-model.md)
 - [Operations, observability, and SRE](architecture/operations.md)
 - [SLO and error-budget policy](operations/slo-error-budget-policy.md)
@@ -343,6 +348,13 @@ Run `make observability-up` to start the profiled Redis, Prometheus, Grafana,
 and OpenTelemetry Collector topology. Host ports are Redis `46379`,
 Prometheus `49090`, Grafana `43000`, and OTLP `44317`/`44318`; override them
 with environment variables documented in `compose.yaml`.
+
+The document-checkout evidence card reads the server-owned applicability
+projection through `VITE_INDEXER_STREAM_KEY`. Compose defaults this public
+selector to `localnet/settlement/v1`; staging and production releases must
+replace it with the approved stream selector and must not treat it as an
+authorization secret. The API still derives tenant scope from the authenticated
+principal and rejects unknown or cross-tenant settlement intents.
 
 Run `make indexer-replay-drill` for the two-replica automated replay contract.
 It proves durable gap claiming, bounded projection recovery, forward-checkpoint

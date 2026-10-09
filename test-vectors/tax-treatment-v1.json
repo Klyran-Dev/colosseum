@@ -1,0 +1,77 @@
+{
+  "schema": "solana-tax-protocol/tax-treatment/v1",
+  "cases": [
+    {
+      "id": "taxable-collects",
+      "treatment": "Taxable",
+      "gross_atomic": "1100",
+      "arithmetic_tax_atomic": "100",
+      "expected": {
+        "collected_tax_atomic": "100",
+        "self_assessed_tax_atomic": "0",
+        "withheld_tax_atomic": "0",
+        "taxable_base_atomic": "1100"
+      }
+    },
+    {
+      "id": "zero-rated-reportable-base",
+      "treatment": "ZeroRated",
+      "gross_atomic": "1100",
+      "arithmetic_tax_atomic": "0",
+      "expected": {
+        "collected_tax_atomic": "0",
+        "self_assessed_tax_atomic": "0",
+        "withheld_tax_atomic": "0",
+        "taxable_base_atomic": "1100"
+      }
+    },
+    {
+      "id": "exempt-no-taxable-base",
+      "treatment": "Exempt",
+      "gross_atomic": "1100",
+      "arithmetic_tax_atomic": "0",
+      "expected": {
+        "collected_tax_atomic": "0",
+        "self_assessed_tax_atomic": "0",
+        "withheld_tax_atomic": "0",
+        "taxable_base_atomic": "0"
+      }
+    },
+    {
+      "id": "out-of-scope-no-taxable-base",
+      "treatment": "OutOfScope",
+      "gross_atomic": "1100",
+      "arithmetic_tax_atomic": "0",
+      "expected": {
+        "collected_tax_atomic": "0",
+        "self_assessed_tax_atomic": "0",
+        "withheld_tax_atomic": "0",
+        "taxable_base_atomic": "0"
+      }
+    },
+    {
+      "id": "reverse-charge-self-assessed",
+      "treatment": "ReverseCharge",
+      "gross_atomic": "1100",
+      "arithmetic_tax_atomic": "100",
+      "expected": {
+        "collected_tax_atomic": "0",
+        "self_assessed_tax_atomic": "100",
+        "withheld_tax_atomic": "0",
+        "taxable_base_atomic": "1100"
+      }
+    },
+    {
+      "id": "withholding-deducted",
+      "treatment": "Withholding",
+      "gross_atomic": "1100",
+      "arithmetic_tax_atomic": "100",
+      "expected": {
+        "collected_tax_atomic": "100",
+        "self_assessed_tax_atomic": "0",
+        "withheld_tax_atomic": "100",
+        "taxable_base_atomic": "1100"
+      }
+    }
+  ]
+}

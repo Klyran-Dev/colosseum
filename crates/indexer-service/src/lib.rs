@@ -5,14 +5,16 @@
 
 use async_trait::async_trait;
 use indexer::{
-    Checkpoint, FailoverPageSource, FailoverRefundBalanceProofSource, FailoverSignaturePageSource,
-    FailoverTransactionSource, FailoverVaultBalanceSource, FinalizedPageSource,
-    FinalizedRefundBalanceProofSource, FinalizedSignaturePageSource, FinalizedTransactionSource,
-    FinalizedVaultBalanceSource, IndexerCoordinator, MAX_PROVIDER_ATTEMPTS, MAX_RPC_PAGE_SLOTS,
-    MAX_RPC_RESPONSE_BYTES, ProviderError, ProviderHealthSnapshot, RefundClaimTopologyRequest,
-    RefundProofCandidate, RefundProofCandidateSource, RefundProofCycleResult, RefundProofEvidence,
-    RefundProofSink, RefundProofWorker, RefundProofWorkerError, ReplayGap, ReplayGapReason,
-    ReqwestJsonRpcTransport, ScanRange, SettlementExecutedDecoder, SolanaRpcPageSource,
+    ApplicabilityBindingTarget, ApplicabilitySettlementExecutedEvent, Checkpoint,
+    FailoverApplicabilityBindingSource, FailoverPageSource, FailoverRefundBalanceProofSource,
+    FailoverSignaturePageSource, FailoverTransactionSource, FailoverVaultBalanceSource,
+    FinalizedApplicabilityBindingSource, FinalizedPageSource, FinalizedRefundBalanceProofSource,
+    FinalizedSignaturePageSource, FinalizedTransactionSource, FinalizedVaultBalanceSource,
+    IndexerCoordinator, MAX_PROVIDER_ATTEMPTS, MAX_RPC_PAGE_SLOTS, MAX_RPC_RESPONSE_BYTES,
+    ProviderError, ProviderHealthSnapshot, RefundClaimTopologyRequest, RefundProofCandidate,
+    RefundProofCandidateSource, RefundProofCycleResult, RefundProofEvidence, RefundProofSink,
+    RefundProofWorker, RefundProofWorkerError, ReplayGap, ReplayGapReason, ReqwestJsonRpcTransport,
+    ScanRange, SettlementExecutedDecoder, SolanaRpcApplicabilityBindingSource, SolanaRpcPageSource,
     SolanaRpcRefundBalanceProofSource, SolanaRpcSignaturePageSource, SolanaRpcTransactionSource,
     SolanaRpcVaultBalanceSource, VaultBalanceExpectation, VaultBalanceReconciliation,
     VaultBalanceTarget, canonical_signature,
@@ -195,6 +197,31 @@ impl IndexerConfig {
             )));
         }
         Ok(FailoverPageSource::new(providers, self.rpc_timeout)?)
+    }
+
+    pub fn build_applicability_binding_source(
+        &self,
+    ) -> Result<FailoverApplicabilityBindingSource, IndexerServiceError> {
+        let mut providers: Vec<Arc<dyn FinalizedApplicabilityBindingSource>> =
+            Vec::with_capacity(self.rpc_endpoints.len());
+        for endpoint in &self.rpc_endpoints {
+            let transport = if self.allow_insecure_local_rpc {
+                ReqwestJsonRpcTransport::new_for_local_development(
+                    endpoint,
+                    self.rpc_timeout,
+                    MAX_RPC_RESPONSE_BYTES,
+                )?
+            } else {
+                ReqwestJsonRpcTransport::new(endpoint, self.rpc_timeout, MAX_RPC_RESPONSE_BYTES)?
+            };
+            providers.push(Arc::new(SolanaRpcApplicabilityBindingSource::new(
+                transport,
+            )));
+        }
+        Ok(FailoverApplicabilityBindingSource::new(
+            providers,
+            self.rpc_timeout,
+        )?)
     }
 
     pub fn build_targeted_recovery_sources(
@@ -1320,6 +1347,70 @@ pub async fn replay_once(
         Ok(ReplayOutcome::ChunkRequeued)
     } else {
         Ok(ReplayOutcome::Completed)
+    }
+}
+
+/// Verify one server-owned applicability binding. The job lease is committed
+/// before this RPC call, and completion atomically commits the typed projection
+/// with the lease transition. A false result means the bounded queue is idle.
+pub async fn verify_one_applicability_binding_once<S>(
+    store: &PgStore,
+    source: &S,
+    stream_key: &str,
+) -> Result<bool, IndexerServiceError>
+where
+    S: FinalizedApplicabilityBindingSource + ?Sized,
+{
+    let Some(candidate) = store
+        .claim_applicability_binding_verification_candidate(stream_key)
+        .await?
+    else {
+        return Ok(false);
+    };
+    let event = match ApplicabilitySettlementExecutedEvent::decode(&candidate.evidence.event_data) {
+        Ok(event) => event,
+        Err(error) => {
+            store
+                .fail_applicability_binding_verification_candidate(
+                    &candidate,
+                    "event_decode_invalid",
+                )
+                .await?;
+            return Err(IndexerServiceError::Configuration(error.to_string()));
+        }
+    };
+    let target = ApplicabilityBindingTarget {
+        binding: Pubkey::new_from_array(event.binding).to_string(),
+        receipt: Pubkey::new_from_array(event.receipt).to_string(),
+        merchant: Pubkey::new_from_array(event.merchant).to_string(),
+        mint: Pubkey::new_from_array(event.mint).to_string(),
+        context_id: event.context_id,
+        attestation_digest: event.applicability_attestation_digest,
+    };
+    let verification = match source.fetch_finalized_applicability_binding(&target).await {
+        Ok(verification) => verification,
+        Err(error) => {
+            let error_code = applicability_provider_error_code(&error);
+            store
+                .fail_applicability_binding_verification_candidate(&candidate, error_code)
+                .await?;
+            return Err(IndexerServiceError::Provider(error));
+        }
+    };
+    store
+        .complete_applicability_binding_verification_candidate(&candidate, &verification)
+        .await?;
+    Ok(true)
+}
+
+fn applicability_provider_error_code(error: &ProviderError) -> &'static str {
+    match error {
+        ProviderError::Transport(_) => "provider_transport_failed",
+        ProviderError::ResponseTooLarge => "provider_response_too_large",
+        ProviderError::InvalidResponse(_) => "provider_response_invalid",
+        ProviderError::Rpc(_) => "provider_rpc_error",
+        ProviderError::InvalidPage(_) => "provider_page_invalid",
+        ProviderError::NonFinalized => "provider_not_finalized",
     }
 }
 

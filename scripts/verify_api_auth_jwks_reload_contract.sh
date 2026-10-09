@@ -120,7 +120,7 @@ while [ "$attempt" -lt 60 ]; do
 done
 [ "$healthy" = true ] || fail "API health did not return 204 within the bounded startup window"
 
-quote_body='{"idempotency_key":"jwks-reload-contract","rule_set_id":"not-used","rule_version":1,"jurisdiction":"US-CA","regime":"sales-tax","facts":{"gross_atomic":"1100","net_atomic":"1000","currency":"USD","jurisdiction":"US-CA"},"jurisdiction_evidence":[]}'
+quote_body='{"idempotency_key":"jwks-reload-contract","rule_set_id":"not-used","rule_version":1,"jurisdiction":"US-CA","regime":"sales-tax","facts":{"gross_atomic":"1100","net_atomic":"1000","atomic_decimals":2,"currency":"USD","jurisdiction":"US-CA"},"jurisdiction_evidence":[]}'
 first_token=$(sign_token first-key "$first_key")
 second_token=$(sign_token second-key "$second_key")
 

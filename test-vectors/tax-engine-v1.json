@@ -25,6 +25,7 @@
       "facts": {
         "gross_atomic": "1100",
         "net_atomic": "1000",
+        "atomic_decimals": 2,
         "currency": "USD",
         "jurisdiction": "US-CA",
         "exemption_codes": [],
@@ -65,6 +66,7 @@
       "facts": {
         "gross_atomic": "1700",
         "net_atomic": "1500",
+        "atomic_decimals": 2,
         "currency": "USD",
         "jurisdiction": "US-FED",
         "exemption_codes": [],
@@ -113,6 +115,7 @@
       "facts": {
         "gross_atomic": "1155",
         "net_atomic": "1000",
+        "atomic_decimals": 2,
         "currency": "USD",
         "jurisdiction": "CA-BC",
         "exemption_codes": [],
@@ -151,6 +154,7 @@
       "facts": {
         "gross_atomic": "1100",
         "net_atomic": "1000",
+        "atomic_decimals": 2,
         "currency": "EUR",
         "jurisdiction": "DE",
         "exemption_codes": [],
@@ -160,6 +164,47 @@
         "total_tax_atomic": "100",
         "total_net_atomic": "1000",
         "components": [{ "id": "vat", "base_atomic": "1100", "effective_base_atomic": "1100", "tax_atomic": "100", "exemption_applied": false }]
+      }
+    },
+    {
+      "id": "inclusive-gross-threshold",
+      "rule_set": {
+        "id": "inclusive-gross-threshold",
+        "version": 1,
+        "components": [
+          {
+            "id": "vat",
+            "label": "VAT",
+            "base": { "sources": ["Gross"] },
+            "rate": { "Flat": { "numerator": "10", "denominator": "100" } },
+            "price_mode": "Inclusive",
+            "credit_atomic": "0",
+            "floor_atomic": null,
+            "cap_atomic": null,
+            "rounding": { "mode": "HalfUp" },
+            "threshold": {
+              "amount_atomic": "1100",
+              "basis": "PerTransaction",
+              "mode": "ExemptUpTo",
+              "inclusive_equation": "GrossExcess"
+            },
+            "exemption_codes": []
+          }
+        ]
+      },
+      "facts": {
+        "gross_atomic": "1200",
+        "net_atomic": "1200",
+        "atomic_decimals": 2,
+        "currency": "EUR",
+        "jurisdiction": "DE",
+        "exemption_codes": [],
+        "cumulative_period": null
+      },
+      "expected": {
+        "total_tax_atomic": "9",
+        "total_net_atomic": "1191",
+        "components": [{ "id": "vat", "base_atomic": "1200", "effective_base_atomic": "100", "tax_atomic": "9", "exemption_applied": false }]
       }
     },
     {
@@ -186,6 +231,7 @@
       "facts": {
         "gross_atomic": "104",
         "net_atomic": "101",
+        "atomic_decimals": 2,
         "currency": "USD",
         "jurisdiction": "US-NY",
         "exemption_codes": [],
@@ -221,6 +267,7 @@
       "facts": {
         "gross_atomic": "210",
         "net_atomic": "200",
+        "atomic_decimals": 2,
         "currency": "USD",
         "jurisdiction": "US-CA",
         "exemption_codes": [],
@@ -256,6 +303,7 @@
       "facts": {
         "gross_atomic": "1000",
         "net_atomic": "1000",
+        "atomic_decimals": 2,
         "currency": "USD",
         "jurisdiction": "US-CA",
         "exemption_codes": ["RESALE"],
@@ -291,6 +339,7 @@
       "facts": {
         "gross_atomic": "140",
         "net_atomic": "100",
+        "atomic_decimals": 2,
         "currency": "USD",
         "jurisdiction": "AU-NSW",
         "exemption_codes": [],
@@ -326,6 +375,7 @@
       "facts": {
         "gross_atomic": "2",
         "net_atomic": "1",
+        "atomic_decimals": 2,
         "currency": "USD",
         "jurisdiction": "US-CA",
         "exemption_codes": [],
@@ -374,6 +424,7 @@
       "facts": {
         "gross_atomic": "1",
         "net_atomic": "1",
+        "atomic_decimals": 2,
         "currency": "USD",
         "jurisdiction": "US-CA",
         "exemption_codes": [],
@@ -425,6 +476,7 @@
       "facts": {
         "gross_atomic": "100",
         "net_atomic": "100",
+        "atomic_decimals": 2,
         "currency": "USD",
         "jurisdiction": "US-CA",
         "exemption_codes": [],

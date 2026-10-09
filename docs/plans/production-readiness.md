@@ -7,6 +7,64 @@ server-owned quote-bound calculation-attestation ingestion, and a cached
 on-chain policy attestation binding. These are foundation gates, not completed
 production readiness. Unchecked items remain release blockers.
 
+On 2026-10-06, the Docker/NGINX browser gate passed 49/49 journeys after
+ADR-0406's mobile shell action-row change. The new journey proves the 568 CSS
+pixel top bar remains a two-row Material composition with wrapped horizontal
+actions and bounded height; all existing localization, RTL, WCAG, wallet, and
+fail-closed journeys also passed. This is automated local evidence only and
+does not close manual assistive-technology or production identity/provider
+gates.
+
+Also on 2026-10-06, the current `make integration-check` passed on a fresh
+Docker PostgreSQL 18/NATS stack. The run rebuilt the pinned API, worker,
+migrator, RPC-fixture, and NGINX images, then proved concurrent submission
+fencing (`200`/`409`, one fixture send), ambiguous-provider reconciliation,
+process-crash recovery, immutable rule rollback, governed adjustment event
+proof, and duplicate-submission rejection. This is Docker-local synthetic
+evidence; it does not close Linux/amd64 validator, live-provider, custody,
+legal, regional SLO, or production identity gates.
+
+On 2026-10-06, the canonical `make tier1-local-check` completed every local
+layer before the validator boundary: workspace checks, 79 frontend test files
+with 344 passing tests and 10 intentional skips, production build and UI
+contracts, zero high/critical Trivy findings, authenticated Docker integration,
+and all 49 real-browser journeys. It then failed closed at
+`make solana-conformance` with `host_os_must_be_linux`; this macOS/ARM host is
+not an accepted validator evidence environment. No local result is promoted
+to Solana conformance, and native Linux/amd64 execution remains a release
+blocker.
+
+The same-day bounded latency samples measured aggregate quote service at
+5.545/26.046/47.393 ms p50/p95/p99 for 200 requests at concurrency 16, with
+32/32 same-key contention responses and exact one-row idempotency,
+calculation, and outbox convergence. The authenticated RBAC/PBAC/ABAC
+capability workload measured 1.153/2.253/5.400 ms p50/p95/p99 for 256
+requests at concurrency 32, with all 256 responses valid and HTTP 200 and the
+25 ms p95 local budget met. These are Docker Desktop arm64 synthetic samples,
+not production SLO acceptance.
+
+The native Criterion hot-path benchmark also passed on the current Rust 1.98.1
+toolchain with 3 seconds of warm-up and 100 samples: compile median 755.47 ns,
+uncached calculation median 1.4429 microseconds, compiled calculation median
+663.01 ns, and a bounded 64-line/16-component document median 256.80
+microseconds. Criterion reported improvement or noise-range changes for every
+benchmark. This is a local native-arm64 microbenchmark, not a service or
+regional SLO.
+
+ADR-0407's first implementation slice now exists in the workspace as
+`tax-applicability`. Its five tests pass, including the versioned golden vector,
+highest-precedence treatment, unresolved result, equal-precedence ambiguity,
+and stale-evidence rejection; workspace Clippy passes with warnings denied.
+This proves only the pure bounded decision kernel. Signed attestation, API and
+PostgreSQL integration, legal ownership, and published jurisdiction/product
+coverage remain release gates.
+
+The exact `cargo test --locked --workspace --all-targets` regression then passed
+with the new crate included, including the existing 68 Tax Engine tests and
+Criterion targets plus 5 applicability tests. This is source-level regression
+evidence; it does not promote the applicability kernel into an enabled quote or
+settlement path.
+
 ADR-0217 now retains the authoritative authenticated Docker integration stream
 for successful and failed CI runs with bounded public-safe artifacts. This
 improves reviewability of the synthetic service boundary but does not replace
@@ -21,13 +79,280 @@ rule rollback, and finalized adjustment evidence. These are local Docker
 evidence gates only; they do not close the Linux validator, live provider,
 staging identity, HSM/KMS, legal, or regional SLO gates.
 
-The final production UI language, location-verification disclosure, and
-server-owned payout-reference selection changes also passed
-`make web-browser-check`: all 25 real-browser journeys passed, including the
+On 2026-10-05, the refreshed aggregate quote-service workload passed 200/200
+HTTP 200 requests at concurrency 16, 32/32 same-key contention responses, zero
+transport errors, exact 200/200/200 idempotency/calculation/outbox cardinality,
+and p50/p95/p99 of 6.297/22.969/29.731 ms with a 16-connection database pool
+and zero observed pool waiters. This is current Docker Desktop arm64 local
+synthetic evidence only; Linux/amd64, regional/resource-profile, failover, and
+production SLO acceptance remain open.
+
+On 2026-10-05, ADR-0385 removed repeated English asset-scale terminology from
+the quote, invoice quote, document simulation, rule-governance, and checkout
+surfaces. The shared precision catalog covers English, German, Arabic, and
+Japanese, falls back exactly to English for unknown locales, and exposes
+localized label, help, validation, and route-evidence wording. The frontend
+suite passed 310 tests with 10 intentional skips, typecheck, and production
+build; browser, manual assistive-technology, and live-provider evidence remain
+separate gates.
+
+On 2026-10-05, the current worktree passed `make check` again after the Tax
+Engine service cache-integrity, single-flight compilation, and localized asset
+precision changes. The run passed workspace Clippy/tests, 75 frontend test
+files (310 passing tests and 10 intentional skips), production build, zero
+Cargo/pnpm vulnerability findings, zero high/critical Trivy findings, clean
+Dockerfile misconfiguration results, observability/configuration contracts,
+Tax Engine runtime and mTLS contracts, EVM adapter checks, and the public
+repository contract. The security command now uses an explicit bounded scan
+timeout and excludes platform metadata files such as `.DS_Store`; this is a
+scan-input hygiene fix, not a finding suppression. The run also retained the
+known arm64 Docker warning for the Alertmanager image and does not replace
+Linux/amd64 validator, regional resource-profile, staging identity, custody,
+legal, or production SLO evidence.
+
+Later on 2026-10-05, the exact current worktree passed `make check` again after
+the complete authorization benchmark catalog and current Material 3 Expressive shell were
+rebuilt. The run passed 76 frontend test files (329 passing tests and 10
+intentional skips), the full Rust workspace and Tier-1 tax vectors, typecheck,
+production build, zero Cargo/pnpm vulnerabilities, zero Dockerfile
+high/critical findings, and all public, authorization, palette,
+forced-colors, localization, runtime, migration, deployment, and observability
+contracts. This remains local evidence; the expected arm64 Alertmanager image
+warning and fixed linux/amd64 EVM build warning remain, and Linux validator,
+live identity/provider, custody, legal, manual accessibility, regional SLO,
+and license gates remain open.
+
+After ADR-0402's result-workspace cleanup, the frontend suite passed 77 test
+files (330 passing tests and 10 intentional skips), and the production
+typecheck/build passed. The focused regression proves that each validated tax
+component trace is rendered once inside the progressive explanation; manual
+operator, screen-reader, responsive, localization, and design-system review
+remain required.
+
+The rebuilt Docker/Nginx browser gate passed all 48 real-browser journeys
+after ADR-0402, including responsive, RTL, forced-colors, localization,
+wallet-bound, progressive-disclosure, and fail-closed states. This remains
+automated local evidence and does not replace manual assistive-technology or
+production identity review.
+
+The subsequent exact-current `make check` also passed with 77 frontend test
+files (330 passing tests and 10 intentional skips), all Rust/Tier-1 vectors,
+clean scans, production build, and repository contracts. This is local
+evidence only; Linux/amd64 validator, live provider, staging identity,
+custody, legal, manual accessibility, regional SLO, and license gates remain
+open.
+
+After ADR-0403, the shell regression passes 20 focused tests and proves that
+the persistent navigation rail carries access state without repeating verified
+tenant identity. Identity remains available in the account menu and current
+protection remains visible in the page context. Manual keyboard, screen-reader,
+responsive, RTL, and authorization-operator review remain release gates.
+
+The follow-up stylesheet cleanup removes the retired duplicate-account selector
+and adds a failing-first Material shell contract for its absence. The frontend
+suite now passes 331 tests with 10 intentional skips, and the Docker/Nginx
+browser suite passes all 48 real-browser journeys after the cleanup.
+
+The exact current `make check` after ADR-0403 passed the full Rust workspace,
+77 frontend test files (331 passing tests and 10 intentional skips),
+typecheck/build, palette/forced-colors/localization contracts, zero reported
+Cargo/pnpm vulnerabilities, zero Dockerfile high/critical findings, runtime
+identity/provider checks, EVM checks, and public documentation checks. This
+remains local evidence; Linux/amd64 validator, live-provider, staging
+identity, custody, legal, manual accessibility, regional SLO, and license
+gates remain open.
+
+On 2026-10-05, ADR-0386 moved document-quote and aggregate-checkout failure
+copy into reviewed English, German, Arabic, and Japanese catalogs. Typed
+status/state interpolation is bounded, provider diagnostics remain redacted,
+and the request, digest, authorization, and settlement contracts are unchanged.
+The frontend suite passed 312 tests with 10 intentional skips, and the full
+Docker-backed browser suite passed 48/48 journeys, including the unavailable
+document-quote API path and its support-reference behavior. Manual linguistic,
+assistive-technology, and live-provider review remain separate gates.
+
+ADR-0387 extends the same reviewed language boundary to document checkout:
+route loading, invoice evidence, durable payment preparation, wallet
+submission, unknown outcomes, status refresh, and reconciliation now use
+English, German, Arabic, and Japanese catalog entries with bounded dynamic
+values. Settlement and attestation contracts are unchanged. The frontend suite
+passed 313 tests with 10 intentional skips, and the Docker-backed browser
+suite passed 48/48 journeys. Manual linguistic, assistive-technology, and
+live-provider review remain separate gates.
+
+ADR-0389 applies the reviewed language boundary to refund claim. Authorization,
+preparation, durable reload recovery, two-person signing, submission
+ambiguity, and finalized-claim reconciliation now use the four-locale catalog
+with bounded status values. Refund artifacts, wallet roles, signed bytes, and
+chain evidence behavior remain unchanged. The frontend suite passed 315 tests
+with 10 intentional skips, and the Docker-backed browser suite passed 48/48
+journeys. Manual linguistic, assistive-technology, live-wallet, and
+live-provider review remain separate gates.
+
+ADR-0388 extends the same boundary to refund execution. Authorization,
+preparation, durable reload recovery, two-person signing, submission
+ambiguity, and proof-pending notices now use the reviewed four-locale catalog
+with bounded status values. Refund artifacts, wallet roles, signed bytes, and
+finalized evidence behavior remain unchanged. The frontend suite passed 314
+tests with 10 intentional skips, and the Docker-backed browser suite passed
+48/48 journeys. Manual linguistic, assistive-technology, live-wallet, and
+live-provider review remain separate gates.
+
+ADR-0390 extends the reviewed language boundary to vault release. Route
+loading, proposal, durable lookup, malformed-response handling, governed
+transitions, mismatch protection, and refresh-reconciliation notices now use
+the four-locale catalog with bounded status values. Server-owned route
+selection, two-person governance, and ledger evidence behavior remain
+unchanged. The focused frontend suite passed 10 vault-release localization and
+UI tests; the full frontend, build, browser, and manual linguistic,
+assistive-technology, live-wallet, and live-provider gates remain required.
+
+ADR-0391 extends the same boundary to Replay Operations. Bounded transport
+status, page-budget validation, action failure, projection reload recovery,
+and malformed route-verification evidence now use the reviewed four-locale
+catalog. Replay authority, retry budgets, route activation, and chain evidence
+behavior remain unchanged. Focused tests and typecheck pass; full frontend,
+build, browser, and manual linguistic, assistive-technology, and production
+operator review remain required.
+
+ADR-0392 extends the reviewed recovery boundary to Settlement Adjustments.
+Authentication, input validation, bounded transport status, lifecycle
+transitions, wallet evidence preparation, and reconciliation now use typed
+English, German, Arabic, and Japanese catalog entries. Asset/evidence-array
+errors are distinct from transition-evidence errors, and invalid HTTP status
+values are rendered as `unknown status`. Tenant authorization, server-owned
+adjustment state, exact wallet evidence instructions, fail-closed unknown
+outcomes, and finalized reconciliation remain unchanged. Focused tests and
+typecheck pass; full frontend, browser, manual linguistic,
+assistive-technology, live-wallet, live-provider, and production operator
+review remain required.
+
+ADR-0393 extends the reviewed recovery boundary to Revenue Streaming. Bounded
+HTTP status, unavailable-address fallback, claim amount placeholder, and
+selected setup-evidence labels now use typed English, German, Arabic, and
+Japanese catalog entries. Server-owned reference selection, finalized-balance
+authority, authorization, idempotency, claim bounds, and fail-closed payout
+semantics remain unchanged. Focused tests and typecheck pass; full frontend,
+browser, manual linguistic, assistive-technology, live-provider, and
+production operator review remain required.
+
+ADR-0394 extends the reviewed recovery boundary to Vault Reconciliation. Target
+and history HTTP failures now use typed English, German, Arabic, and Japanese
+catalog entries with bounded status display. Stale, mismatch, error, empty,
+finalized-observation, tenant-authorization, and read-only release-stop
+semantics remain unchanged. Focused tests and typecheck pass; full frontend,
+browser, manual linguistic, assistive-technology, live-provider, and
+production operator review remain required.
+
+ADR-0395 extends the reviewed recovery boundary to Governance. Lookup, draft,
+transition, and simulation HTTP failures now use typed English, German, Arabic,
+and Japanese catalog entries with bounded status display. Tenant authorization,
+idempotent immutable drafts, provenance, lifecycle gates, server-owned
+simulation, and redacted diagnostics remain authoritative. Focused tests and
+typecheck pass; full frontend, browser, manual linguistic, assistive-
+technology, live-provider, and production operator review remain required.
+
+ADR-0396 extends the reviewed recovery boundary to Evidence Access. Read
+failures now use typed English, German, Arabic, and Japanese catalog entries
+with bounded status display. Tenant-scoped authorization, bounded UUIDv7
+filters, read-only audit semantics, exact evidence values, and diagnostics
+redaction remain authoritative. Focused tests and typecheck pass; full
+frontend, browser, manual linguistic, assistive-technology, live-provider, and
+production operator review remain required.
+
+ADR-0397 extends the reviewed recovery boundary to Refund Cancellation.
+Prepare, recovery, submit, and reconciliation failures now use typed English,
+German, Arabic, and Japanese catalog entries with bounded status display.
+Unchanged signed bytes, governance-wallet authority, unknown outcomes,
+finalized event reconciliation, and claim-state convergence remain
+authoritative. Focused tests and typecheck pass; full frontend, browser,
+manual linguistic, assistive-technology, live-provider, and production
+operator review remain required.
+
+ADR-0398 corrects the keyboard skip link to the stable main workspace
+landmark and establishes the final Material 3 Expressive shell role boundary.
+Shell surfaces, navigation, identity, popovers, and state containers use the
+versioned semantic role matrix; raw hues and decorative gradients are not
+permitted in production web source. The rendered landmark test, palette
+contrast contract, role-only color scan, and diff check pass. Manual keyboard,
+screen-reader, forced-colors, responsive, RTL, and design-system review remain
+required.
+
+ADR-0399 moves navigation access-state labels and the local unknown-policy
+fallback into the versioned English, German, Arabic RTL, and Japanese shell
+catalogs. Server-owned authorization reasons and identifiers remain exact and
+untranslated, while visible navigation stays task-oriented and status remains
+progressively disclosed to assistive technology and hover users. Catalog,
+German rendered-shell, and typecheck evidence pass; manual linguistic,
+screen-reader, RTL, and authorization-operator review remain required.
+
+The final production UI language, location-verification disclosure,
+server-owned payout-reference selection, and access-control workspace
+localization changes passed the then-current browser gate. The current suite,
+including the single-open navigation,
+forced-colors, shell-localization, aggregate-checkout, document-checkout,
+Treasury/vault-release, refund-request wallet, refund-cancellation wallet,
+and refund-execution wallet localization journeys, passes
+`make web-browser-check`: all 48 real-browser journeys passed, including the
 WCAG A/AA audit workspaces, keyboard and responsive behavior, wallet rejection,
 expired-quote, evidence handoff, fail-closed API states, and ID-only payout
-plan proposal. This automated browser evidence does not replace manual
+plan proposal and German/Arabic access-control explanations. This automated
+browser evidence does not replace manual
 assistive-technology, legal/tax, live-wallet, or staging identity review.
+
+On 2026-10-05, ADR-0364 kept the governed tax-rule draft open while moving
+the lower-frequency saved-rule simulation into a native collapsed disclosure.
+The change preserves keyboard and screen-reader semantics, avoids an extra
+request on expansion, and reduces first-view cognitive load without changing
+authorization, rule loading, calculation, or settlement behavior. The updated
+frontend suite passed 74 test files with 306 passing tests and 10 intentional
+skips; the production typecheck/build, public-documentation, Material palette,
+and `make web-browser-check` gates also passed with 48 real-browser journeys.
+This is automated local evidence; manual visual, assistive-technology,
+linguistic, tax-owner, and production-identity review remain open.
+
+ADR-0365 additionally keeps capability-snapshot parser and transport details
+out of the primary operator surface. Expiry, missing-expiry, and generic
+access failures now use localized recovery copy while protected navigation
+remains in a needs-check state. Parser, catalog, component, and 48-journey
+browser evidence passed locally; staging identity-provider, clock-skew,
+screen-reader, and support-evidence review remain open.
+
+ADR-0366 additionally keeps arbitrary injected-wallet provider exceptions out
+of the primary operator surface. Generic provider failures now use localized
+wallet-rejection copy, while typed multi-account recovery remains explicit and
+does not retry or infer authorization. Component and 48-journey browser
+evidence passed locally; live injected-wallet, provider-matrix, screen-reader,
+and staging support-evidence review remain open.
+
+ADR-0367 establishes the shared operator-error presentation boundary. API
+payload messages are no longer treated as browser presentation authority;
+aggregate/document checkout, refund claim/cancellation/execution, tax-document
+simulation, rule governance, document quote, treasury/vault,
+reconciliation, settlement adjustment, replay operations, revenue streaming,
+and the application shell now retain reviewed fallback copy and validated
+UUIDv7 support references, while ordinary provider/parser exceptions are
+redacted. The full web suite and 48-journey browser suite passed locally.
+Live-provider and manual accessibility gates remain open.
+
+ADR-0326 additionally removes persistent per-row policy/risk badges from the
+navigation rail while retaining server-owned access reasons and action
+sensitivity in the accessible row context and native tooltip. The full web
+suite, Material role contracts, and the current 48 real-browser journeys pass
+with this semantic state hierarchy; manual screen-reader, keyboard-only, RTL,
+reduced-motion, and wide/narrow operator review remain open.
+
+ADR-0335 additionally binds the shell's state presentation to named semantic
+aliases and quiet tonal hierarchy. The active route uses a lower-tonal surface
+with a primary rail, while unavailable sign-in configuration remains visible
+as a compact warning disclosure with its detailed error preserved inside the
+disclosure. The final local web suite, palette/color contracts, UI-language
+and shell-localization contracts, and current 48 real-browser journeys pass;
+manual operator,
+screen-reader, high-contrast, and production theme review remain open. ADR-
+0337 now keeps only the current workspace navigation group open, and ADR-0338
+adds forced-colors system-role mapping; both are covered by the current
+browser gate.
 
 On 2026-10-04, a fresh isolated Compose project initialized PostgreSQL 18,
 applied the complete migration set, started the API, and served the SPA through
@@ -42,6 +367,58 @@ uncached calculation at 1.4336–1.4431 microseconds, compiled calculation at
 256.24–257.71 microseconds. The zero-copy normalization fix improved the
 comparison for those calculation workloads; Linux/amd64, service, regional,
 and production SLO evidence remain separate gates.
+
+On 2026-10-05, the generalized tax-base evaluator was benchmarked before and
+after preserving the legacy integer fast path. The first run regressed legacy
+compile and uncached calculation by 31.44% and 20.92%; the corrected matched
+rerun on native arm64 macOS 27.0.1 (`Mac16,6`, 14 logical CPUs) with Rust
+1.98.1, three seconds of warm-up, and 100 samples measured 761.71 ns compile,
+1.4933 microseconds uncached calculation, 672.24 ns compiled calculation, and
+256.78 microseconds for the 64-line/16-component document workload. The
+rerun improved all four retained local baselines. This is a local
+microbenchmark result only; Linux/amd64, service, regional, RPC, and
+production p50/p95/p99 evidence remain separate gates.
+
+On 2026-10-05, ADR-0381 added bounded process-local single-flight compilation
+for same-digest warm-service misses. The failing-first concurrency test proved
+eight concurrent callers share one compilation and one immutable cached graph;
+the complete service suite and Clippy passed. The post-change Docker workload
+returned 256/256 HTTP 200 responses at concurrency 32 with p50/p95/p99 of
+1.466/3.256/5.705 ms on native arm64. Because the workload is warmed before
+measurement, the unit test—not this benchmark—is the cold-miss coalescing
+evidence; Linux/amd64, regional resource profiles, and production SLO evidence
+remain open.
+
+The refreshed 2026-10-05 pinned-container Tax Engine workload returned 256/256
+HTTP 200 responses at concurrency 32 with p50/p95/p99 of 1.535/4.697/10.305
+ms, using cache capacity 64 and maximum service concurrency 32. The result is
+local synthetic arm64 evidence for the warm HTTP adapter; Linux/amd64,
+regional/resource profiles, cold-miss, and production SLO evidence remain
+separate gates.
+
+On 2026-10-05, ADR-0382 added an explicit required-ID manifest for the v1 and
+v2 Tax Engine golden-vector schemas and a weighted-component cascade vector.
+The failing-first test rejected the missing scenario, then the complete
+Tax Engine suite passed 66/66 with Clippy and the public-repository contract.
+This strengthens semantic regression evidence and cross-language replay
+coverage; it does not establish jurisdictional legal approval or production
+rule publication.
+
+ADR-0381's follow-up cleanup test now exercises 128 distinct rule misses
+through a one-permit service and proves the single-flight coordination map
+returns to zero after every completed request while the compiled-rule cache
+remains bounded at one entry. This is local lifecycle evidence; process
+crash, multi-replica, and production resource-profile evidence remain open.
+
+On 2026-10-05, ADR-0383 removed the browser formatter's implicit two-decimal
+fallback and ADR-0384 carried required `atomic_decimals` through facts,
+canonical digests, results, browser parsing, and settlement-route comparison.
+The frontend now requires an explicit `0..=9` scale at every production call
+site; quote/document results use the server-returned scale and checkout uses
+finalized route `mint_decimals`. The failing-first formatter and scale tests,
+308-test frontend suite, TypeScript contract, API suite, and Rust Tax Engine
+suite passed. Production release gates remain separate from this contract
+evidence.
 
 ADR-0065 now provides an executable validator-backed conformance harness and a
 Dockerized SBF build path. The harness is a release-gate implementation, not
@@ -72,6 +449,13 @@ On 2026-10-04, after synchronizing the real-validator builders with the
 SHA-256 `e905ab9102b88bf015b095afb3af4b878870348b1a6c5a34d829f2dec40d50ce`.
 The same host again failed closed at Agave validator startup with the typed
 `validator_io_uring_unsupported` result, before RPC or transaction tests ran.
+
+On 2026-10-05, `make solana-conformance` rebuilt the exact SBF artifact with
+SHA-256 `b4c4ad136eb213f54c9a13519dca6c38501ff2f0cd26d35649b1acb904fb1667`
+and the pinned Agave 4.3.0 validator image. The validator again failed closed
+before RPC readiness with `io_uring_supported()` on this macOS Docker
+runtime. No conformance transaction or release evidence was produced; the
+required Linux/amd64 execution remains open.
 This confirms the updated conformance source is buildable and wired to the
 release gate; it is not validator evidence.
 
@@ -106,6 +490,43 @@ recovery, immutable rule rollback, and the finalized adjustment evidence path.
 This confirms the end-to-end local Docker path remains green; it does not
 replace Linux validator, staging identity, live provider, or production SLO
 evidence.
+
+On 2026-10-05, the same `make integration-check` was rerun against the
+current worktree after the bounded tax-base vector and documentation update.
+The fresh PostgreSQL 18/NATS/NGINX topology rebuilt successfully; concurrent
+submission fencing returned one `200` and one `409` with exactly one fixture
+transaction send, ambiguous submission reconciled to `confirmed`, process
+crash recovery reconciled to `confirmed`, immutable rule rollback passed, and
+finalized adjustment evidence was persisted. This is current local Docker
+evidence only; Linux validator, staging identity, live provider, HSM/KMS,
+legal, and production SLO gates remain separate.
+
+On 2026-10-05, `make web-browser-check` also passed on the current worktree:
+all 48 Playwright journeys passed through the pinned NGINX edge in 1.1
+minutes. The run covered WCAG A/AA assertions, forced-colors semantics,
+German/Arabic RTL localization, theme persistence, protected-action denial,
+wallet rejection, expired quotes, evidence handoff, reconciliation mismatch,
+unauthorized reads, and bounded client timeouts. This is automated synthetic
+browser evidence; manual assistive-technology, live-wallet/provider, staging
+identity, and production evidence remain open.
+
+On 2026-10-05, the same authenticated Docker integration gate was re-run after
+the capability-snapshot expiry boundary changes. It again rebuilt the pinned
+topology on a fresh PostgreSQL 18 volume and passed concurrent idempotency
+fencing (`409` and `200` with one transaction send), ambiguous submission
+reconciliation, API process-crash recovery, immutable rule rollback, and the
+finalized adjustment evidence path. This is current local evidence only; the
+external production gates above remain open.
+
+Later on 2026-10-05, the gate was re-run after the financial-workspace error
+boundary hardening. The fresh run again passed on PostgreSQL 18 with the
+two-replica `409`/`200` submission fence, one-send contention invariant,
+ambiguous submission recovery, API process-crash reconciliation, immutable
+rule rollback, route/asset verification, NATS outbox publication, and the
+adjustment evidence `[200,409]` submission contract. This strengthens local
+end-to-end evidence only; Linux/amd64 validator execution, live providers,
+staging identity, HSM/KMS custody, legal review, and production SLO evidence
+remain release blockers.
 
 ADR-0210 adds `make bootstrap`, the explicit Docker full-topology entry point.
 Its dry-run contract is covered by `make check`; a successful runtime bootstrap
@@ -301,10 +722,10 @@ close the separate successful Linux validator evidence gate.
   remain open.
 - [ ] The submit boundary cryptographically proves the signed message contains
   the compiled settlement instruction, expected program/account domain,
-  payer authorization, and exact instruction policy before production
-  enablement. ADR-0058 and unit tests cover the message-binding portion; fresh
-  blockhash validity, durable nonce policy, localnet, and staging evidence
-  remain open.
+  explicit fee-payer binding, payer authorization, and exact instruction
+  policy before production enablement. ADR-0058 and ADR-0359 plus unit tests
+  cover the repository message-binding portion; fresh blockhash validity,
+  durable nonce policy, localnet, and staging evidence remain open.
 - [x] The durable settlement submission fence has been exercised across two
   independently running API replicas. ADR-0134's Docker drill returned one
   `200`, one `409`, exactly one validating RPC send, and one durable native
@@ -336,7 +757,9 @@ close the separate successful Linux validator evidence gate.
   and production identity evidence remain open.
 - [x] Tax-engine golden vectors cover simple, progressive, tax-on-tax,
   cascading, inclusive/exclusive, min/max, threshold, exemption, cumulative
-  snapshot, credit, truncation, and rounding cases.
+  snapshot, credit, truncation, and rounding cases. ADR-0382 additionally
+  makes the v1/v2 vector IDs an explicit duplicate/unknown-ID manifest and
+  adds a weighted-component cascade to the v2 cross-language contract.
 - [x] Tax-engine boundary evidence covers zero, exact `u64::MAX`, unit-rate,
   invalid-rate/clamp, all declared rounding ties, and generated bounded `u64`
   conservation through floor/cap logic.
@@ -439,9 +862,15 @@ close the separate successful Linux validator evidence gate.
   telemetry remain open.
 - [x] ADR-0232 adds a real-image warm Tax Engine concurrency contract: 256
   authenticated aggregate requests at concurrency 32, exact response checks,
-  bounded timeouts, and p50/p95/p99 metadata. The 2026-10-03 local arm64 run
-  returned 256/256 HTTP 200 responses at concurrency 32 with p50/p95/p99 of
-  1.214/2.717/3.826 ms. This is local synthetic service evidence;
+  bounded timeouts, and p50/p95/p99 metadata. The latest 2026-10-05 local
+  arm64 runs returned 256/256 HTTP 200 responses at concurrency 32, with
+  p50/p95/p99 of 1.373/4.987/11.360 ms and 2.020/8.538/17.459 ms against
+  image digests
+  `sha256:7b224ef6fe993a809e42755cd2f16df36829fcd6ec248ed01b27f52341879ab9`.
+  and `sha256:c4467808bc4a6046f83051b7e2107046f0b1af833b257a56ba37f352dd5ff5c5`.
+  The two-run tail variance is retained as a performance investigation signal;
+  the prior 2026-10-03 run remains retained in ADR-0232 for comparison. This
+  is local synthetic service evidence;
   Linux/amd64 retention,
   resource profiles, regional SLOs, mTLS, and production identity issuance
   remain open.
@@ -559,7 +988,12 @@ close the separate successful Linux validator evidence gate.
   contention idempotency/calculation/outbox result (ADR-0112). This is local
   capacity evidence only. A fresh 2026-10-03 rerun observed peak `waiting=2`
   after the sampler was hardened to cover both replicas and a bounded,
-  explicit local table-lock hold.
+  explicit local table-lock hold. On 2026-10-05, the current pinned stack
+  completed the same 256/256 workload with 0% errors, peak `waiting=1`,
+  p50/p95/p99 of 12.590/189.054/203.112 ms under the bounded 200 ms table-lock
+  fault injection, and exact 256/256/256 durable
+  idempotency/calculation/outbox records plus one record for the 256 same-key
+  retries. This remains Docker Desktop arm64 local capacity evidence only.
 - [x] A Docker-isolated PostgreSQL 18 index-plan drill seeds 25,000 rows in
   each append-only evidence family, 25,000 tenant intents, and 10,000 intent
   lifecycle events. Normal planning selected all six declared scoped indexes
@@ -571,7 +1005,10 @@ close the separate successful Linux validator evidence gate.
   tenant volume, partition/retention policies, and index plans are load-tested
   against production-like data. Production-volume sizing, partition/retention,
   archive/PITR, and regional database evidence remain open; the local drills do
-  not close this broader gate.
+  not close this broader gate. The 2026-10-05 local pool drill and contention
+  drill provide current bounded evidence for queueing, lock/statement timeout,
+  settlement fencing, and refund nonce/claim convergence, but do not replace
+  representative tenant-volume or production-region testing.
 
 ## Security
 
@@ -589,6 +1026,10 @@ close the separate successful Linux validator evidence gate.
 - [ ] Dependency, container, SBOM, and secret scans pass in CI.
 - [x] The local NGINX edge has a non-root UID, read-only root filesystem,
   dropped capabilities, bounded temporary storage, and a passing Trivy gate.
+  The 2026-10-05 aggregate run reported zero Cargo/pnpm vulnerabilities,
+  zero secrets, zero high/critical findings, and zero Dockerfile
+  misconfigurations. CI retention and scheduled database-refresh evidence
+  remain separate release gates.
 - [x] Bounded stable-Rust adversarial account-meta property tests run on every
   program change through the dedicated `program-adversarial` CI job. ADR-0110
   constructs actual payer-signed transactions and substitutes every compiled
@@ -632,7 +1073,11 @@ close the separate successful Linux validator evidence gate.
   fresh 2026-10-03 local arm64 run returned p50/p95/p99 of
   4.940/24.936/38.346 ms with 200/200 successful responses and the same-key
   persistence invariants; this supersedes the older local timing observation,
-  not the open production gates.
+  not the open production gates. A refreshed 2026-10-05 authoritative-scale
+  run completed 200/200 requests at concurrency 16 with p50/p95/p99 of
+  6.297/22.969/29.731 ms, 32/32 same-key contention success, exact durable
+  counts, and zero observed pool waiters. This is Docker Desktop arm64 local
+  synthetic evidence only.
 - [x] ADR-0209 adds a separate two-line document-quote workload with
   document-specific persistence/outbox invariants. The 2026-09-30 local
   Docker run completed 200 requests at concurrency 16 across two API replicas
@@ -641,6 +1086,14 @@ close the separate successful Linux validator evidence gate.
   200/200 responses with p50/p95/p99 of 4.632/41.573/52.453 ms and preserved
   the same durable invariants. A successful retained CI artifact and
   production-like regional/resource-profile measurements remain open.
+- [x] A refreshed 2026-10-05 document-quote workload, using the required
+  authoritative atomic scale in the request facts, again completed 200/200
+  HTTP 200 requests at concurrency 16, 32/32 same-key contention responses,
+  exact 200/200/200 idempotency/calculation/outbox cardinality, and p50/p95/p99
+  of 6.926/27.063/40.952 ms with zero observed pool waiters. This remains
+  Docker Desktop arm64 local synthetic evidence; retained CI,
+  Linux/amd64, regional/resource-profile, and production SLO acceptance remain
+  open.
 - [x] Persisted-rule simulation has a separate facts-only two-replica latency
   workload with server-owned response-binding checks and bounded read
   contention (ADR-0145). Its local p95 diagnostic budget is evidence for the
@@ -712,7 +1165,10 @@ evidence. ADR-0046 now
 provides the bounded replay executor and suffix advancement path; those runtime
 and operational gates are intentionally not marked complete by unit tests.
 
-- [ ] Structured logs, traces, metrics, and alert routing are live; ADR-0082
+- [ ] Structured logs, traces, metrics, and alert routing are live; ADR-0372
+  now adds bounded read-only Grafana panels for protocol pause, replay
+  backlog, database-pool pressure, tax-rule cache behavior, and settlement
+  provider health without identity labels. ADR-0082
   now gives every API response an API-owned UUIDv7 correlation ID and rejects
   caller-controlled identity by overwrite. The API,
   worker, and indexer now expose bounded Prometheus-compatible metrics and
@@ -825,7 +1281,15 @@ and operational gates are intentionally not marked complete by unit tests.
 - [ ] ADR-0308 runs the authenticated Docker integration gate on the exact
   release candidate, binds it to the source revision, and includes it in the
   checksummed release evidence. Retained Linux execution and independent
-  review remain required.
+review remain required.
+
+ADR-0400 removes the implicit two-decimal precision from every browser form
+that constructs quote or simulation facts. Precision now begins blank and is
+accepted only through one exact 0–9 parser, preventing `Number("")` coercion
+from creating an unintended financial fact. Existing route-bound settlement
+precision comparison remains authoritative. Parser and affected-workspace
+tests pass; manual operator, localization, assistive-technology, route-asset,
+and live-wallet review remain required.
 - [x] SLOs, error budgets, RTO/RPO, support ownership, and incident severity policy are published under ADR-0135; named deployment owners, alert-receiver delivery, and measured regional evidence remain open.
 - [ ] Backup restore, key recovery, RPC failover, and indexer replay drills
   pass in the required production-like environments. The Docker integration
@@ -839,8 +1303,16 @@ and operational gates are intentionally not marked complete by unit tests.
 
 - [ ] Counsel reviewed tax, custody, money transmission, reporting, privacy, and jurisdictional claims.
 - [ ] Merchant terms identify who is responsible for tax registration and filing.
-- [ ] Policy issuer authority and evidence provenance are documented.
-- [ ] Stablecoin issuer and redemption/off-ramp dependencies are documented.
+- [x] Policy issuer authority and evidence provenance are documented under
+  ADR-0380 with a typed authority matrix, bounded evidence envelope, explicit
+  key/registry ownership, and fail-closed unknown-state semantics. Concrete
+  issuer selection, legal approval, HSM/KMS custody, and production activation
+  remain separate release gates.
+- [x] Stablecoin issuer and redemption/off-ramp dependencies are documented in
+  ADR-0380 and the provider-neutral dependency register, including protocol
+  admission versus redemption/liquidity boundaries, suspension behavior, and
+  replacement paths. A concrete issuer/off-ramp binding and legal/finance
+  approval remain external release gates.
 - [x] User-facing copy says “automated withholding and evidence,” not “guaranteed compliance”; ADR-0315 adds an executable language contract that rejects positive compliance and filing claims.
 - [x] Each published rule has a bounded versioned release-provenance envelope with legal/tax owner, source provenance, effective period, review date, and jurisdiction scope; ADR-0316 adds Rust, PostgreSQL, local integration, and governance-workbench evidence. Counsel, source verification, and jurisdiction-owner approval remain external release gates.
 - [x] UI clearly distinguishes calculated tax, attested policy, finalized settlement evidence, and legal responsibility boundaries; ADR-0315 makes the copy contract executable. Counsel and merchant-term approval remain open.
@@ -915,10 +1387,12 @@ and operational gates are intentionally not marked complete by unit tests.
   The 2026-10-01 pinned NGINX/Playwright run also passed 15/15 real-browser
   journeys, including keyboard/focus, narrow RTL, reduced-motion, lazy-load
   recovery, API failure states, quote expiry, wallet rejection, document
-  evidence handoff, and reconciliation mismatch/authorization states. This is
-  strong automated evidence, but manual screen-reader/assistive-technology,
-  complete localization, live-wallet/provider, and production identity review
-  remain open.
+  evidence handoff, and reconciliation mismatch/authorization states. The
+  current 40/40 Docker run additionally covers the latest navigation,
+  forced-colors, and shell-localization contracts. This is strong automated
+  evidence, but manual
+  screen-reader/assistive-technology, complete localization, live-wallet/
+  provider, and production identity review remain open.
 - [x] ADR-0146 centralizes exact `BigInt` atomic formatting, locale-aware
   timestamps, explicit IANA time-zone validation, bounded locale selection,
   and RTL direction handling. Formatter and rendered settings tests cover
@@ -934,8 +1408,9 @@ and operational gates are intentionally not marked complete by unit tests.
   workspace chunks, narrow RTL overflow, reduced motion, and bounded dynamic
   import failure. It now also runs pinned `axe-core` WCAG A/AA audits against
   the quote, API-unavailable fail-closed state, and every lazy workspace in the
-  real browser; the 15/15 Docker run passed. Manual assistive-technology review
-  and live-provider journeys
+  real browser; the historical 15/15 Docker run passed. The current 40/40
+  Docker run additionally covers the latest navigation, forced-colors, and
+  shell-localization contracts. Manual assistive-technology review and live-provider journeys
   remain open.
 - [x] ADR-0149 removes the secure-context-only `crypto.randomUUID()` startup
   dependency by using a CSPRNG `getRandomValues()` fallback for client-only
@@ -1101,7 +1576,7 @@ and operational gates are intentionally not marked complete by unit tests.
   disclosure, axe validation, reload, and durable intent recovery. This is
   synthetic API evidence only; live injected-wallet, RPC-provider, and
   finalized-chain evidence remain open.
-- [ ] Loading, stale-policy, expired-quote, wallet rejection, RPC timeout, and reconciliation-required states have complete browser accessibility and live-provider evidence. The shared timeout boundary and unit coverage are implemented by ADR-0095.
+- [ ] Loading, stale-policy, expired-quote, wallet rejection, RPC timeout, and reconciliation-required states have complete browser accessibility and live-provider evidence. The automated suite now covers unavailable, unauthorized, stale, expired capability, mismatch, wallet-rejection, expired-quote, bounded reconciliation-timeout, and checkout API/provider redaction states with axe assertions; the shared timeout boundary and unit coverage are implemented by ADR-0095, the localized capability recovery boundary by ADR-0365, wallet-provider exception redaction by ADR-0366, the financial-workspace error boundary by ADR-0367, and non-interruptive system-status semantics by ADR-0368. Live-provider, injected-wallet, and manual assistive-technology evidence remain open.
 
 ## Public repository
 
@@ -1109,4 +1584,10 @@ and operational gates are intentionally not marked complete by unit tests.
 - [x] `AGENTS.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, and `CHANGELOG.md` are present, linked, and current for the implementation foundation; `make public-docs-check` verifies the public-file and status contract. This does not close the separate license or production-readiness gates.
 - [ ] License choice is explicit before public source release.
 - [x] ADR index, coverage matrix, API/IDL documentation, release notes, and the public-release contract are linked from the README.
-- [ ] CI status, security scanning, dependency updates, and artifact provenance are visible without overstating readiness. ADR-0129 adds grouped Dependabot maintenance and a tag/manual release-candidate evidence workflow with checksums, SBOM, exact toolchain metadata, and validator/security evidence; a successful retained run, independent release review, and license decision remain open.
+- [ ] CI status, security scanning, dependency updates, and artifact provenance are visible without overstating readiness. ADR-0129 adds grouped Dependabot maintenance and a tag/manual release-candidate evidence workflow with checksums, SBOM, exact toolchain metadata, and validator/security evidence; ADR-0369 makes Rust 1.98.1 installation and selection explicit, and ADR-0370 records Node.js 24.21.0 and pnpm 12.3.4 evidence in host-side CI. A successful retained run, independent release review, and license decision remain open.
+
+ADR-0401 keeps the capability latency benchmark aligned with the complete
+nineteen-policy server catalog, including revenue-streaming deny decisions and
+resource-context indeterminate decisions. The executable benchmark contract is
+now part of `make check`; Linux/amd64, regional, identity-provider,
+resource-profile, and production SLO evidence remain separate release gates.

@@ -15,6 +15,23 @@ require_file() {
 }
 
 require_file metadata.txt
+require_file preflight.txt
+
+grep -Fxq 'schema_version=solana-tax-protocol/conformance-host/v1' "$evidence_dir/preflight.txt" \
+    || fail "unsupported conformance host preflight schema"
+grep -Fxq 'status=ready' "$evidence_dir/preflight.txt" \
+    || fail "conformance host preflight did not pass"
+grep -Fxq 'failure_reason=none' "$evidence_dir/preflight.txt" \
+    || fail "conformance host preflight has a failure reason"
+grep -Eq '^host_os=Linux$' "$evidence_dir/preflight.txt" \
+    || fail "authoritative conformance must run on a Linux host"
+grep -Eq '^host_architecture=(x86_64|amd64)$' "$evidence_dir/preflight.txt" \
+    || fail "authoritative conformance must run on an amd64 host"
+grep -Eq '^docker_ostype=linux$' "$evidence_dir/preflight.txt" \
+    || fail "authoritative conformance must use a Linux Docker engine"
+grep -Eq '^docker_server_architecture=(amd64|x86_64)$' "$evidence_dir/preflight.txt" \
+    || fail "authoritative conformance must run on an amd64 Docker engine"
+
 require_file artifact.txt
 require_file compose-config.yml
 require_file container-digests.txt

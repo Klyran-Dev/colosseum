@@ -24,6 +24,9 @@ mod fx_bootstrap;
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut telemetry = observability::init_tracing("api")?;
 
+    api::initialize_authorization_catalog()
+        .map_err(|code| format!("authorization catalog startup preflight failed: {code}"))?;
+
     let bind_address = env::var("API_BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:8080".into());
     let address: SocketAddr = bind_address.parse()?;
     let deployment = DeploymentConfig::from_env()?;

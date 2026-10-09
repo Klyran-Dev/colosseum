@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
+use tax_applicability::ApplicabilityDecision;
+pub use tax_applicability::Treatment;
 use thiserror::Error;
 
 pub type AtomicAmount = i128;
@@ -25,6 +27,7 @@ pub const MAX_CODE_BYTES: usize = 64;
 pub const MAX_PERIOD_ID_BYTES: usize = 128;
 pub const MAX_CURRENCY_CODE_BYTES: usize = 16;
 pub const RULE_SET_DOCUMENT_SCHEMA_V1: &str = "solana-tax-protocol/tax-rule/v1";
+pub const RULE_SET_DOCUMENT_SCHEMA_V2: &str = "solana-tax-protocol/tax-rule/v2";
 pub const TAX_DOCUMENT_SCHEMA_V1: &str = "solana-tax-protocol/tax-document/v1";
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -341,6 +344,9 @@ pub struct TaxFacts {
     pub gross_atomic: AtomicAmount,
     #[serde(with = "serde_i128_string")]
     pub net_atomic: AtomicAmount,
+    /// Number of decimal places represented by one whole unit of the asset.
+    /// This is metadata only; settlement binds it to the finalized mint route.
+    pub atomic_decimals: u8,
     pub currency: String,
     pub jurisdiction: String,
     /// Server-owned resolution evidence. `None` is retained only for legacy
@@ -355,6 +361,10 @@ pub struct TaxFacts {
     pub exemption_codes: Vec<String>,
     #[serde(default)]
     pub cumulative_period: Option<CumulativePeriodSnapshot>,
+    /// Evidence-bound product/tax treatment. `None` is retained only for
+    /// legacy calculations; new applicability-aware paths must provide it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applicability: Option<ApplicabilityDecision>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -458,6 +468,7 @@ pub struct TaxLineFacts {
 #[serde(deny_unknown_fields)]
 pub struct TaxDocumentFacts {
     pub id: String,
+    pub atomic_decimals: u8,
     pub currency: String,
     pub jurisdiction: String,
     #[serde(default)]
@@ -466,6 +477,10 @@ pub struct TaxDocumentFacts {
     pub fx_conversion: Option<FxConversionEvidence>,
     #[serde(default)]
     pub cumulative_period: Option<CumulativePeriodSnapshot>,
+    /// Document-level applicability context. It binds to the document facts
+    /// digest, not to any individual line's arithmetic facts digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applicability: Option<ApplicabilityDecision>,
     pub lines: Vec<TaxLineFacts>,
 }
 
@@ -484,12 +499,14 @@ impl TaxDocumentFacts {
         TaxFacts {
             gross_atomic: 0,
             net_atomic: 0,
+            atomic_decimals: self.atomic_decimals,
             currency: self.currency.clone(),
             jurisdiction: self.jurisdiction.clone(),
             jurisdiction_resolution: self.jurisdiction_resolution.clone(),
             fx_conversion: self.fx_conversion.clone(),
             exemption_codes: Vec::new(),
             cumulative_period: self.cumulative_period.clone(),
+            applicability: None,
         }
         .validate()?;
 
@@ -540,14 +557,40 @@ impl TaxDocumentFacts {
                 "document totals must fit Solana u64 atomic units",
             ));
         }
+        if let Some(applicability) = &self.applicability {
+            validate_applicability_binding(
+                applicability,
+                self.pre_applicability_digest_without_validation()?,
+            )?;
+        }
         Ok(())
+    }
+
+    pub fn pre_applicability_digest(&self) -> Result<Digest32, TaxError> {
+        let mut without_applicability = self.clone();
+        without_applicability.applicability = None;
+        without_applicability.validate()?;
+        without_applicability.pre_applicability_digest_without_validation()
+    }
+
+    fn pre_applicability_digest_without_validation(&self) -> Result<Digest32, TaxError> {
+        let mut encoder = CanonicalEncoder::new();
+        self.encode_base(&mut encoder)?;
+        Ok(encoder.digest())
     }
 
     pub fn canonical_digest(&self) -> Result<Digest32, TaxError> {
         self.validate()?;
         let mut encoder = CanonicalEncoder::new();
+        self.encode_base(&mut encoder)?;
+        encode_optional_applicability(&mut encoder, &self.applicability)?;
+        Ok(encoder.digest())
+    }
+
+    fn encode_base(&self, encoder: &mut CanonicalEncoder) -> Result<(), TaxError> {
         encoder.text(TAX_DOCUMENT_SCHEMA_V1)?;
         encoder.text(&self.id)?;
+        encoder.u8(self.atomic_decimals);
         encoder.text(&self.currency)?;
         encoder.text(&self.jurisdiction)?;
         let mut lines = self.lines.iter().collect::<Vec<_>>();
@@ -573,9 +616,8 @@ impl TaxDocumentFacts {
             }
             None => encoder.u8(0),
         }
-        encode_jurisdiction_resolution(&mut encoder, &self.jurisdiction_resolution)?;
-        encode_fx_conversion(&mut encoder, &self.fx_conversion)?;
-        Ok(encoder.digest())
+        encode_jurisdiction_resolution(encoder, &self.jurisdiction_resolution)?;
+        encode_fx_conversion(encoder, &self.fx_conversion)
     }
 
     fn normalized_for_calculation(&self) -> Result<Cow<'_, Self>, TaxError> {
@@ -599,6 +641,11 @@ impl TaxDocumentFacts {
 
 impl TaxFacts {
     fn validate(&self) -> Result<(), TaxError> {
+        if self.atomic_decimals > 9 {
+            return Err(TaxError::InvalidFacts(
+                "atomic decimal scale must be between 0 and 9",
+            ));
+        }
         if self.gross_atomic < 0 || self.net_atomic < 0 {
             return Err(TaxError::InvalidFacts("amounts must be non-negative"));
         }
@@ -648,14 +695,40 @@ impl TaxFacts {
                 "invalid cumulative period evidence snapshot",
             ));
         }
+        if let Some(applicability) = &self.applicability {
+            validate_applicability_binding(
+                applicability,
+                self.pre_applicability_digest_without_validation()?,
+            )?;
+        }
         Ok(())
+    }
+
+    pub fn pre_applicability_digest(&self) -> Result<Digest32, TaxError> {
+        let mut without_applicability = self.clone();
+        without_applicability.applicability = None;
+        without_applicability.validate()?;
+        without_applicability.pre_applicability_digest_without_validation()
+    }
+
+    fn pre_applicability_digest_without_validation(&self) -> Result<Digest32, TaxError> {
+        let mut encoder = CanonicalEncoder::new();
+        self.encode_base(&mut encoder)?;
+        Ok(encoder.digest())
     }
 
     pub fn canonical_digest(&self) -> Result<Digest32, TaxError> {
         self.validate()?;
         let mut encoder = CanonicalEncoder::new();
+        self.encode_base(&mut encoder)?;
+        encode_optional_applicability(&mut encoder, &self.applicability)?;
+        Ok(encoder.digest())
+    }
+
+    fn encode_base(&self, encoder: &mut CanonicalEncoder) -> Result<(), TaxError> {
         encoder.i128(self.gross_atomic);
         encoder.i128(self.net_atomic);
+        encoder.u8(self.atomic_decimals);
         encoder.text(&self.currency)?;
         encoder.text(&self.jurisdiction)?;
         let mut exemption_codes = self.exemption_codes.iter().collect::<Vec<_>>();
@@ -676,9 +749,8 @@ impl TaxFacts {
         // Preserve the pre-ADR-0102 canonical bytes for legacy facts without
         // a resolution envelope. Presence of an envelope is an additive
         // versioned suffix, so historical evidence remains replayable.
-        encode_jurisdiction_resolution(&mut encoder, &self.jurisdiction_resolution)?;
-        encode_fx_conversion(&mut encoder, &self.fx_conversion)?;
-        Ok(encoder.digest())
+        encode_jurisdiction_resolution(encoder, &self.jurisdiction_resolution)?;
+        encode_fx_conversion(encoder, &self.fx_conversion)
     }
 
     fn normalized_for_calculation(&self) -> Result<Cow<'_, Self>, TaxError> {
@@ -696,6 +768,170 @@ impl TaxFacts {
         normalized.validate()?;
         Ok(Cow::Owned(normalized))
     }
+}
+
+fn validate_applicability_binding(
+    decision: &ApplicabilityDecision,
+    base_facts_digest: Digest32,
+) -> Result<(), TaxError> {
+    if decision.policy_version == 0 {
+        return Err(TaxError::InvalidApplicabilityDecision);
+    }
+    decision
+        .canonical_digest()
+        .map_err(|_| TaxError::InvalidApplicabilityDecision)?;
+    if decision.facts_digest != base_facts_digest {
+        return Err(TaxError::ApplicabilityFactsDigestMismatch);
+    }
+    Ok(())
+}
+
+fn applicability_treatment(
+    decision: Option<&ApplicabilityDecision>,
+) -> Result<Treatment, TaxError> {
+    let treatment = decision.map_or(Treatment::Taxable, |decision| decision.treatment);
+    if treatment == Treatment::Unresolved {
+        return Err(TaxError::UnresolvedApplicability);
+    }
+    Ok(treatment)
+}
+
+fn treatment_uses_rule_graph(treatment: Treatment) -> bool {
+    matches!(
+        treatment,
+        Treatment::Taxable | Treatment::ReverseCharge | Treatment::Withholding
+    )
+}
+
+fn treatment_outcome(
+    treatment: Treatment,
+    gross_atomic: AtomicAmount,
+    arithmetic_tax_atomic: AtomicAmount,
+) -> Result<TreatmentOutcome, TaxError> {
+    if !(0..=MAX_ATOMIC_AMOUNT).contains(&gross_atomic)
+        || !(0..=MAX_ATOMIC_AMOUNT).contains(&arithmetic_tax_atomic)
+    {
+        return Err(TaxError::InvalidFacts(
+            "treatment outcome amounts must fit Solana atomic units",
+        ));
+    }
+    let (collected_tax_atomic, self_assessed_tax_atomic, withheld_tax_atomic, taxable_base_atomic) =
+        match treatment {
+            Treatment::Taxable => (arithmetic_tax_atomic, 0, 0, gross_atomic),
+            Treatment::ZeroRated => (0, 0, 0, gross_atomic),
+            Treatment::Exempt | Treatment::OutOfScope => (0, 0, 0, 0),
+            Treatment::ReverseCharge => (0, arithmetic_tax_atomic, 0, gross_atomic),
+            Treatment::Withholding => (
+                arithmetic_tax_atomic,
+                0,
+                arithmetic_tax_atomic,
+                gross_atomic,
+            ),
+            Treatment::Unresolved => return Err(TaxError::UnresolvedApplicability),
+        };
+    Ok(TreatmentOutcome {
+        treatment,
+        arithmetic_tax_atomic,
+        collected_tax_atomic,
+        self_assessed_tax_atomic,
+        withheld_tax_atomic,
+        taxable_base_atomic,
+    })
+}
+
+fn apply_calculation_treatment(
+    mut result: CalculationResult,
+    treatment: Treatment,
+) -> Result<CalculationResult, TaxError> {
+    let arithmetic_tax_atomic = result.total_tax_atomic;
+    let outcome = treatment_outcome(treatment, result.gross_atomic, arithmetic_tax_atomic)?;
+    if treatment == Treatment::ReverseCharge {
+        for component in &mut result.components {
+            component.clamped_tax_atomic = 0;
+            component.tax_atomic = 0;
+            component.explanation = format!(
+                "{} calculated as self-assessed tax and not collected from seller proceeds",
+                component.label
+            );
+        }
+    }
+    if !treatment_uses_rule_graph(treatment) {
+        result.components.clear();
+    }
+    result.total_tax_atomic = outcome.collected_tax_atomic;
+    result.total_net_atomic = result
+        .gross_atomic
+        .checked_sub(result.total_tax_atomic)
+        .ok_or(TaxError::ArithmeticOverflow)?;
+    result.treatment_outcome = outcome;
+    Ok(result)
+}
+
+fn apply_document_treatment(
+    mut result: TaxDocumentResult,
+    treatment: Treatment,
+) -> Result<TaxDocumentResult, TaxError> {
+    let arithmetic_tax_atomic = result.total_tax_atomic;
+    let outcome = treatment_outcome(treatment, result.gross_atomic, arithmetic_tax_atomic)?;
+    if treatment == Treatment::ReverseCharge {
+        for line in &mut result.lines {
+            for component in &mut line.components {
+                component.clamped_tax_atomic = 0;
+                component.tax_atomic = 0;
+                component.explanation = format!(
+                    "{} calculated as self-assessed tax and not collected from seller proceeds",
+                    component.label
+                );
+            }
+            line.total_tax_atomic = 0;
+            line.total_net_atomic = line.gross_atomic;
+        }
+    }
+    if !treatment_uses_rule_graph(treatment) {
+        for line in &mut result.lines {
+            line.components.clear();
+            line.total_tax_atomic = 0;
+            line.total_net_atomic = line.gross_atomic;
+        }
+    }
+    result.total_tax_atomic = outcome.collected_tax_atomic;
+    result.total_net_atomic = result
+        .gross_atomic
+        .checked_sub(result.total_tax_atomic)
+        .ok_or(TaxError::ArithmeticOverflow)?;
+    result.treatment_outcome = outcome;
+    Ok(result)
+}
+
+fn empty_document_lines(facts: &TaxDocumentFacts) -> Result<Vec<TaxLineResult>, TaxError> {
+    let mut lines = facts.lines.iter().collect::<Vec<_>>();
+    lines.sort_by(|left, right| left.id.cmp(&right.id));
+    lines
+        .into_iter()
+        .map(|line| {
+            Ok(TaxLineResult {
+                id: line.id.clone(),
+                gross_atomic: line.gross_atomic,
+                total_tax_atomic: 0,
+                total_net_atomic: line.gross_atomic,
+                components: Vec::new(),
+            })
+        })
+        .collect()
+}
+
+fn encode_optional_applicability(
+    encoder: &mut CanonicalEncoder,
+    decision: &Option<ApplicabilityDecision>,
+) -> Result<(), TaxError> {
+    if let Some(decision) = decision {
+        encoder.u8(1);
+        let digest = decision
+            .canonical_digest()
+            .map_err(|_| TaxError::InvalidApplicabilityDecision)?;
+        encoder.bytes(&digest);
+    }
+    Ok(())
 }
 
 fn encode_jurisdiction_resolution(
@@ -751,8 +987,22 @@ fn encode_fx_conversion(
     Ok(())
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum BaseReference {
+    Gross,
+    Net,
+    Component(String),
+    Weighted {
+        source: WeightedBaseSource,
+        #[serde(with = "serde_i128_string")]
+        numerator: i128,
+        #[serde(with = "serde_i128_string")]
+        denominator: i128,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub enum WeightedBaseSource {
     Gross,
     Net,
     Component(String),
@@ -761,12 +1011,54 @@ pub enum BaseReference {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TaxBase {
     pub sources: Vec<BaseReference>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_option_i128_string"
+    )]
+    pub floor_atomic: Option<AtomicAmount>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_option_i128_string"
+    )]
+    pub cap_atomic: Option<AtomicAmount>,
 }
 
 impl TaxBase {
     pub fn single(source: BaseReference) -> Self {
         Self {
             sources: vec![source],
+            floor_atomic: None,
+            cap_atomic: None,
+        }
+    }
+
+    pub fn weighted(source: WeightedBaseSource, numerator: i128, denominator: i128) -> Self {
+        Self::single(BaseReference::Weighted {
+            source,
+            numerator,
+            denominator,
+        })
+    }
+
+    pub fn with_bounds(
+        mut self,
+        floor_atomic: Option<AtomicAmount>,
+        cap_atomic: Option<AtomicAmount>,
+    ) -> Self {
+        self.floor_atomic = floor_atomic;
+        self.cap_atomic = cap_atomic;
+        self
+    }
+}
+
+impl BaseReference {
+    pub fn weighted(source: WeightedBaseSource, numerator: i128, denominator: i128) -> Self {
+        Self::Weighted {
+            source,
+            numerator,
+            denominator,
         }
     }
 }
@@ -783,12 +1075,23 @@ pub enum ThresholdMode {
     TriggerAt,
 }
 
+/// Explicit equations are required when a threshold is applied to an
+/// inclusive price. `GrossExcess` treats the amount above the threshold as a
+/// new inclusive gross base; this keeps the equation bounded and exact for
+/// flat and progressive rates without inferring a jurisdiction's legal rule.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum InclusiveThresholdEquation {
+    GrossExcess,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ThresholdRule {
     #[serde(with = "serde_i128_string")]
     pub amount_atomic: AtomicAmount,
     pub basis: ThresholdBasis,
     pub mode: ThresholdMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inclusive_equation: Option<InclusiveThresholdEquation>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -877,14 +1180,23 @@ pub struct RuleSetDocument {
 
 impl RuleSetDocument {
     pub fn new(rule_set: RuleSet) -> Self {
+        let schema = if rule_set.uses_v2_base_operations() {
+            RULE_SET_DOCUMENT_SCHEMA_V2
+        } else {
+            RULE_SET_DOCUMENT_SCHEMA_V1
+        };
         Self {
-            schema: RULE_SET_DOCUMENT_SCHEMA_V1.to_string(),
+            schema: schema.to_string(),
             rule_set,
         }
     }
 
     pub fn validate(&self) -> Result<(), TaxError> {
-        if self.schema != RULE_SET_DOCUMENT_SCHEMA_V1 {
+        if self.schema != RULE_SET_DOCUMENT_SCHEMA_V1 && self.schema != RULE_SET_DOCUMENT_SCHEMA_V2
+        {
+            return Err(TaxError::InvalidRuleDocumentSchema);
+        }
+        if self.schema == RULE_SET_DOCUMENT_SCHEMA_V1 && self.rule_set.uses_v2_base_operations() {
             return Err(TaxError::InvalidRuleDocumentSchema);
         }
         self.rule_set.compile().map(|_| ())
@@ -897,6 +1209,18 @@ impl RuleSetDocument {
 }
 
 impl RuleSet {
+    fn uses_v2_base_operations(&self) -> bool {
+        self.components.iter().any(|component| {
+            component.base.floor_atomic.is_some()
+                || component.base.cap_atomic.is_some()
+                || component
+                    .base
+                    .sources
+                    .iter()
+                    .any(|source| matches!(source, BaseReference::Weighted { .. }))
+        })
+    }
+
     pub fn canonical_digest(&self) -> Result<Digest32, TaxError> {
         validate_rule_set(self)?;
         let mut encoder = CanonicalEncoder::new();
@@ -973,16 +1297,35 @@ impl CompiledRuleSet {
 
     pub fn calculate(&self, facts: &TaxFacts) -> Result<CalculationResult, TaxError> {
         facts.validate()?;
+        let treatment = applicability_treatment(facts.applicability.as_ref())?;
         let facts_digest = facts.canonical_digest()?;
         let fx_conversion = facts.fx_conversion.clone();
         let facts = facts.normalized_for_calculation()?;
+        if !treatment_uses_rule_graph(treatment) {
+            return Ok(CalculationResult {
+                rule_set_id: self.rule_set.id.clone(),
+                rule_version: self.rule_set.version,
+                engine_version: ENGINE_VERSION.to_string(),
+                atomic_decimals: facts.atomic_decimals,
+                currency: facts.currency.clone(),
+                jurisdiction: facts.jurisdiction.clone(),
+                jurisdiction_resolution: facts.jurisdiction_resolution.clone(),
+                fx_conversion,
+                applicability: facts.applicability.clone(),
+                facts_digest,
+                rule_digest: self.rule_digest,
+                gross_atomic: facts.gross_atomic,
+                total_tax_atomic: 0,
+                total_net_atomic: facts.gross_atomic,
+                treatment_outcome: treatment_outcome(treatment, facts.gross_atomic, 0)?,
+                components: Vec::new(),
+            });
+        }
         match self.rule_set.components[0].rounding.scope {
             RoundingScope::Settlement => {
-                return self.calculate_settlement_scope(
-                    facts.as_ref(),
-                    facts_digest,
-                    fx_conversion,
-                );
+                let result =
+                    self.calculate_settlement_scope(facts.as_ref(), facts_digest, fx_conversion)?;
+                return apply_calculation_treatment(result, treatment);
             }
             RoundingScope::Line | RoundingScope::Invoice => {
                 return Err(TaxError::UnsupportedDocumentScope(
@@ -1073,21 +1416,29 @@ impl CompiledRuleSet {
             ));
         }
 
-        Ok(CalculationResult {
+        let result = CalculationResult {
             rule_set_id: self.rule_set.id.clone(),
             rule_version: self.rule_set.version,
             engine_version: ENGINE_VERSION.to_string(),
+            atomic_decimals: facts.atomic_decimals,
             currency: facts.currency.clone(),
             jurisdiction: facts.jurisdiction.clone(),
             jurisdiction_resolution: facts.jurisdiction_resolution.clone(),
             fx_conversion,
+            applicability: facts.applicability.clone(),
             facts_digest,
             rule_digest: self.rule_digest,
             gross_atomic: facts.gross_atomic,
             total_tax_atomic,
             total_net_atomic,
+            treatment_outcome: treatment_outcome(
+                Treatment::Taxable,
+                facts.gross_atomic,
+                total_tax_atomic,
+            )?,
             components: results.into_values().collect(),
-        })
+        };
+        apply_calculation_treatment(result, treatment)
     }
 
     fn calculate_settlement_scope(
@@ -1119,15 +1470,22 @@ impl CompiledRuleSet {
             rule_set_id: self.rule_set.id.clone(),
             rule_version: self.rule_set.version,
             engine_version: ENGINE_VERSION.to_string(),
+            atomic_decimals: facts.atomic_decimals,
             currency: facts.currency.clone(),
             jurisdiction: facts.jurisdiction.clone(),
             jurisdiction_resolution: facts.jurisdiction_resolution.clone(),
             fx_conversion,
+            applicability: facts.applicability.clone(),
             facts_digest,
             rule_digest: self.rule_digest,
             gross_atomic: facts.gross_atomic,
             total_tax_atomic,
             total_net_atomic,
+            treatment_outcome: treatment_outcome(
+                Treatment::Taxable,
+                facts.gross_atomic,
+                total_tax_atomic,
+            )?,
             components: allocated,
         })
     }
@@ -1212,9 +1570,36 @@ impl CompiledRuleSet {
         facts: &TaxDocumentFacts,
     ) -> Result<TaxDocumentResult, TaxError> {
         facts.validate()?;
+        let treatment = applicability_treatment(facts.applicability.as_ref())?;
         let facts_digest = facts.canonical_digest()?;
         let fx_conversion = facts.fx_conversion.clone();
         let facts = facts.normalized_for_calculation()?;
+        if !treatment_uses_rule_graph(treatment) {
+            let gross_atomic = facts.lines.iter().try_fold(0_i128, |total, line| {
+                total
+                    .checked_add(line.gross_atomic)
+                    .ok_or(TaxError::ArithmeticOverflow)
+            })?;
+            return Ok(TaxDocumentResult {
+                document_id: facts.id.clone(),
+                rule_set_id: self.rule_set.id.clone(),
+                rule_version: self.rule_set.version,
+                engine_version: ENGINE_VERSION.to_string(),
+                atomic_decimals: facts.atomic_decimals,
+                currency: facts.currency.clone(),
+                jurisdiction: facts.jurisdiction.clone(),
+                jurisdiction_resolution: facts.jurisdiction_resolution.clone(),
+                fx_conversion,
+                applicability: facts.applicability.clone(),
+                facts_digest,
+                rule_digest: self.rule_digest,
+                gross_atomic,
+                total_tax_atomic: 0,
+                total_net_atomic: gross_atomic,
+                treatment_outcome: treatment_outcome(treatment, gross_atomic, 0)?,
+                lines: empty_document_lines(facts.as_ref())?,
+            });
+        }
         let scope = self.rule_set.components[0].rounding.scope;
         if !matches!(scope, RoundingScope::Line | RoundingScope::Invoice) {
             return Err(TaxError::UnsupportedDocumentScope(
@@ -1230,12 +1615,14 @@ impl CompiledRuleSet {
             let line_facts = TaxFacts {
                 gross_atomic: line.gross_atomic,
                 net_atomic: line.net_atomic,
+                atomic_decimals: facts.atomic_decimals,
                 currency: facts.currency.clone(),
                 jurisdiction: facts.jurisdiction.clone(),
                 jurisdiction_resolution: facts.jurisdiction_resolution.clone(),
                 fx_conversion: None,
                 exemption_codes: line.exemption_codes.clone(),
                 cumulative_period: facts.cumulative_period.clone(),
+                applicability: None,
             };
             let mut pending = self.exact_components(&line_facts)?;
             for component in &mut pending {
@@ -1302,22 +1689,30 @@ impl CompiledRuleSet {
                 "document tax cannot exceed gross amount",
             ));
         }
-        Ok(TaxDocumentResult {
+        let result = TaxDocumentResult {
             document_id: facts.id.clone(),
             rule_set_id: self.rule_set.id.clone(),
             rule_version: self.rule_set.version,
             engine_version: ENGINE_VERSION.to_string(),
+            atomic_decimals: facts.atomic_decimals,
             currency: facts.currency.clone(),
             jurisdiction: facts.jurisdiction.clone(),
             jurisdiction_resolution: facts.jurisdiction_resolution.clone(),
             fx_conversion,
+            applicability: facts.applicability.clone(),
             facts_digest,
             rule_digest: self.rule_digest,
             gross_atomic,
             total_tax_atomic,
             total_net_atomic,
+            treatment_outcome: treatment_outcome(
+                Treatment::Taxable,
+                gross_atomic,
+                total_tax_atomic,
+            )?,
             lines: line_results,
-        })
+        };
+        apply_document_treatment(result, treatment)
     }
 
     /// Resolves and binds jurisdiction evidence while reusing this compiled
@@ -1474,6 +1869,34 @@ pub struct ComponentResult {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TreatmentOutcome {
+    pub treatment: Treatment,
+    #[serde(with = "serde_i128_string")]
+    pub arithmetic_tax_atomic: AtomicAmount,
+    #[serde(with = "serde_i128_string")]
+    pub collected_tax_atomic: AtomicAmount,
+    #[serde(with = "serde_i128_string")]
+    pub self_assessed_tax_atomic: AtomicAmount,
+    #[serde(with = "serde_i128_string")]
+    pub withheld_tax_atomic: AtomicAmount,
+    #[serde(with = "serde_i128_string")]
+    pub taxable_base_atomic: AtomicAmount,
+}
+
+impl Default for TreatmentOutcome {
+    fn default() -> Self {
+        Self {
+            treatment: Treatment::Taxable,
+            arithmetic_tax_atomic: 0,
+            collected_tax_atomic: 0,
+            self_assessed_tax_atomic: 0,
+            withheld_tax_atomic: 0,
+            taxable_base_atomic: 0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CalculationResult {
     pub rule_set_id: String,
     pub rule_version: u32,
@@ -1481,12 +1904,15 @@ pub struct CalculationResult {
     // calculations always populate this field explicitly below.
     #[serde(default)]
     pub engine_version: String,
+    pub atomic_decimals: u8,
     pub currency: String,
     pub jurisdiction: String,
     #[serde(default)]
     pub jurisdiction_resolution: Option<JurisdictionResolution>,
     #[serde(default)]
     pub fx_conversion: Option<FxConversionEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applicability: Option<ApplicabilityDecision>,
     pub facts_digest: Digest32,
     pub rule_digest: Digest32,
     #[serde(with = "serde_i128_string")]
@@ -1495,6 +1921,8 @@ pub struct CalculationResult {
     pub total_tax_atomic: AtomicAmount,
     #[serde(with = "serde_i128_string")]
     pub total_net_atomic: AtomicAmount,
+    #[serde(default)]
+    pub treatment_outcome: TreatmentOutcome,
     pub components: Vec<ComponentResult>,
 }
 
@@ -1534,12 +1962,15 @@ pub struct TaxDocumentResult {
     pub rule_version: u32,
     #[serde(default)]
     pub engine_version: String,
+    pub atomic_decimals: u8,
     pub currency: String,
     pub jurisdiction: String,
     #[serde(default)]
     pub jurisdiction_resolution: Option<JurisdictionResolution>,
     #[serde(default)]
     pub fx_conversion: Option<FxConversionEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applicability: Option<ApplicabilityDecision>,
     pub facts_digest: Digest32,
     pub rule_digest: Digest32,
     #[serde(with = "serde_i128_string")]
@@ -1548,6 +1979,8 @@ pub struct TaxDocumentResult {
     pub total_tax_atomic: AtomicAmount,
     #[serde(with = "serde_i128_string")]
     pub total_net_atomic: AtomicAmount,
+    #[serde(default)]
+    pub treatment_outcome: TreatmentOutcome,
     pub lines: Vec<TaxLineResult>,
 }
 
@@ -1579,12 +2012,22 @@ pub enum TaxError {
     InvalidRuleDocumentSchema,
     #[error("invalid facts: {0}")]
     InvalidFacts(&'static str),
+    #[error("invalid tax applicability decision")]
+    InvalidApplicabilityDecision,
+    #[error("tax applicability decision is bound to a different facts digest")]
+    ApplicabilityFactsDigestMismatch,
+    #[error("tax applicability is unresolved")]
+    UnresolvedApplicability,
+    #[error("tax applicability treatment is not yet integrated: {0:?}")]
+    UnsupportedApplicabilityTreatment(Treatment),
     #[error("missing tax component: {0}")]
     MissingComponent(String),
     #[error("tax rule dependency cycle detected at component: {0}")]
     DependencyCycle(String),
     #[error("arithmetic overflow")]
     ArithmeticOverflow,
+    #[error("tax base is not an integral atomic amount")]
+    NonIntegralTaxBase,
     #[error("unsupported inclusive calculation: {0}")]
     UnsupportedInclusive(&'static str),
     #[error("cumulative threshold requires an evidence snapshot")]
@@ -1701,7 +2144,22 @@ fn encode_component(
                 encoder.u8(2);
                 encoder.text(id)?;
             }
+            BaseReference::Weighted {
+                source,
+                numerator,
+                denominator,
+            } => {
+                encoder.u8(3);
+                encode_weighted_base_source(encoder, source)?;
+                encoder.i128(*numerator);
+                encoder.i128(*denominator);
+            }
         }
+    }
+    if component.base.floor_atomic.is_some() || component.base.cap_atomic.is_some() {
+        encoder.u8(1);
+        encoder.optional_i128(component.base.floor_atomic);
+        encoder.optional_i128(component.base.cap_atomic);
     }
     match &component.rate {
         RateSpec::Flat(rate) => {
@@ -1761,6 +2219,14 @@ fn encode_component(
                 ThresholdMode::ExemptUpTo => 0,
                 ThresholdMode::TriggerAt => 1,
             });
+            // Preserve legacy rule digests when no inclusive equation is
+            // declared. An explicit equation is an additive semantic marker.
+            if let Some(equation) = threshold.inclusive_equation {
+                encoder.u8(2);
+                encoder.u8(match equation {
+                    InclusiveThresholdEquation::GrossExcess => 0,
+                });
+            }
         }
         None => encoder.u8(0),
     }
@@ -1769,6 +2235,21 @@ fn encode_component(
     encoder.count(exemption_codes.len())?;
     for code in exemption_codes {
         encoder.text(code)?;
+    }
+    Ok(())
+}
+
+fn encode_weighted_base_source(
+    encoder: &mut CanonicalEncoder,
+    source: &WeightedBaseSource,
+) -> Result<(), TaxError> {
+    match source {
+        WeightedBaseSource::Gross => encoder.u8(0),
+        WeightedBaseSource::Net => encoder.u8(1),
+        WeightedBaseSource::Component(id) => {
+            encoder.u8(2);
+            encoder.text(id)?;
+        }
     }
     Ok(())
 }
@@ -1803,11 +2284,11 @@ fn visit(
     }
     state[index] = VisitState::Visiting;
     for dependency in &rule_set.components[index].base.sources {
-        if let BaseReference::Component(id) = dependency {
+        if let Some(id) = component_dependency(dependency) {
             let dependency_index = indices
-                .get(id.as_str())
+                .get(id)
                 .copied()
-                .ok_or_else(|| TaxError::MissingComponent(id.clone()))?;
+                .ok_or_else(|| TaxError::MissingComponent(id.to_string()))?;
             visit(dependency_index, rule_set, indices, state, order)?;
         }
     }
@@ -1826,17 +2307,125 @@ fn evaluate_base(
             "tax base must have at least one source",
         ));
     }
-    base.sources.iter().try_fold(0_i128, |total, source| {
-        let value = match source {
-            BaseReference::Gross => facts.gross_atomic,
-            BaseReference::Net => facts.net_atomic,
-            BaseReference::Component(id) => computed
+    if is_legacy_additive_base(base) {
+        return base.sources.iter().try_fold(0_i128, |total, source| {
+            let value = match source {
+                BaseReference::Gross => facts.gross_atomic,
+                BaseReference::Net => facts.net_atomic,
+                BaseReference::Component(id) => computed
+                    .get(id)
+                    .copied()
+                    .ok_or_else(|| TaxError::MissingComponent(id.clone()))?,
+                BaseReference::Weighted { .. } => {
+                    return Err(TaxError::InvalidRule(
+                        "weighted source requires generalized base evaluation",
+                    ));
+                }
+            };
+            total.checked_add(value).ok_or(TaxError::ArithmeticOverflow)
+        });
+    }
+    let total = base
+        .sources
+        .iter()
+        .try_fold(Rational::zero(), |total, source| {
+            total.checked_add(evaluate_base_term(source, facts, computed)?)
+        })?;
+    if total.numerator % total.denominator != 0 {
+        return Err(TaxError::NonIntegralTaxBase);
+    }
+    let integral = total.numerator / total.denominator;
+    let floored = match base.floor_atomic {
+        Some(floor) => integral.max(floor),
+        None => integral,
+    };
+    Ok(match base.cap_atomic {
+        Some(cap) => floored.min(cap),
+        None => floored,
+    })
+}
+
+fn is_legacy_additive_base(base: &TaxBase) -> bool {
+    base.floor_atomic.is_none()
+        && base.cap_atomic.is_none()
+        && base.sources.iter().all(|source| {
+            matches!(
+                source,
+                BaseReference::Gross | BaseReference::Net | BaseReference::Component(_)
+            )
+        })
+}
+
+fn evaluate_base_term(
+    source: &BaseReference,
+    facts: &TaxFacts,
+    computed: &BTreeMap<String, AtomicAmount>,
+) -> Result<Rational, TaxError> {
+    let (value, coefficient) = match source {
+        BaseReference::Gross => (facts.gross_atomic, Rational::from_integer(1)),
+        BaseReference::Net => (facts.net_atomic, Rational::from_integer(1)),
+        BaseReference::Component(id) => (
+            computed
                 .get(id)
                 .copied()
                 .ok_or_else(|| TaxError::MissingComponent(id.clone()))?,
-        };
-        total.checked_add(value).ok_or(TaxError::ArithmeticOverflow)
-    })
+            Rational::from_integer(1),
+        ),
+        BaseReference::Weighted {
+            source,
+            numerator,
+            denominator,
+        } => {
+            let value = match source {
+                WeightedBaseSource::Gross => facts.gross_atomic,
+                WeightedBaseSource::Net => facts.net_atomic,
+                WeightedBaseSource::Component(id) => computed
+                    .get(id)
+                    .copied()
+                    .ok_or_else(|| TaxError::MissingComponent(id.clone()))?,
+            };
+            (value, Rational::new(*numerator, *denominator)?)
+        }
+    };
+    Rational::from_integer(value).checked_mul(coefficient)
+}
+
+fn component_dependency(source: &BaseReference) -> Option<&str> {
+    match source {
+        BaseReference::Component(id) => Some(id.as_str()),
+        BaseReference::Weighted {
+            source: WeightedBaseSource::Component(id),
+            ..
+        } => Some(id.as_str()),
+        BaseReference::Gross | BaseReference::Net | BaseReference::Weighted { .. } => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BaseSourceIdentity<'a> {
+    Gross,
+    Net,
+    Component(&'a str),
+}
+
+fn base_source_identity(source: &BaseReference) -> BaseSourceIdentity<'_> {
+    match source {
+        BaseReference::Gross
+        | BaseReference::Weighted {
+            source: WeightedBaseSource::Gross,
+            ..
+        } => BaseSourceIdentity::Gross,
+        BaseReference::Net
+        | BaseReference::Weighted {
+            source: WeightedBaseSource::Net,
+            ..
+        } => BaseSourceIdentity::Net,
+        BaseReference::Component(id)
+        | BaseReference::Weighted {
+            source: WeightedBaseSource::Component(id),
+            ..
+        } => BaseSourceIdentity::Component(id),
+    }
 }
 
 fn apply_threshold(
@@ -1847,7 +2436,7 @@ fn apply_threshold(
     let Some(threshold) = &component.threshold else {
         return Ok(base_atomic);
     };
-    if component.price_mode == PriceMode::Inclusive {
+    if component.price_mode == PriceMode::Inclusive && threshold.inclusive_equation.is_none() {
         return Err(TaxError::UnsupportedThreshold(
             "inclusive threshold equations require an explicit rule version",
         ));
@@ -2015,7 +2604,7 @@ fn validate_rule_set(rule_set: &RuleSet) -> Result<(), TaxError> {
                 .base
                 .sources
                 .iter()
-                .any(|source| matches!(source, BaseReference::Component(_))))
+                .any(|source| component_dependency(source).is_some()))
         {
             return Err(TaxError::InvalidRule(
                 "aggregate, line, and invoice rounding cannot use component dependencies, mixed rounding modes, or mixed atomic quanta",
@@ -2068,6 +2657,65 @@ fn validate_rule_set(rule_set: &RuleSet) -> Result<(), TaxError> {
                 "tax base source count is outside the supported bound",
             ));
         }
+        if component.base.floor_atomic.unwrap_or(0) < 0
+            || component.base.cap_atomic.unwrap_or(0) < 0
+        {
+            return Err(TaxError::InvalidRule(
+                "tax base floor and cap must be non-negative",
+            ));
+        }
+        if component.base.floor_atomic.unwrap_or(0) > MAX_ATOMIC_AMOUNT
+            || component.base.cap_atomic.unwrap_or(0) > MAX_ATOMIC_AMOUNT
+        {
+            return Err(TaxError::InvalidRule(
+                "tax base floor and cap must fit Solana u64 atomic units",
+            ));
+        }
+        if let (Some(floor), Some(cap)) = (component.base.floor_atomic, component.base.cap_atomic)
+            && floor > cap
+        {
+            return Err(TaxError::InvalidRule("base floor cannot exceed cap"));
+        }
+        for (source_index, source) in component.base.sources.iter().enumerate() {
+            let identity = base_source_identity(source);
+            if component.base.sources[..source_index]
+                .iter()
+                .any(|previous| base_source_identity(previous) == identity)
+            {
+                return Err(TaxError::InvalidRule(
+                    "tax base sources must be distinct; repeated sources are ambiguous",
+                ));
+            }
+            if let BaseReference::Weighted {
+                source,
+                numerator,
+                denominator,
+            } = source
+            {
+                if *numerator == 0 {
+                    return Err(TaxError::InvalidRule(
+                        "weighted tax base coefficient must be non-zero",
+                    ));
+                }
+                if *numerator > MAX_ATOMIC_AMOUNT || *numerator < -MAX_ATOMIC_AMOUNT {
+                    return Err(TaxError::InvalidRule(
+                        "weighted tax base numerator must fit the bounded coefficient domain",
+                    ));
+                }
+                if *denominator <= 0 || *denominator > MAX_ATOMIC_AMOUNT {
+                    return Err(TaxError::InvalidRule(
+                        "weighted tax base denominator must be positive and bounded",
+                    ));
+                }
+                if let WeightedBaseSource::Component(id) = source
+                    && (id.trim().is_empty() || id.len() > MAX_CODE_BYTES)
+                {
+                    return Err(TaxError::InvalidRule(
+                        "weighted component source id is invalid",
+                    ));
+                }
+            }
+        }
         if component.exemption_codes.len() > MAX_EXEMPTION_CODES {
             return Err(TaxError::InvalidRule("too many exemption codes"));
         }
@@ -2086,9 +2734,18 @@ fn validate_rule_set(rule_set: &RuleSet) -> Result<(), TaxError> {
                     "threshold must fit non-negative Solana atomic units",
                 ));
             }
-            if component.price_mode == PriceMode::Inclusive {
+            if component.price_mode == PriceMode::Inclusive
+                && threshold.inclusive_equation.is_none()
+            {
                 return Err(TaxError::UnsupportedThreshold(
                     "inclusive threshold equations require an explicit rule version",
+                ));
+            }
+            if component.price_mode == PriceMode::Exclusive
+                && threshold.inclusive_equation.is_some()
+            {
+                return Err(TaxError::InvalidRule(
+                    "inclusive threshold equations require inclusive price mode",
                 ));
             }
         }
@@ -2160,12 +2817,305 @@ mod tests {
         TaxFacts {
             gross_atomic,
             net_atomic,
+            atomic_decimals: 2,
             currency: "USD".to_string(),
             jurisdiction: "US-CA".to_string(),
             jurisdiction_resolution: None,
             fx_conversion: None,
             exemption_codes: Vec::new(),
             cumulative_period: None,
+            applicability: None,
+        }
+    }
+
+    fn applicability_decision(
+        facts_digest: Digest32,
+        treatment: tax_applicability::Treatment,
+    ) -> tax_applicability::ApplicabilityDecision {
+        tax_applicability::ApplicabilityDecision {
+            schema: tax_applicability::APPLICABILITY_SCHEMA_V1.to_string(),
+            policy_id: "policy-us-ca-digital".to_string(),
+            policy_version: 1,
+            policy_digest: [9; 32],
+            facts_digest,
+            treatment,
+            selected_rule_id: Some("taxable-digital-service".to_string()),
+            matched_rule_ids: vec!["taxable-digital-service".to_string()],
+            evaluated_at_unix: 1_700_000_100,
+        }
+    }
+
+    fn applicability_rule() -> RuleSet {
+        RuleSet {
+            id: "applicability-binding".to_string(),
+            version: 1,
+            components: vec![flat_rule(
+                "sales-tax",
+                TaxBase::single(BaseReference::Net),
+                Rate::new(10, 100).expect("test rate"),
+                PriceMode::Exclusive,
+            )],
+        }
+    }
+
+    #[test]
+    fn applicability_context_is_bound_to_facts_and_replay_result() {
+        let mut transaction = facts(1_100, 1_000);
+        let base_digest = transaction
+            .pre_applicability_digest()
+            .expect("base facts digest");
+        transaction.applicability = Some(applicability_decision(
+            base_digest,
+            tax_applicability::Treatment::Taxable,
+        ));
+
+        let result = calculate(&applicability_rule(), &transaction).expect("calculation");
+
+        assert_eq!(result.applicability, transaction.applicability);
+        assert_ne!(result.facts_digest, base_digest);
+        result
+            .verify_replay(&applicability_rule(), &transaction)
+            .expect("applicability replay");
+    }
+
+    #[test]
+    fn applicability_binding_rejects_a_decision_for_different_facts() {
+        let mut transaction = facts(1_100, 1_000);
+        transaction.applicability = Some(applicability_decision(
+            [8; 32],
+            tax_applicability::Treatment::Taxable,
+        ));
+
+        assert_eq!(
+            calculate(&applicability_rule(), &transaction),
+            Err(TaxError::ApplicabilityFactsDigestMismatch)
+        );
+    }
+
+    #[test]
+    fn unresolved_applicability_fails_closed_before_arithmetic() {
+        let mut transaction = facts(1_100, 1_000);
+        let base_digest = transaction
+            .pre_applicability_digest()
+            .expect("base facts digest");
+        transaction.applicability = Some(applicability_decision(
+            base_digest,
+            tax_applicability::Treatment::Unresolved,
+        ));
+
+        assert_eq!(
+            calculate(&applicability_rule(), &transaction),
+            Err(TaxError::UnresolvedApplicability)
+        );
+    }
+
+    #[test]
+    fn zero_rated_treatment_preserves_taxable_base_without_collecting_tax() {
+        let mut transaction = facts(1_100, 1_000);
+        let base_digest = transaction
+            .pre_applicability_digest()
+            .expect("base facts digest");
+        transaction.applicability = Some(applicability_decision(
+            base_digest,
+            tax_applicability::Treatment::ZeroRated,
+        ));
+
+        let result = calculate(&applicability_rule(), &transaction).expect("zero-rated result");
+
+        assert_eq!(result.total_tax_atomic, 0);
+        assert_eq!(result.total_net_atomic, 1_100);
+        assert!(result.components.is_empty());
+        assert_eq!(
+            result.treatment_outcome,
+            TreatmentOutcome {
+                treatment: tax_applicability::Treatment::ZeroRated,
+                arithmetic_tax_atomic: 0,
+                collected_tax_atomic: 0,
+                self_assessed_tax_atomic: 0,
+                withheld_tax_atomic: 0,
+                taxable_base_atomic: 1_100,
+            }
+        );
+    }
+
+    #[test]
+    fn reverse_charge_reports_self_assessed_tax_without_reducing_seller_net() {
+        let mut transaction = facts(1_100, 1_000);
+        let base_digest = transaction
+            .pre_applicability_digest()
+            .expect("base facts digest");
+        transaction.applicability = Some(applicability_decision(
+            base_digest,
+            tax_applicability::Treatment::ReverseCharge,
+        ));
+
+        let result = calculate(&applicability_rule(), &transaction).expect("reverse-charge result");
+
+        assert_eq!(result.total_tax_atomic, 0);
+        assert_eq!(result.total_net_atomic, 1_100);
+        assert_eq!(result.treatment_outcome.arithmetic_tax_atomic, 100);
+        assert_eq!(result.treatment_outcome.collected_tax_atomic, 0);
+        assert_eq!(result.treatment_outcome.self_assessed_tax_atomic, 100);
+        assert_eq!(result.treatment_outcome.withheld_tax_atomic, 0);
+        assert_eq!(result.components[0].tax_atomic, 0);
+        result
+            .verify_replay(&applicability_rule(), &transaction)
+            .expect("reverse-charge replay");
+    }
+
+    #[test]
+    fn withholding_reduces_seller_net_and_records_the_withheld_amount() {
+        let mut transaction = facts(1_100, 1_000);
+        let base_digest = transaction
+            .pre_applicability_digest()
+            .expect("base facts digest");
+        transaction.applicability = Some(applicability_decision(
+            base_digest,
+            tax_applicability::Treatment::Withholding,
+        ));
+
+        let result = calculate(&applicability_rule(), &transaction).expect("withholding result");
+
+        assert_eq!(result.total_tax_atomic, 100);
+        assert_eq!(result.total_net_atomic, 1_000);
+        assert_eq!(result.treatment_outcome.arithmetic_tax_atomic, 100);
+        assert_eq!(result.treatment_outcome.collected_tax_atomic, 100);
+        assert_eq!(result.treatment_outcome.self_assessed_tax_atomic, 0);
+        assert_eq!(result.treatment_outcome.withheld_tax_atomic, 100);
+    }
+
+    #[test]
+    fn exempt_and_out_of_scope_treatments_have_no_authoritative_tax_graph() {
+        for treatment in [
+            tax_applicability::Treatment::Exempt,
+            tax_applicability::Treatment::OutOfScope,
+        ] {
+            let mut transaction = facts(1_100, 1_000);
+            let base_digest = transaction
+                .pre_applicability_digest()
+                .expect("base facts digest");
+            transaction.applicability = Some(applicability_decision(base_digest, treatment));
+
+            let result = calculate(&applicability_rule(), &transaction).expect("non-tax result");
+
+            assert_eq!(result.total_tax_atomic, 0);
+            assert_eq!(result.total_net_atomic, 1_100);
+            assert!(result.components.is_empty());
+            assert_eq!(result.treatment_outcome.treatment, treatment);
+            assert_eq!(result.treatment_outcome.taxable_base_atomic, 0);
+        }
+    }
+
+    #[test]
+    fn document_applicability_context_binds_to_document_replay() {
+        let rule = independent_document_rule(RoundingScope::Line);
+        let mut document = document_facts(vec![line("line-1", 1_100)]);
+        let base_digest = document
+            .pre_applicability_digest()
+            .expect("base document digest");
+        document.applicability = Some(applicability_decision(
+            base_digest,
+            tax_applicability::Treatment::Taxable,
+        ));
+
+        let result = calculate_document(&rule, &document).expect("document calculation");
+
+        assert_eq!(result.applicability, document.applicability);
+        assert_ne!(result.facts_digest, base_digest);
+        result
+            .verify_replay(&rule, &document)
+            .expect("document applicability replay");
+    }
+
+    #[test]
+    fn document_reverse_charge_preserves_line_conservation_and_self_assessed_total() {
+        let rule = independent_document_rule(RoundingScope::Line);
+        let mut document = document_facts(vec![line("line-1", 1_100), line("line-2", 550)]);
+        let base_digest = document
+            .pre_applicability_digest()
+            .expect("base document digest");
+        document.applicability = Some(applicability_decision(
+            base_digest,
+            tax_applicability::Treatment::ReverseCharge,
+        ));
+
+        let result = calculate_document(&rule, &document).expect("document reverse-charge");
+
+        assert_eq!(result.gross_atomic, 1_650);
+        assert_eq!(result.total_tax_atomic, 0);
+        assert_eq!(result.total_net_atomic, 1_650);
+        assert_eq!(result.treatment_outcome.self_assessed_tax_atomic, 1_100);
+        assert!(
+            result.lines.iter().all(
+                |line| line.total_tax_atomic == 0 && line.total_net_atomic == line.gross_atomic
+            )
+        );
+        result
+            .verify_replay(&rule, &document)
+            .expect("document reverse-charge replay");
+    }
+
+    #[test]
+    fn treatment_semantics_match_the_versioned_golden_vector() {
+        #[derive(Deserialize)]
+        struct Vector {
+            schema: String,
+            cases: Vec<VectorCase>,
+        }
+        #[derive(Deserialize)]
+        struct VectorCase {
+            treatment: Treatment,
+            gross_atomic: String,
+            arithmetic_tax_atomic: String,
+            expected: TreatmentExpected,
+        }
+        #[derive(Deserialize)]
+        struct TreatmentExpected {
+            collected_tax_atomic: String,
+            self_assessed_tax_atomic: String,
+            withheld_tax_atomic: String,
+            taxable_base_atomic: String,
+        }
+
+        let vector: Vector =
+            serde_json::from_str(include_str!("../../../test-vectors/tax-treatment-v1.json"))
+                .expect("treatment vector");
+        assert_eq!(vector.schema, "solana-tax-protocol/tax-treatment/v1");
+        for case in vector.cases {
+            let gross_atomic = case.gross_atomic.parse().expect("gross atomic");
+            let arithmetic_tax_atomic = case
+                .arithmetic_tax_atomic
+                .parse()
+                .expect("arithmetic tax atomic");
+            let expected = TreatmentOutcome {
+                treatment: case.treatment,
+                arithmetic_tax_atomic,
+                collected_tax_atomic: case
+                    .expected
+                    .collected_tax_atomic
+                    .parse()
+                    .expect("collected tax atomic"),
+                self_assessed_tax_atomic: case
+                    .expected
+                    .self_assessed_tax_atomic
+                    .parse()
+                    .expect("self-assessed tax atomic"),
+                withheld_tax_atomic: case
+                    .expected
+                    .withheld_tax_atomic
+                    .parse()
+                    .expect("withheld tax atomic"),
+                taxable_base_atomic: case
+                    .expected
+                    .taxable_base_atomic
+                    .parse()
+                    .expect("taxable base atomic"),
+            };
+            assert_eq!(
+                treatment_outcome(case.treatment, gross_atomic, arithmetic_tax_atomic)
+                    .expect("treatment outcome"),
+                expected
+            );
         }
     }
 
@@ -2206,7 +3156,7 @@ mod tests {
             )],
         };
         let mut document = RuleSetDocument::new(rule_set);
-        document.schema = "solana-tax-protocol/tax-rule/v2".to_string();
+        document.schema = "solana-tax-protocol/tax-rule/v3".to_string();
         assert_eq!(
             document.validate(),
             Err(TaxError::InvalidRuleDocumentSchema)
@@ -2288,6 +3238,8 @@ mod tests {
                             BaseReference::Net,
                             BaseReference::Component("first".to_string()),
                         ],
+                        floor_atomic: None,
+                        cap_atomic: None,
                     },
                     Rate::new(5, 100).unwrap(),
                     PriceMode::Exclusive,
@@ -2511,11 +3463,13 @@ mod tests {
     fn document_facts(lines: Vec<TaxLineFacts>) -> TaxDocumentFacts {
         TaxDocumentFacts {
             id: "invoice-1".to_string(),
+            atomic_decimals: 2,
             currency: "USD".to_string(),
             jurisdiction: "US-CA".to_string(),
             jurisdiction_resolution: None,
             fx_conversion: None,
             cumulative_period: None,
+            applicability: None,
             lines,
         }
     }
@@ -2527,6 +3481,40 @@ mod tests {
             net_atomic: amount,
             exemption_codes: Vec::new(),
         }
+    }
+
+    #[test]
+    fn atomic_scale_is_required_in_canonical_facts_and_bounded() {
+        let mut transaction = facts(1_100, 1_000);
+        let digest = transaction.canonical_digest().unwrap();
+        transaction.atomic_decimals = 6;
+        assert_ne!(digest, transaction.canonical_digest().unwrap());
+
+        transaction.atomic_decimals = 10;
+        assert!(
+            matches!(transaction.validate(), Err(TaxError::InvalidFacts(message)) if message.contains("atomic decimal scale"))
+        );
+    }
+
+    #[test]
+    fn calculated_result_carries_authoritative_atomic_scale() {
+        let rule = RuleSet {
+            id: "scale-result".to_string(),
+            version: 1,
+            components: vec![flat_rule(
+                "sales-tax",
+                TaxBase::single(BaseReference::Net),
+                Rate::new(10, 100).unwrap(),
+                PriceMode::Exclusive,
+            )],
+        };
+        let mut transaction = facts(1_100, 1_000);
+        transaction.atomic_decimals = 6;
+        let result = calculate(&rule, &transaction).unwrap();
+        assert_eq!(result.atomic_decimals, 6);
+        let encoded = serde_json::to_vec(&result).unwrap();
+        let decoded: CalculationResult = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded.atomic_decimals, 6);
     }
 
     fn independent_document_rule(scope: RoundingScope) -> RuleSet {
@@ -2818,6 +3806,427 @@ mod tests {
     }
 
     #[test]
+    fn classifies_legacy_additive_bases_for_the_integer_fast_path() {
+        assert!(is_legacy_additive_base(&TaxBase::single(
+            BaseReference::Net
+        )));
+        assert!(is_legacy_additive_base(&TaxBase {
+            sources: vec![
+                BaseReference::Gross,
+                BaseReference::Component("state".to_string())
+            ],
+            floor_atomic: None,
+            cap_atomic: None,
+        }));
+        assert!(!is_legacy_additive_base(&TaxBase::weighted(
+            WeightedBaseSource::Net,
+            1,
+            2,
+        )));
+        assert!(!is_legacy_additive_base(
+            &TaxBase::single(BaseReference::Net).with_bounds(Some(0), None,)
+        ));
+    }
+
+    #[test]
+    fn rejects_duplicate_tax_base_sources_before_calculation() {
+        let rule = RuleSet {
+            id: "duplicate-base-source".to_string(),
+            version: 1,
+            components: vec![flat_rule(
+                "tax",
+                TaxBase {
+                    sources: vec![BaseReference::Net, BaseReference::Net],
+                    floor_atomic: None,
+                    cap_atomic: None,
+                },
+                Rate::new(10, 100).unwrap(),
+                PriceMode::Exclusive,
+            )],
+        };
+
+        assert!(matches!(
+            rule.compile(),
+            Err(TaxError::InvalidRule(message))
+                if message.contains("base sources must be distinct")
+        ));
+    }
+
+    #[test]
+    fn calculates_an_exact_weighted_tax_base() {
+        let rule = RuleSet {
+            id: "weighted-base".to_string(),
+            version: 2,
+            components: vec![flat_rule(
+                "tax",
+                TaxBase::weighted(WeightedBaseSource::Net, 1, 2),
+                Rate::new(10, 100).unwrap(),
+                PriceMode::Exclusive,
+            )],
+        };
+
+        let result = calculate(&rule, &facts(200, 200)).unwrap();
+
+        assert_eq!(result.components[0].base_atomic, 100);
+        assert_eq!(result.total_tax_atomic, 10);
+    }
+
+    #[test]
+    fn calculates_an_explicit_subtractive_tax_base() {
+        let rule = RuleSet {
+            id: "subtractive-base".to_string(),
+            version: 2,
+            components: vec![flat_rule(
+                "tax",
+                TaxBase {
+                    sources: vec![
+                        BaseReference::Gross,
+                        BaseReference::weighted(WeightedBaseSource::Net, -1, 1),
+                    ],
+                    floor_atomic: None,
+                    cap_atomic: None,
+                },
+                Rate::new(10, 100).unwrap(),
+                PriceMode::Exclusive,
+            )],
+        };
+
+        let result = calculate(&rule, &facts(1_000, 300)).unwrap();
+
+        assert_eq!(result.components[0].base_atomic, 700);
+        assert_eq!(result.total_tax_atomic, 70);
+    }
+
+    #[test]
+    fn calculates_tax_base_floor_and_cap_before_tax_rate() {
+        let floor_rule = RuleSet {
+            id: "bounded-floor".to_string(),
+            version: 2,
+            components: vec![flat_rule(
+                "tax",
+                TaxBase {
+                    sources: vec![
+                        BaseReference::Gross,
+                        BaseReference::weighted(WeightedBaseSource::Net, -1, 1),
+                    ],
+                    floor_atomic: Some(500),
+                    cap_atomic: None,
+                },
+                Rate::new(10, 100).unwrap(),
+                PriceMode::Exclusive,
+            )],
+        };
+        let floor_result = calculate(&floor_rule, &facts(1_000, 700)).unwrap();
+        assert_eq!(floor_result.components[0].base_atomic, 500);
+        assert_eq!(floor_result.total_tax_atomic, 50);
+
+        let cap_rule = RuleSet {
+            id: "bounded-cap".to_string(),
+            version: 2,
+            components: vec![flat_rule(
+                "tax",
+                TaxBase {
+                    sources: vec![BaseReference::Gross],
+                    floor_atomic: None,
+                    cap_atomic: Some(400),
+                },
+                Rate::new(10, 100).unwrap(),
+                PriceMode::Exclusive,
+            )],
+        };
+        let cap_result = calculate(&cap_rule, &facts(1_000, 1_000)).unwrap();
+        assert_eq!(cap_result.components[0].base_atomic, 400);
+        assert_eq!(cap_result.total_tax_atomic, 40);
+    }
+
+    #[test]
+    fn applies_base_floor_then_cap_and_allows_flooring_negative_adjustment() {
+        let rule = RuleSet {
+            id: "bounded-order".to_string(),
+            version: 2,
+            components: vec![flat_rule(
+                "tax",
+                TaxBase {
+                    sources: vec![
+                        BaseReference::Gross,
+                        BaseReference::weighted(WeightedBaseSource::Net, -1, 1),
+                    ],
+                    floor_atomic: Some(200),
+                    cap_atomic: Some(250),
+                },
+                Rate::new(10, 100).unwrap(),
+                PriceMode::Exclusive,
+            )],
+        };
+        let result = calculate(&rule, &facts(1_000, 700)).unwrap();
+        assert_eq!(result.components[0].base_atomic, 250);
+        assert_eq!(result.total_tax_atomic, 25);
+
+        let negative_rule = RuleSet {
+            id: "bounded-negative".to_string(),
+            version: 2,
+            components: vec![flat_rule(
+                "tax",
+                TaxBase {
+                    sources: vec![
+                        BaseReference::Gross,
+                        BaseReference::weighted(WeightedBaseSource::Net, -1, 1),
+                    ],
+                    floor_atomic: Some(0),
+                    cap_atomic: None,
+                },
+                Rate::new(10, 100).unwrap(),
+                PriceMode::Exclusive,
+            )],
+        };
+        let negative_result = calculate(&negative_rule, &facts(100, 200)).unwrap();
+        assert_eq!(negative_result.components[0].base_atomic, 0);
+        assert_eq!(negative_result.total_tax_atomic, 0);
+    }
+
+    #[test]
+    fn rejects_invalid_tax_base_bounds_and_legacy_v1_bound_envelope() {
+        let invalid = RuleSet {
+            id: "invalid-bounds".to_string(),
+            version: 2,
+            components: vec![flat_rule(
+                "tax",
+                TaxBase {
+                    sources: vec![BaseReference::Net],
+                    floor_atomic: Some(500),
+                    cap_atomic: Some(400),
+                },
+                Rate::new(10, 100).unwrap(),
+                PriceMode::Exclusive,
+            )],
+        };
+        assert!(matches!(
+            invalid.compile(),
+            Err(TaxError::InvalidRule(message)) if message.contains("base floor cannot exceed cap")
+        ));
+
+        let bounded = RuleSet {
+            id: "bounded-envelope".to_string(),
+            version: 2,
+            components: vec![flat_rule(
+                "tax",
+                TaxBase {
+                    sources: vec![BaseReference::Net],
+                    floor_atomic: Some(1),
+                    cap_atomic: None,
+                },
+                Rate::new(10, 100).unwrap(),
+                PriceMode::Exclusive,
+            )],
+        };
+        let mut legacy_document = RuleSetDocument::new(bounded);
+        legacy_document.schema = RULE_SET_DOCUMENT_SCHEMA_V1.to_string();
+        assert_eq!(
+            legacy_document.validate(),
+            Err(TaxError::InvalidRuleDocumentSchema)
+        );
+    }
+
+    proptest! {
+        #[test]
+        fn bounded_tax_base_stays_within_declared_bounds(
+            raw_base in 0i128..=10_000,
+            first_bound in 0i128..=10_000,
+            second_bound in 0i128..=10_000,
+        ) {
+            let floor = first_bound.min(second_bound);
+            let cap = first_bound.max(second_bound);
+            let rule = RuleSet {
+                id: "bounded-property".to_string(),
+                version: 2,
+                components: vec![flat_rule(
+                    "tax",
+                    TaxBase {
+                        sources: vec![BaseReference::Gross],
+                        floor_atomic: Some(floor),
+                        cap_atomic: Some(cap),
+                    },
+                    Rate::new(0, 1).unwrap(),
+                    PriceMode::Exclusive,
+                )],
+            };
+            let result = calculate(&rule, &facts(raw_base, raw_base)).unwrap();
+            prop_assert!(result.components[0].base_atomic >= floor);
+            prop_assert!(result.components[0].base_atomic <= cap);
+        }
+    }
+
+    #[test]
+    fn evaluates_weighted_component_dependencies_before_dependents() {
+        let rule = RuleSet {
+            id: "weighted-dependent-base".to_string(),
+            version: 2,
+            components: vec![
+                flat_rule(
+                    "first",
+                    TaxBase::single(BaseReference::Net),
+                    Rate::new(10, 100).unwrap(),
+                    PriceMode::Exclusive,
+                ),
+                flat_rule(
+                    "second",
+                    TaxBase {
+                        sources: vec![BaseReference::weighted(
+                            WeightedBaseSource::Component("first".to_string()),
+                            1,
+                            2,
+                        )],
+                        floor_atomic: None,
+                        cap_atomic: None,
+                    },
+                    Rate::new(10, 100).unwrap(),
+                    PriceMode::Exclusive,
+                ),
+            ],
+        };
+
+        let result = calculate(&rule, &facts(1_100, 1_000)).unwrap();
+
+        assert_eq!(result.components[1].base_atomic, 50);
+        assert_eq!(result.total_tax_atomic, 105);
+    }
+
+    #[test]
+    fn rejects_a_weighted_base_that_is_not_integral_in_atomic_units() {
+        let rule = RuleSet {
+            id: "fractional-base".to_string(),
+            version: 2,
+            components: vec![flat_rule(
+                "tax",
+                TaxBase::weighted(WeightedBaseSource::Net, 1, 2),
+                Rate::new(10, 100).unwrap(),
+                PriceMode::Exclusive,
+            )],
+        };
+
+        assert!(matches!(
+            calculate(&rule, &facts(101, 101)),
+            Err(TaxError::NonIntegralTaxBase)
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_weighted_coefficients_and_legacy_v1_envelopes() {
+        let mut zero_numerator = RuleSet {
+            id: "zero-weight".to_string(),
+            version: 2,
+            components: vec![flat_rule(
+                "tax",
+                TaxBase::weighted(WeightedBaseSource::Net, 0, 1),
+                Rate::new(10, 100).unwrap(),
+                PriceMode::Exclusive,
+            )],
+        };
+        assert!(matches!(
+            zero_numerator.compile(),
+            Err(TaxError::InvalidRule(message)) if message.contains("coefficient must be non-zero")
+        ));
+
+        let negative_denominator = RuleSet {
+            id: "negative-denominator".to_string(),
+            version: 2,
+            components: vec![flat_rule(
+                "tax",
+                TaxBase::weighted(WeightedBaseSource::Net, 1, -1),
+                Rate::new(10, 100).unwrap(),
+                PriceMode::Exclusive,
+            )],
+        };
+        assert!(matches!(
+            negative_denominator.compile(),
+            Err(TaxError::InvalidRule(message)) if message.contains("denominator must be positive")
+        ));
+
+        let overflowed_numerator = RuleSet {
+            id: "overflowed-numerator".to_string(),
+            version: 2,
+            components: vec![flat_rule(
+                "tax",
+                TaxBase::weighted(WeightedBaseSource::Net, MAX_ATOMIC_AMOUNT + 1, 1),
+                Rate::new(10, 100).unwrap(),
+                PriceMode::Exclusive,
+            )],
+        };
+        assert!(matches!(
+            overflowed_numerator.compile(),
+            Err(TaxError::InvalidRule(message)) if message.contains("numerator must fit")
+        ));
+
+        zero_numerator.components[0].base = TaxBase::weighted(WeightedBaseSource::Net, 1, 2);
+        let mut legacy_document = RuleSetDocument::new(zero_numerator);
+        legacy_document.schema = RULE_SET_DOCUMENT_SCHEMA_V1.to_string();
+        assert_eq!(
+            legacy_document.validate(),
+            Err(TaxError::InvalidRuleDocumentSchema)
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_source_identity_after_weighting() {
+        let rule = RuleSet {
+            id: "duplicate-weighted-base".to_string(),
+            version: 2,
+            components: vec![flat_rule(
+                "tax",
+                TaxBase {
+                    sources: vec![
+                        BaseReference::Net,
+                        BaseReference::weighted(WeightedBaseSource::Net, -1, 1),
+                    ],
+                    floor_atomic: None,
+                    cap_atomic: None,
+                },
+                Rate::new(10, 100).unwrap(),
+                PriceMode::Exclusive,
+            )],
+        };
+
+        assert!(matches!(
+            rule.compile(),
+            Err(TaxError::InvalidRule(message))
+                if message.contains("base sources must be distinct")
+        ));
+    }
+
+    #[test]
+    fn selects_the_minimum_rule_document_envelope_for_linear_bases() {
+        let legacy = RuleSet {
+            id: "legacy-envelope".to_string(),
+            version: 1,
+            components: vec![flat_rule(
+                "tax",
+                TaxBase::single(BaseReference::Net),
+                Rate::new(10, 100).unwrap(),
+                PriceMode::Exclusive,
+            )],
+        };
+        let weighted = RuleSet {
+            id: "linear-envelope".to_string(),
+            version: 2,
+            components: vec![flat_rule(
+                "tax",
+                TaxBase::weighted(WeightedBaseSource::Net, 1, 2),
+                Rate::new(10, 100).unwrap(),
+                PriceMode::Exclusive,
+            )],
+        };
+
+        assert_eq!(
+            RuleSetDocument::new(legacy).schema,
+            RULE_SET_DOCUMENT_SCHEMA_V1
+        );
+        assert_eq!(
+            RuleSetDocument::new(weighted).schema,
+            RULE_SET_DOCUMENT_SCHEMA_V2
+        );
+    }
+
+    #[test]
     fn rejects_amounts_that_cannot_be_settled_on_solana() {
         let rule = RuleSet {
             id: "bounded".to_string(),
@@ -2940,6 +4349,7 @@ mod tests {
             amount_atomic: 1_000,
             basis: ThresholdBasis::PerTransaction,
             mode: ThresholdMode::ExemptUpTo,
+            inclusive_equation: None,
         });
         let result = calculate(
             &RuleSet {
@@ -2967,6 +4377,7 @@ mod tests {
             amount_atomic: 1_000,
             basis: ThresholdBasis::PerTransaction,
             mode: ThresholdMode::TriggerAt,
+            inclusive_equation: None,
         });
         let rule = RuleSet {
             id: "trigger".to_string(),
@@ -2997,6 +4408,7 @@ mod tests {
             amount_atomic: 1_000,
             basis: ThresholdBasis::CumulativePeriod,
             mode: ThresholdMode::ExemptUpTo,
+            inclusive_equation: None,
         });
         let rule = RuleSet {
             id: "cumulative".to_string(),
@@ -3052,6 +4464,7 @@ mod tests {
             amount_atomic: 100,
             basis: ThresholdBasis::PerTransaction,
             mode: ThresholdMode::ExemptUpTo,
+            inclusive_equation: None,
         });
         let rule = RuleSet {
             id: "inclusive-threshold".to_string(),
@@ -3062,6 +4475,38 @@ mod tests {
             calculate(&rule, &facts(1_100, 1_000)),
             Err(TaxError::UnsupportedThreshold(_))
         ));
+    }
+
+    #[test]
+    fn calculates_inclusive_gross_threshold_with_an_explicit_equation() {
+        let rule: RuleSet = serde_json::from_value(serde_json::json!({
+            "id": "inclusive-gross-threshold",
+            "version": 1,
+            "components": [{
+                "id": "vat",
+                "label": "VAT",
+                "base": {"sources": ["Gross"]},
+                "rate": {"Flat": {"numerator": "10", "denominator": "100"}},
+                "price_mode": "Inclusive",
+                "credit_atomic": "0",
+                "floor_atomic": null,
+                "cap_atomic": null,
+                "rounding": {"mode": "HalfUp"},
+                "threshold": {
+                    "amount_atomic": "1100",
+                    "basis": "PerTransaction",
+                    "mode": "ExemptUpTo",
+                    "inclusive_equation": "GrossExcess"
+                },
+                "exemption_codes": []
+            }]
+        }))
+        .unwrap();
+
+        let result = calculate(&rule, &facts(1_200, 1_200)).unwrap();
+        assert_eq!(result.total_tax_atomic, 9);
+        assert_eq!(result.total_net_atomic, 1_191);
+        assert_eq!(result.components[0].effective_base_atomic, 100);
     }
 
     #[test]
@@ -3089,9 +4534,9 @@ mod tests {
         assert_eq!(
             transaction_facts.canonical_digest().unwrap(),
             [
-                0x28, 0x7d, 0x5b, 0x04, 0xd4, 0x65, 0xdd, 0xb8, 0x1c, 0x71, 0xf8, 0xe2, 0x76, 0x0f,
-                0x23, 0xcf, 0x5a, 0x6d, 0x06, 0x07, 0xa9, 0xfe, 0x53, 0xab, 0x66, 0x8d, 0x47, 0x2a,
-                0xc8, 0x2a, 0xa7, 0x16,
+                0x68, 0x9a, 0x54, 0xef, 0x81, 0x94, 0x60, 0x76, 0xde, 0x61, 0x43, 0xf1, 0xcf, 0xa0,
+                0x37, 0xce, 0xaf, 0xb8, 0x68, 0x83, 0x78, 0x49, 0x92, 0x90, 0x77, 0x4f, 0xea, 0x7a,
+                0xd1, 0xb2, 0x41, 0x93,
             ]
         );
     }
@@ -3338,6 +4783,8 @@ mod tests {
                             BaseReference::Net,
                             BaseReference::Component("first".to_string()),
                         ],
+                        floor_atomic: None,
+                        cap_atomic: None,
                     },
                     Rate::new(5, 100).unwrap(),
                     PriceMode::Exclusive,
@@ -3426,6 +4873,21 @@ mod tests {
         );
     }
 
+    #[test]
+    fn omitted_applicability_preserves_legacy_wire_shape_and_digest() {
+        let legacy = facts(1_100, 1_000);
+        let serialized = serde_json::to_value(&legacy).unwrap();
+
+        assert!(serialized.get("applicability").is_none());
+        assert_eq!(
+            legacy.canonical_digest().unwrap(),
+            legacy.pre_applicability_digest().unwrap()
+        );
+
+        let decoded: TaxFacts = serde_json::from_value(serialized).unwrap();
+        assert_eq!(decoded, legacy);
+    }
+
     #[derive(Deserialize)]
     struct GoldenVectorFile {
         schema: String,
@@ -3461,13 +4923,115 @@ mod tests {
         exemption_applied: bool,
     }
 
+    fn assert_golden_vector_manifest(
+        schema: &str,
+        vectors: &[GoldenVector],
+        required_ids: &[&str],
+    ) {
+        let actual_ids = vectors
+            .iter()
+            .map(|vector| vector.id.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            actual_ids.len(),
+            vectors.len(),
+            "{schema} golden vector IDs must be unique"
+        );
+        let required_ids = required_ids
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            actual_ids, required_ids,
+            "{schema} golden vector manifest drifted"
+        );
+    }
+
     #[test]
     fn executes_the_versioned_global_tax_golden_vectors() {
         let file: GoldenVectorFile =
             serde_json::from_str(include_str!("../../../test-vectors/tax-engine-v1.json"))
                 .expect("tax-engine golden vectors must be valid JSON");
         assert_eq!(file.schema, "solana-tax-protocol/tax-engine/v1");
-        assert!(file.vectors.len() >= 8);
+        assert_golden_vector_manifest(
+            &file.schema,
+            &file.vectors,
+            &[
+                "simple-exclusive",
+                "progressive-marginal",
+                "tax-on-tax-cascade",
+                "inclusive-price",
+                "inclusive-gross-threshold",
+                "credit-floor-cap-truncation",
+                "cumulative-threshold",
+                "exemption-and-rounding",
+                "minimum-and-maximum",
+                "ceil-rounding",
+                "settlement-scope-largest-remainder",
+                "settlement-scope-quantum-residual",
+            ],
+        );
+
+        for vector in file.vectors {
+            let result = calculate(&vector.rule_set, &vector.facts)
+                .unwrap_or_else(|error| panic!("golden vector {} failed: {error}", vector.id));
+            assert_eq!(
+                result.total_tax_atomic, vector.expected.total_tax_atomic,
+                "{}",
+                vector.id
+            );
+            assert_eq!(
+                result.total_net_atomic, vector.expected.total_net_atomic,
+                "{}",
+                vector.id
+            );
+            assert_eq!(
+                result.components.len(),
+                vector.expected.components.len(),
+                "{}",
+                vector.id
+            );
+            for expected in vector.expected.components {
+                let actual = result
+                    .components
+                    .iter()
+                    .find(|component| component.id == expected.id)
+                    .unwrap_or_else(|| {
+                        panic!("component {} missing in {}", expected.id, vector.id)
+                    });
+                assert_eq!(actual.base_atomic, expected.base_atomic, "{}", vector.id);
+                assert_eq!(
+                    actual.effective_base_atomic, expected.effective_base_atomic,
+                    "{}",
+                    vector.id
+                );
+                assert_eq!(actual.tax_atomic, expected.tax_atomic, "{}", vector.id);
+                assert_eq!(
+                    actual.exemption_applied, expected.exemption_applied,
+                    "{}",
+                    vector.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn executes_the_v2_linear_tax_base_golden_vectors() {
+        let file: GoldenVectorFile =
+            serde_json::from_str(include_str!("../../../test-vectors/tax-engine-v2.json"))
+                .expect("tax-engine v2 golden vectors must be valid JSON");
+        assert_eq!(file.schema, "solana-tax-protocol/tax-engine/v2");
+        assert_golden_vector_manifest(
+            &file.schema,
+            &file.vectors,
+            &[
+                "weighted-net-share",
+                "subtractive-gross-adjustment",
+                "bounded-adjusted-base",
+                "capped-adjusted-base",
+                "weighted-component-cascade",
+            ],
+        );
 
         for vector in file.vectors {
             let result = calculate(&vector.rule_set, &vector.facts)

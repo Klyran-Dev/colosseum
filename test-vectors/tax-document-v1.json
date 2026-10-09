@@ -24,6 +24,7 @@
       },
       "facts": {
         "id": "invoice-line-scope",
+        "atomic_decimals": 2,
         "currency": "USD",
         "jurisdiction": "US-CA",
         "jurisdiction_resolution": null,
@@ -79,6 +80,7 @@
       },
       "facts": {
         "id": "invoice-rounding",
+        "atomic_decimals": 2,
         "currency": "USD",
         "jurisdiction": "US-CA",
         "jurisdiction_resolution": null,

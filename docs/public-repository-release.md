@@ -20,6 +20,21 @@ open.
   [implementation plan](plans/implementation-plan.md), and
   [production-readiness gates](plans/production-readiness.md) are linked from
   the public entry points and contain no unsupported production claims.
+- The Material 3 Expressive palette is enforced in both the stylesheet and
+  production TypeScript/TSX source by ADR-0371; this is a source-quality gate,
+  not evidence of completed manual UX, accessibility, or localization review.
+- The observability dashboard is a read-only, fixed-cardinality operational
+  surface governed by ADR-0372; it is not settlement authority or production
+  alert-delivery evidence.
+- The Evidence & audit workspace and its tenant-derived read projection are
+  governed by ADR-0373; they expose bounded access metadata only and do not
+  establish tax compliance, payment completion, or finalized settlement.
+- ADR-0374 governs the session-only compact navigation rail; it is a
+  presentation preference and never changes authorization or route authority.
+- ADR-0375 governs the bounded linear tax-base v2 envelope; weighted and
+  subtractive terms are exact, bounded, replayable, and fail closed when they
+  cannot resolve to an integral atomic amount. This extends representability,
+  not legal applicability or jurisdiction coverage.
 - The public runbook index includes the Tax Engine mTLS certificate-rotation
   procedure, including fail-closed rollback and evidence-redaction rules.
 - The public runbook index includes the Tax Engine service-token rotation
@@ -39,7 +54,9 @@ open.
   grouped dependency automation, checksums, SBOM, retained evidence bundle, and
   ADR-0218's explicit final-program and resolved-configuration hashes. ADR-0299
   additionally binds validator evidence to the exact packaged Git revision;
-  the workflow does not publish images or deploy to production.
+  ADR-0369 makes host-side Rust installation, selection, and version evidence
+  explicit in CI, and ADR-0370 does the same for Node.js and pnpm. The workflow
+  does not publish images or deploy to production.
 - A maintainer has reviewed public examples, fixtures, logs, benchmark output,
   and test artifacts for credentials, private keys, PII, and sensitive
   jurisdiction evidence.
@@ -59,10 +76,14 @@ automation, legal/tax ownership, or approved operational on-call coverage.
 
 ## Automated contract
 
-Run `make public-docs-check` from a clean checkout. The check verifies the
+Run `make public-docs-check` and `make release-claim-contract` from a clean
+checkout. The public-docs check verifies the
 required public files, root documentation links, ADR-index coverage, explicit
 status language, tracked-secret filename hygiene, and presence of the
 repository's current executable safety contracts and reconciliation drill. The
+release-claim contract additionally prevents unsupported production/mainnet
+claims, an unapproved license file, and deployment authority in the
+release-candidate evidence workflow. The
 separate `make rust-panic-safety-contract`, `make container-pinning-contract`,
 and `make refund-cancellation-reconciliation-drill` gates verify runtime lint
 coverage, immutable container/action inputs, and validator-backed cancellation

@@ -89,7 +89,7 @@ write_registry() {
 }
 
 request_without_evidence="$work_dir/request-without-evidence.json"
-printf '%s' '{"facts":{"gross_atomic":"1100","net_atomic":"1000","currency":"USD","jurisdiction":"US-CA"}}' > "$request_without_evidence"
+printf '%s' '{"facts":{"gross_atomic":"1100","net_atomic":"1000","atomic_decimals":2,"currency":"USD","jurisdiction":"US-CA"}}' > "$request_without_evidence"
 
 docker build --file ops/docker/Dockerfile.attestation-fixture \
   --tag "${project_name}-attestation-fixture" . >/dev/null
@@ -124,7 +124,7 @@ docker compose -p "$project_name" build api migrator >/dev/null
 docker compose -p "$project_name" up -d postgres >/dev/null
 docker compose -p "$project_name" run --rm migrator >/dev/null
 
-docker compose -p "$project_name" run --detach --no-deps \
+docker compose -p "$project_name" run -T --detach --no-deps \
   --name "${project_name}-api" \
   --publish "127.0.0.1:${host_port}:8080" \
   --volume "$work_dir:/run/jurisdiction:ro" \
@@ -167,9 +167,9 @@ done
 first_evidence_json=$(cat "$first_evidence")
 second_evidence_json=$(cat "$second_evidence")
 first_request=$(jq -cn --argjson evidence "$first_evidence_json" \
-  '{idempotency_key:"jurisdiction-reload-first",rule_set_id:"operator-simulator-flat-rate",rule_version:1,jurisdiction:"US-CA",regime:"sales-tax",facts:{gross_atomic:"1100",net_atomic:"1000",currency:"USD",jurisdiction:"US-CA"},jurisdiction_evidence:[$evidence]}')
+  '{idempotency_key:"jurisdiction-reload-first",rule_set_id:"operator-simulator-flat-rate",rule_version:1,jurisdiction:"US-CA",regime:"sales-tax",facts:{gross_atomic:"1100",net_atomic:"1000",atomic_decimals:2,currency:"USD",jurisdiction:"US-CA"},jurisdiction_evidence:[$evidence]}')
 second_request=$(jq -cn --argjson evidence "$second_evidence_json" \
-  '{idempotency_key:"jurisdiction-reload-second",rule_set_id:"operator-simulator-flat-rate",rule_version:1,jurisdiction:"US-CA",regime:"sales-tax",facts:{gross_atomic:"1100",net_atomic:"1000",currency:"USD",jurisdiction:"US-CA"},jurisdiction_evidence:[$evidence]}')
+  '{idempotency_key:"jurisdiction-reload-second",rule_set_id:"operator-simulator-flat-rate",rule_version:1,jurisdiction:"US-CA",regime:"sales-tax",facts:{gross_atomic:"1100",net_atomic:"1000",atomic_decimals:2,currency:"USD",jurisdiction:"US-CA"},jurisdiction_evidence:[$evidence]}')
 first_token=$(sign_token "$auth_key")
 
 first_response="$work_dir/first-response.json"

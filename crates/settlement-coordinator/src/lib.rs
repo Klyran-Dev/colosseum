@@ -181,6 +181,12 @@ impl SignedTransaction {
             ));
         }
         let static_accounts = message.static_account_keys();
+        let expected_payer = expected.accounts.first().ok_or_else(|| {
+            CoordinatorError::InvalidSignedTransaction(
+                "compiled adjustment has no canonical fee payer account".into(),
+            )
+        })?;
+        verify_fee_payer(message, static_accounts, &expected_payer.pubkey)?;
         let instruction = &instructions[0];
         let program_index = usize::from(instruction.program_id_index);
         let program_id = static_accounts.get(program_index).ok_or_else(|| {
@@ -331,6 +337,12 @@ impl SignedTransaction {
             ));
         }
         let static_accounts = message.static_account_keys();
+        let expected_payer = expected.accounts.first().ok_or_else(|| {
+            CoordinatorError::InvalidSignedTransaction(
+                "compiled refund has no canonical fee payer account".into(),
+            )
+        })?;
+        verify_fee_payer(message, static_accounts, &expected_payer.pubkey)?;
         let instruction = &instructions[0];
         let program_index = usize::from(instruction.program_id_index);
         let program_id = static_accounts.get(program_index).ok_or_else(|| {
@@ -465,6 +477,12 @@ impl SignedTransaction {
             ));
         }
         let static_accounts = message.static_account_keys();
+        let expected_payer = expected.accounts.first().ok_or_else(|| {
+            CoordinatorError::InvalidSignedTransaction(
+                "compiled refund cancellation has no canonical fee payer account".into(),
+            )
+        })?;
+        verify_fee_payer(message, static_accounts, &expected_payer.pubkey)?;
         let instruction = &instructions[0];
         let program_index = usize::from(instruction.program_id_index);
         let program_id = static_accounts.get(program_index).ok_or_else(|| {
@@ -601,6 +619,12 @@ impl SignedTransaction {
             ));
         }
         let static_accounts = message.static_account_keys();
+        let expected_payer = expected.accounts.first().ok_or_else(|| {
+            CoordinatorError::InvalidSignedTransaction(
+                "compiled revenue stream has no canonical fee payer account".into(),
+            )
+        })?;
+        verify_fee_payer(message, static_accounts, &expected_payer.pubkey)?;
         let instruction = &instructions[0];
         let program_index = usize::from(instruction.program_id_index);
         let program_id = static_accounts.get(program_index).ok_or_else(|| {
@@ -747,6 +771,12 @@ impl SignedTransaction {
             ));
         }
         let static_accounts = message.static_account_keys();
+        let expected_payer = expected.accounts.first().ok_or_else(|| {
+            CoordinatorError::InvalidSignedTransaction(
+                "compiled settlement has no canonical fee payer account".into(),
+            )
+        })?;
+        verify_fee_payer(message, static_accounts, &expected_payer.pubkey)?;
         let mut accounts = static_accounts.to_vec();
         accounts.extend_from_slice(&loaded_writable);
         accounts.extend_from_slice(&loaded_readonly);
@@ -937,6 +967,28 @@ impl SignedTransaction {
         })?;
         Ok(transaction.message.recent_blockhash().to_string())
     }
+}
+
+fn verify_fee_payer(
+    message: &solana_transaction::VersionedMessage,
+    static_accounts: &[solana_transaction::Address],
+    expected_payer: &str,
+) -> Result<(), CoordinatorError> {
+    let actual_payer = static_accounts.first().ok_or_else(|| {
+        CoordinatorError::InvalidSignedTransaction(
+            "signed transaction does not contain a fee payer account".into(),
+        )
+    })?;
+    let reserved_addresses = std::collections::BTreeSet::<solana_transaction::Address>::new();
+    if actual_payer.to_string() != expected_payer
+        || !message.is_signer(0)
+        || !message.is_maybe_writable_with_reserved_addresses(0, Some(&reserved_addresses))
+    {
+        return Err(CoordinatorError::InvalidSignedTransaction(
+            "signed transaction fee payer does not match the compiled payer account".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn verify_compute_budget_instruction(
@@ -2052,6 +2104,37 @@ mod tests {
         .expect("signed transaction")
     }
 
+    fn signed_settlement_with_sponsored_fee_payer(
+        expected: &CompiledSettlementInstruction,
+        payer: &Keypair,
+        fee_payer: &Keypair,
+    ) -> SignedTransaction {
+        let [compute_limit, compute_price] = compute_budget_instructions(expected);
+        let mut transaction = solana_transaction::Transaction::new_with_payer(
+            &[
+                compute_limit,
+                compute_price,
+                settlement_instruction(expected),
+            ],
+            Some(&fee_payer.pubkey()),
+        );
+        transaction
+            .try_partial_sign(
+                &[fee_payer, payer],
+                solana_transaction::Hash::new_from_array([9; 32]),
+            )
+            .expect("sign sponsored settlement");
+        SignedTransaction::parse(
+            &BASE64.encode(
+                wincode::serialize(&solana_transaction::versioned::VersionedTransaction::from(
+                    transaction,
+                ))
+                .expect("serialize sponsored transaction"),
+            ),
+        )
+        .expect("bounded sponsored transaction")
+    }
+
     fn compile_adjustment_request(approver: &Keypair) -> SettlementAdjustmentCompileRequest {
         let unique = || solana_transaction::Address::new_unique().to_string();
         SettlementAdjustmentCompileRequest {
@@ -2815,6 +2898,22 @@ mod tests {
         mutated_limit.data[1] = mutated_limit.data[1].saturating_add(1);
         let mutated = signed_with_instruction_sequence(&payer, &[mutated_limit, price, settlement]);
         assert!(mutated.verify_settlement_instruction(&expected).is_err());
+    }
+
+    #[test]
+    fn rejects_sponsored_fee_payer_even_when_compiled_payer_signs() {
+        let payer = Keypair::new();
+        let fee_payer = Keypair::new();
+        let expected = compile_settlement_instruction(&compile_request(&payer)).expect("compile");
+        let signed = signed_settlement_with_sponsored_fee_payer(&expected, &payer, &fee_payer);
+
+        let error = signed
+            .verify_settlement_instruction(&expected)
+            .expect_err("settlement payer must be the transaction fee payer");
+        assert!(
+            error.to_string().contains("fee payer"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]

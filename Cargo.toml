@@ -23,6 +23,7 @@ members = [
     "crates/settlement-adjustments",
     "crates/settlement-coordinator",
     "crates/tax-engine",
+    "crates/tax-applicability",
     "crates/tax-engine-service",
     "crates/worker",
     "crates/revenue-streaming",

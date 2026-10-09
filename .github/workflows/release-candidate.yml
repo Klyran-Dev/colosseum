@@ -20,16 +20,24 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install and select pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy --no-self-update
+          echo "RUSTUP_TOOLCHAIN=1.98.1" >> "$GITHUB_ENV"
+          rustc --version
+          cargo --version
+
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24.21.0
 
       - name: Activate pinned pnpm
-        run: corepack enable && corepack prepare pnpm@12.3.4 --activate
-
-      - name: Verify pinned Rust toolchain
-        run: rustup show active-toolchain && rustc --version && cargo --version
+        run: |
+          corepack enable
+          corepack prepare pnpm@12.3.4 --activate
+          node --version
+          pnpm --version
 
       - name: Install locked web dependencies
         run: pnpm --dir apps/web install --frozen-lockfile
@@ -84,6 +92,8 @@ jobs:
             amd64|x86_64) ;;
             *) echo "unsupported Docker architecture" >&2; exit 1 ;;
           esac
+      - name: Retain authoritative host preflight
+        run: ./scripts/verify_solana_conformance_host.sh
       - name: Run validator-backed conformance
         env:
           SOLANA_USE_DOCKER_BUILDER: true

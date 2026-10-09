@@ -2,6 +2,7 @@ FROM rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288
 
 WORKDIR /workspace
 COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
+COPY contracts ./contracts
 COPY crates ./crates
 COPY programs ./programs
 

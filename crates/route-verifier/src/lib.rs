@@ -15,10 +15,11 @@ use indexer::{
 use std::{env, sync::Arc, time::Duration};
 use storage::{
     DEFAULT_POOL_WAIT_TIMEOUT, PgStore, RevenueStreamDestinationRouteVerificationCandidate,
-    SettlementRouteVerificationCandidate, StorageError,
+    SettlementRouteVerificationCandidate, SettlementRouteVerificationRunSummary, StorageError,
 };
 use thiserror::Error;
 use tokio::time::timeout;
+use uuid::Uuid;
 
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
 pub const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(2);
@@ -40,6 +41,27 @@ impl DeploymentEnvironment {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RouteVerifierRunMode {
+    Daemon,
+    Backfill,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RouteVerificationRunKind {
+    Scheduled,
+    Backfill,
+}
+
+impl RouteVerificationRunKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Scheduled => "scheduled",
+            Self::Backfill => "backfill",
+        }
+    }
+}
+
 fn parse_deployment_environment(value: &str) -> Result<DeploymentEnvironment, RouteVerifierError> {
     match value {
         "local" => Ok(DeploymentEnvironment::Local),
@@ -54,6 +76,8 @@ fn parse_deployment_environment(value: &str) -> Result<DeploymentEnvironment, Ro
 #[derive(Clone, Debug)]
 pub struct RouteVerifierConfig {
     pub environment: DeploymentEnvironment,
+    pub run_mode: RouteVerifierRunMode,
+    pub backfill_approval_id: Option<Uuid>,
     pub database_url: String,
     pub rpc_endpoints: Vec<String>,
     pub poll_interval: Duration,
@@ -66,6 +90,15 @@ pub struct RouteVerifierConfig {
 impl RouteVerifierConfig {
     pub fn from_env() -> Result<Self, RouteVerifierError> {
         let environment = parse_deployment_environment(&required_env("ROUTE_VERIFIER_ENV")?)?;
+        let run_mode = parse_run_mode(
+            &env::var("ROUTE_VERIFIER_MODE").unwrap_or_else(|_| "daemon".to_string()),
+        )?;
+        let backfill_approval_id = validate_run_mode_approval(
+            run_mode,
+            env::var("ROUTE_VERIFIER_BACKFILL_APPROVAL_ID")
+                .ok()
+                .as_deref(),
+        )?;
         let database_url = required_env("ROUTE_VERIFIER_DATABASE_URL")?;
         let rpc_endpoints = required_env("ROUTE_VERIFIER_RPC_ENDPOINTS")?
             .split(',')
@@ -111,6 +144,8 @@ impl RouteVerifierConfig {
         }
         Ok(Self {
             environment,
+            run_mode,
+            backfill_approval_id,
             database_url,
             rpc_endpoints,
             poll_interval,
@@ -176,6 +211,25 @@ pub async fn verify_once(
     batch_size: usize,
     rpc_timeout: Duration,
 ) -> Result<VerificationSummary, RouteVerifierError> {
+    verify_once_with_kind(
+        store,
+        transports,
+        batch_size,
+        rpc_timeout,
+        RouteVerificationRunKind::Scheduled,
+        None,
+    )
+    .await
+}
+
+pub async fn verify_once_with_kind(
+    store: &PgStore,
+    transports: &[Arc<dyn JsonRpcTransport>],
+    batch_size: usize,
+    rpc_timeout: Duration,
+    run_kind: RouteVerificationRunKind,
+    operator_approval_id: Option<Uuid>,
+) -> Result<VerificationSummary, RouteVerifierError> {
     if transports.is_empty() || transports.len() > MAX_PROVIDER_ATTEMPTS {
         return Err(RouteVerifierError::Configuration(
             "route verifier provider pool is outside the bounded range".to_string(),
@@ -198,6 +252,16 @@ pub async fn verify_once(
         examined: candidates.len(),
         ..VerificationSummary::default()
     };
+    if candidates.is_empty() {
+        return Ok(summary);
+    }
+    let run_id = store
+        .begin_settlement_route_verification_run(
+            run_kind.as_str(),
+            batch_size,
+            operator_approval_id,
+        )
+        .await?;
     for candidate in candidates {
         let route = route_config(&candidate);
         match verify_with_failover(transports, &route, rpc_timeout).await {
@@ -218,6 +282,17 @@ pub async fn verify_once(
             }
         }
     }
+    store
+        .complete_settlement_route_verification_run(
+            run_id,
+            SettlementRouteVerificationRunSummary {
+                examined: summary.examined,
+                activated: summary.activated,
+                already_active: summary.already_active,
+                failed: summary.failed,
+            },
+        )
+        .await?;
     Ok(summary)
 }
 
@@ -533,6 +608,51 @@ fn required_env(name: &str) -> Result<String, RouteVerifierError> {
     Ok(value)
 }
 
+fn parse_run_mode(value: &str) -> Result<RouteVerifierRunMode, RouteVerifierError> {
+    match value {
+        "daemon" => Ok(RouteVerifierRunMode::Daemon),
+        "backfill" => Ok(RouteVerifierRunMode::Backfill),
+        _ => Err(RouteVerifierError::Configuration(
+            "ROUTE_VERIFIER_MODE must be exactly daemon or backfill".to_string(),
+        )),
+    }
+}
+
+fn validate_run_mode_approval(
+    mode: RouteVerifierRunMode,
+    approval_id: Option<&str>,
+) -> Result<Option<Uuid>, RouteVerifierError> {
+    match mode {
+        RouteVerifierRunMode::Daemon => {
+            if approval_id.is_some() {
+                return Err(RouteVerifierError::Configuration(
+                    "ROUTE_VERIFIER_BACKFILL_APPROVAL_ID is only valid in backfill mode"
+                        .to_string(),
+                ));
+            }
+            Ok(None)
+        }
+        RouteVerifierRunMode::Backfill => {
+            let value = approval_id.ok_or_else(|| {
+                RouteVerifierError::Configuration(
+                    "ROUTE_VERIFIER_BACKFILL_APPROVAL_ID is required in backfill mode".to_string(),
+                )
+            })?;
+            let parsed = Uuid::parse_str(value).map_err(|_| {
+                RouteVerifierError::Configuration(
+                    "ROUTE_VERIFIER_BACKFILL_APPROVAL_ID must be a UUIDv7".to_string(),
+                )
+            })?;
+            if parsed.get_version_num() != 7 {
+                return Err(RouteVerifierError::Configuration(
+                    "ROUTE_VERIFIER_BACKFILL_APPROVAL_ID must be a UUIDv7".to_string(),
+                ));
+            }
+            Ok(Some(parsed))
+        }
+    }
+}
+
 fn parse_usize(name: &str, default: usize) -> Result<usize, RouteVerifierError> {
     match env::var(name) {
         Ok(value) => value.parse().map_err(|_| {
@@ -606,6 +726,44 @@ mod tests {
     }
 
     #[test]
+    fn backfill_mode_requires_an_approval_bound_uuidv7() {
+        assert_eq!(
+            parse_run_mode("daemon").unwrap(),
+            RouteVerifierRunMode::Daemon
+        );
+        assert_eq!(
+            parse_run_mode("backfill").unwrap(),
+            RouteVerifierRunMode::Backfill
+        );
+        assert!(parse_run_mode("scheduled").is_err());
+
+        let approval_id = uuid::Uuid::now_v7();
+        assert_eq!(
+            validate_run_mode_approval(
+                RouteVerifierRunMode::Backfill,
+                Some(&approval_id.to_string())
+            )
+            .unwrap(),
+            Some(approval_id)
+        );
+        assert!(validate_run_mode_approval(RouteVerifierRunMode::Backfill, None).is_err());
+        assert!(
+            validate_run_mode_approval(
+                RouteVerifierRunMode::Daemon,
+                Some(&approval_id.to_string())
+            )
+            .is_err()
+        );
+        assert!(
+            validate_run_mode_approval(
+                RouteVerifierRunMode::Backfill,
+                Some("01900000-0000-4000-8000-000000000001")
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn route_config_preserves_the_candidate_identity() {
         let candidate = SettlementRouteVerificationCandidate {
             id: uuid::Uuid::from_u128(1),
@@ -634,6 +792,9 @@ mod tests {
             net_destination: "destination".to_string(),
             token_program: "program".to_string(),
             asset_config: "asset-config".to_string(),
+            asset_kind: indexer::STABLECOIN_ASSET_KIND,
+            asset_enabled: true,
+            asset_config_bump: 7,
             verification_schema: indexer::SETTLEMENT_ROUTE_VERIFICATION_SCHEMA,
             verification_slot: 7,
             verification_commitment: "finalized",

@@ -32,8 +32,9 @@ use indexer_service::{
 };
 use observability::ServiceMetrics;
 use policy::{
-    AttestationBinding, AttestationError, CalculationAttestation, Digest32,
-    DocumentAttestationBinding, DocumentCalculationAttestation, merchant_identity_digest,
+    ApplicabilityAttestation, AttestationBinding, AttestationError, CalculationAttestation,
+    Digest32, DocumentAttestationBinding, DocumentCalculationAttestation, merchant_identity_digest,
+    treatment_outcome_binding,
 };
 use refund_workflow::{
     RefundArtifact, RefundCancellationArtifact, RefundCancellationServerInputs,
@@ -46,45 +47,47 @@ use revenue_streaming::{AssetId, RecipientId, StreamPlanId, StreamPlanSpec};
 use serde::{Deserialize, Serialize};
 use settlement_adjustments::{AdjustmentDelta, AdjustmentKind};
 use settlement_client::{
+    ApplicabilityDocumentSettlementCompileRequest, ApplicabilitySettlementCompileRequest,
     CompiledDocumentSettlementInstruction, CompiledSettlementAdjustmentInstruction,
     CompiledSettlementInstruction, CompiledSplitSettlementInstruction,
     DocumentSettlementCompileRequest as ClientDocumentSettlementCompileRequest,
     SETTLEMENT_PROGRAM_ID,
     SettlementAdjustmentCompileRequest as ClientSettlementAdjustmentCompileRequest,
     SettlementCompileError, SettlementCompileRequest, SplitSettlementCompileRequest,
-    compile_document_settlement_instruction, compile_settlement_adjustment_instruction,
-    compile_settlement_instruction, compile_split_settlement_instruction,
-    compiled_instruction_digest, derive_source_token_account,
+    compile_applicability_document_settlement_instruction,
+    compile_applicability_settlement_instruction, compile_document_settlement_instruction,
+    compile_settlement_adjustment_instruction, compile_settlement_instruction,
+    compile_split_settlement_instruction, compiled_instruction_digest, derive_source_token_account,
 };
 use settlement_coordinator::{
     AdjustmentRegistryVerificationRequest, CoordinatorError, SettlementCoordinator,
     SettlementProviderHealthSnapshot, SettlementStatus, SignedTransaction, can_transition,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use storage::{
-    BindAdjustmentAuthority, CreateAdjustmentAuthorityChallenge,
-    CreateDocumentPaymentIntentCommand, CreateJurisdictionPolicyCommand,
-    CreateRefundCancellationIntentCommand, CreateRefundClaimIntentCommand,
-    CreateRefundExecuteIntentCommand, CreateRefundFundingConfigurationCommand,
-    CreateRevenueStreamPlanCommand, CreateSettlementAdjustmentChainIntent,
-    CreateSettlementAdjustmentCommand, CreateSettlementAdjustmentEvidenceIntent,
-    CreateVaultReleaseClaimCommand, DatabasePoolStats, DocumentQuoteCommand, DocumentQuoteOutcome,
-    EvidenceAccessAuditCommand, JurisdictionPolicyGovernanceTransition, PersistedFxEvidence,
-    PgStore, PrepareRevenueStreamClaimCommand, QuoteCommand, QuoteOutcome,
-    RefundCancellationFinalization, RefundCancellationIntentTransition,
-    RefundClaimCancellationEvidenceExpectation, RefundClaimIntentTransition,
-    RefundExecuteIntentTransition, RefundFundingConfigurationTransition,
-    RevenueStreamPlanTransition, RuleCacheStats, RuleGovernanceTransition,
-    SettlementAdjustmentChainIntent, SettlementAdjustmentChainTransition,
+    ApplicabilityContextTransition, BindAdjustmentAuthority, CreateAdjustmentAuthorityChallenge,
+    CreateApplicabilityContextCommand, CreateDocumentPaymentIntentCommand,
+    CreateJurisdictionPolicyCommand, CreateRefundCancellationIntentCommand,
+    CreateRefundClaimIntentCommand, CreateRefundExecuteIntentCommand,
+    CreateRefundFundingConfigurationCommand, CreateRevenueStreamPlanCommand,
+    CreateSettlementAdjustmentChainIntent, CreateSettlementAdjustmentCommand,
+    CreateSettlementAdjustmentEvidenceIntent, CreateVaultReleaseClaimCommand, DatabasePoolStats,
+    DocumentQuoteCommand, DocumentQuoteOutcome, EvidenceAccessAuditCommand,
+    JurisdictionPolicyGovernanceTransition, PersistedFxEvidence, PgStore,
+    PrepareRevenueStreamClaimCommand, QuoteCommand, QuoteOutcome, RefundCancellationFinalization,
+    RefundCancellationIntentTransition, RefundClaimCancellationEvidenceExpectation,
+    RefundClaimIntentTransition, RefundExecuteIntentTransition,
+    RefundFundingConfigurationTransition, RevenueStreamPlanTransition, RuleCacheStats,
+    RuleGovernanceTransition, SettlementAdjustmentChainIntent, SettlementAdjustmentChainTransition,
     SettlementAdjustmentEvidenceIntent, SettlementAdjustmentRecord, SettlementAdjustmentTransition,
     SettlementTransition, StorageError, VaultReleaseClaimTransition,
 };
 use tax_engine::{
     CalculationResult, RuleSet, TAX_DOCUMENT_SCHEMA_V1, TaxDocumentFacts, TaxDocumentResult,
-    TaxError, TaxFacts, calculate, calculate_document,
+    TaxError, TaxFacts, TreatmentOutcome, calculate, calculate_document,
 };
 use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
 use uuid::Uuid;
@@ -109,6 +112,9 @@ pub const API_METRIC_OPERATIONS: &[&str] = &[
     "tax_rule_draft_create",
     "tax_rule_transition",
     "tax_rule_governance_read",
+    "tax_applicability_context_create",
+    "tax_applicability_context_read",
+    "tax_applicability_context_transition",
     "jurisdiction_policy_draft_create",
     "jurisdiction_policy_transition",
     "jurisdiction_policy_governance_read",
@@ -125,7 +131,11 @@ pub const API_METRIC_OPERATIONS: &[&str] = &[
     "refund_funding_configuration_transition",
     "refund_claim_prepare",
     "vault_reconciliation_read",
+    "tax_document_attestation_status",
+    "evidence_access_audit_explorer",
+    "applicability_binding_verification_read",
     "indexer_replay_operator",
+    "indexer_route_verification_evidence",
     "indexer_targeted_recovery",
     "settlement_compile",
     "settlement_document_compile",
@@ -171,129 +181,158 @@ pub struct AuthorizationCapability {
     pub reason_code: &'static str,
 }
 
-#[derive(Clone, Copy)]
-struct CapabilityPolicy {
-    id: &'static str,
-    required_scopes: &'static [&'static str],
-    required_roles: &'static [&'static str],
-    required_attributes: &'static [&'static str],
+const CAPABILITY_CATALOG_SCHEMA: &str = "authorization-catalog/v1";
+const CAPABILITY_CATALOG_MAX_POLICIES: usize = 64;
+const CAPABILITY_CATALOG_MAX_VALUE_LENGTH: usize = 128;
+const CAPABILITY_CATALOG_GROUPS: &[&str] = &[
+    "Daily work",
+    "Rules & access",
+    "Money movement",
+    "Records & issues",
+];
+const CAPABILITY_CATALOG_WORKSPACES: &[&str] = &[
+    "quote",
+    "document-quote",
+    "preview",
+    "governance",
+    "checkout",
+    "document-checkout",
+    "vault-reconciliation",
+    "vault-release",
+    "revenue-streaming",
+    "adjustments",
+    "refund-claims",
+    "refund-cancellations",
+    "refund-executions",
+    "replay-ops",
+    "evidence-access",
+    "access-control",
+];
+const CAPABILITY_CATALOG_RISKS: &[&str] = &["read", "write", "governance", "financial"];
+const CAPABILITY_CATALOG_ATTRIBUTES: &[&str] = &["environment", "jurisdiction"];
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CapabilityCatalog {
+    schema: String,
+    version: u16,
+    policies: Vec<CapabilityPolicy>,
 }
 
-const CAPABILITY_POLICIES: &[CapabilityPolicy] = &[
-    CapabilityPolicy {
-        id: "tax.quote.create",
-        required_scopes: &["tax:quote"],
-        required_roles: &[],
-        required_attributes: &["environment"],
-    },
-    CapabilityPolicy {
-        id: "tax.preview.run",
-        required_scopes: &[],
-        required_roles: &[],
-        required_attributes: &[],
-    },
-    CapabilityPolicy {
-        id: "tax.document.quote.create",
-        required_scopes: &["tax:quote"],
-        required_roles: &[],
-        required_attributes: &["environment"],
-    },
-    CapabilityPolicy {
-        id: "tax.rule.govern",
-        required_scopes: &["tax:rule:read"],
-        required_roles: &["tax_rule_author", "tax_rule_reviewer", "tax_rule_approver"],
-        required_attributes: &["environment", "jurisdiction"],
-    },
-    CapabilityPolicy {
-        id: "settlement.wallet",
-        required_scopes: &["tax:settlement:compile"],
-        required_roles: &[],
-        required_attributes: &[],
-    },
-    CapabilityPolicy {
-        id: "settlement.document.wallet",
-        required_scopes: &["tax:settlement:compile"],
-        required_roles: &[],
-        required_attributes: &[],
-    },
-    CapabilityPolicy {
-        id: "vault.reconciliation",
-        required_scopes: &["tax:vault:read"],
-        required_roles: &[],
-        required_attributes: &[],
-    },
-    CapabilityPolicy {
-        id: "vault.release",
-        required_scopes: &["tax:vault:propose"],
-        required_roles: &["vault_release_proposer"],
-        required_attributes: &[],
-    },
-    CapabilityPolicy {
-        id: "revenue_stream.read",
-        required_scopes: &["tax:stream:read"],
-        required_roles: &[
-            "revenue_stream_proposer",
-            "revenue_stream_approver",
-            "revenue_stream_operator",
-            "revenue_stream_auditor",
-        ],
-        required_attributes: &[],
-    },
-    CapabilityPolicy {
-        id: "revenue_stream.propose",
-        required_scopes: &["tax:stream:propose"],
-        required_roles: &["revenue_stream_proposer"],
-        required_attributes: &[],
-    },
-    CapabilityPolicy {
-        id: "revenue_stream.govern",
-        required_scopes: &["tax:stream:govern"],
-        required_roles: &["revenue_stream_approver", "revenue_stream_governance"],
-        required_attributes: &[],
-    },
-    CapabilityPolicy {
-        id: "revenue_stream.claim.prepare",
-        required_scopes: &["tax:stream:claim:prepare"],
-        required_roles: &["revenue_stream_operator"],
-        required_attributes: &[],
-    },
-    CapabilityPolicy {
-        id: "settlement.adjustment",
-        required_scopes: &["tax:adjustment:propose"],
-        required_roles: &["settlement_adjustment_proposer"],
-        required_attributes: &[],
-    },
-    CapabilityPolicy {
-        id: "refund.claim.create",
-        required_scopes: &["tax:refund:claim:prepare"],
-        required_roles: &["settlement_adjustment_proposer"],
-        required_attributes: &[],
-    },
-    CapabilityPolicy {
-        id: "refund.claim.cancel",
-        required_scopes: &["tax:refund:claim:cancel:prepare"],
-        required_roles: &["settlement_adjustment_governance"],
-        required_attributes: &[],
-    },
-    CapabilityPolicy {
-        id: "refund.payment.release",
-        required_scopes: &["tax:refund:execute:prepare"],
-        required_roles: &["settlement_adjustment_approver"],
-        required_attributes: &[],
-    },
-    CapabilityPolicy {
-        id: "evidence.replay",
-        required_scopes: &["tax:indexer:read"],
-        required_roles: &["indexer_operator"],
-        required_attributes: &[],
-    },
-    CapabilityPolicy {
-        id: "access.control",
-        required_scopes: &["audit:read"],
-        required_roles: &[],
-        required_attributes: &[],
-    },
-];
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CapabilityPolicy {
+    id: String,
+    label: String,
+    description: String,
+    group: String,
+    workspace: String,
+    risk: String,
+    required_scopes: Vec<String>,
+    required_roles: Vec<String>,
+    required_attributes: Vec<String>,
+}
+
+static CAPABILITY_POLICIES: OnceLock<Result<Vec<CapabilityPolicy>, &'static str>> = OnceLock::new();
+
+/// Parse and validate the immutable authorization catalog before the API
+/// listener is created. Startup callers must fail closed on catalog errors;
+/// endpoint access does not substitute for this deployment preflight.
+pub fn initialize_authorization_catalog() -> Result<(), &'static str> {
+    CAPABILITY_POLICIES
+        .get_or_init(parse_capability_catalog)
+        .as_ref()
+        .map(|_| ())
+        .map_err(|code| *code)
+}
+
+fn capability_policies() -> Result<&'static [CapabilityPolicy], ApiError> {
+    match CAPABILITY_POLICIES.get_or_init(parse_capability_catalog) {
+        Ok(policies) => Ok(policies.as_slice()),
+        Err(code) => Err(ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code,
+            message: "authorization policy catalog is unavailable".to_string(),
+        }),
+    }
+}
+
+fn parse_capability_catalog() -> Result<Vec<CapabilityPolicy>, &'static str> {
+    let catalog: CapabilityCatalog = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../contracts/authorization-capabilities-v1.json"
+    )))
+    .map_err(|_| "AUTHORIZATION_CATALOG_INVALID")?;
+    validate_capability_catalog(&catalog)?;
+    Ok(catalog.policies)
+}
+
+fn validate_capability_catalog(catalog: &CapabilityCatalog) -> Result<(), &'static str> {
+    if catalog.schema != CAPABILITY_CATALOG_SCHEMA
+        || catalog.version != 1
+        || catalog.policies.is_empty()
+        || catalog.policies.len() > CAPABILITY_CATALOG_MAX_POLICIES
+    {
+        return Err("AUTHORIZATION_CATALOG_INVALID");
+    }
+    let mut ids = BTreeSet::new();
+    for policy in &catalog.policies {
+        if policy.id.is_empty()
+            || policy.id.len() > CAPABILITY_CATALOG_MAX_VALUE_LENGTH
+            || !policy.id.bytes().all(is_policy_id_byte)
+            || !ids.insert(policy.id.clone())
+            || policy.label.is_empty()
+            || policy.label.len() > CAPABILITY_CATALOG_MAX_VALUE_LENGTH
+            || policy.description.is_empty()
+            || policy.description.len() > 512
+            || !CAPABILITY_CATALOG_GROUPS.contains(&policy.group.as_str())
+            || !CAPABILITY_CATALOG_WORKSPACES.contains(&policy.workspace.as_str())
+            || !CAPABILITY_CATALOG_RISKS.contains(&policy.risk.as_str())
+            || !bounded_unique_values(&policy.required_scopes, is_scope_value)
+            || !bounded_unique_values(&policy.required_roles, is_role_value)
+            || !bounded_unique_values(&policy.required_attributes, is_attribute)
+        {
+            return Err("AUTHORIZATION_CATALOG_INVALID");
+        }
+    }
+    Ok(())
+}
+
+fn bounded_unique_values(values: &[String], valid_value: fn(&str) -> bool) -> bool {
+    if values.len() > 16 {
+        return false;
+    }
+    let mut unique = BTreeSet::new();
+    values.iter().all(|value| {
+        !value.is_empty()
+            && value.len() <= CAPABILITY_CATALOG_MAX_VALUE_LENGTH
+            && valid_value(value)
+            && unique.insert(value)
+    })
+}
+
+fn is_policy_id_byte(byte: u8) -> bool {
+    matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-')
+}
+
+fn is_scope_value(value: &str) -> bool {
+    !value.starts_with(':')
+        && !value.ends_with(':')
+        && !value.contains("::")
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b':' | b'_' | b'-'))
+}
+
+fn is_role_value(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-'))
+}
+
+fn is_attribute(value: &str) -> bool {
+    CAPABILITY_CATALOG_ATTRIBUTES.contains(&value)
+}
 
 pub struct TargetedRecoveryPorts {
     pub signature_source: Arc<dyn FinalizedSignaturePageSource>,
@@ -334,6 +373,7 @@ pub struct CalculateDocumentResponse {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct QuoteRequest {
     pub idempotency_key: String,
     pub rule_set_id: String,
@@ -341,6 +381,8 @@ pub struct QuoteRequest {
     pub jurisdiction: String,
     pub regime: String,
     pub facts: TaxFacts,
+    #[serde(default)]
+    pub applicability_context_id: Option<Uuid>,
     #[serde(default)]
     pub source_currency: Option<String>,
     #[serde(default)]
@@ -358,9 +400,29 @@ pub struct DocumentQuoteRequest {
     pub regime: String,
     pub facts: TaxDocumentFacts,
     #[serde(default)]
+    pub applicability_context_id: Option<Uuid>,
+    #[serde(default)]
     pub source_currency: Option<String>,
     #[serde(default)]
     pub jurisdiction_evidence: Vec<::jurisdiction::JurisdictionEvidenceEnvelope>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApplicabilityContextCreateRequest {
+    pub idempotency_key: String,
+    pub attestation: ApplicabilityAttestation,
+    pub effective_from_unix: i64,
+    #[serde(default)]
+    pub effective_until_unix: Option<i64>,
+    pub provenance: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApplicabilityContextTransitionRequest {
+    pub to_status: String,
+    pub evidence: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1020,6 +1082,25 @@ pub struct ReplayGapListQuery {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct RouteVerificationRunsQuery {
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceAccessAuditListQuery {
+    pub calculation_id: Option<Uuid>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApplicabilityBindingVerificationQuery {
+    pub stream_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VaultReconciliationListQuery {
     pub limit: Option<usize>,
 }
@@ -1086,6 +1167,8 @@ pub struct AttestationBindingRequest {
     pub tax_atomic: u64,
     #[serde(with = "policy::serde_u64_string")]
     pub net_atomic: u64,
+    #[serde(default)]
+    pub treatment_outcome_digest: Option<Digest32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1125,6 +1208,22 @@ pub struct DocumentQuoteAttestationVerifyResponse {
     pub payload_digest: Digest32,
     pub issuer_public_key: [u8; 32],
     pub expires_at_unix: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DocumentQuoteAttestationStatusResponse {
+    pub status: &'static str,
+    pub calculation_id: Uuid,
+    pub payload_digest: Digest32,
+    pub issuer_public_key: [u8; 32],
+    pub expires_at_unix: i64,
+    pub checked_at_unix: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocumentQuoteAttestationStatusQuery {
+    pub route_id: Uuid,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1265,6 +1364,10 @@ impl From<TaxError> for ApiError {
             TaxError::InvalidRule(_) => "INVALID_RULE",
             TaxError::InvalidRuleDocumentSchema => "INVALID_RULE_DOCUMENT_SCHEMA",
             TaxError::InvalidFacts(_) => "INVALID_FACTS",
+            TaxError::InvalidApplicabilityDecision => "INVALID_APPLICABILITY_DECISION",
+            TaxError::ApplicabilityFactsDigestMismatch => "APPLICABILITY_FACTS_DIGEST_MISMATCH",
+            TaxError::UnresolvedApplicability => "UNRESOLVED_APPLICABILITY",
+            TaxError::UnsupportedApplicabilityTreatment(_) => "UNSUPPORTED_APPLICABILITY_TREATMENT",
             TaxError::MissingComponent(_) => "MISSING_COMPONENT",
             TaxError::DependencyCycle(_) => "DEPENDENCY_CYCLE",
             TaxError::ArithmeticOverflow => "ARITHMETIC_OVERFLOW",
@@ -1276,6 +1379,7 @@ impl From<TaxError> for ApiError {
             TaxError::ReplayMismatch => "CALCULATION_REPLAY_MISMATCH",
             TaxError::JurisdictionResolution(_) => "JURISDICTION_RESOLUTION_FAILED",
             TaxError::FxConversionOutOfRange => "FX_CONVERSION_OUT_OF_RANGE",
+            TaxError::NonIntegralTaxBase => "NON_INTEGRAL_TAX_BASE",
         };
         Self {
             status: StatusCode::UNPROCESSABLE_ENTITY,
@@ -1304,6 +1408,17 @@ impl From<AttestationError> for ApiError {
             AttestationError::PayloadDigestMismatch => "ATTESTATION_PAYLOAD_DIGEST_MISMATCH",
             AttestationError::OutsideValidityWindow => "ATTESTATION_OUTSIDE_VALIDITY_WINDOW",
             AttestationError::BindingMismatch => "ATTESTATION_BINDING_MISMATCH",
+            AttestationError::InvalidApplicabilityFacts => "INVALID_APPLICABILITY_FACTS",
+            AttestationError::InvalidApplicabilityDecision => "INVALID_APPLICABILITY_DECISION",
+            AttestationError::ApplicabilityFactsBindingMismatch => {
+                "APPLICABILITY_FACTS_BINDING_MISMATCH"
+            }
+            AttestationError::ApplicabilityEvidenceWindowMismatch => {
+                "APPLICABILITY_EVIDENCE_WINDOW_MISMATCH"
+            }
+            AttestationError::LegacyTreatmentOutcomeUnsupported => {
+                "LEGACY_TREATMENT_OUTCOME_UNSUPPORTED"
+            }
         };
         Self {
             status: StatusCode::UNPROCESSABLE_ENTITY,
@@ -1445,6 +1560,37 @@ impl From<StorageError> for ApiError {
                 "ATTESTATION_EVIDENCE_TOO_LARGE",
                 "calculation attestation evidence exceeds the bounded size".to_string(),
             ),
+            StorageError::ApplicabilityContextNotFound => (
+                StatusCode::NOT_FOUND,
+                "APPLICABILITY_CONTEXT_NOT_FOUND",
+                "no applicability context was found for this merchant".to_string(),
+            ),
+            StorageError::ApplicabilityContextConflict => (
+                StatusCode::CONFLICT,
+                "APPLICABILITY_CONTEXT_CONFLICT",
+                "the applicability context already has different immutable evidence".to_string(),
+            ),
+            StorageError::InvalidApplicabilityContext(message) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_APPLICABILITY_CONTEXT",
+                message,
+            ),
+            StorageError::ApplicabilityContextTransitionConflict => (
+                StatusCode::CONFLICT,
+                "APPLICABILITY_CONTEXT_TRANSITION_CONFLICT",
+                "the applicability context lifecycle transition is not allowed".to_string(),
+            ),
+            StorageError::ApplicabilityBindingVerificationConflict => (
+                StatusCode::CONFLICT,
+                "APPLICABILITY_BINDING_VERIFICATION_CONFLICT",
+                "finalized applicability evidence conflicts with the stored projection"
+                    .to_string(),
+            ),
+            StorageError::InvalidApplicabilityBindingVerification(message) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_APPLICABILITY_BINDING_VERIFICATION",
+                message,
+            ),
             StorageError::SettlementRouteNotFound => (
                 StatusCode::NOT_FOUND,
                 "SETTLEMENT_ROUTE_NOT_FOUND",
@@ -1469,6 +1615,12 @@ impl From<StorageError> for ApiError {
                 StatusCode::CONFLICT,
                 "SETTLEMENT_ROUTE_ACTIVATION_CONFLICT",
                 "the settlement route cannot be activated in its current lifecycle state"
+                    .to_string(),
+            ),
+            StorageError::SettlementRouteVerificationRunConflict => (
+                StatusCode::CONFLICT,
+                "SETTLEMENT_ROUTE_VERIFICATION_RUN_CONFLICT",
+                "the settlement route verification run cannot take that lifecycle transition"
                     .to_string(),
             ),
             StorageError::RevenueStreamDestinationRouteNotFound => (
@@ -2077,6 +2229,15 @@ impl From<SettlementCompileError> for ApiError {
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "EMPTY_DOCUMENT_PROVENANCE_DIGEST",
             ),
+            SettlementCompileError::EmptyApplicabilityContextId
+            | SettlementCompileError::EmptyApplicabilityAttestationDigest => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "EMPTY_APPLICABILITY_BINDING",
+            ),
+            SettlementCompileError::InvalidCompiledInstructionEncoding => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "SETTLEMENT_INSTRUCTION_ENCODING_FAILURE",
+            ),
             SettlementCompileError::InvalidNonce => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "INVALID_SETTLEMENT_NONCE")
             }
@@ -2203,6 +2364,18 @@ pub fn router() -> Router<AppState> {
         .route("/v1/tax/calculate-document", post(calculate_document_tax))
         .route("/v1/tax/quote", post(quote_tax))
         .route("/v1/tax/document-quote", post(document_quote_tax))
+        .route(
+            "/v1/tax/applicability-contexts",
+            post(create_applicability_context),
+        )
+        .route(
+            "/v1/tax/applicability-contexts/{context_id}",
+            get(load_applicability_context),
+        )
+        .route(
+            "/v1/tax/applicability-contexts/{context_id}/transition",
+            post(transition_applicability_context),
+        )
         .route("/v1/tax/rules", post(create_rule_draft))
         .route(
             "/v1/tax/rules/{rule_set_id}/transition",
@@ -2229,10 +2402,7 @@ pub fn router() -> Router<AppState> {
             get(load_jurisdiction_policy_governance),
         )
         .route("/v1/vault/release-claims", post(create_vault_release_claim))
-        .route(
-            "/v1/vault/release-routes",
-            get(list_vault_release_routes),
-        )
+        .route("/v1/vault/release-routes", get(list_vault_release_routes))
         .route(
             "/v1/vault/release-claims/{claim_id}",
             get(load_vault_release_claim),
@@ -2379,7 +2549,20 @@ pub fn router() -> Router<AppState> {
             "/v1/tax/document-quotes/{calculation_id}/attestation/verify",
             post(verify_document_quote_attestation),
         )
+        .route(
+            "/v1/tax/document-quotes/{calculation_id}/attestation/status",
+            get(document_quote_attestation_status),
+        )
+        .route(
+            "/v1/settlement/intents/{intent_id}/applicability-binding-verification",
+            get(load_applicability_binding_verification),
+        )
         .route("/v1/indexer/replay-gaps", get(list_replay_gaps))
+        .route(
+            "/v1/indexer/route-verification-runs",
+            get(list_route_verification_runs),
+        )
+        .route("/v1/audit/evidence-access", get(list_evidence_access_audit))
         .route(
             "/v1/indexer/replay-gaps/{gap_id}/acknowledge",
             post(acknowledge_replay_gap),
@@ -2468,7 +2651,7 @@ fn authorization_capabilities_inner(
     let expires_at_unix = principal
         .expires_at_unix
         .min(now_unix.saturating_add(CAPABILITY_SNAPSHOT_MAX_LIFETIME_SECONDS));
-    let capabilities = CAPABILITY_POLICIES
+    let capabilities = capability_policies()?
         .iter()
         .map(|policy| {
             let decision = if policy
@@ -2630,6 +2813,7 @@ async fn calculate_tax_inner(
         });
     }
     reject_client_fx_conversion(request.facts.fx_conversion.is_some())?;
+    reject_client_applicability(request.facts.applicability.is_some())?;
     let result = calculate(&request.rule_set, &request.facts).map_err(ApiError::from)?;
     Ok(Json(CalculateResponse {
         calculation_id: Uuid::now_v7(),
@@ -2670,6 +2854,7 @@ async fn calculate_document_tax_inner(
         });
     }
     reject_client_fx_conversion(request.facts.fx_conversion.is_some())?;
+    reject_client_applicability(request.facts.applicability.is_some())?;
     let result = calculate_document(&request.rule_set, &request.facts).map_err(ApiError::from)?;
     Ok(Json(CalculateDocumentResponse {
         schema: TAX_DOCUMENT_SCHEMA_V1,
@@ -2704,6 +2889,7 @@ async fn quote_tax_inner(
     })?;
     let mut request = request;
     reject_client_fx_conversion(request.facts.fx_conversion.is_some())?;
+    reject_client_applicability(request.facts.applicability.is_some())?;
     let Some(store) = state.storage.as_ref() else {
         return Err(ApiError {
             status: StatusCode::SERVICE_UNAVAILABLE,
@@ -2728,6 +2914,22 @@ async fn quote_tax_inner(
         })?;
     let facts_digest = request.facts.canonical_digest().map_err(ApiError::from)?;
     let now_unix = server_unix_now()?;
+    if request
+        .applicability_context_id
+        .is_some_and(|context_id| context_id.is_nil())
+    {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_APPLICABILITY_CONTEXT_REFERENCE",
+            message: "applicability context reference must not be nil".to_string(),
+        });
+    }
+    if let Some(context_id) = request.applicability_context_id {
+        store
+            .load_applicability_context(principal.merchant_id, context_id, now_unix, true)
+            .await
+            .map_err(ApiError::from)?;
+    }
     let candidates = provider_registry.verify(
         &request.jurisdiction_evidence,
         principal.merchant_id,
@@ -2756,6 +2958,7 @@ async fn quote_tax_inner(
             jurisdiction: request.jurisdiction,
             regime: request.regime,
             facts: request.facts,
+            applicability_context_id: request.applicability_context_id,
             jurisdiction_candidates: candidates,
             fx_evidence,
         })
@@ -2799,6 +3002,7 @@ async fn document_quote_tax_inner(
     }
     let mut request = request;
     reject_client_fx_conversion(request.facts.fx_conversion.is_some())?;
+    reject_client_applicability(request.facts.applicability.is_some())?;
     let Some(store) = state.storage.as_ref() else {
         return Err(ApiError {
             status: StatusCode::SERVICE_UNAVAILABLE,
@@ -2823,6 +3027,22 @@ async fn document_quote_tax_inner(
         })?;
     let facts_digest = request.facts.canonical_digest().map_err(ApiError::from)?;
     let now_unix = server_unix_now()?;
+    if request
+        .applicability_context_id
+        .is_some_and(|context_id| context_id.is_nil())
+    {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_APPLICABILITY_CONTEXT_REFERENCE",
+            message: "applicability context reference must not be nil".to_string(),
+        });
+    }
+    if let Some(context_id) = request.applicability_context_id {
+        store
+            .load_applicability_context(principal.merchant_id, context_id, now_unix, true)
+            .await
+            .map_err(ApiError::from)?;
+    }
     let candidates = provider_registry.verify(
         &request.jurisdiction_evidence,
         principal.merchant_id,
@@ -2852,6 +3072,7 @@ async fn document_quote_tax_inner(
             jurisdiction: request.jurisdiction,
             regime: request.regime,
             facts: request.facts,
+            applicability_context_id: request.applicability_context_id,
             jurisdiction_candidates: candidates,
             fx_evidence,
         })
@@ -2863,6 +3084,175 @@ async fn document_quote_tax_inner(
         }
     };
     Ok(Json(response))
+}
+
+async fn create_applicability_context(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    payload: Result<Json<ApplicabilityContextCreateRequest>, JsonRejection>,
+) -> Result<Json<storage::StoredApplicabilityContext>, ApiError> {
+    let metrics = Arc::clone(&state.metrics);
+    let started = Instant::now();
+    let result = create_applicability_context_inner(state, headers, payload).await;
+    metrics.observe_or_log(
+        "tax_applicability_context_create",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+async fn create_applicability_context_inner(
+    state: AppState,
+    headers: HeaderMap,
+    payload: Result<Json<ApplicabilityContextCreateRequest>, JsonRejection>,
+) -> Result<Json<storage::StoredApplicabilityContext>, ApiError> {
+    let principal = authenticate_scope_role(
+        &state,
+        &headers,
+        "tax:applicability:author",
+        "tax_applicability_author",
+    )?;
+    let Json(request) = payload.map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "INVALID_JSON",
+        message: "request body is invalid".to_string(),
+    })?;
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "APPLICABILITY_CONTEXT_STORAGE_UNAVAILABLE",
+        message: "tax applicability context storage is not configured".to_string(),
+    })?;
+    let outcome = store
+        .create_applicability_context(CreateApplicabilityContextCommand {
+            merchant_id: principal.merchant_id,
+            idempotency_key: request.idempotency_key,
+            attestation: request.attestation,
+            effective_from_unix: request.effective_from_unix,
+            effective_until_unix: request.effective_until_unix,
+            provenance: request.provenance,
+            actor_subject: principal.subject,
+        })
+        .await
+        .map_err(ApiError::from)?;
+    let response = match outcome {
+        storage::ApplicabilityContextOutcome::Created(context)
+        | storage::ApplicabilityContextOutcome::Replay(context) => context,
+    };
+    Ok(Json(response))
+}
+
+async fn load_applicability_context(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(context_id): Path<Uuid>,
+) -> Result<Json<storage::StoredApplicabilityContext>, ApiError> {
+    let metrics = Arc::clone(&state.metrics);
+    let started = Instant::now();
+    let result = load_applicability_context_inner(state, headers, context_id).await;
+    metrics.observe_or_log(
+        "tax_applicability_context_read",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+async fn load_applicability_context_inner(
+    state: AppState,
+    headers: HeaderMap,
+    context_id: Uuid,
+) -> Result<Json<storage::StoredApplicabilityContext>, ApiError> {
+    let principal = authenticate_scope(&state, &headers, "tax:applicability:read")?;
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "APPLICABILITY_CONTEXT_STORAGE_UNAVAILABLE",
+        message: "tax applicability context storage is not configured".to_string(),
+    })?;
+    let context = store
+        .load_applicability_context_for_operator(principal.merchant_id, context_id)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(context))
+}
+
+async fn transition_applicability_context(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(context_id): Path<Uuid>,
+    payload: Result<Json<ApplicabilityContextTransitionRequest>, JsonRejection>,
+) -> Result<Json<storage::StoredApplicabilityContext>, ApiError> {
+    let metrics = Arc::clone(&state.metrics);
+    let started = Instant::now();
+    let result = transition_applicability_context_inner(state, headers, context_id, payload).await;
+    metrics.observe_or_log(
+        "tax_applicability_context_transition",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+async fn transition_applicability_context_inner(
+    state: AppState,
+    headers: HeaderMap,
+    context_id: Uuid,
+    payload: Result<Json<ApplicabilityContextTransitionRequest>, JsonRejection>,
+) -> Result<Json<storage::StoredApplicabilityContext>, ApiError> {
+    let Json(request) = payload.map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "INVALID_JSON",
+        message: "request body is invalid".to_string(),
+    })?;
+    let (scope, role) = applicability_context_transition_requirements(&request.to_status)?;
+    let principal = authenticate_scope_role(&state, &headers, scope, role)?;
+    if context_id.is_nil() {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_APPLICABILITY_CONTEXT_REFERENCE",
+            message: "applicability context reference must not be nil".to_string(),
+        });
+    }
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "APPLICABILITY_CONTEXT_STORAGE_UNAVAILABLE",
+        message: "tax applicability context storage is not configured".to_string(),
+    })?;
+    let current = store
+        .load_applicability_context_for_operator(principal.merchant_id, context_id)
+        .await
+        .map_err(ApiError::from)?;
+    store
+        .transition_applicability_context(ApplicabilityContextTransition {
+            context_id,
+            merchant_id: principal.merchant_id,
+            expected_status: current.status,
+            next_status: request.to_status,
+            actor_subject: principal.subject,
+            evidence: request.evidence,
+        })
+        .await
+        .map_err(ApiError::from)?;
+    let updated = store
+        .load_applicability_context_for_operator(principal.merchant_id, context_id)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(updated))
+}
+
+fn applicability_context_transition_requirements(
+    to_status: &str,
+) -> Result<(&'static str, &'static str), ApiError> {
+    match to_status {
+        "review" => Ok(("tax:applicability:author", "tax_applicability_author")),
+        "approved" | "rejected" => Ok(("tax:applicability:review", "tax_applicability_reviewer")),
+        "published" | "retired" => Ok(("tax:applicability:publish", "tax_applicability_approver")),
+        _ => Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_APPLICABILITY_CONTEXT_STATUS",
+            message: "the requested applicability lifecycle status is not supported".to_string(),
+        }),
+    }
 }
 
 async fn create_rule_draft(
@@ -3104,6 +3494,7 @@ fn parse_strict_simulation_facts(value: serde_json::Value) -> Result<TaxFacts, A
     const ALLOWED_FIELDS: &[&str] = &[
         "gross_atomic",
         "net_atomic",
+        "atomic_decimals",
         "currency",
         "jurisdiction",
         "jurisdiction_resolution",
@@ -3133,6 +3524,17 @@ fn reject_client_fx_conversion(present: bool) -> Result<(), ApiError> {
             status: StatusCode::BAD_REQUEST,
             code: "CLIENT_FX_CONVERSION_FORBIDDEN",
             message: "FX conversion evidence is server-owned".to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn reject_client_applicability(present: bool) -> Result<(), ApiError> {
+    if present {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "CLIENT_APPLICABILITY_FORBIDDEN",
+            message: "tax applicability context is server-owned".to_string(),
         });
     }
     Ok(())
@@ -5359,6 +5761,155 @@ async fn list_replay_gaps_inner(
     ))
 }
 
+async fn list_route_verification_runs(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<RouteVerificationRunsQuery>,
+) -> Result<Json<Vec<storage::SettlementRouteVerificationRunView>>, ApiError> {
+    let metrics = Arc::clone(&state.metrics);
+    let started = Instant::now();
+    let result = list_route_verification_runs_inner(state, headers, query).await;
+    metrics.observe_or_log(
+        "indexer_route_verification_evidence",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+async fn list_route_verification_runs_inner(
+    state: AppState,
+    headers: HeaderMap,
+    query: RouteVerificationRunsQuery,
+) -> Result<Json<Vec<storage::SettlementRouteVerificationRunView>>, ApiError> {
+    authenticate_scope_role(&state, &headers, "tax:indexer:read", "indexer_operator")?;
+    if let Some(limit) = query.limit
+        && !(1..=storage::MAX_ROUTE_VERIFICATION_RUN_LIST_LIMIT).contains(&limit)
+    {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_INDEXER_REPLAY_OPERATOR_INPUT",
+            message: format!(
+                "route-verification run list limit must be between 1 and {}",
+                storage::MAX_ROUTE_VERIFICATION_RUN_LIST_LIMIT
+            ),
+        });
+    }
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "INDEXER_STORAGE_UNAVAILABLE",
+        message: "route-verification evidence storage is not configured".to_string(),
+    })?;
+    Ok(Json(
+        store
+            .list_settlement_route_verification_runs(query.limit.unwrap_or(50))
+            .await
+            .map_err(ApiError::from)?,
+    ))
+}
+
+async fn list_evidence_access_audit(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<EvidenceAccessAuditListQuery>,
+) -> Result<Json<Vec<storage::EvidenceAccessAuditEventView>>, ApiError> {
+    let metrics = Arc::clone(&state.metrics);
+    let started = Instant::now();
+    let result = list_evidence_access_audit_inner(state, headers, query).await;
+    metrics.observe_or_log(
+        "evidence_access_audit_explorer",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+async fn list_evidence_access_audit_inner(
+    state: AppState,
+    headers: HeaderMap,
+    query: EvidenceAccessAuditListQuery,
+) -> Result<Json<Vec<storage::EvidenceAccessAuditEventView>>, ApiError> {
+    let principal = authenticate_scope(&state, &headers, "audit:read")?;
+    if query
+        .calculation_id
+        .is_some_and(|calculation_id| calculation_id.get_version_num() != 7)
+    {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_EVIDENCE_AUDIT_CALCULATION",
+            message: "calculation_id must be a UUIDv7".to_string(),
+        });
+    }
+    let limit = query.limit.unwrap_or(50);
+    if !(1..=storage::MAX_EVIDENCE_ACCESS_AUDIT_LIST_LIMIT).contains(&limit) {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_EVIDENCE_AUDIT_LIMIT",
+            message: format!(
+                "evidence access audit list limit must be between 1 and {}",
+                storage::MAX_EVIDENCE_ACCESS_AUDIT_LIST_LIMIT
+            ),
+        });
+    }
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "EVIDENCE_AUDIT_STORAGE_UNAVAILABLE",
+        message: "evidence audit storage is not configured".to_string(),
+    })?;
+    Ok(Json(
+        store
+            .list_evidence_access_audit_events(principal.merchant_id, query.calculation_id, limit)
+            .await
+            .map_err(ApiError::from)?,
+    ))
+}
+
+async fn load_applicability_binding_verification(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(intent_id): Path<Uuid>,
+    Query(query): Query<ApplicabilityBindingVerificationQuery>,
+) -> Result<Json<storage::ApplicabilityBindingVerificationView>, ApiError> {
+    let metrics = Arc::clone(&state.metrics);
+    let started = Instant::now();
+    let result =
+        load_applicability_binding_verification_inner(state, headers, intent_id, query).await;
+    metrics.observe_or_log(
+        "applicability_binding_verification_read",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+async fn load_applicability_binding_verification_inner(
+    state: AppState,
+    headers: HeaderMap,
+    intent_id: Uuid,
+    query: ApplicabilityBindingVerificationQuery,
+) -> Result<Json<storage::ApplicabilityBindingVerificationView>, ApiError> {
+    let principal = authenticate_scope(&state, &headers, "audit:read")?;
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "APPLICABILITY_VERIFICATION_STORAGE_UNAVAILABLE",
+        message: "applicability verification storage is not configured".to_string(),
+    })?;
+    let view = store
+        .load_applicability_binding_verification(
+            intent_id,
+            principal.merchant_id,
+            &query.stream_key,
+        )
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError {
+            status: StatusCode::NOT_FOUND,
+            code: "SETTLEMENT_INTENT_NOT_FOUND",
+            message: "the settlement intent was not found for this account".to_string(),
+        })?;
+    Ok(Json(view))
+}
+
 async fn acknowledge_replay_gap(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -5674,7 +6225,7 @@ async fn compile_settlement_inner(
         code: "INVALID_JSON",
         message: "request body is invalid".to_string(),
     })?;
-    compile_settlement_request(state, principal.merchant_id, request, None).await
+    compile_settlement_request(state, principal.merchant_id, request, None, None).await
 }
 
 async fn list_settlement_routes(
@@ -7969,12 +8520,14 @@ async fn compile_settlement_from_quote_inner(
         .load_quote_for_settlement(principal.merchant_id, request.calculation_id)
         .await
         .map_err(ApiError::from)?;
+    let applicability_binding = quote_applicability_binding(&quote)?;
     let policy_binding =
         require_quote_attestation(&store, principal.merchant_id, request.calculation_id).await?;
     let route = store
         .load_active_settlement_route(principal.merchant_id, request.route_id)
         .await
         .map_err(ApiError::from)?;
+    ensure_quote_scale_matches_route(quote.result.atomic_decimals, &route)?;
     let source = derive_source_token_account(&request.payer, &route.mint, &route.token_program)
         .map_err(ApiError::from)?;
     compile_settlement_request(
@@ -7997,6 +8550,7 @@ async fn compile_settlement_from_quote_inner(
             policy_digest: policy_binding.digest,
         },
         Some(request.route_id),
+        applicability_binding,
     )
     .await
 }
@@ -8051,6 +8605,7 @@ async fn compile_document_settlement_from_quote_inner(
         code: "SETTLEMENT_ROUTE_EVIDENCE_CORRUPT",
         message: "stored route mint is not a valid Solana public key".to_string(),
     })?;
+    ensure_quote_scale_matches_route(document.result.atomic_decimals, &route)?;
     let binding = DocumentAttestationBinding {
         document_schema: &document.schema,
         merchant_id: merchant_identity_digest(principal.merchant_id.as_bytes()),
@@ -8066,6 +8621,10 @@ async fn compile_document_settlement_from_quote_inner(
         gross_atomic: quote_amount_as_u64(document.result.gross_atomic, "gross_atomic")?,
         tax_atomic: quote_amount_as_u64(document.result.total_tax_atomic, "total_tax_atomic")?,
         net_atomic: quote_amount_as_u64(document.result.total_net_atomic, "total_net_atomic")?,
+        treatment_outcome_digest: quote_treatment_outcome_binding(
+            attestation.attestation.unsigned.schema_version,
+            &document.result.treatment_outcome,
+        )?,
     };
     attestation
         .attestation
@@ -8111,8 +8670,19 @@ async fn compile_document_settlement_from_quote_inner(
     digest_input.extend_from_slice(request.route_id.as_bytes());
     digest_input.extend_from_slice(&serialized_request);
     let request_digest = sha256_digest(&digest_input);
-    let instruction =
-        compile_document_settlement_instruction(&client_request).map_err(ApiError::from)?;
+    let applicability_binding = document_quote_applicability_binding(&document)?;
+    let instruction = if let Some((context_id, attestation_digest)) = applicability_binding {
+        compile_applicability_document_settlement_instruction(
+            &ApplicabilityDocumentSettlementCompileRequest {
+                settlement: client_request.clone(),
+                context_id,
+                attestation_digest,
+            },
+        )
+        .map_err(ApiError::from)?
+    } else {
+        compile_document_settlement_instruction(&client_request).map_err(ApiError::from)?
+    };
     let instruction_digest =
         sha256_digest(&serde_json::to_vec(&instruction).map_err(|error| ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -8193,6 +8763,7 @@ async fn compile_split_settlement_from_quote_inner(
             message: "the split plan is not scoped to the selected settlement route".to_string(),
         });
     }
+    ensure_quote_scale_matches_route(quote.result.atomic_decimals, &route)?;
     let source = derive_source_token_account(&request.payer, &route.mint, &route.token_program)
         .map_err(ApiError::from)?;
     compile_split_settlement_request(
@@ -8225,11 +8796,26 @@ async fn compile_split_settlement_from_quote_inner(
     .await
 }
 
+fn ensure_quote_scale_matches_route(
+    quote_atomic_decimals: u8,
+    route: &storage::SettlementRoute,
+) -> Result<(), ApiError> {
+    if quote_atomic_decimals != route.mint_decimals {
+        return Err(ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "SETTLEMENT_ATOMIC_SCALE_ROUTE_MISMATCH",
+            message: "quote precision does not match the finalized settlement route".to_string(),
+        });
+    }
+    Ok(())
+}
+
 async fn compile_settlement_request(
     state: AppState,
     merchant_id: Uuid,
     request: SettlementCompileRequest,
     route_id: Option<Uuid>,
+    applicability_binding: Option<ApplicabilityBinding>,
 ) -> Result<Json<CompiledSettlementResponse>, ApiError> {
     let serialized_request = serde_json::to_vec(&request).map_err(|error| ApiError {
         status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -8240,11 +8826,25 @@ async fn compile_settlement_request(
         let mut digest_input = b"solana-tax-protocol/settlement-request/v2".to_vec();
         digest_input.extend_from_slice(route_id.as_bytes());
         digest_input.extend_from_slice(&serialized_request);
+        if let Some((context_id, attestation_digest)) = applicability_binding {
+            digest_input.extend_from_slice(b"/applicability/v1");
+            digest_input.extend_from_slice(&context_id);
+            digest_input.extend_from_slice(&attestation_digest);
+        }
         sha256_digest(&digest_input)
     } else {
         sha256_digest(&serialized_request)
     };
-    let instruction = compile_settlement_instruction(&request).map_err(ApiError::from)?;
+    let instruction = if let Some((context_id, attestation_digest)) = applicability_binding {
+        compile_applicability_settlement_instruction(&ApplicabilitySettlementCompileRequest {
+            settlement: request.clone(),
+            context_id,
+            attestation_digest,
+        })
+        .map_err(ApiError::from)?
+    } else {
+        compile_settlement_instruction(&request).map_err(ApiError::from)?
+    };
     let instruction_digest =
         compiled_instruction_digest(&instruction).map_err(|error| ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -8314,6 +8914,46 @@ fn server_owned_policy_binding<T: ServerOwnedPolicySource>(
     ServerOwnedPolicyBinding {
         sequence: attestation.policy_sequence(),
         digest: attestation.policy_digest(),
+    }
+}
+
+type ApplicabilityBinding = ([u8; 16], [u8; 32]);
+
+fn quote_applicability_binding(
+    quote: &storage::StoredQuote,
+) -> Result<Option<ApplicabilityBinding>, ApiError> {
+    match (
+        quote.applicability_context_id,
+        quote.applicability_attestation_digest,
+    ) {
+        (None, None) => Ok(None),
+        (Some(context_id), Some(attestation_digest)) => {
+            Ok(Some((*context_id.as_bytes(), attestation_digest)))
+        }
+        _ => Err(ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "QUOTE_APPLICABILITY_BINDING_CORRUPT",
+            message: "stored quote has an incomplete applicability binding".to_string(),
+        }),
+    }
+}
+
+fn document_quote_applicability_binding(
+    quote: &storage::StoredDocumentQuote,
+) -> Result<Option<ApplicabilityBinding>, ApiError> {
+    match (
+        quote.applicability_context_id,
+        quote.applicability_attestation_digest,
+    ) {
+        (None, None) => Ok(None),
+        (Some(context_id), Some(attestation_digest)) => {
+            Ok(Some((*context_id.as_bytes(), attestation_digest)))
+        }
+        _ => Err(ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "DOCUMENT_QUOTE_APPLICABILITY_BINDING_CORRUPT",
+            message: "stored document quote has an incomplete applicability binding".to_string(),
+        }),
     }
 }
 
@@ -8474,6 +9114,11 @@ async fn submit_settlement_inner(
                 policy_attestation: instruction.policy_attestation.clone(),
                 receipt: instruction.receipt.clone(),
                 asset_config: instruction.asset_config.clone(),
+                applicability_context_id: instruction.applicability_context_id.clone(),
+                applicability_attestation_digest: instruction
+                    .applicability_attestation_digest
+                    .clone(),
+                applicability_binding: instruction.applicability_binding.clone(),
                 compute_budget_policy: instruction.compute_budget_policy.clone(),
             },
         ),
@@ -8501,6 +9146,9 @@ async fn submit_settlement_inner(
                 policy_attestation: instruction.policy_attestation.clone(),
                 receipt: instruction.receipt.clone(),
                 asset_config: instruction.asset_config.clone(),
+                applicability_context_id: None,
+                applicability_attestation_digest: None,
+                applicability_binding: None,
                 compute_budget_policy: instruction.compute_budget_policy.clone(),
             },
         ),
@@ -8827,6 +9475,7 @@ async fn verify_attestation(
         gross_atomic: request.binding.gross_atomic,
         tax_atomic: request.binding.tax_atomic,
         net_atomic: request.binding.net_atomic,
+        treatment_outcome_digest: request.binding.treatment_outcome_digest,
     };
     request
         .attestation
@@ -8889,6 +9538,10 @@ async fn verify_quote_attestation(
         gross_atomic,
         tax_atomic,
         net_atomic,
+        treatment_outcome_digest: quote_treatment_outcome_binding(
+            request.attestation.unsigned.schema_version,
+            &quote.result.treatment_outcome,
+        )?,
     };
     request
         .attestation
@@ -8971,6 +9624,10 @@ async fn verify_document_quote_attestation(
         gross_atomic: quote_amount_as_u64(document.result.gross_atomic, "gross_atomic")?,
         tax_atomic: quote_amount_as_u64(document.result.total_tax_atomic, "total_tax_atomic")?,
         net_atomic: quote_amount_as_u64(document.result.total_net_atomic, "total_net_atomic")?,
+        treatment_outcome_digest: quote_treatment_outcome_binding(
+            request.attestation.unsigned.schema_version,
+            &document.result.treatment_outcome,
+        )?,
     };
     request
         .attestation
@@ -9006,12 +9663,138 @@ async fn verify_document_quote_attestation(
     }))
 }
 
+async fn document_quote_attestation_status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(calculation_id): Path<Uuid>,
+    Query(query): Query<DocumentQuoteAttestationStatusQuery>,
+) -> Result<Json<DocumentQuoteAttestationStatusResponse>, ApiError> {
+    let metrics = Arc::clone(&state.metrics);
+    let started = Instant::now();
+    let result =
+        document_quote_attestation_status_inner(state, headers, calculation_id, query).await;
+    metrics.observe_or_log(
+        "tax_document_attestation_status",
+        started.elapsed(),
+        result.is_err(),
+    );
+    result
+}
+
+async fn document_quote_attestation_status_inner(
+    state: AppState,
+    headers: HeaderMap,
+    calculation_id: Uuid,
+    query: DocumentQuoteAttestationStatusQuery,
+) -> Result<Json<DocumentQuoteAttestationStatusResponse>, ApiError> {
+    let principal = authenticate_scope(&state, &headers, "tax:settlement:compile")?;
+    if calculation_id.get_version_num() != 7 || query.route_id.get_version_num() != 7 {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_DOCUMENT_EVIDENCE_REFERENCE",
+            message: "document and route references must be UUIDv7".to_string(),
+        });
+    }
+    let store = state.storage.ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "ATTESTATION_STORAGE_UNAVAILABLE",
+        message: "document attestation storage is not configured".to_string(),
+    })?;
+    let (stored, checked_at_unix) = load_and_verify_stored_document_attestation(
+        &store,
+        principal.merchant_id,
+        calculation_id,
+        query.route_id,
+    )
+    .await?;
+    Ok(Json(DocumentQuoteAttestationStatusResponse {
+        status: "verified",
+        calculation_id: stored.calculation_id,
+        payload_digest: stored.payload_digest,
+        issuer_public_key: stored.issuer_public_key,
+        expires_at_unix: stored.expires_at_unix,
+        checked_at_unix,
+    }))
+}
+
+async fn load_and_verify_stored_document_attestation(
+    store: &PgStore,
+    merchant_id: Uuid,
+    calculation_id: Uuid,
+    route_id: Uuid,
+) -> Result<(storage::StoredDocumentCalculationAttestation, i64), ApiError> {
+    let checked_at_unix = server_unix_now()?;
+    let (document, attestation, route) = tokio::try_join!(
+        store.load_document_quote_for_attestation(merchant_id, calculation_id),
+        store.load_document_calculation_attestation(merchant_id, calculation_id),
+        store.load_active_settlement_route(merchant_id, route_id),
+    )
+    .map_err(ApiError::from)?;
+    if document.schema != TAX_DOCUMENT_SCHEMA_V1 {
+        return Err(ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "DOCUMENT_QUOTE_SCHEMA_CORRUPT",
+            message: "stored document quote schema is not supported".to_string(),
+        });
+    }
+    let asset_mint = Pubkey::from_str(&route.mint).map_err(|_| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        code: "SETTLEMENT_ROUTE_EVIDENCE_CORRUPT",
+        message: "stored route mint is not a valid Solana public key".to_string(),
+    })?;
+    let binding = DocumentAttestationBinding {
+        document_schema: &document.schema,
+        merchant_id: merchant_identity_digest(merchant_id.as_bytes()),
+        document_id: &document.result.document_id,
+        engine_version: &document.result.engine_version,
+        rule_set_id: &document.result.rule_set_id,
+        rule_version: document.result.rule_version,
+        jurisdiction: &document.result.jurisdiction,
+        currency: &document.result.currency,
+        asset_mint: asset_mint.to_bytes(),
+        facts_digest: document.result.facts_digest,
+        rule_digest: document.result.rule_digest,
+        gross_atomic: quote_amount_as_u64(document.result.gross_atomic, "gross_atomic")?,
+        tax_atomic: quote_amount_as_u64(document.result.total_tax_atomic, "total_tax_atomic")?,
+        net_atomic: quote_amount_as_u64(document.result.total_net_atomic, "total_net_atomic")?,
+        treatment_outcome_digest: quote_treatment_outcome_binding(
+            attestation.attestation.unsigned.schema_version,
+            &document.result.treatment_outcome,
+        )?,
+    };
+    attestation
+        .attestation
+        .verify_at(checked_at_unix)
+        .map_err(ApiError::from)?;
+    attestation
+        .attestation
+        .verify_binding(&binding)
+        .map_err(ApiError::from)?;
+    Ok((attestation, checked_at_unix))
+}
+
 fn quote_amount_as_u64(value: i128, field: &str) -> Result<u64, ApiError> {
     u64::try_from(value).map_err(|_| ApiError {
         status: StatusCode::INTERNAL_SERVER_ERROR,
         code: "QUOTE_AMOUNT_OUT_OF_ATTESTATION_RANGE",
         message: format!("stored quote {field} is outside the attestation amount range"),
     })
+}
+
+fn quote_treatment_outcome_binding(
+    schema_version: u16,
+    outcome: &TreatmentOutcome,
+) -> Result<Option<Digest32>, ApiError> {
+    treatment_outcome_binding(
+        schema_version,
+        outcome.treatment,
+        outcome.arithmetic_tax_atomic,
+        outcome.collected_tax_atomic,
+        outcome.self_assessed_tax_atomic,
+        outcome.withheld_tax_atomic,
+        outcome.taxable_base_atomic,
+    )
+    .map_err(ApiError::from)
 }
 
 fn server_unix_now() -> Result<i64, ApiError> {
@@ -9033,6 +9816,307 @@ fn server_unix_now() -> Result<i64, ApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use policy::treatment_outcome_digest;
+    use tax_engine::Treatment;
+
+    fn empty_test_state(storage: Option<Arc<PgStore>>, authenticator: bool) -> AppState {
+        AppState {
+            ready: false,
+            simulation_mode: false,
+            storage,
+            authenticator: authenticator.then(auth::test_authenticator),
+            jurisdiction_provider_registry: None,
+            fx_issuance: None,
+            settlement_coordinator: None,
+            targeted_recovery: None,
+            metrics: test_metrics(),
+        }
+    }
+
+    #[tokio::test]
+    async fn applicability_context_create_requires_authentication_before_storage() {
+        let response = router()
+            .with_state(empty_test_state(None, true))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/tax/applicability-contexts")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn applicability_context_transition_requires_authentication_before_storage() {
+        let response = router()
+            .with_state(empty_test_state(None, true))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!(
+                        "/v1/tax/applicability-contexts/{}/transition",
+                        Uuid::now_v7()
+                    ))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"to_status":"review","evidence":{}}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn applicability_context_create_rejects_unknown_fields_before_storage() {
+        let now = server_unix_now().expect("test clock");
+        let (token, _) = auth::test_token_with_scope_and_roles(
+            now,
+            "tax:applicability:author",
+            "applicability-author",
+            &["tax_applicability_author"],
+        );
+        let response = router()
+            .with_state(empty_test_state(None, true))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/tax/applicability-contexts")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"idempotency_key":"ctx-1","unexpected":true}"#,
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn applicability_context_create_fails_closed_when_storage_is_unavailable() {
+        let now = server_unix_now().expect("test clock");
+        let (token, _) = auth::test_token_with_scope_and_roles(
+            now,
+            "tax:applicability:author",
+            "applicability-author",
+            &["tax_applicability_author"],
+        );
+        let body = serde_json::json!({
+            "idempotency_key": "ctx-1",
+            "attestation": {
+                "unsigned": {
+                    "schema_version": 1,
+                    "merchant_id": vec![1; 32],
+                    "jurisdiction_resolution_digest": vec![2; 32],
+                    "facts": {
+                        "schema": "tax-applicability/v1",
+                        "product_category": "digital-service",
+                        "supply_type": "cross-border",
+                        "customer_class": "business",
+                        "merchant_registration": "registered",
+                        "customer_registration": "unregistered",
+                        "transaction_type": "sale",
+                        "evidence_digest": vec![6; 32],
+                        "valid_until_unix": now + 300
+                    },
+                    "decision": {
+                        "schema": "tax-applicability/v1",
+                        "policy_id": "policy-1",
+                        "policy_version": 1,
+                        "policy_digest": vec![7; 32],
+                        "facts_digest": vec![8; 32],
+                        "treatment": "Taxable",
+                        "selected_rule_id": "rule-1",
+                        "matched_rule_ids": ["rule-1"],
+                        "evaluated_at_unix": 1800000000
+                    },
+                    "rule_set_id": "rules-1",
+                    "rule_version": 1,
+                    "rule_digest": vec![3; 32],
+                    "issued_at_unix": now,
+                    "expires_at_unix": now + 300,
+                    "sequence": "1",
+                    "issuer_key_id": vec![4; 32]
+                },
+                "issuer_public_key": vec![5; 32],
+                "payload_digest": vec![6; 32],
+                "signature": [7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7
+            ],
+            },
+            "effective_from_unix": now,
+            "provenance": {}
+        });
+        let response = router()
+            .with_state(empty_test_state(None, true))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/tax/applicability-contexts")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).expect("request JSON")))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn evidence_access_explorer_rejects_missing_bearer_token_before_storage_access() {
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: false,
+                storage: None,
+                authenticator: Some(auth::test_authenticator()),
+                jurisdiction_provider_registry: None,
+                fx_issuance: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/audit/evidence-access")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn applicability_binding_read_requires_audit_scope_before_storage_access() {
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: false,
+                storage: None,
+                authenticator: Some(auth::test_authenticator()),
+                jurisdiction_provider_registry: None,
+                fx_issuance: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!(
+                        "/v1/settlement/intents/{}/applicability-binding-verification?stream_key=local%2Fsettlement",
+                        Uuid::now_v7()
+                    ))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn evidence_access_explorer_requires_audit_scope_before_storage_access() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let (token, _) = auth::test_token_with_scope(now, "tax:quote");
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: false,
+                storage: None,
+                authenticator: Some(auth::test_authenticator()),
+                jurisdiction_provider_registry: None,
+                fx_issuance: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/audit/evidence-access")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn evidence_access_explorer_requires_durable_storage_after_authorization() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let (token, _) = auth::test_token_with_scope(now, "audit:read");
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: false,
+                storage: None,
+                authenticator: Some(auth::test_authenticator()),
+                jurisdiction_provider_registry: None,
+                fx_issuance: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/audit/evidence-access?limit=101")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn evidence_access_explorer_rejects_non_uuidv7_calculation_filter() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let (token, _) = auth::test_token_with_scope(now, "audit:read");
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: false,
+                storage: None,
+                authenticator: Some(auth::test_authenticator()),
+                jurisdiction_provider_registry: None,
+                fx_issuance: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/audit/evidence-access?calculation_id=00000000-0000-4000-8000-000000000000")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
     use axum::{
         body::Body,
         http::{HeaderValue, Request},
@@ -9048,6 +10132,25 @@ mod tests {
 
     fn test_metrics() -> Arc<ServiceMetrics> {
         Arc::new(ServiceMetrics::new("api", API_METRIC_OPERATIONS).unwrap())
+    }
+
+    #[test]
+    fn settlement_compile_rejects_quote_scale_that_differs_from_finalized_route() {
+        let route = storage::SettlementRoute {
+            id: Uuid::now_v7(),
+            route_key: "usdc-primary".to_string(),
+            version: 1,
+            merchant_account: "11111111111111111111111111111111".to_string(),
+            mint: "11111111111111111111111111111111".to_string(),
+            mint_decimals: 6,
+            tax_vault: "11111111111111111111111111111111".to_string(),
+            net_destination: "11111111111111111111111111111111".to_string(),
+            token_program: "11111111111111111111111111111111".to_string(),
+        };
+        let error = ensure_quote_scale_matches_route(2, &route).unwrap_err();
+        assert_eq!(error.code, "SETTLEMENT_ATOMIC_SCALE_ROUTE_MISMATCH");
+        assert_eq!(error.status, StatusCode::UNPROCESSABLE_ENTITY);
+        ensure_quote_scale_matches_route(6, &route).unwrap();
     }
 
     #[test]
@@ -9614,6 +10717,8 @@ mod tests {
             capability_ids,
             vec![
                 "access.control",
+                "evidence.applicability.read",
+                "evidence.audit.read",
                 "evidence.replay",
                 "refund.claim.cancel",
                 "refund.claim.create",
@@ -9625,6 +10730,7 @@ mod tests {
                 "settlement.adjustment",
                 "settlement.document.wallet",
                 "settlement.wallet",
+                "tax.applicability.govern",
                 "tax.document.quote.create",
                 "tax.preview.run",
                 "tax.quote.create",
@@ -9661,6 +10767,74 @@ mod tests {
             parsed["capabilities"]["vault.release"]["reason_code"],
             "scope_missing"
         );
+    }
+
+    #[test]
+    fn canonical_authorization_catalog_is_present_and_bounded() {
+        let catalog: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../contracts/authorization-capabilities-v1.json"
+        )))
+        .expect("canonical authorization catalog JSON");
+        assert_eq!(catalog["schema"], "authorization-catalog/v1");
+        assert_eq!(catalog["version"], 1);
+        let policies = catalog["policies"].as_array().expect("policy array");
+        assert_eq!(policies.len(), 21);
+        assert!(policies.iter().all(|policy| {
+            policy["id"].as_str().is_some_and(|id| !id.is_empty())
+                && policy["required_scopes"]
+                    .as_array()
+                    .is_some_and(|values| values.len() <= 16)
+                && policy["required_roles"]
+                    .as_array()
+                    .is_some_and(|values| values.len() <= 16)
+                && policy["required_attributes"]
+                    .as_array()
+                    .is_some_and(|values| values.len() <= 16)
+        }));
+    }
+
+    #[test]
+    fn canonical_authorization_catalog_rejects_semantic_drift() {
+        let mut catalog: CapabilityCatalog = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../contracts/authorization-capabilities-v1.json"
+        )))
+        .expect("canonical authorization catalog");
+
+        assert_eq!(validate_capability_catalog(&catalog), Ok(()));
+
+        catalog.policies[0].risk = "danger".to_string();
+        assert_eq!(
+            validate_capability_catalog(&catalog),
+            Err("AUTHORIZATION_CATALOG_INVALID")
+        );
+
+        catalog.policies[0].risk = "write".to_string();
+        catalog.policies[0].required_attributes = vec!["tenant_secret".to_string()];
+        assert_eq!(
+            validate_capability_catalog(&catalog),
+            Err("AUTHORIZATION_CATALOG_INVALID")
+        );
+
+        catalog.policies[0].required_attributes = vec!["environment".to_string()];
+        catalog.policies[0].required_scopes = vec!["tax quote".to_string()];
+        assert_eq!(
+            validate_capability_catalog(&catalog),
+            Err("AUTHORIZATION_CATALOG_INVALID")
+        );
+
+        catalog.policies[0].required_scopes = vec!["tax:quote".to_string()];
+        catalog.policies[0].required_roles = vec!["role with spaces".to_string()];
+        assert_eq!(
+            validate_capability_catalog(&catalog),
+            Err("AUTHORIZATION_CATALOG_INVALID")
+        );
+    }
+
+    #[test]
+    fn authorization_catalog_startup_preflight_is_available() {
+        assert_eq!(initialize_authorization_catalog(), Ok(()));
     }
 
     #[tokio::test]
@@ -9904,6 +11078,14 @@ mod tests {
             gross_atomic: 1_155,
             tax_atomic: 155,
             net_atomic: 1_000,
+            treatment_outcome_digest: treatment_outcome_digest(
+                Treatment::Taxable,
+                155,
+                155,
+                0,
+                0,
+                1_155,
+            ),
             issued_at_unix: 1_800_000_000,
             expires_at_unix: 1_800_000_300,
             sequence: 9,
@@ -9925,6 +11107,14 @@ mod tests {
                 gross_atomic: 1_155,
                 tax_atomic: 155,
                 net_atomic: 1_000,
+                treatment_outcome_digest: Some(treatment_outcome_digest(
+                    Treatment::Taxable,
+                    155,
+                    155,
+                    0,
+                    0,
+                    1_155,
+                )),
             },
             now_unix: 1_800_000_100,
         })
@@ -9967,20 +11157,22 @@ mod tests {
             facts: TaxFacts {
                 gross_atomic: 1_100,
                 net_atomic: 1_000,
+                atomic_decimals: 2,
                 currency: "USD".to_string(),
                 jurisdiction: "US-CA".to_string(),
                 jurisdiction_resolution: None,
                 fx_conversion: None,
                 exemption_codes: Vec::new(),
                 cumulative_period: None,
+                applicability: None,
             },
             rule_set: RuleSet {
                 id: "api-test".to_string(),
-                version: 1,
+                version: 2,
                 components: vec![tax_engine::TaxComponentRule {
                     id: "sales-tax".to_string(),
                     label: "Sales tax".to_string(),
-                    base: tax_engine::TaxBase::single(tax_engine::BaseReference::Net),
+                    base: tax_engine::TaxBase::weighted(tax_engine::WeightedBaseSource::Net, 1, 2),
                     rate: tax_engine::RateSpec::Flat(tax_engine::Rate::new(10, 100).unwrap()),
                     price_mode: tax_engine::PriceMode::Exclusive,
                     credit_atomic: 0,
@@ -10024,8 +11216,8 @@ mod tests {
             .await
             .unwrap();
         let response: serde_json::Value = serde_json::from_slice(&response_body).unwrap();
-        assert_eq!(response["result"]["total_tax_atomic"], "100");
-        assert_eq!(response["result"]["total_net_atomic"], "1000");
+        assert_eq!(response["result"]["total_tax_atomic"], "50");
+        assert_eq!(response["result"]["total_net_atomic"], "1050");
         assert_eq!(
             response["result"]["facts_digest"].as_array().unwrap().len(),
             32
@@ -10037,7 +11229,7 @@ mod tests {
         let body = serde_json::json!({
             "facts": {
                 "gross_atomic": "100",
-                "net_atomic": "100",
+                "net_atomic": "100","atomic_decimals":2,
                 "currency": "EUR",
                 "jurisdiction": "DE-BE",
                 "fx_conversion": client_fx_evidence_json()
@@ -10079,7 +11271,7 @@ mod tests {
         let body = serde_json::json!({
             "schema": "solana-tax-protocol/tax-document/v1",
             "facts": {
-                "id": "invoice-client-fx",
+                "id": "invoice-client-fx","atomic_decimals":2,
                 "currency": "EUR",
                 "jurisdiction": "DE-BE",
                 "fx_conversion": client_fx_evidence_json(),
@@ -10132,7 +11324,7 @@ mod tests {
             "regime": "sales-tax",
             "facts": {
                 "gross_atomic": "100",
-                "net_atomic": "100",
+                "net_atomic": "100","atomic_decimals":2,
                 "currency": "EUR",
                 "jurisdiction": "DE-BE",
                 "fx_conversion": client_fx_evidence_json()
@@ -10177,7 +11369,7 @@ mod tests {
             "jurisdiction": "DE-BE",
             "regime": "sales-tax",
             "facts": {
-                "id": "invoice-client-fx-quote",
+                "id": "invoice-client-fx-quote","atomic_decimals":2,
                 "currency": "EUR",
                 "jurisdiction": "DE-BE",
                 "fx_conversion": client_fx_evidence_json(),
@@ -10220,7 +11412,7 @@ mod tests {
         let body = serde_json::json!({
             "schema": "solana-tax-protocol/tax-document/v1",
             "facts": {
-                "id": "invoice-api-1",
+                "id": "invoice-api-1","atomic_decimals":2,
                 "currency": "USD",
                 "jurisdiction": "US-CA",
                 "jurisdiction_resolution": null,
@@ -10288,7 +11480,7 @@ mod tests {
         let body = serde_json::json!({
             "schema": "solana-tax-protocol/tax-document/v1",
             "facts": {
-                "id": "invoice-api-production-boundary",
+                "id": "invoice-api-production-boundary","atomic_decimals":2,
                 "currency": "USD",
                 "jurisdiction": "US-CA",
                 "jurisdiction_resolution": null,
@@ -10339,7 +11531,7 @@ mod tests {
         let body = serde_json::json!({
             "schema": "solana-tax-protocol/tax-document/v0",
             "facts": {
-                "id": "invoice-schema-boundary",
+                "id": "invoice-schema-boundary","atomic_decimals":2,
                 "currency": "USD",
                 "jurisdiction": "US-CA",
                 "lines": [{ "id": "line-a", "gross_atomic": "1", "net_atomic": "1", "exemption_codes": [] }]
@@ -10387,13 +11579,16 @@ mod tests {
             facts: TaxFacts {
                 gross_atomic: 1_100,
                 net_atomic: 1_000,
+                atomic_decimals: 2,
                 currency: "USD".to_string(),
                 jurisdiction: "US-CA".to_string(),
                 jurisdiction_resolution: None,
                 fx_conversion: None,
                 exemption_codes: Vec::new(),
                 cumulative_period: None,
+                applicability: None,
             },
+            applicability_context_id: None,
             source_currency: None,
             jurisdiction_evidence: Vec::new(),
         })
@@ -10452,13 +11647,16 @@ mod tests {
                             facts: TaxFacts {
                                 gross_atomic: 1_100,
                                 net_atomic: 1_000,
+                                atomic_decimals: 2,
                                 currency: "USD".to_string(),
                                 jurisdiction: "US-CA".to_string(),
                                 jurisdiction_resolution: None,
                                 fx_conversion: None,
                                 exemption_codes: Vec::new(),
                                 cumulative_period: None,
+                                applicability: None,
                             },
+                            applicability_context_id: None,
                             source_currency: None,
                             jurisdiction_evidence: Vec::new(),
                         })
@@ -10502,6 +11700,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn document_attestation_status_rejects_missing_bearer_token_before_storage_access() {
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: false,
+                storage: None,
+                authenticator: Some(auth::test_authenticator()),
+                jurisdiction_provider_registry: None,
+                fx_issuance: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!(
+                        "/v1/tax/document-quotes/{}/attestation/status?route_id={}",
+                        Uuid::now_v7(),
+                        Uuid::now_v7()
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
     async fn document_attestation_wire_boundary_rejects_aggregate_attestation() {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -10522,6 +11750,14 @@ mod tests {
                 gross_atomic: 10,
                 tax_atomic: 1,
                 net_atomic: 9,
+                treatment_outcome_digest: treatment_outcome_digest(
+                    Treatment::Taxable,
+                    1,
+                    1,
+                    0,
+                    0,
+                    10,
+                ),
                 issued_at_unix: now,
                 expires_at_unix: now + 300,
                 sequence: 1,
@@ -10618,7 +11854,7 @@ mod tests {
                     .header("authorization", format!("Bearer {token}"))
                     .header("content-type", "application/json")
                     .body(Body::from(
-                        r#"{"schema":"solana-tax-protocol/tax-document/v0","idempotency_key":"doc-1","rule_set_id":"rule","rule_version":1,"jurisdiction":"US-CA","regime":"sales-tax","facts":{"id":"invoice-1","currency":"USD","jurisdiction":"US-CA","lines":[{"id":"line-1","gross_atomic":"100","net_atomic":"100"}]}}"#,
+                        r#"{"schema":"solana-tax-protocol/tax-document/v0","idempotency_key":"doc-1","rule_set_id":"rule","rule_version":1,"jurisdiction":"US-CA","regime":"sales-tax","facts":{"id":"invoice-1","atomic_decimals":2,"currency":"USD","jurisdiction":"US-CA","lines":[{"id":"line-1","gross_atomic":"100","net_atomic":"100"}]}}"#,
                     ))
                     .unwrap(),
             )
@@ -10658,7 +11894,7 @@ mod tests {
                     .header("authorization", format!("Bearer {token}"))
                     .header("content-type", "application/json")
                     .body(Body::from(
-                        r#"{"schema":"solana-tax-protocol/tax-document/v1","idempotency_key":"doc-1","rule_set_id":"rule","rule_version":1,"jurisdiction":"US-CA","regime":"sales-tax","facts":{"id":"invoice-1","currency":"USD","jurisdiction":"US-CA","lines":[{"id":"line-1","gross_atomic":"100","net_atomic":"100"}]}}"#,
+                        r#"{"schema":"solana-tax-protocol/tax-document/v1","idempotency_key":"doc-1","rule_set_id":"rule","rule_version":1,"jurisdiction":"US-CA","regime":"sales-tax","facts":{"id":"invoice-1","atomic_decimals":2,"currency":"USD","jurisdiction":"US-CA","lines":[{"id":"line-1","gross_atomic":"100","net_atomic":"100"}]}}"#,
                     ))
                     .unwrap(),
             )
@@ -10988,7 +12224,7 @@ mod tests {
                     .header("authorization", format!("Bearer {token}"))
                     .header("content-type", "application/json")
                     .body(Body::from(
-                        r#"{"facts":{"gross_atomic":"1100","net_atomic":"1000","currency":"USD","jurisdiction":"US-CA"}}"#,
+                        r#"{"facts":{"gross_atomic":"1100","net_atomic":"1000","atomic_decimals":2,"currency":"USD","jurisdiction":"US-CA"}}"#,
                     ))
                     .unwrap(),
             )
@@ -11031,7 +12267,7 @@ mod tests {
                     .header("authorization", format!("Bearer {token}"))
                     .header("content-type", "application/json")
                     .body(Body::from(
-                        r#"{"facts":{"gross_atomic":"1100","net_atomic":"1000","currency":"USD","jurisdiction":"US-CA","jurisdiction_resolution":{}}}"#,
+                        r#"{"facts":{"gross_atomic":"1100","net_atomic":"1000","atomic_decimals":2,"currency":"USD","jurisdiction":"US-CA","jurisdiction_resolution":{}}}"#,
                     ))
                     .unwrap(),
             )
@@ -11343,6 +12579,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn route_verification_evidence_requires_the_exact_system_operator_role() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let (token, _) = auth::test_token_with_scope(now, "tax:indexer:read");
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: false,
+                storage: None,
+                authenticator: Some(auth::test_authenticator()),
+                jurisdiction_provider_registry: None,
+                fx_issuance: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/indexer/route-verification-runs?limit=20")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn route_verification_evidence_rejects_an_unbounded_limit_before_storage_access() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let (token, _) = auth::test_token_with_scope_and_roles(
+            now,
+            "tax:indexer:read",
+            "test-user",
+            &["indexer_operator"],
+        );
+        let response = router()
+            .with_state(AppState {
+                ready: false,
+                simulation_mode: false,
+                storage: None,
+                authenticator: Some(auth::test_authenticator()),
+                jurisdiction_provider_registry: None,
+                fx_issuance: None,
+                settlement_coordinator: None,
+                targeted_recovery: None,
+                metrics: test_metrics(),
+            })
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/indexer/route-verification-runs?limit=51")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
     async fn settlement_compile_fails_closed_without_authentication() {
         let response = router()
             .with_state(AppState {
@@ -11563,6 +12866,14 @@ mod tests {
             gross_atomic: 1_000,
             tax_atomic: 100,
             net_atomic: 900,
+            treatment_outcome_digest: treatment_outcome_digest(
+                Treatment::Taxable,
+                100,
+                100,
+                0,
+                0,
+                1_000,
+            ),
             issued_at_unix: 1_800_000_000,
             expires_at_unix: 1_800_000_600,
             sequence: 73,
@@ -11604,5 +12915,38 @@ mod tests {
         assert!(
             serde_json::from_value::<SettlementCompileFromQuoteRequest>(non_canonical).is_err()
         );
+    }
+
+    #[test]
+    fn quote_boundary_rejects_caller_owned_applicability() {
+        assert!(reject_client_applicability(false).is_ok());
+        let error = reject_client_applicability(true).expect_err("caller-owned context");
+        assert_eq!(error.code, "CLIENT_APPLICABILITY_FORBIDDEN");
+
+        let request = QuoteRequest {
+            idempotency_key: "quote-1".to_string(),
+            rule_set_id: "rule-1".to_string(),
+            rule_version: 1,
+            jurisdiction: "US-CA".to_string(),
+            regime: "sales-tax".to_string(),
+            facts: TaxFacts {
+                gross_atomic: 1_100,
+                net_atomic: 1_000,
+                atomic_decimals: 2,
+                currency: "USD".to_string(),
+                jurisdiction: "US-CA".to_string(),
+                jurisdiction_resolution: None,
+                fx_conversion: None,
+                exemption_codes: Vec::new(),
+                cumulative_period: None,
+                applicability: None,
+            },
+            applicability_context_id: None,
+            source_currency: None,
+            jurisdiction_evidence: Vec::new(),
+        };
+        let mut value = serde_json::to_value(request).unwrap();
+        value["applicability"] = serde_json::json!({});
+        assert!(serde_json::from_value::<QuoteRequest>(value).is_err());
     }
 }

@@ -6,6 +6,14 @@ This is the public capability register for supported tax behavior. A jurisdictio
 
 No jurisdiction or tax regime is currently published as production-supported. The repository is in the architecture/design phase.
 
+The arithmetic capability register below must not be read as an applicability
+or legal-coverage register. ADR-0407 introduces the separate Tax Applicability
+and Classification bounded context for product category, supply type,
+registration status, customer classification, treatment outcome, and evidence.
+The current `regime` selector identifies a published rule release; it is not a
+product category and does not by itself establish taxable, exempt, zero-rated,
+reverse-charge, withholding, or out-of-scope treatment.
+
 ## Engine semantics evidence
 
 The following is the capability boundary of the deterministic engine, not a
@@ -18,9 +26,12 @@ provenance, owner, effective window, and legal review are published below.
 | --- | --- | --- | --- |
 | Simple tax | Flat rational rate over a declared base; exclusive price semantics | `simple-exclusive` | `calculates_simple_percentage` |
 | Progressive tax | Ordered marginal brackets with bounded lower/upper edges | `progressive-marginal` | `calculates_progressive_brackets` |
-| Tax-on-tax / cascading | Component dependency graph; dependent base includes declared prior components only | `tax-on-tax-cascade` | `calculates_tax_on_tax_with_dependency_order`, `compiles_dependencies_before_dependents` |
-| Inclusive and exclusive pricing | Explicit gross/net equation; inclusive thresholds require an explicit equation | `inclusive-price` | `calculates_inclusive_tax`, `rejects_inclusive_threshold_without_an_explicit_equation` |
+| Tax-on-tax / cascading | Component dependency graph; dependent base includes declared prior components only; additive base sources must be distinct; v2 weighted component terms are explicit | `tax-on-tax-cascade`, `test-vectors/tax-engine-v2.json` (`weighted-component-cascade`) | `calculates_tax_on_tax_with_dependency_order`, `compiles_dependencies_before_dependents`, `rejects_duplicate_tax_base_sources_before_calculation`, `executes_the_v2_linear_tax_base_golden_vectors` |
+| Weighted and subtractive bases | v2 explicit signed linear terms over gross, net, or a prior component; exact rational intermediate; integral atomic admission; no implicit duplicate terms | `test-vectors/tax-engine-v2.json` (`weighted-net-share`, `subtractive-gross-adjustment`, `weighted-component-cascade`) | `executes_the_v2_linear_tax_base_golden_vectors`, `calculates_an_exact_weighted_tax_base`, `calculates_an_explicit_subtractive_tax_base`, `rejects_invalid_weighted_coefficients_and_legacy_v1_envelopes` |
+| Bounded taxable bases | v2 exact floor/cap applied after integral linear-base admission and before threshold/rate evaluation; floor is applied before cap | `test-vectors/tax-engine-v2.json` (`bounded-adjusted-base`, `capped-adjusted-base`) | `calculates_tax_base_floor_and_cap_before_tax_rate`, `applies_base_floor_then_cap_and_allows_flooring_negative_adjustment`, `bounded_tax_base_stays_within_declared_bounds`, `rejects_invalid_tax_base_bounds_and_legacy_v1_bound_envelope` |
+| Inclusive and exclusive pricing | Explicit gross/net equation; `GrossExcess` is the only currently executable inclusive-threshold equation; all other inclusive thresholds fail closed | `inclusive-price`, `inclusive-gross-threshold` | `calculates_inclusive_tax`, `calculates_inclusive_gross_threshold_with_an_explicit_equation`, `rejects_inclusive_threshold_without_an_explicit_equation` |
 | Thresholds and exemptions | Per-transaction and cumulative-period threshold basis with evidence-bound snapshots; matching exemption codes | `cumulative-threshold`, `exemption-and-rounding` | `applies_per_transaction_exempt_up_to_threshold`, `cumulative_threshold_consumes_a_bound_snapshot`, `matching_exemption_code_zeroes_only_the_declared_component` |
+| Applicability treatment semantics | Explicit collected, self-assessed, withheld, taxable-base, and gross-to-net channels for taxable, zero-rated, exempt, reverse-charge, withholding, and out-of-scope outcomes; unresolved remains fail-closed | `test-vectors/tax-treatment-v1.json` | `treatment_semantics_match_the_versioned_golden_vector`, `zero_rated_treatment_preserves_taxable_base_without_collecting_tax`, `reverse_charge_reports_self_assessed_tax_without_reducing_seller_net`, `withholding_reduces_seller_net_and_records_the_withheld_amount` |
 | Credits, floors, and caps | Ordered credit, floor, and cap operations with checked non-negative results | `credit-floor-cap-truncation`, `minimum-and-maximum` | `applies_credit_floor_cap_and_truncation`, `rejects_invalid_rate_and_clamp_boundaries` |
 | Truncation and rounding | Declared rounding mode, positive atomic quantum, scope, and deterministic tie behavior | `credit-floor-cap-truncation`, `ceil-rounding` | `rounds_exact_ties_according_to_each_declared_mode`, `component_rounding_uses_declared_atomic_quantum` |
 | Residual allocation | Invoice, settlement, and line scopes use canonical largest-remainder or cell allocation without breaking conservation | `settlement-scope-largest-remainder`, `settlement-scope-quantum-residual`, `tax-document-v1.json` | `settlement_scope_rounds_once_and_allocates_residual_by_canonical_id`, `invoice_scope_rounds_once_and_allocates_by_line_then_component_id` |
@@ -38,6 +49,8 @@ provenance, owner, effective window, and legal review are published below.
 - Rules that contain cycles, ambiguous precedence, overlapping brackets,
   missing evidence, invalid effective windows, unsupported asset precision, or
   out-of-bound settlement amounts fail closed.
+- Arbitrary formulas, unbounded expression graphs, and implicit jurisdiction
+  semantics remain unsupported; bounded base clamps are explicit v2 operations.
 
 ## Capability record
 

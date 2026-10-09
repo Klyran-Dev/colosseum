@@ -4,6 +4,7 @@ INSERT INTO settlement_routes (
     id, merchant_id, route_key, version, status,
     merchant_account, mint, tax_vault, net_destination, token_program,
     mint_decimals,
+    asset_config, asset_kind, asset_enabled, asset_config_bump,
     verification_digest, verification_slot, verification_commitment,
     verification_schema, verification_evidence, verified_at
 )
@@ -19,11 +20,12 @@ VALUES (
     'SysvarRecentB1ockHashes11111111111111111111',
     'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
     2,
+    'AL5PDSRbT5yyhtjQrTmh11rTShZXS9x6QMo9YCMs499d', 1, true, 254,
     decode(repeat('07', 32), 'hex'),
     0,
     'local_synthetic',
     'settlement-route-verification/v2',
-    '{"source":"synthetic-local-fixture","warning":"not chain verified","verification_schema":"settlement-route-verification/v2","asset_config":"AL5PDSRbT5yyhtjQrTmh11rTShZXS9x6QMo9YCMs499d","accounts":[{}, {}, {}, {}, {}],"mint_decimals":2}'::jsonb,
+    '{"source":"synthetic-local-fixture","warning":"not chain verified","verification_schema":"settlement-route-verification/v2","asset_config":"AL5PDSRbT5yyhtjQrTmh11rTShZXS9x6QMo9YCMs499d","asset_kind":1,"asset_enabled":true,"asset_config_bump":254,"accounts":[{}, {}, {}, {}, {}],"mint_decimals":2}'::jsonb,
     now()
 )
 ON CONFLICT (id) DO NOTHING;

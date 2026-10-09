@@ -12,12 +12,14 @@ The Tax Engine owns:
 
 - normalized tax facts;
 - jurisdiction and place-of-supply resolution;
-- taxability, exemptions, thresholds, and tax categories;
+- arithmetic treatment of an authenticated applicability decision, including
+  exemptions and thresholds;
 - ordered tax components and calculation bases;
 - progressive brackets and marginal rates;
 - tax-on-tax and cascading dependencies;
 - inclusive/exclusive pricing;
 - minimums, maximums, caps, floors, credits, and thresholds;
+- bounded taxable-base floor/cap operations applied before rate evaluation;
 - decimal scale, truncation, rounding, and residual allocation;
 - rule provenance, effective dates, approval status, and immutable versions;
 - calculation traces, evidence references, and replayable outputs;
@@ -38,7 +40,8 @@ Raw checkout facts
   -> normalize units, currency, timestamps, customer/merchant facts
   -> verify and bind exact FX evidence when source and target currencies differ
   -> resolve jurisdiction and place of supply
-  -> resolve tax category, exemptions, and registration/threshold state
+  -> resolve the evidence-bound tax applicability context, exemptions, and
+     registration/threshold state
   -> select immutable RuleSet
   -> build dependency graph of tax components
   -> calculate bases and progressive brackets
@@ -51,6 +54,40 @@ Raw checkout facts
 ```
 
 Every stage is pure with respect to its inputs. External facts such as exchange rates, customer evidence, registration thresholds, or policy snapshots are resolved before calculation and included by digest in the calculation input.
+
+Tax applicability is a separate bounded context under ADR-0407. The engine
+does not infer a product category, customer status, registration obligation,
+reverse-charge treatment, withholding treatment, or legal taxability from an
+amount or the `regime` selector. It consumes a verified, versioned applicability
+decision when that context is enabled; unresolved applicability fails closed.
+The current repository has no production-supported jurisdiction or treatment.
+
+The first integration slice is now present in `crates/tax-engine`: an optional
+`ApplicabilityDecision` binds to the pre-applicability facts digest, is included
+in the final facts digest and calculation result, and participates in replay.
+Legacy facts without the field retain their historical digest. ADR-0416 now
+defines and implements the explicit `TreatmentOutcome` contract: taxable and
+withholding amounts are collected from seller proceeds, reverse-charge tax is
+reported as self-assessed without reducing seller net, zero-rated preserves a
+reportable taxable base with zero collection, and exempt/out-of-scope produce
+no authoritative tax base. Unresolved treatment still fails closed. The API
+does not accept caller-authored treatment or evidence; a server-owned, signed
+applicability context remains required for production use.
+
+`CalculationResult` and `TaxDocumentResult` carry the additive
+`treatment_outcome` object with `arithmetic_tax_atomic`,
+`collected_tax_atomic`, `self_assessed_tax_atomic`, `withheld_tax_atomic`, and
+`taxable_base_atomic`. `total_tax_atomic` remains the collected amount used by
+settlement conservation. The exact semantics are covered by
+`test-vectors/tax-treatment-v1.json` and replay tests.
+
+The policy boundary now provides the first signed applicability-attestation
+kernel in `crates/policy`. `ApplicabilityAttestation` signs a distinct domain
+containing the applicability facts and decision digests, jurisdiction
+resolution digest, source evidence window, immutable rule release, merchant
+identity, issuer key, and sequence. Verification rejects facts substitution
+and any attestation that outlives its source evidence. This contract is not yet
+accepted by quote, PostgreSQL, or Solana settlement handlers.
 
 ADR-0244 makes foreign-exchange normalization explicit: a verified upstream
 provider supplies a bounded source/target currency pair, exact rational rate,
@@ -89,7 +126,7 @@ Brackets must be ordered, non-overlapping, explicit about open/closed boundaries
 
 ### Tax-on-tax and cascading taxes
 
-Each component declares `base_components`. For example, component B may use `line_net + component_A`, while component C may use `line_net + component_A + component_B`. Dependencies form a directed acyclic graph. Cycles fail compilation; implicit ordering is forbidden.
+Each component declares `base_components`. For example, component B may use `line_net + component_A`, while component C may use `line_net + component_A + component_B`. Dependencies form a directed acyclic graph. Cycles fail compilation; implicit ordering is forbidden. Whether a component is applicable is not inferred by this graph; it comes from the verified applicability context and explicit component exemption semantics.
 
 ### Inclusive and exclusive tax
 

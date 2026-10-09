@@ -1,0 +1,42 @@
+{
+  "schema": "solana-tax-protocol/tax-applicability/v1",
+  "facts": {
+    "schema": "solana-tax-protocol/tax-applicability/v1",
+    "product_category": "digital-service",
+    "supply_type": "cross-border",
+    "customer_class": "business",
+    "merchant_registration": "registered",
+    "customer_registration": "unregistered",
+    "transaction_type": "sale",
+    "evidence_digest": [7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7],
+    "valid_until_unix": 1700001000
+  },
+  "policy": {
+    "schema": "solana-tax-protocol/tax-applicability/v1",
+    "id": "policy-us-ca-digital",
+    "version": 1,
+    "jurisdiction": "US-CA",
+    "regime": "sales-tax",
+    "effective_from_unix": 1600000000,
+    "effective_until_unix": null,
+    "rules": [
+      {
+        "id": "withholding-resident",
+        "priority": 100,
+        "effective_from_unix": 1600000000,
+        "effective_until_unix": null,
+        "predicates": [
+          { "Equals": { "key": "ProductCategory", "value": "digital-service" } },
+          { "Equals": { "key": "CustomerClass", "value": "business" } }
+        ],
+        "treatment": "Withholding"
+      }
+    ]
+  },
+  "evaluated_at_unix": 1700000100,
+  "expected": {
+    "treatment": "Withholding",
+    "selected_rule_id": "withholding-resident",
+    "matched_rule_ids": ["withholding-resident"]
+  }
+}

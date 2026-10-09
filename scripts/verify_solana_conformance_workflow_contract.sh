@@ -52,6 +52,7 @@ check_workflow() {
     require_job_text "$workflow" "$job" 'test "$(uname -s)" = Linux'
     require_job_text "$workflow" "$job" 'test "$(docker info --format '\''{{.OSType}}'\'')" = linux'
     require_job_text "$workflow" "$job" 'amd64|x86_64'
+    require_job_text "$workflow" "$job" 'run: ./scripts/verify_solana_conformance_host.sh'
     require_job_text "$workflow" "$job" 'SOLANA_USE_DOCKER_BUILDER: true'
     require_job_text "$workflow" "$job" 'run: make solana-conformance'
     require_job_text "$workflow" "$job" 'run: ./scripts/verify_solana_conformance_evidence.sh'
@@ -59,16 +60,20 @@ check_workflow() {
     require_job_text "$workflow" "$job" 'path: test-results/solana-conformance/'
     require_job_text "$workflow" "$job" 'if-no-files-found: error'
     require_job_text "$workflow" "$job" 'retention-days:'
+    require_order "$workflow" "$job" 'run: ./scripts/verify_solana_conformance_host.sh' 'run: make solana-conformance'
     require_order "$workflow" "$job" 'run: make solana-conformance' 'run: ./scripts/verify_solana_conformance_evidence.sh'
 }
 
 ci_workflow="$repo_root/.github/workflows/ci.yml"
 release_workflow="$repo_root/.github/workflows/release-candidate.yml"
+dedicated_workflow="$repo_root/.github/workflows/solana-conformance.yml"
 [ -f "$ci_workflow" ] || fail "missing $ci_workflow"
 [ -f "$release_workflow" ] || fail "missing $release_workflow"
+[ -f "$dedicated_workflow" ] || fail "missing $dedicated_workflow"
 
 check_workflow "$ci_workflow" solana-conformance
 check_workflow "$release_workflow" release-candidate
+check_workflow "$dedicated_workflow" solana-conformance
 require_job_text "$release_workflow" release-candidate 'run: make release-bundle-integrity-contract'
 require_job_text "$release_workflow" release-candidate 'run: ./scripts/create_release_bundle.sh'
 require_job_text "$release_workflow" release-candidate 'run: make web-browser-check'

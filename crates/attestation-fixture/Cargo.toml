@@ -17,4 +17,5 @@ policy = { path = "../policy" }
 serde_json.workspace = true
 solana-pubkey.workspace = true
 tax-engine = { path = "../tax-engine" }
+tax-applicability = { path = "../tax-applicability" }
 uuid.workspace = true

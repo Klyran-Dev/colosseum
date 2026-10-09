@@ -37,6 +37,46 @@
       "targets": [{"expr": "sum(increase(stp_requests_total[1h]))", "legendFormat": "requests", "refId": "A"}],
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
       "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}
+    },
+    {
+      "type": "stat",
+      "title": "Protocol pause state",
+      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 16},
+      "targets": [{"expr": "max(stp_settlement_protocol_paused{service=\"indexer\"})", "legendFormat": "paused", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Replay backlog",
+      "gridPos": {"h": 6, "w": 8, "x": 8, "y": 16},
+      "targets": [{"expr": "sum by (status) (stp_indexer_replay_gaps{service=\"indexer\"})", "legendFormat": "{{status}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Database pool pressure",
+      "gridPos": {"h": 6, "w": 8, "x": 16, "y": 16},
+      "targets": [{"expr": "stp_database_pool_waiting{service=\"api\"}", "legendFormat": "waiting", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Tax rule cache hit ratio",
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 22},
+      "targets": [{"expr": "100 * sum(rate(stp_tax_rule_cache_hits_total{service=\"api\"}[5m])) / clamp_min(sum(rate(stp_tax_rule_cache_hits_total{service=\"api\"}[5m])) + sum(rate(stp_tax_rule_cache_misses_total{service=\"api\"}[5m])), 1)", "legendFormat": "hit ratio", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Settlement provider health",
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 22},
+      "targets": [{"expr": "min(stp_settlement_provider_health_score{service=\"api\"})", "legendFormat": "lowest provider score", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
     }
   ],
   "refresh": "15s",

@@ -6,8 +6,8 @@
 use axum::{Router, extract::State, http::StatusCode, routing::get};
 use observability::ServiceMetrics;
 use route_verifier::{
-    RouteVerifierConfig, build_store, verify_once, verify_refund_funding_once,
-    verify_revenue_stream_destinations_once,
+    RouteVerificationRunKind, RouteVerifierConfig, RouteVerifierRunMode, build_store, verify_once,
+    verify_once_with_kind, verify_refund_funding_once, verify_revenue_stream_destinations_once,
 };
 use std::{
     net::SocketAddr,
@@ -73,6 +73,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = RouteVerifierConfig::from_env()?;
     let transports = config.build_transports()?;
     let store = Arc::new(build_store(&config).await?);
+    if config.run_mode == RouteVerifierRunMode::Backfill {
+        let approval_id = config
+            .backfill_approval_id
+            .ok_or("backfill mode requires a validated approval reference")?;
+        let started = Instant::now();
+        let result = verify_once_with_kind(
+            &store,
+            &transports,
+            config.batch_size,
+            config.rpc_timeout,
+            RouteVerificationRunKind::Backfill,
+            Some(approval_id),
+        )
+        .await;
+        match result {
+            Ok(summary) => {
+                info!(
+                    approval_id = %approval_id,
+                    examined = summary.examined,
+                    activated = summary.activated,
+                    failed = summary.failed,
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "approved route-verification backfill completed"
+                );
+                telemetry.shutdown();
+                if summary.failed > 0 {
+                    return Err("route-verification backfill completed with failures".into());
+                }
+                return Ok(());
+            }
+            Err(error) => {
+                telemetry.shutdown();
+                return Err(error.into());
+            }
+        }
+    }
     let health_state = HealthState {
         ready: Arc::new(AtomicBool::new(true)),
         metrics: Arc::new(ServiceMetrics::new(

@@ -22,6 +22,7 @@ case and may forward it to an explicitly approved downstream service.
   "facts": {
     "gross_atomic": "1100",
     "net_atomic": "1000",
+    "atomic_decimals": 2,
     "currency": "USD",
     "jurisdiction": "US-CA"
   },
@@ -46,10 +47,14 @@ case and may forward it to an explicitly approved downstream service.
 ```
 
 Advanced published rules may additionally declare a component `threshold`
-(`basis`, `mode`, and `amount_atomic`) and bounded `exemption_codes`. Facts may
-carry `exemption_codes` and a `cumulative_period` snapshot. Cumulative rules
-fail closed without a snapshot; the snapshot evidence digest is included in
-the facts digest and must be preserved for replay.
+(`basis`, `mode`, and `amount_atomic`) and bounded `exemption_codes`. An
+inclusive-price threshold must also declare the versioned
+`inclusive_equation: "GrossExcess"`; this applies `ExemptUpTo` to the gross
+excess as a new inclusive gross base. Undeclared, taxable-net, and other
+jurisdiction-specific equations fail closed. Facts may carry
+`exemption_codes` and a `cumulative_period` snapshot. Cumulative rules fail
+closed without a snapshot; the snapshot evidence digest is included in the
+facts digest and must be preserved for replay.
 
 Facts may also carry the server-owned `jurisdiction_resolution` envelope from
 ADR-0102. It binds the selected jurisdiction to a versioned resolution policy,
@@ -59,10 +64,73 @@ a new globally supported jurisdiction must not treat a caller's
 `jurisdiction` string or digest as resolved evidence; authenticated provider
 and resolver integration remains a release gate.
 
+`atomic_decimals` is required and bounded to `0..=9`. It describes the
+atomic-unit scale of the asset and is included in the canonical facts digest;
+it is not inferred from currency or locale. Quote and document results carry
+the same value for display. Settlement compilation compares it with the
+finalized server-owned route `mint_decimals` and rejects a mismatch before
+creating an instruction or payment intent.
+
 The calculation response returns `gross_atomic`, `total_tax_atomic`, `total_net_atomic`,
 component amounts, and rational trace fields as decimal strings. It also
 returns `facts_digest` and `rule_digest`; these are the values an issuer must
 bind into a calculation attestation.
+
+The result additionally returns `treatment_outcome`:
+
+```json
+{
+  "treatment": "ReverseCharge",
+  "arithmetic_tax_atomic": "100",
+  "collected_tax_atomic": "0",
+  "self_assessed_tax_atomic": "100",
+  "withheld_tax_atomic": "0",
+  "taxable_base_atomic": "1100"
+}
+```
+
+`total_tax_atomic` is always the amount removed from gross proceeds. It is
+equal to `collected_tax_atomic`, not necessarily to the arithmetic tax for a
+reverse-charge result. `Taxable`, `ZeroRated`, `Exempt`, `ReverseCharge`,
+`Withholding`, and `OutOfScope` are distinct signed applicability outcomes;
+`Unresolved` fails closed. See ADR-0416 and the versioned treatment vectors.
+
+Calculation and document attestation schema v2 additionally carries a
+`treatment_outcome_digest`. It is a domain-separated SHA-256 commitment over
+the treatment enum and the five signed i128 atomic channels. The API derives
+the expected digest from the immutable server-owned result and verifies it
+before persistence or settlement compilation. Legacy v1 evidence remains
+readable for historical replay, but v1 cannot authorize a non-`Taxable`
+treatment settlement. See ADR-0417 and
+`test-vectors/treatment-outcome-digest-v1.json`.
+
+The quote `regime` field is the published rule-release selector and is not a
+product category or a taxability decision. Product/service classification,
+customer or merchant status, registration evidence, reverse-charge,
+withholding, zero-rated, exempt, and out-of-scope treatment belong to the
+evidence-bound applicability context defined by ADR-0407. Until that additive
+contract is implemented and legally governed, the API must not claim that a
+free-form regime value establishes any of those outcomes.
+
+At the pure-engine wire boundary, `TaxFacts` and `TaxDocumentFacts` now have an
+optional server-owned `applicability` decision. When present, its
+`facts_digest` must bind to the pre-applicability canonical facts digest; the
+final result echoes the decision and includes it in the replay digest. When
+absent, historical digest compatibility is preserved. This is an internal
+binding slice: quote and document-quote HTTP requests reject caller-authored
+applicability but may reference a server-issued published context UUIDv7. The
+API verifies that context for the authenticated merchant and current evidence
+window, and PostgreSQL persists the exact context and signed-attestation
+digest alongside the calculation. Treatment-specific arithmetic/reporting
+semantics are defined by ADR-0416, but legal publication, provenance,
+server-owned policy resolution, and Solana settlement binding remain separate
+release gates. The engine rejects unresolved treatment rather than interpreting
+it as zero tax.
+
+The policy crate also exposes a versioned signed applicability-attestation
+contract. It is not a caller-owned request field: the server resolves and
+signs the facts, decision, jurisdiction evidence, rule release, and
+source-evidence validity before a quote endpoint may consume the context.
 
 The calculation result also returns the exact `engine_version` that produced
 the trace. Replay tooling must use the same engine version and compare the
@@ -157,6 +225,7 @@ The request envelope is:
   "schema": "solana-tax-protocol/tax-document/v1",
   "facts": {
     "id": "invoice-1001",
+    "atomic_decimals": 2,
     "currency": "USD",
     "jurisdiction": "US-CA",
     "jurisdiction_resolution": null,
@@ -181,6 +250,7 @@ strings:
     "rule_set_id": "operator-simulator-flat-rate",
     "rule_set_version": 1,
     "engine_version": "tax-engine-v1",
+    "atomic_decimals": 2,
     "currency": "USD",
     "jurisdiction": "US-CA",
     "facts_digest": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -216,9 +286,11 @@ not accepted from the request body:
   "rule_version": 7,
   "jurisdiction": "US-CA",
   "regime": "sales-tax",
+  "applicability_context_id": "01992f1b-4a70-7e30-8ea2-b6e37a9d9d13",
   "facts": {
     "gross_atomic": "1100",
     "net_atomic": "1000",
+    "atomic_decimals": 2,
     "currency": "USD",
     "jurisdiction": "US-CA"
   },
@@ -252,6 +324,13 @@ tenant policy in `jurisdiction_policies`. The browser cannot promote a
 jurisdiction string or digest into authoritative evidence. Synthetic local
 development uses the isolated fixture issuer only; production provider
 registries require governed key rotation and legal/tax ownership.
+When `applicability_context_id` is present, it must be a server-issued UUIDv7
+for a currently effective, published, tenant-scoped applicability context.
+The browser cannot submit treatment, applicability facts, attestation JSON, or
+the attestation digest. The persisted quote response returns the selected
+context reference and exact attestation digest when present; omitting the
+reference preserves the explicitly documented arithmetic-only compatibility
+path until a jurisdiction/product legal owner enables the governed context.
 The byte fields in the envelope are serialized as JSON arrays with exact
 lengths: 32-byte digests/public keys and a 64-byte signature. The
 angle-bracket values above are documentation placeholders, not accepted
@@ -311,6 +390,14 @@ the authenticated principal, and returns the bounded policy catalog for the
 product shell. The endpoint performs no database, RPC, broker, filesystem, or
 identity-provider call.
 
+The policy metadata is defined once in
+`contracts/authorization-capabilities-v1.json` and consumed by the API and
+React affordance projection. The API validates this catalog during startup,
+before binding its listener, and fails closed on semantic drift. This shared catalog prevents stale labels,
+required-role explanations, and context requirements from drifting between the
+server decision and the access-review UI. It is metadata only; it never grants
+access or replaces handler-level authorization.
+
 The response schema is `authorization-capabilities/v1`:
 
 ```json
@@ -343,7 +430,7 @@ chain-evidence checks. A missing, expired, malformed, or failed snapshot never
 enables an action.
 
 The capability catalog has one bounded primary entry for each production
-workspace: `access.control`, `evidence.replay`, `refund.claim.cancel`,
+workspace: `access.control`, `evidence.applicability.read`, `evidence.audit.read`, `evidence.replay`, `refund.claim.cancel`,
 `refund.claim.create`, `refund.payment.release`, `settlement.adjustment`,
 `settlement.document.wallet`, `settlement.wallet`,
 `tax.document.quote.create`, `tax.preview.run`, `tax.quote.create`,
@@ -351,6 +438,22 @@ workspace: `access.control`, `evidence.replay`, `refund.claim.cancel`,
 describe the workspace affordance; they do not replace the handler-level
 authorization checks for read, approval, submission, reconciliation, or
 finalized chain evidence.
+
+## Evidence-access audit explorer
+
+`GET /v1/audit/evidence-access` is the authenticated, read-only evidence-access
+projection from ADR-0373. It requires `audit:read`; the merchant boundary is
+derived from the verified principal and is never accepted from a query
+parameter. The optional `calculation_id` must be a UUIDv7 belonging to that
+merchant. `limit` is optional, defaults to 50, and is bounded to 1–100.
+
+The response is ordered latest-first by `occurred_at, id` and contains only
+bounded audit metadata: event ID, calculation ID, actor subject, request ID,
+purpose, outcome, occurrence time, and an optional 32-byte facts digest. It
+does not return raw tax facts, request bodies, wallet credentials, or provider
+payloads. A digest is a commitment for correlation, not evidence that a tax
+filing, legal obligation, payment, or finalized settlement succeeded. The
+read path performs no RPC, provider, broker, or unbounded export work.
 
 For deployment-owned key rotation, `API_AUTH_JWKS_FILE` may replace the
 inline key representations. The API loads and fully validates the bounded
@@ -445,12 +548,48 @@ input returns the same immutable draft evidence; a different input or an
 existing tenant/external-id/version conflicts. Creation does not simulate,
 publish, attest, certify, or authorize settlement.
 
-The persisted rule document is the versioned `RuleSetDocument` envelope
-`{"schema":"solana-tax-protocol/tax-rule/v1","rule_set":{...}}`. The
-request keeps the stable `rule_set` API shape for compatibility; the server
+The persisted rule document is the versioned `RuleSetDocument` envelope. Legacy
+additive bases use `{"schema":"solana-tax-protocol/tax-rule/v1","rule_set":{...}}`.
+Rules that use explicit weighted or subtractive base terms use
+`solana-tax-protocol/tax-rule/v2`:
+
+```json
+{
+  "schema": "solana-tax-protocol/tax-rule/v2",
+  "rule_set": {
+    "id": "regional-tax-base",
+    "version": 2,
+    "components": [{
+      "id": "taxable-share",
+      "label": "Taxable share",
+      "base": { "sources": [{
+        "Weighted": {
+          "source": "Net",
+          "numerator": "3",
+          "denominator": "4"
+        }
+      }] },
+      "rate": { "Flat": { "numerator": "10", "denominator": "100" } },
+      "price_mode": "Exclusive",
+      "credit_atomic": "0",
+      "floor_atomic": null,
+      "cap_atomic": null,
+      "rounding": { "mode": "HalfUp" },
+      "threshold": null,
+      "exemption_codes": []
+    }]
+  }
+}
+```
+
+The numerator may be negative for an explicit subtractive term; the
+denominator must be positive. Terms are evaluated as exact rational
+intermediates and must resolve to an integral atomic amount before tax is
+calculated. The v2 envelope is required for weighted operations; a v1 envelope
+containing them, an unknown schema, a cycle, or an ambiguous base fails closed.
+The request keeps the stable `rule_set` API shape for compatibility; the server
 wraps every new publication before persistence. Replay accepts the historical
 bare `RuleSet` shape only for immutable legacy rows and never writes it again.
-An unsupported document schema fails closed before calculation or settlement.
 
 ## Tax-rule governance transition
 
@@ -574,6 +713,7 @@ jurisdiction-resolution evidence:
   "facts": {
     "gross_atomic": "1100",
     "net_atomic": "1000",
+    "atomic_decimals": 2,
     "currency": "USD",
     "jurisdiction": "US-CA"
   }
@@ -612,9 +752,14 @@ stored response; a different request for that key returns a conflict.
 
 The response includes the document schema, UUIDv7 `calculation_id`, expiry,
 status, complete line/component trace, facts digest, rule digest, and all atomic
-amounts as decimal strings. This route does not authorize Solana settlement:
-the current attestation and settlement contracts remain aggregate-quote-only
-until a separate document-to-payment binding ADR is accepted.
+amounts as decimal strings. When supplied, it also returns the server-owned
+`applicability_context_id` and `applicability_attestation_digest`. When the
+quote carries a published applicability context, the settlement compiler
+selects the versioned `settle_document_with_applicability` contract from
+ADR-0411. The browser still supplies only payer and nonce; context ID,
+attestation digest, merchant-side accounts, and program ID are server-owned.
+Finalized binding-PDA/event verification remains an indexer and production
+readiness gate.
 
 Document quotes use the same optional `source_currency` and server-owned FX
 composition contract as aggregate quotes. The source currency is applied to
@@ -639,6 +784,34 @@ identity, and route mint from PostgreSQL; caller-supplied binding values are
 not authority inputs. The document attestation, document status transition,
 and `tax.document_calculation.attested` outbox event commit atomically in the
 dedicated document-attestation table.
+For v2 evidence, verification also requires the signed
+`treatment_outcome_digest` to match the stored document result; a missing or
+mismatched digest fails closed.
+
+`GET /v1/tax/document-quotes/{calculation_id}/attestation/status?route_id=...`
+is the checkout read boundary from ADR-0330. It requires the exact
+`tax:settlement:compile` scope and accepts only UUIDv7 document and route
+references. The API loads the authenticated tenant's persisted document
+attestation, resolves the server-owned route, verifies the signed binding and
+validity window again, and returns bounded status metadata:
+
+```json
+{
+  "status": "verified",
+  "calculation_id": "0199f8a8-0000-7abc-8def-0123456789ab",
+  "payload_digest": [0, 1, 2],
+  "issuer_public_key": [3, 4, 5],
+  "expires_at_unix": 1791120000,
+  "checked_at_unix": 1791119700
+}
+```
+
+The status response never returns the raw signed attestation document and
+cannot create a quote, intent, outbox event, or token movement. Missing,
+expired, invalid, unavailable, and route-mismatched evidence returns an
+explicit error; the browser must keep payment preparation disabled. Document
+settlement compilation repeats the complete verification, so this endpoint is
+an explanation/read surface rather than an authorization authority.
 
 The aggregate route
 `/v1/tax/quotes/{calculation_id}/attestation/verify` accepts only the aggregate
@@ -716,6 +889,47 @@ compares the complete signed message with the server-created instruction.
 Client-provided lookup-table contents or digests are never trusted. v1 remains
 unsupported.
 
+If the persisted quote contains a complete published applicability binding, the
+server selects the versioned `settle_with_applicability` instruction instead.
+Its response includes `applicability_context_id`,
+`applicability_attestation_digest`, and the receipt-scoped
+`applicability_binding` PDA. These values are derived from stored evidence and
+are not accepted from the browser. Arithmetic-only compatibility quotes remain
+on the legacy contract until the legal/treatment publication gate is approved.
+
+### Applicability-context management
+
+The server-owned applicability lifecycle is managed through the following
+authenticated routes. These routes are governance operations, not quote or
+settlement hot-path calls:
+
+- `POST /v1/tax/applicability-contexts` requires
+  `tax:applicability:author` and the `tax_applicability_author` role. The
+  request contains `idempotency_key`, an issuer-signed `attestation`,
+  `effective_from_unix`, optional `effective_until_unix`, and bounded
+  `provenance`. Tenant identity, actor subject, status, governance subjects,
+  and digests are server-owned or derived from the attestation.
+- `GET /v1/tax/applicability-contexts/{context_id}` requires
+  `tax:applicability:read`. The tenant comes from the authenticated principal;
+  the UUIDv7 path value cannot cross that boundary. Historical retired and
+  expired contexts remain readable for audit but cannot be selected by quote
+  binding.
+- `POST /v1/tax/applicability-contexts/{context_id}/transition` accepts only
+  the bounded `to_status` and `evidence` fields. `draft -> review` requires
+  `tax_applicability_author`; review decisions require
+  `tax_applicability_reviewer`; publish/retire decisions require
+  `tax_applicability_approver`. Storage and PostgreSQL triggers enforce the
+  expected state, four-eyes subjects, append-only events, and idempotent
+  persistence.
+
+All requests reject unknown fields and use the standard bounded error envelope.
+The response schema is `tax-applicability-context/v1`; it returns the context's
+UUIDv7 identity, lifecycle, policy/facts/decision/evidence digests, validity
+window, provenance, and signed attestation. A successful create replay returns
+the original response for the same tenant and idempotency key; a changed
+request conflicts. Publication remains subject to legal/tax-owner approval
+and does not imply tax filing, legal compliance, or tax advice.
+
 ### Authenticated bounded Split Plan compilation
 
 ### Authenticated document-to-payment compilation
@@ -758,6 +972,14 @@ provenance on-chain and the indexer retains the typed event as finalized raw
 evidence. This is withholding/settlement authorization only, not tax advice,
 filing, reporting, or legal compliance certification.
 
+When the document quote contains a complete published applicability binding,
+the server instead returns the versioned
+`settle_document_with_applicability` artifact with
+`applicability_context_id`, `applicability_attestation_digest`, and a
+receipt-scoped `applicability_binding` PDA. Finalized binding-PDA/event
+verification is required before the indexer marks the payment applicability
+bound.
+
 `POST /v1/settlement/split/compile-from-quote` is the additive Split Plan
 contract from ADR-0092. It requires the same exact
 `tax:settlement:compile` scope and accepts `calculation_id`, `route_id`,
@@ -797,9 +1019,10 @@ explicitly amount-bearing internal/test boundary and is not the checkout path.
 The server hashes the canonical instruction artifact and independently parses,
 sanitizes, and verifies the signed Solana message before changing intent state
 or calling RPC. It requires the exact compute-budget pair followed by one
-settlement instruction and compares program IDs, canonical data, account order,
-signer flags, writable flags, and (for v0) server-resolved address-table
-expansion. It never accepts a private key. The coordinator derives the
+settlement instruction, explicitly binds the first static message account to
+the first compiled payer account, and compares program IDs, canonical data,
+account order, signer flags, writable flags, and (for v0) server-resolved
+address-table expansion. It never accepts a private key. The coordinator derives the
 native transaction signature from the verified bytes, and the intent must win
 a durable `signed -> submitting` compare-and-set before RPC submission. A
 provider response with a different signature fails closed. It uses bounded
@@ -812,6 +1035,16 @@ process crash) and requires reconciliation; it is never automatically
 resubmitted. When a chain signature is known, `POST /v1/settlement/intents/{intent_id}/reconcile`
 requires `tax:settlement:reconcile` and advances only from observed provider
 commitment evidence; it cannot regress a finalized state.
+
+`GET /v1/settlement/intents/{intent_id}/applicability-binding-verification?stream_key=<stream>`
+requires `audit:read` and returns the tenant-scoped, evidence-only read model
+from ADR-0415. The merchant boundary is derived from the authenticated
+principal; `stream_key` is only a bounded projection selector. The status is
+one of `not_applicable`, `pending`, `retrying`, `verified`, or
+`dead_lettered`. Only `verified` means that the finalized binding account
+projection is present. The response contains canonical slot strings, redacted
+public identities, digests, and bounded retry metadata; it never authorizes a
+wallet signature, settlement, tax filing, or legal conclusion.
 
 The browser treats handing signed bytes to `POST /v1/settlement/submit` as an
 irreversible observation boundary. After any unsuccessful submit response it
@@ -873,6 +1106,24 @@ dead-letter event requires a new acknowledgement. The chain remains the
 source of truth; neither operation advances a finalized checkpoint or marks
 projection repair complete. Authentication, role, malformed-input, missing
 gap, and invalid-state failures are explicit and fail closed.
+
+### Route-verification evidence
+
+`GET /v1/indexer/route-verification-runs?limit=<n>` requires the same
+`tax:indexer:read` scope and exact `indexer_operator` role. `limit` is
+optional and bounded to 1–50; the default is 50. The endpoint returns the
+newest durable scheduled and approval-bound backfill run records, ordered by
+`started_at DESC, id DESC`.
+
+The response is operational evidence only. Each row contains a UUIDv7 run
+identifier, run kind, lifecycle status, bounded batch/counter fields, failure
+code, timestamps, and an approval reference for backfills. Terminal rows must
+contain a completion timestamp and conserve the examined count across
+activated, already-active, and failed routes. A successful read does not
+activate a route, authorize a transaction, or confirm finalized Solana state;
+finalized account evidence and the settlement program remain authoritative.
+The browser exposes this view only after an explicit operator action and does
+not poll it.
 
 ### Targeted finalized signature recovery
 
@@ -978,7 +1229,10 @@ form values are not a financial projection.
 
 The first request creates a `proposed` claim, its append-only event, and its
 outbox publication in one serializable transaction. An identical retry returns
-the same claim; reuse of the idempotency key for different input returns
+the same claim, including when the resolved route is suspended after the claim
+was created; this replay creates no additional lifecycle or outbox record. A
+new idempotency key is rejected while the route is suspended. Reuse of the
+idempotency key for different input returns
 `409 VAULT_RELEASE_CLAIM_IDEMPOTENCY_CONFLICT`. `GET
 /v1/vault/release-claims/{claim_id}` requires `tax:vault:read` and one of the
 proposer, approver, governance, auditor, or operator roles.

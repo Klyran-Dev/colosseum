@@ -9,9 +9,10 @@ use jurisdiction::{
     UnsignedJurisdictionEvidence,
 };
 use policy::{
-    ATTESTATION_SCHEMA_VERSION, CalculationAttestation,
-    DOCUMENT_CALCULATION_ATTESTATION_SCHEMA_VERSION, Digest32, DocumentCalculationAttestation,
-    UnsignedAttestation, UnsignedDocumentAttestation, merchant_identity_digest,
+    APPLICABILITY_ATTESTATION_SCHEMA_VERSION, ATTESTATION_SCHEMA_VERSION, ApplicabilityAttestation,
+    CalculationAttestation, DOCUMENT_CALCULATION_ATTESTATION_SCHEMA_VERSION, Digest32,
+    DocumentCalculationAttestation, UnsignedApplicabilityAttestation, UnsignedAttestation,
+    UnsignedDocumentAttestation, merchant_identity_digest, treatment_outcome_digest,
 };
 use serde_json::{Value, json};
 use solana_pubkey::Pubkey;
@@ -20,7 +21,10 @@ use std::{
     str::FromStr,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tax_engine::RuleSetDocument;
+use tax_applicability::{
+    APPLICABILITY_SCHEMA_V1, ApplicabilityDecision, ApplicabilityFacts, Treatment,
+};
+use tax_engine::{RuleSetDocument, TreatmentOutcome};
 use uuid::Uuid;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -30,6 +34,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if args.get(1).map(String::as_str) == Some("document-attestation") {
         return emit_document_attestation(&args);
+    }
+    if args.get(1).map(String::as_str) == Some("applicability-attestation") {
+        return emit_applicability_attestation(&args);
     }
     if args.get(1).map(String::as_str) == Some("rule-digest") {
         return emit_rule_digest(&args);
@@ -67,6 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             gross_atomic: value_amount(result, "gross_atomic")?,
             tax_atomic: value_amount(result, "total_tax_atomic")?,
             net_atomic: value_amount(result, "total_net_atomic")?,
+            treatment_outcome_digest: value_treatment_outcome_digest(result)?,
             issued_at_unix,
             expires_at_unix,
             sequence: 1,
@@ -82,6 +90,59 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "attestation": attestation,
         }))?
     );
+    Ok(())
+}
+
+fn emit_applicability_attestation(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    if args.len() != 4 {
+        return Err(
+            "usage: attestation-fixture applicability-attestation <merchant-id> <seed-hex>".into(),
+        );
+    }
+    let merchant_id = Uuid::parse_str(&args[2])?;
+    let signing_key = SigningKey::from_bytes(&parse_seed(&args[3])?);
+    let issued_at_unix = unix_now()?.saturating_sub(1);
+    let expires_at_unix = issued_at_unix.saturating_add(300);
+    let facts = ApplicabilityFacts {
+        schema: APPLICABILITY_SCHEMA_V1.to_string(),
+        product_category: "digital-service".to_string(),
+        supply_type: "cross-border".to_string(),
+        customer_class: "business".to_string(),
+        merchant_registration: "registered".to_string(),
+        customer_registration: "unregistered".to_string(),
+        transaction_type: "sale".to_string(),
+        evidence_digest: [6; 32],
+        valid_until_unix: expires_at_unix,
+    };
+    let decision = ApplicabilityDecision {
+        schema: APPLICABILITY_SCHEMA_V1.to_string(),
+        policy_id: "policy-us-ca-digital".to_string(),
+        policy_version: 3,
+        policy_digest: [7; 32],
+        facts_digest: facts.canonical_digest()?,
+        treatment: Treatment::Taxable,
+        selected_rule_id: Some("taxable-digital-service".to_string()),
+        matched_rule_ids: vec!["taxable-digital-service".to_string()],
+        evaluated_at_unix: issued_at_unix,
+    };
+    let attestation = ApplicabilityAttestation::sign(
+        UnsignedApplicabilityAttestation {
+            schema_version: APPLICABILITY_ATTESTATION_SCHEMA_VERSION,
+            merchant_id: merchant_identity_digest(merchant_id.as_bytes()),
+            jurisdiction_resolution_digest: [2; 32],
+            facts,
+            decision,
+            rule_set_id: "us-ca-sales-tax".to_string(),
+            rule_version: 7,
+            rule_digest: [3; 32],
+            issued_at_unix,
+            expires_at_unix,
+            sequence: 9,
+            issuer_key_id: [4; 32],
+        },
+        &signing_key,
+    )?;
+    println!("{}", serde_json::to_string(&attestation)?);
     Ok(())
 }
 
@@ -137,6 +198,7 @@ fn emit_document_attestation(args: &[String]) -> Result<(), Box<dyn std::error::
             gross_atomic: value_amount(result, "gross_atomic")?,
             tax_atomic: value_amount(result, "total_tax_atomic")?,
             net_atomic: value_amount(result, "total_net_atomic")?,
+            treatment_outcome_digest: value_treatment_outcome_digest(result)?,
             issued_at_unix,
             expires_at_unix,
             sequence: 1,
@@ -225,6 +287,23 @@ fn value_amount(value: &Value, field: &str) -> Result<u64, Box<dyn std::error::E
     value_string(value, field)?
         .parse()
         .map_err(|_| format!("quote field {field} is not a u64 string").into())
+}
+
+fn value_treatment_outcome_digest(value: &Value) -> Result<Digest32, Box<dyn std::error::Error>> {
+    let outcome: TreatmentOutcome = serde_json::from_value(
+        value
+            .get("treatment_outcome")
+            .ok_or("quote field treatment_outcome is required")?
+            .clone(),
+    )?;
+    Ok(treatment_outcome_digest(
+        outcome.treatment,
+        outcome.arithmetic_tax_atomic,
+        outcome.collected_tax_atomic,
+        outcome.self_assessed_tax_atomic,
+        outcome.withheld_tax_atomic,
+        outcome.taxable_base_atomic,
+    ))
 }
 
 fn value_digest(value: &Value, field: &str) -> Result<Digest32, Box<dyn std::error::Error>> {

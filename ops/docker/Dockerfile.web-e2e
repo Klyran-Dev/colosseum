@@ -10,6 +10,7 @@ RUN mkdir -p /opt/corepack \
 COPY --chown=pwuser:pwuser apps/web/package.json apps/web/pnpm-lock.yaml apps/web/pnpm-workspace.yaml ./apps/web/
 RUN pnpm --dir apps/web install --frozen-lockfile
 
+COPY --chown=pwuser:pwuser contracts ./contracts
 COPY --chown=pwuser:pwuser test-vectors ./test-vectors
 COPY --chown=pwuser:pwuser apps/web ./apps/web
 USER pwuser

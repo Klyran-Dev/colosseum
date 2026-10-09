@@ -118,7 +118,7 @@ if [ "$replica_ready" != "true" ]; then
     exit 1
 fi
 
-simulation_body='{"facts":{"gross_atomic":"1100","net_atomic":"1000","currency":"USD","jurisdiction":"US-CA"}}'
+simulation_body='{"facts":{"gross_atomic":"1100","net_atomic":"1000","atomic_decimals":2,"currency":"USD","jurisdiction":"US-CA"}}'
 simulation_path="/v1/tax/rules/$rule_set_uuid/simulate"
 warmup_response="$integration_dir/warmup.json"
 warmup_status="$(printf '%s' "$simulation_body" | curl --silent --show-error \

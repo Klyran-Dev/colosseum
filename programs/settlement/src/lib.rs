@@ -55,10 +55,7 @@ pub mod settlement {
         ctx: Context<InitializeAssetConfig>,
         asset_kind: u8,
     ) -> Result<()> {
-        validate_protocol_authority(
-            &ctx.accounts.protocol_config,
-            ctx.accounts.authority.key(),
-        )?;
+        validate_protocol_authority(&ctx.accounts.protocol_config, ctx.accounts.authority.key())?;
         require!(
             asset_kind == ASSET_KIND_STABLECOIN,
             SettlementError::UnsupportedAssetKind
@@ -1112,6 +1109,91 @@ pub mod settlement {
         Ok(())
     }
 
+    /// Applicability-bound aggregate settlement. This has a distinct
+    /// discriminator so the legacy `settle` wire contract remains immutable.
+    pub fn settle_with_applicability(
+        ctx: Context<SettleWithApplicability>,
+        nonce: u64,
+        policy_sequence: u64,
+        gross_atomic: u64,
+        tax_atomic: u64,
+        net_atomic: u64,
+        policy_digest: [u8; 32],
+        context_id: [u8; 16],
+        applicability_attestation_digest: [u8; 32],
+    ) -> Result<()> {
+        validate_protocol_not_paused(&ctx.accounts.protocol_config)?;
+        require!(
+            context_id != [0; 16],
+            SettlementError::EmptyApplicabilityContextId
+        );
+        require!(
+            applicability_attestation_digest != [0; 32],
+            SettlementError::EmptyApplicabilityAttestationDigest
+        );
+        validate_policy_attestation(
+            &ctx.accounts.policy_attestation,
+            PolicySettlementBinding {
+                merchant: ctx.accounts.merchant.key(),
+                mint: ctx.accounts.mint.key(),
+                sequence: policy_sequence,
+                gross_atomic,
+                tax_atomic,
+                net_atomic,
+                policy_digest,
+            },
+            Clock::get()?.unix_timestamp,
+        )?;
+        execute_settlement_transfers(
+            &ctx.accounts.payer,
+            &ctx.accounts.source,
+            &ctx.accounts.mint,
+            &ctx.accounts.tax_vault,
+            &ctx.accounts.vault_authority,
+            &ctx.accounts.net_destination,
+            &ctx.accounts.asset_config,
+            &ctx.accounts.token_program,
+            gross_atomic,
+            tax_atomic,
+            net_atomic,
+        )?;
+
+        let receipt = &mut ctx.accounts.receipt;
+        receipt.payer = ctx.accounts.payer.key();
+        receipt.merchant = ctx.accounts.merchant.key();
+        receipt.mint = ctx.accounts.mint.key();
+        receipt.nonce = nonce;
+        receipt.gross_atomic = gross_atomic;
+        receipt.tax_atomic = tax_atomic;
+        receipt.net_atomic = net_atomic;
+        receipt.policy_digest = policy_digest;
+        receipt.bump = ctx.bumps.receipt;
+
+        let binding = &mut ctx.accounts.applicability_binding;
+        binding.receipt = receipt.key();
+        binding.merchant = ctx.accounts.merchant.key();
+        binding.mint = ctx.accounts.mint.key();
+        binding.context_id = context_id;
+        binding.attestation_digest = applicability_attestation_digest;
+        binding.bump = ctx.bumps.applicability_binding;
+
+        emit!(ApplicabilitySettlementExecuted {
+            receipt: receipt.key(),
+            binding: binding.key(),
+            payer: receipt.payer,
+            merchant: receipt.merchant,
+            mint: receipt.mint,
+            nonce,
+            gross_atomic,
+            tax_atomic,
+            net_atomic,
+            policy_digest,
+            context_id,
+            applicability_attestation_digest,
+        });
+        Ok(())
+    }
+
     /// Settles a server-bound document payment. This is intentionally a
     /// separate instruction from aggregate `settle`: the receipt records the
     /// source document attestation and the exact whole-document/line-subset
@@ -1261,6 +1343,106 @@ pub mod settlement {
             policy_digest,
             document_attestation_digest,
             payment_scope_digest,
+        });
+        Ok(())
+    }
+
+    /// Applicability-bound document settlement. The separate discriminator
+    /// preserves the existing document settlement wire contract.
+    #[allow(clippy::too_many_arguments)]
+    pub fn settle_document_with_applicability(
+        ctx: Context<SettleDocumentWithApplicability>,
+        nonce: u64,
+        policy_sequence: u64,
+        gross_atomic: u64,
+        tax_atomic: u64,
+        net_atomic: u64,
+        policy_digest: [u8; 32],
+        document_attestation_digest: [u8; 32],
+        payment_scope_digest: [u8; 32],
+        context_id: [u8; 16],
+        applicability_attestation_digest: [u8; 32],
+    ) -> Result<()> {
+        validate_protocol_not_paused(&ctx.accounts.protocol_config)?;
+        require!(
+            context_id != [0; 16],
+            SettlementError::EmptyApplicabilityContextId
+        );
+        require!(
+            applicability_attestation_digest != [0; 32],
+            SettlementError::EmptyApplicabilityAttestationDigest
+        );
+        validate_policy_attestation(
+            &ctx.accounts.policy_attestation,
+            PolicySettlementBinding {
+                merchant: ctx.accounts.merchant.key(),
+                mint: ctx.accounts.mint.key(),
+                sequence: policy_sequence,
+                gross_atomic,
+                tax_atomic,
+                net_atomic,
+                policy_digest,
+            },
+            Clock::get()?.unix_timestamp,
+        )?;
+        require!(
+            document_attestation_digest != [0; 32],
+            SettlementError::EmptyDocumentAttestationDigest
+        );
+        require!(
+            payment_scope_digest != [0; 32],
+            SettlementError::EmptyPaymentScopeDigest
+        );
+        execute_settlement_transfers(
+            &ctx.accounts.payer,
+            &ctx.accounts.source,
+            &ctx.accounts.mint,
+            &ctx.accounts.tax_vault,
+            &ctx.accounts.vault_authority,
+            &ctx.accounts.net_destination,
+            &ctx.accounts.asset_config,
+            &ctx.accounts.token_program,
+            gross_atomic,
+            tax_atomic,
+            net_atomic,
+        )?;
+
+        let receipt = &mut ctx.accounts.receipt;
+        receipt.payer = ctx.accounts.payer.key();
+        receipt.merchant = ctx.accounts.merchant.key();
+        receipt.mint = ctx.accounts.mint.key();
+        receipt.nonce = nonce;
+        receipt.gross_atomic = gross_atomic;
+        receipt.tax_atomic = tax_atomic;
+        receipt.net_atomic = net_atomic;
+        receipt.policy_digest = policy_digest;
+        receipt.document_attestation_digest = document_attestation_digest;
+        receipt.payment_scope_digest = payment_scope_digest;
+        receipt.bump = ctx.bumps.receipt;
+
+        let binding = &mut ctx.accounts.applicability_binding;
+        binding.receipt = receipt.key();
+        binding.merchant = ctx.accounts.merchant.key();
+        binding.mint = ctx.accounts.mint.key();
+        binding.context_id = context_id;
+        binding.attestation_digest = applicability_attestation_digest;
+        binding.bump = ctx.bumps.applicability_binding;
+
+        emit!(ApplicabilitySettlementDocumentExecuted {
+            receipt: receipt.key(),
+            binding: binding.key(),
+            payer: receipt.payer,
+            merchant: receipt.merchant,
+            mint: receipt.mint,
+            nonce,
+            gross_atomic,
+            tax_atomic,
+            net_atomic,
+            policy_digest,
+            document_attestation_digest,
+            payment_scope_digest,
+            context_id,
+            applicability_attestation_digest,
         });
         Ok(())
     }
@@ -2611,6 +2793,60 @@ pub struct Settle<'info> {
 
 #[derive(Accounts)]
 #[instruction(nonce: u64, policy_sequence: u64)]
+pub struct SettleWithApplicability<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(
+        seeds = [b"protocol-config"],
+        bump = protocol_config.bump,
+    )]
+    pub protocol_config: Account<'info, ProtocolConfig>,
+    pub merchant: SystemAccount<'info>,
+    #[account(mut)]
+    pub source: InterfaceAccount<'info, TokenAccount>,
+    pub mint: InterfaceAccount<'info, Mint>,
+    #[account(mut)]
+    pub tax_vault: InterfaceAccount<'info, TokenAccount>,
+    /// CHECK: address is constrained by the vault-authority PDA seeds.
+    #[account(
+        seeds = [b"vault-authority", merchant.key().as_ref(), mint.key().as_ref()],
+        bump
+    )]
+    pub vault_authority: UncheckedAccount<'info>,
+    #[account(
+        seeds = [b"policy-attestation", merchant.key().as_ref(), mint.key().as_ref(), &policy_sequence.to_le_bytes()],
+        bump = policy_attestation.bump,
+    )]
+    pub policy_attestation: Account<'info, PolicyAttestation>,
+    #[account(mut)]
+    pub net_destination: InterfaceAccount<'info, TokenAccount>,
+    #[account(
+        init,
+        payer = payer,
+        space = 8 + SettlementReceipt::INIT_SPACE,
+        seeds = [b"receipt", payer.key().as_ref(), merchant.key().as_ref(), &nonce.to_le_bytes()],
+        bump
+    )]
+    pub receipt: Account<'info, SettlementReceipt>,
+    #[account(
+        init,
+        payer = payer,
+        space = 8 + ApplicabilitySettlementBinding::INIT_SPACE,
+        seeds = [b"applicability-binding", receipt.key().as_ref()],
+        bump
+    )]
+    pub applicability_binding: Account<'info, ApplicabilitySettlementBinding>,
+    #[account(
+        seeds = [b"asset-config", mint.key().as_ref()],
+        bump = asset_config.bump,
+    )]
+    pub asset_config: Account<'info, AssetConfig>,
+    pub token_program: Interface<'info, TokenInterface>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(nonce: u64, policy_sequence: u64)]
 pub struct SettleDocument<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
@@ -2646,6 +2882,60 @@ pub struct SettleDocument<'info> {
         bump
     )]
     pub receipt: Account<'info, DocumentSettlementReceipt>,
+    #[account(
+        seeds = [b"asset-config", mint.key().as_ref()],
+        bump = asset_config.bump,
+    )]
+    pub asset_config: Account<'info, AssetConfig>,
+    pub token_program: Interface<'info, TokenInterface>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(nonce: u64, policy_sequence: u64)]
+pub struct SettleDocumentWithApplicability<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(
+        seeds = [b"protocol-config"],
+        bump = protocol_config.bump,
+    )]
+    pub protocol_config: Account<'info, ProtocolConfig>,
+    pub merchant: SystemAccount<'info>,
+    #[account(mut)]
+    pub source: InterfaceAccount<'info, TokenAccount>,
+    pub mint: InterfaceAccount<'info, Mint>,
+    #[account(mut)]
+    pub tax_vault: InterfaceAccount<'info, TokenAccount>,
+    /// CHECK: address is constrained by the vault-authority PDA seeds.
+    #[account(
+        seeds = [b"vault-authority", merchant.key().as_ref(), mint.key().as_ref()],
+        bump
+    )]
+    pub vault_authority: UncheckedAccount<'info>,
+    #[account(
+        seeds = [b"policy-attestation", merchant.key().as_ref(), mint.key().as_ref(), &policy_sequence.to_le_bytes()],
+        bump = policy_attestation.bump,
+    )]
+    pub policy_attestation: Account<'info, PolicyAttestation>,
+    #[account(mut)]
+    pub net_destination: InterfaceAccount<'info, TokenAccount>,
+    #[account(
+        init,
+        payer = payer,
+        space = 8 + DocumentSettlementReceipt::INIT_SPACE,
+        seeds = [b"document-receipt", payer.key().as_ref(), merchant.key().as_ref(), &nonce.to_le_bytes()],
+        bump
+    )]
+    pub receipt: Account<'info, DocumentSettlementReceipt>,
+    #[account(
+        init,
+        payer = payer,
+        space = 8 + ApplicabilitySettlementBinding::INIT_SPACE,
+        seeds = [b"applicability-binding", receipt.key().as_ref()],
+        bump
+    )]
+    pub applicability_binding: Account<'info, ApplicabilitySettlementBinding>,
     #[account(
         seeds = [b"asset-config", mint.key().as_ref()],
         bump = asset_config.bump,
@@ -2940,6 +3230,17 @@ pub struct SettlementReceipt {
 
 #[account]
 #[derive(InitSpace)]
+pub struct ApplicabilitySettlementBinding {
+    pub receipt: Pubkey,
+    pub merchant: Pubkey,
+    pub mint: Pubkey,
+    pub context_id: [u8; 16],
+    pub attestation_digest: [u8; 32],
+    pub bump: u8,
+}
+
+#[account]
+#[derive(InitSpace)]
 pub struct DocumentSettlementReceipt {
     pub payer: Pubkey,
     pub merchant: Pubkey,
@@ -3013,6 +3314,40 @@ pub struct SettlementExecuted {
     pub tax_atomic: u64,
     pub net_atomic: u64,
     pub policy_digest: [u8; 32],
+}
+
+#[event]
+pub struct ApplicabilitySettlementExecuted {
+    pub receipt: Pubkey,
+    pub binding: Pubkey,
+    pub payer: Pubkey,
+    pub merchant: Pubkey,
+    pub mint: Pubkey,
+    pub nonce: u64,
+    pub gross_atomic: u64,
+    pub tax_atomic: u64,
+    pub net_atomic: u64,
+    pub policy_digest: [u8; 32],
+    pub context_id: [u8; 16],
+    pub applicability_attestation_digest: [u8; 32],
+}
+
+#[event]
+pub struct ApplicabilitySettlementDocumentExecuted {
+    pub receipt: Pubkey,
+    pub binding: Pubkey,
+    pub payer: Pubkey,
+    pub merchant: Pubkey,
+    pub mint: Pubkey,
+    pub nonce: u64,
+    pub gross_atomic: u64,
+    pub tax_atomic: u64,
+    pub net_atomic: u64,
+    pub policy_digest: [u8; 32],
+    pub document_attestation_digest: [u8; 32],
+    pub payment_scope_digest: [u8; 32],
+    pub context_id: [u8; 16],
+    pub applicability_attestation_digest: [u8; 32],
 }
 
 #[event]
@@ -3222,6 +3557,92 @@ pub struct RevenueStreamClaimCancelled {
     pub governance_authority: Pubkey,
 }
 
+fn execute_settlement_transfers<'info>(
+    payer: &Signer<'info>,
+    source: &InterfaceAccount<'info, TokenAccount>,
+    mint: &InterfaceAccount<'info, Mint>,
+    tax_vault: &InterfaceAccount<'info, TokenAccount>,
+    vault_authority: &UncheckedAccount<'info>,
+    net_destination: &InterfaceAccount<'info, TokenAccount>,
+    asset_config: &Account<'info, AssetConfig>,
+    token_program: &Interface<'info, TokenInterface>,
+    gross_atomic: u64,
+    tax_atomic: u64,
+    net_atomic: u64,
+) -> Result<()> {
+    validate_settlement_amounts(gross_atomic, tax_atomic, net_atomic)?;
+    validate_supported_token_accounts(token_program, mint, source, tax_vault, net_destination)?;
+    validate_asset_admission(asset_config, mint.key(), token_program.key(), mint.decimals)?;
+    require_keys_eq!(
+        source.owner,
+        payer.key(),
+        SettlementError::SourceAuthorityMismatch
+    );
+    require_keys_eq!(source.mint, mint.key(), SettlementError::SourceMintMismatch);
+    require_keys_eq!(
+        tax_vault.mint,
+        mint.key(),
+        SettlementError::TaxVaultMintMismatch
+    );
+    require_keys_eq!(
+        tax_vault.owner,
+        vault_authority.key(),
+        SettlementError::TaxVaultAuthorityMismatch
+    );
+    require_keys_eq!(
+        net_destination.mint,
+        mint.key(),
+        SettlementError::DestinationMintMismatch
+    );
+    require_keys_neq!(
+        source.key(),
+        tax_vault.key(),
+        SettlementError::AliasedTokenAccounts
+    );
+    require_keys_neq!(
+        source.key(),
+        net_destination.key(),
+        SettlementError::AliasedTokenAccounts
+    );
+    require_keys_neq!(
+        tax_vault.key(),
+        net_destination.key(),
+        SettlementError::AliasedTokenAccounts
+    );
+    require!(
+        source.amount >= gross_atomic,
+        SettlementError::InsufficientSourceFunds
+    );
+
+    if tax_atomic > 0 {
+        let transfer_accounts = TransferChecked {
+            from: source.to_account_info(),
+            mint: mint.to_account_info(),
+            to: tax_vault.to_account_info(),
+            authority: payer.to_account_info(),
+        };
+        token_interface::transfer_checked(
+            CpiContext::new(token_program.key(), transfer_accounts),
+            tax_atomic,
+            mint.decimals,
+        )?;
+    }
+    if net_atomic > 0 {
+        let transfer_accounts = TransferChecked {
+            from: source.to_account_info(),
+            mint: mint.to_account_info(),
+            to: net_destination.to_account_info(),
+            authority: payer.to_account_info(),
+        };
+        token_interface::transfer_checked(
+            CpiContext::new(token_program.key(), transfer_accounts),
+            net_atomic,
+            mint.decimals,
+        )?;
+    }
+    Ok(())
+}
+
 fn validate_settlement_amounts(gross_atomic: u64, tax_atomic: u64, net_atomic: u64) -> Result<()> {
     require!(gross_atomic > 0, SettlementError::ZeroGrossAmount);
     require!(
@@ -3366,10 +3787,7 @@ fn validate_asset_admission(
     token_program: Pubkey,
     decimals: u8,
 ) -> Result<()> {
-    require!(
-        asset_config.enabled,
-        SettlementError::AssetConfigDisabled
-    );
+    require!(asset_config.enabled, SettlementError::AssetConfigDisabled);
     require!(
         asset_config.asset_kind == ASSET_KIND_STABLECOIN,
         SettlementError::UnsupportedAssetKind
@@ -4115,6 +4533,10 @@ pub enum SettlementError {
     EmptyDocumentAttestationDigest,
     #[msg("payment scope digest must not be all zeroes")]
     EmptyPaymentScopeDigest,
+    #[msg("applicability context id must not be all zeroes")]
+    EmptyApplicabilityContextId,
+    #[msg("applicability attestation digest must not be all zeroes")]
+    EmptyApplicabilityAttestationDigest,
     #[msg("source token account is not owned by the payer")]
     SourceAuthorityMismatch,
     #[msg("source token account mint does not match the supplied mint")]
@@ -4870,43 +5292,46 @@ mod tests {
     #[test]
     fn asset_admission_requires_enabled_matching_stablecoin_configuration() {
         let config = asset_config_fixture(true);
-        assert!(validate_asset_admission(
-            &config,
-            config.mint,
-            config.token_program,
-            config.decimals,
-        )
-        .is_ok());
+        assert!(
+            validate_asset_admission(&config, config.mint, config.token_program, config.decimals,)
+                .is_ok()
+        );
 
         let mut disabled = config.clone();
         disabled.enabled = false;
-        assert!(validate_asset_admission(
-            &disabled,
-            config.mint,
-            config.token_program,
-            config.decimals,
-        )
-        .is_err());
+        assert!(
+            validate_asset_admission(
+                &disabled,
+                config.mint,
+                config.token_program,
+                config.decimals,
+            )
+            .is_err()
+        );
 
         let mut wrong_mint = config.clone();
         wrong_mint.mint = Pubkey::new_from_array([9; 32]);
-        assert!(validate_asset_admission(
-            &wrong_mint,
-            config.mint,
-            config.token_program,
-            config.decimals,
-        )
-        .is_err());
+        assert!(
+            validate_asset_admission(
+                &wrong_mint,
+                config.mint,
+                config.token_program,
+                config.decimals,
+            )
+            .is_err()
+        );
 
         let mut non_stable = config.clone();
         non_stable.asset_kind = 0;
-        assert!(validate_asset_admission(
-            &non_stable,
-            config.mint,
-            config.token_program,
-            config.decimals,
-        )
-        .is_err());
+        assert!(
+            validate_asset_admission(
+                &non_stable,
+                config.mint,
+                config.token_program,
+                config.decimals,
+            )
+            .is_err()
+        );
     }
 
     fn protocol_fixture(paused: bool) -> ProtocolConfig {

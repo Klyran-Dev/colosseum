@@ -22,6 +22,7 @@ unknown state for reconciliation.
 - [Tax Engine mTLS certificate rotation](tax-engine-mtls-rotation.md)
 - [Tax Engine service-token rotation](tax-engine-service-token-rotation.md)
 - [Incident severity and error-budget response](incident-severity-and-error-budget.md)
+- [Settlement-route verification](settlement-route-verification.md)
 
 ## Required incident record
 

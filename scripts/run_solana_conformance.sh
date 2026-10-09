@@ -64,6 +64,12 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+phase="host_preflight"
+if ! "$repo_root/scripts/verify_solana_conformance_host.sh"; then
+    failure_reason="host_preflight_failed"
+    exit 1
+fi
+
 phase="sbf_build"
 if ! "$repo_root/scripts/build_sbf.sh" > "$evidence_dir/sbf-build.log" 2>&1; then
     failure_reason="sbf_build_failed"

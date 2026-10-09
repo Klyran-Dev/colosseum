@@ -10,9 +10,12 @@ exec docker run --rm \
   "$trivy_image" \
   fs \
   --skip-version-check \
+  --timeout 15m \
   --scanners vuln,secret,misconfig \
   --exit-code 1 \
   --severity CRITICAL,HIGH \
   --skip-dirs /src/target \
   --skip-dirs /src/apps/web/node_modules \
+  --skip-files /src/.DS_Store \
+  --skip-files '/src/**/.DS_Store' \
   /src

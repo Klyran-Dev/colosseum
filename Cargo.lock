@@ -475,6 +475,7 @@ dependencies = [
  "policy",
  "serde_json",
  "solana-pubkey 4.4.0",
+ "tax-applicability",
  "tax-engine",
  "uuid",
 ]
@@ -2601,6 +2602,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "tax-applicability",
  "thiserror 2.0.21",
 ]
 
@@ -4673,6 +4675,7 @@ dependencies = [
  "sha2 0.11.0",
  "solana-pubkey 4.4.0",
  "split-plan",
+ "tax-applicability",
  "tax-engine",
  "thiserror 2.0.21",
  "tokio",
@@ -4757,6 +4760,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tax-applicability"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "tax-engine"
 version = "0.1.0"
 dependencies = [
@@ -4766,6 +4779,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "tax-applicability",
  "thiserror 2.0.21",
 ]
 

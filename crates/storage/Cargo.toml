@@ -27,6 +27,7 @@ serde_json.workspace = true
 sha2.workspace = true
 split-plan = { path = "../split-plan" }
 tax-engine = { path = "../tax-engine" }
+tax-applicability = { path = "../tax-applicability" }
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

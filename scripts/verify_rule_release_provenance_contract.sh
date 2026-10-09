@@ -26,8 +26,16 @@ require_text db/migrations/0065_rule_release_provenance_readiness.sql 'published
 require_text db/migrations/0065_rule_release_provenance_readiness.sql 'jurisdiction_scope'
 require_text scripts/verify_local_stack.sh 'database trigger unexpectedly allowed a published rule without release provenance'
 require_text scripts/verify_local_stack.sh 'expected incomplete rule release provenance to return HTTP 422'
-require_text apps/web/src/GovernancePanel.tsx 'Source SHA-256 digest'
-require_text apps/web/src/GovernancePanel.tsx 'Legal/tax owner'
+if ! grep -Fq 'Source SHA-256 digest' apps/web/src/GovernancePanel.tsx \
+  && ! grep -Fq 'Source SHA-256 digest' apps/web/src/governanceMessages.ts; then
+  echo "rule release provenance contract: missing 'Source SHA-256 digest' in governance panel or catalog" >&2
+  failures=$((failures + 1))
+fi
+if ! grep -Fq 'Legal/tax owner' apps/web/src/GovernancePanel.tsx \
+  && ! grep -Fq 'Legal/tax owner' apps/web/src/governanceMessages.ts; then
+  echo "rule release provenance contract: missing 'Legal/tax owner' in governance panel or catalog" >&2
+  failures=$((failures + 1))
+fi
 require_text apps/web/src/GovernancePanel.tsx 'tax-rule-provenance/v1'
 
 if [ "$failures" -ne 0 ]; then

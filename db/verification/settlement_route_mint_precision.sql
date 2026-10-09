@@ -45,7 +45,18 @@ BEGIN
         verification_digest = decode(repeat('11', 32), 'hex'),
         verification_slot = 1,
         verification_commitment = 'finalized',
-        verification_evidence = jsonb_build_object('mint_decimals', 6),
+        verification_schema = 'settlement-route-verification/v2',
+        asset_config = '55555555555555555555555555555555',
+        asset_kind = 1,
+        asset_enabled = true,
+        asset_config_bump = 1,
+        verification_evidence = jsonb_build_object(
+            'mint_decimals', 6,
+            'asset_config', '55555555555555555555555555555555',
+            'asset_kind', 1,
+            'asset_enabled', true,
+            'asset_config_bump', 1
+        ),
         verified_at = now()
     WHERE id = route_id;
 

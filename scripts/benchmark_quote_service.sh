@@ -42,7 +42,7 @@ if [ "$benchmark_mode" = "document" ]; then
     idempotency_prefix="${IDEMPOTENCY_PREFIX:-document-load-01J8Q4J0M9M2G7YB8F5N3D6K5T}"
     quote_endpoint="/v1/tax/document-quote"
     rule_set_id="operator-document-flat-rate"
-    facts_payload='{"id":"document-load-invoice","currency":"USD","jurisdiction":"US-CA","lines":[{"id":"line-a","gross_atomic":"1000","net_atomic":"1000","exemption_codes":[]},{"id":"line-b","gross_atomic":"500","net_atomic":"500","exemption_codes":[]}]}'
+    facts_payload='{"id":"document-load-invoice","atomic_decimals":2,"currency":"USD","jurisdiction":"US-CA","lines":[{"id":"line-a","gross_atomic":"1000","net_atomic":"1000","exemption_codes":[]},{"id":"line-b","gross_atomic":"500","net_atomic":"500","exemption_codes":[]}]}'
     evidence_facts_payload="{\"facts\":$facts_payload}"
     calculation_table="tax_document_calculations"
     outbox_aggregate_type="tax_document_calculation"
@@ -52,7 +52,7 @@ else
     idempotency_prefix="${IDEMPOTENCY_PREFIX:-load-01J8Q4J0M9M2G7YB8F5N3D6K5T}"
     quote_endpoint="/v1/tax/quote"
     rule_set_id="operator-simulator-flat-rate"
-    facts_payload='{"gross_atomic":"1100","net_atomic":"1000","currency":"USD","jurisdiction":"US-CA"}'
+    facts_payload='{"gross_atomic":"1100","net_atomic":"1000","atomic_decimals":2,"currency":"USD","jurisdiction":"US-CA"}'
     evidence_facts_payload="{\"facts\":$facts_payload}"
     calculation_table="tax_calculations"
     outbox_aggregate_type="tax_calculation"

@@ -41,12 +41,17 @@ pub const PROVIDER_COOLDOWN_BASE: Duration = Duration::from_millis(25);
 pub const MAX_PROVIDER_COOLDOWN: Duration = Duration::from_secs(5);
 pub const SETTLEMENT_PROGRAM_ID: &str = "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi";
 pub const STABLECOIN_ASSET_KIND: u8 = 1;
-pub const ASSET_CONFIG_ACCOUNT_DISCRIMINATOR: [u8; 8] = [0x39, 0x70, 0xf7, 0xa6, 0xf7, 0x40, 0x8c, 0x17];
+pub const ASSET_CONFIG_ACCOUNT_DISCRIMINATOR: [u8; 8] =
+    [0x39, 0x70, 0xf7, 0xa6, 0xf7, 0x40, 0x8c, 0x17];
 pub const ASSET_CONFIG_ACCOUNT_DATA_LEN: usize = 108;
 pub const SETTLEMENT_ROUTE_VERIFICATION_SCHEMA: &str = "settlement-route-verification/v2";
 pub const SETTLEMENT_EVENT_DISCRIMINATOR: [u8; 8] = [198, 221, 154, 28, 173, 8, 114, 6];
 pub const DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR: [u8; 8] = [101, 58, 10, 108, 29, 185, 246, 2];
 pub const SPLIT_SETTLEMENT_EVENT_DISCRIMINATOR: [u8; 8] = [50, 129, 102, 109, 249, 142, 125, 30];
+pub const APPLICABILITY_SETTLEMENT_EVENT_DISCRIMINATOR: [u8; 8] =
+    [183, 111, 70, 137, 145, 33, 22, 37];
+pub const APPLICABILITY_DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR: [u8; 8] =
+    [97, 174, 200, 140, 146, 33, 72, 238];
 pub const PROTOCOL_PAUSE_EVENT_DISCRIMINATOR: [u8; 8] = [67, 33, 235, 73, 71, 124, 172, 110];
 pub const ADJUSTMENT_REFUND_EXECUTED_EVENT_DISCRIMINATOR: [u8; 8] =
     [112, 130, 243, 73, 61, 70, 35, 70];
@@ -59,6 +64,7 @@ pub const SETTLEMENT_ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR: [u8; 8] =
 pub const MAX_ROUTE_RPC_RESULT_BYTES: usize = 256 * 1024;
 pub const MAX_ROUTE_ACCOUNT_DATA_BYTES: usize = 256;
 pub const MAX_REFUND_CLAIM_ACCOUNT_DATA_BYTES: usize = 512;
+pub const APPLICABILITY_BINDING_ACCOUNT_DATA_LEN: usize = 8 + 32 + 32 + 32 + 16 + 32 + 1;
 pub const REFUND_CLAIM_ACCOUNT_DATA_LEN: usize = 8 + (9 * 32) + (4 * 8) + 32 + (2 * 8) + 32 + 3;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -538,6 +544,196 @@ pub struct FinalizedRefundBalances {
 pub struct FinalizedVaultBalance {
     pub slot: u64,
     pub amount_atomic: u64,
+}
+
+/// Server-owned identity for a receipt-scoped applicability binding. Every
+/// field is resolved from the stored settlement event/quote; callers cannot
+/// use this target to select an arbitrary merchant-side account.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApplicabilityBindingTarget {
+    pub binding: String,
+    pub receipt: String,
+    pub merchant: String,
+    pub mint: String,
+    pub context_id: [u8; 16],
+    pub attestation_digest: [u8; 32],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FinalizedApplicabilityBinding {
+    pub slot: u64,
+    pub binding: [u8; 32],
+    pub receipt: [u8; 32],
+    pub merchant: [u8; 32],
+    pub mint: [u8; 32],
+    pub context_id: [u8; 16],
+    pub attestation_digest: [u8; 32],
+    pub bump: u8,
+}
+
+#[async_trait]
+pub trait FinalizedApplicabilityBindingSource: Send + Sync {
+    async fn fetch_finalized_applicability_binding(
+        &self,
+        target: &ApplicabilityBindingTarget,
+    ) -> Result<FinalizedApplicabilityBinding, ProviderError>;
+}
+
+/// Dedicated finalized account reader for applicability-bound settlement.
+/// This workflow is intentionally outside quote, compilation, wallet signing,
+/// and settlement submission paths.
+pub struct SolanaRpcApplicabilityBindingSource<T> {
+    transport: T,
+}
+
+impl<T> SolanaRpcApplicabilityBindingSource<T> {
+    pub const fn new(transport: T) -> Self {
+        Self { transport }
+    }
+}
+
+#[async_trait]
+impl<T: JsonRpcTransport> FinalizedApplicabilityBindingSource
+    for SolanaRpcApplicabilityBindingSource<T>
+{
+    async fn fetch_finalized_applicability_binding(
+        &self,
+        target: &ApplicabilityBindingTarget,
+    ) -> Result<FinalizedApplicabilityBinding, ProviderError> {
+        if target.context_id == [0; 16] || target.attestation_digest == [0; 32] {
+            return Err(ProviderError::InvalidResponse(
+                "applicability binding target contains an empty identity or digest".to_string(),
+            ));
+        }
+        let binding = Pubkey::from_str(target.binding.trim()).map_err(|_| {
+            ProviderError::InvalidResponse(
+                "applicability binding address is not a valid public key".to_string(),
+            )
+        })?;
+        let receipt = Pubkey::from_str(target.receipt.trim()).map_err(|_| {
+            ProviderError::InvalidResponse(
+                "applicability receipt is not a valid public key".to_string(),
+            )
+        })?;
+        let merchant = Pubkey::from_str(target.merchant.trim()).map_err(|_| {
+            ProviderError::InvalidResponse(
+                "applicability merchant is not a valid public key".to_string(),
+            )
+        })?;
+        let mint = Pubkey::from_str(target.mint.trim()).map_err(|_| {
+            ProviderError::InvalidResponse(
+                "applicability mint is not a valid public key".to_string(),
+            )
+        })?;
+        let (expected_binding, expected_bump) = Pubkey::find_program_address(
+            &[b"applicability-binding", receipt.as_ref()],
+            &settlement_client::settlement_program_id(),
+        );
+        if binding != expected_binding {
+            return Err(ProviderError::InvalidResponse(
+                "applicability binding PDA does not match the receipt".to_string(),
+            ));
+        }
+        let response = self
+            .transport
+            .call(
+                "getMultipleAccounts",
+                json!([[binding.to_string()], {
+                    "commitment": "finalized",
+                    "encoding": "base64"
+                }]),
+            )
+            .await?;
+        let encoded = serde_json::to_vec(&response)
+            .map_err(|error| ProviderError::InvalidResponse(error.to_string()))?;
+        if encoded.len() > MAX_ROUTE_RPC_RESULT_BYTES {
+            return Err(ProviderError::ResponseTooLarge);
+        }
+        let slot = response
+            .get("context")
+            .and_then(|value| value.get("slot"))
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                ProviderError::InvalidResponse(
+                    "applicability binding finalized slot is invalid".to_string(),
+                )
+            })?;
+        let values = response
+            .get("value")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                ProviderError::InvalidResponse(
+                    "applicability binding account value is not an array".to_string(),
+                )
+            })?;
+        if values.len() != 1 {
+            return Err(ProviderError::InvalidResponse(
+                "applicability binding response contains an unexpected account count".to_string(),
+            ));
+        }
+        let account = parse_route_account_bounded(
+            &values[0],
+            &binding.to_string(),
+            APPLICABILITY_BINDING_ACCOUNT_DATA_LEN,
+        )
+        .map_err(|error| ProviderError::InvalidResponse(error.to_string()))?;
+        if account.executable || account.owner != settlement_client::SETTLEMENT_PROGRAM_ID {
+            return Err(ProviderError::InvalidResponse(
+                "applicability binding owner or executable flag is invalid".to_string(),
+            ));
+        }
+        if account.data.len() != APPLICABILITY_BINDING_ACCOUNT_DATA_LEN {
+            return Err(ProviderError::InvalidResponse(
+                "applicability binding uses an unsupported account layout".to_string(),
+            ));
+        }
+        let mut discriminator = Sha256::new();
+        discriminator.update(b"account:ApplicabilitySettlementBinding");
+        let discriminator = discriminator.finalize();
+        if account.data.get(..8) != Some(&discriminator[..8]) {
+            return Err(ProviderError::InvalidResponse(
+                "applicability binding discriminator is invalid".to_string(),
+            ));
+        }
+        let actual_receipt = read_pubkey_field(&account, 8, "applicability receipt")
+            .map_err(|error| ProviderError::InvalidResponse(error.to_string()))?;
+        let actual_merchant = read_pubkey_field(&account, 40, "applicability merchant")
+            .map_err(|error| ProviderError::InvalidResponse(error.to_string()))?;
+        let actual_mint = read_pubkey_field(&account, 72, "applicability mint")
+            .map_err(|error| ProviderError::InvalidResponse(error.to_string()))?;
+        let actual_context_id = account.data.get(104..120).ok_or_else(|| {
+            ProviderError::InvalidResponse("applicability context ID is missing".to_string())
+        })?;
+        let actual_attestation_digest = account.data.get(120..152).ok_or_else(|| {
+            ProviderError::InvalidResponse(
+                "applicability attestation digest is missing".to_string(),
+            )
+        })?;
+        let actual_bump = *account.data.get(152).ok_or_else(|| {
+            ProviderError::InvalidResponse("applicability binding bump is missing".to_string())
+        })?;
+        if actual_receipt != receipt
+            || actual_merchant != merchant
+            || actual_mint != mint
+            || actual_context_id != target.context_id
+            || actual_attestation_digest != target.attestation_digest
+            || actual_bump != expected_bump
+        {
+            return Err(ProviderError::InvalidResponse(
+                "applicability binding account does not match the server-owned target".to_string(),
+            ));
+        }
+        Ok(FinalizedApplicabilityBinding {
+            slot,
+            binding: binding.to_bytes(),
+            receipt: actual_receipt.to_bytes(),
+            merchant: actual_merchant.to_bytes(),
+            mint: actual_mint.to_bytes(),
+            context_id: target.context_id,
+            attestation_digest: target.attestation_digest,
+            bump: actual_bump,
+        })
+    }
 }
 
 #[async_trait]
@@ -1130,6 +1326,9 @@ pub struct SettlementRouteVerification {
     pub net_destination: String,
     pub token_program: String,
     pub asset_config: String,
+    pub asset_kind: u8,
+    pub asset_enabled: bool,
+    pub asset_config_bump: u8,
     pub verification_schema: &'static str,
     pub verification_slot: u64,
     pub verification_commitment: &'static str,
@@ -1365,19 +1564,14 @@ pub async fn verify_settlement_route<T: JsonRpcTransport + ?Sized>(
     verify_token_mint(destination, &keys.mint, "net_destination")?;
 
     let asset_config = &snapshots[4];
-    verify_asset_config(asset_config, &keys, mint_decimals)?;
+    let asset_config_fields = verify_asset_config(asset_config, &keys, mint_decimals)?;
 
     let accounts = snapshots
         .into_iter()
         .map(route_account_evidence)
         .collect::<Vec<_>>();
-    let verification_digest = route_verification_digest(
-        route,
-        &keys.asset_config,
-        slot,
-        mint_decimals,
-        &accounts,
-    );
+    let verification_digest =
+        route_verification_digest(route, &keys.asset_config, slot, mint_decimals, &accounts);
     Ok(SettlementRouteVerification {
         route_id: route.route_id,
         route_version: route.version,
@@ -1387,6 +1581,9 @@ pub async fn verify_settlement_route<T: JsonRpcTransport + ?Sized>(
         net_destination: route.net_destination.clone(),
         token_program: route.token_program.clone(),
         asset_config: keys.asset_config.to_string(),
+        asset_kind: asset_config_fields.asset_kind,
+        asset_enabled: asset_config_fields.enabled,
+        asset_config_bump: asset_config_fields.bump,
         verification_schema: SETTLEMENT_ROUTE_VERIFICATION_SCHEMA,
         verification_slot: slot,
         verification_commitment: "finalized",
@@ -3033,6 +3230,118 @@ struct VaultProviderSlot {
     health: AdaptiveProviderHealth,
 }
 
+struct ApplicabilityBindingProviderSlot {
+    source: Arc<dyn FinalizedApplicabilityBindingSource>,
+    health: AdaptiveProviderHealth,
+}
+
+/// Bounded provider failover for one complete finalized applicability-account
+/// proof. The result always comes from one provider; fields are never merged.
+pub struct FailoverApplicabilityBindingSource {
+    providers: Vec<ApplicabilityBindingProviderSlot>,
+    attempt_timeout: Duration,
+}
+
+impl FailoverApplicabilityBindingSource {
+    pub fn new(
+        providers: Vec<Arc<dyn FinalizedApplicabilityBindingSource>>,
+        attempt_timeout: Duration,
+    ) -> Result<Self, ProviderError> {
+        if providers.is_empty() || providers.len() > MAX_PROVIDER_ATTEMPTS {
+            return Err(ProviderError::InvalidResponse(
+                "applicability provider pool must contain between 1 and 3 endpoints".to_string(),
+            ));
+        }
+        if !(Duration::from_millis(50)..=Duration::from_secs(10)).contains(&attempt_timeout) {
+            return Err(ProviderError::InvalidResponse(
+                "applicability provider attempt timeout must be between 50ms and 10s".to_string(),
+            ));
+        }
+        Ok(Self {
+            providers: providers
+                .into_iter()
+                .map(|source| ApplicabilityBindingProviderSlot {
+                    source,
+                    health: AdaptiveProviderHealth::default(),
+                })
+                .collect(),
+            attempt_timeout,
+        })
+    }
+
+    fn provider_order(&self) -> Vec<usize> {
+        let mut available = self
+            .providers
+            .iter()
+            .enumerate()
+            .filter(|(_, provider)| provider.health.is_available())
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        if available.is_empty()
+            && let Some((index, _)) = self
+                .providers
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, provider)| provider.health.cooldown_remaining())
+        {
+            available.push(index);
+        }
+        available.sort_by_key(|index| {
+            (
+                std::cmp::Reverse(self.providers[*index].health.score()),
+                *index,
+            )
+        });
+        available
+    }
+
+    pub async fn fetch_finalized_applicability_binding(
+        &self,
+        target: &ApplicabilityBindingTarget,
+    ) -> Result<FinalizedApplicabilityBinding, ProviderError> {
+        let mut last_error = None;
+        for provider_index in self.provider_order() {
+            let provider = &self.providers[provider_index];
+            match tokio::time::timeout(
+                self.attempt_timeout,
+                provider
+                    .source
+                    .fetch_finalized_applicability_binding(target),
+            )
+            .await
+            {
+                Ok(Ok(binding)) => {
+                    provider.health.record_success();
+                    return Ok(binding);
+                }
+                Ok(Err(error)) => {
+                    provider.health.record_failure();
+                    last_error = Some(error);
+                }
+                Err(_) => {
+                    provider.health.record_failure();
+                    last_error = Some(ProviderError::Transport(
+                        "applicability provider attempt deadline exceeded".to_string(),
+                    ));
+                }
+            }
+        }
+        Err(last_error.unwrap_or_else(|| {
+            ProviderError::Transport("applicability provider pool returned no result".to_string())
+        }))
+    }
+}
+
+#[async_trait]
+impl FinalizedApplicabilityBindingSource for FailoverApplicabilityBindingSource {
+    async fn fetch_finalized_applicability_binding(
+        &self,
+        target: &ApplicabilityBindingTarget,
+    ) -> Result<FinalizedApplicabilityBinding, ProviderError> {
+        Self::fetch_finalized_applicability_binding(self, target).await
+    }
+}
+
 pub struct FailoverVaultBalanceSource {
     providers: Vec<VaultProviderSlot>,
     attempt_timeout: Duration,
@@ -3653,20 +3962,30 @@ fn verify_token_mint(
     Ok(())
 }
 
+struct VerifiedAssetConfigFields {
+    asset_kind: u8,
+    enabled: bool,
+    bump: u8,
+}
+
 fn verify_asset_config(
     account: &RouteAccountSnapshot,
     keys: &ValidatedRouteKeys,
     mint_decimals: u8,
-) -> Result<(), RouteVerificationError> {
+) -> Result<VerifiedAssetConfigFields, RouteVerificationError> {
     if account.executable || account.owner != settlement_client::settlement_program_id().to_string()
     {
         return Err(RouteVerificationError::AccountOwnerMismatch("asset_config"));
     }
     if account.data.len() != ASSET_CONFIG_ACCOUNT_DATA_LEN {
-        return Err(RouteVerificationError::UnsupportedAccountLayout("asset_config"));
+        return Err(RouteVerificationError::UnsupportedAccountLayout(
+            "asset_config",
+        ));
     }
     if account.data[..8] != ASSET_CONFIG_ACCOUNT_DISCRIMINATOR {
-        return Err(RouteVerificationError::UnsupportedAccountLayout("asset_config"));
+        return Err(RouteVerificationError::UnsupportedAccountLayout(
+            "asset_config",
+        ));
     }
     if read_pubkey_field(account, 8, "asset_config")? != keys.mint {
         return Err(RouteVerificationError::AssetConfigMismatch("mint"));
@@ -3689,7 +4008,11 @@ fn verify_asset_config(
     if account.address != keys.asset_config.to_string() {
         return Err(RouteVerificationError::AssetConfigMismatch("PDA address"));
     }
-    Ok(())
+    Ok(VerifiedAssetConfigFields {
+        asset_kind: account.data[73],
+        enabled: account.data[106] != 0,
+        bump: account.data[107],
+    })
 }
 
 fn read_pubkey_field(
@@ -4244,6 +4567,123 @@ pub struct DocumentSettlementExecutedEvent {
     pub policy_digest: [u8; 32],
     pub document_attestation_digest: [u8; 32],
     pub payment_scope_digest: [u8; 32],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApplicabilitySettlementExecutedEvent {
+    pub receipt: [u8; 32],
+    pub binding: [u8; 32],
+    pub payer: [u8; 32],
+    pub merchant: [u8; 32],
+    pub mint: [u8; 32],
+    pub nonce: u64,
+    pub gross_atomic: u64,
+    pub tax_atomic: u64,
+    pub net_atomic: u64,
+    pub policy_digest: [u8; 32],
+    pub document_attestation_digest: Option<[u8; 32]>,
+    pub payment_scope_digest: Option<[u8; 32]>,
+    pub context_id: [u8; 16],
+    pub applicability_attestation_digest: [u8; 32],
+}
+
+impl ApplicabilitySettlementExecutedEvent {
+    pub fn decode(data: &[u8]) -> Result<Self, ProviderError> {
+        let discriminator = data.get(..8).ok_or_else(|| {
+            ProviderError::InvalidResponse(
+                "applicability settlement event is shorter than its discriminator".to_string(),
+            )
+        })?;
+        let is_document = discriminator == APPLICABILITY_DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR;
+        let expected_len = if is_document {
+            8 + (32 * 6) + (8 * 4) + (32 * 2) + 16 + 32
+        } else {
+            8 + (32 * 5) + (8 * 4) + 32 + 16 + 32
+        };
+        if data.len() != expected_len
+            || (is_document
+                && discriminator != APPLICABILITY_DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR)
+            || (!is_document && discriminator != APPLICABILITY_SETTLEMENT_EVENT_DISCRIMINATOR)
+        {
+            return Err(ProviderError::InvalidResponse(
+                "applicability settlement event has an unexpected discriminator or length"
+                    .to_string(),
+            ));
+        }
+        let mut offset = 8;
+        let receipt = read_array::<32>(data, &mut offset)?;
+        let binding = read_array::<32>(data, &mut offset)?;
+        let payer = read_array::<32>(data, &mut offset)?;
+        let merchant = read_array::<32>(data, &mut offset)?;
+        let mint = read_array::<32>(data, &mut offset)?;
+        let nonce = read_u64_le(data, &mut offset)?;
+        let gross_atomic = read_u64_le(data, &mut offset)?;
+        let tax_atomic = read_u64_le(data, &mut offset)?;
+        let net_atomic = read_u64_le(data, &mut offset)?;
+        let policy_digest = read_array::<32>(data, &mut offset)?;
+        let (document_attestation_digest, payment_scope_digest) = if is_document {
+            (
+                Some(read_array::<32>(data, &mut offset)?),
+                Some(read_array::<32>(data, &mut offset)?),
+            )
+        } else {
+            (None, None)
+        };
+        let context_id = read_array::<16>(data, &mut offset)?;
+        let applicability_attestation_digest = read_array::<32>(data, &mut offset)?;
+        if offset != data.len()
+            || receipt == [0; 32]
+            || binding == [0; 32]
+            || payer == [0; 32]
+            || merchant == [0; 32]
+            || mint == [0; 32]
+            || nonce == 0
+            || gross_atomic == 0
+            || tax_atomic.checked_add(net_atomic) != Some(gross_atomic)
+            || policy_digest == [0; 32]
+            || context_id == [0; 16]
+            || applicability_attestation_digest == [0; 32]
+            || document_attestation_digest.is_some_and(|digest| digest == [0; 32])
+            || payment_scope_digest.is_some_and(|digest| digest == [0; 32])
+        {
+            return Err(ProviderError::InvalidResponse(
+                "applicability settlement event violates identity, provenance, or amount invariants"
+                    .to_string(),
+            ));
+        }
+        Ok(Self {
+            receipt,
+            binding,
+            payer,
+            merchant,
+            mint,
+            nonce,
+            gross_atomic,
+            tax_atomic,
+            net_atomic,
+            policy_digest,
+            document_attestation_digest,
+            payment_scope_digest,
+            context_id,
+            applicability_attestation_digest,
+        })
+    }
+
+    pub fn validate_binding(
+        &self,
+        binding: &FinalizedApplicabilityBinding,
+    ) -> Result<(), IndexerError> {
+        if self.receipt != binding.receipt
+            || self.binding != binding.binding
+            || self.merchant != binding.merchant
+            || self.mint != binding.mint
+            || self.context_id != binding.context_id
+            || self.applicability_attestation_digest != binding.attestation_digest
+        {
+            return Err(IndexerError::ConflictingEvidence);
+        }
+        Ok(())
+    }
 }
 
 impl DocumentSettlementExecutedEvent {
@@ -5043,6 +5483,22 @@ pub fn rebuild_receipt_from_raw_evidence(
             event.net_atomic,
             event.policy_digest,
         )
+    } else if evidence.event_discriminator == APPLICABILITY_SETTLEMENT_EVENT_DISCRIMINATOR
+        || evidence.event_discriminator == APPLICABILITY_DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR
+    {
+        let event = ApplicabilitySettlementExecutedEvent::decode(&evidence.event_data)
+            .map_err(|_| IndexerError::InvalidEvidence)?;
+        (
+            event.receipt,
+            event.payer,
+            event.merchant,
+            event.mint,
+            event.nonce,
+            event.gross_atomic,
+            event.tax_atomic,
+            event.net_atomic,
+            event.policy_digest,
+        )
     } else if evidence.event_discriminator == SPLIT_SETTLEMENT_EVENT_DISCRIMINATOR {
         let event = SplitSettlementExecutedEvent::decode(&evidence.event_data)
             .map_err(|_| IndexerError::InvalidEvidence)?;
@@ -5216,6 +5672,8 @@ impl ReceiptDecoder for SettlementExecutedDecoder {
                 if discriminator != SETTLEMENT_EVENT_DISCRIMINATOR
                     && discriminator != DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR
                     && discriminator != SPLIT_SETTLEMENT_EVENT_DISCRIMINATOR
+                    && discriminator != APPLICABILITY_SETTLEMENT_EVENT_DISCRIMINATOR
+                    && discriminator != APPLICABILITY_DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR
                     && discriminator != SETTLEMENT_ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR
                     && discriminator != ADJUSTMENT_REFUND_EXECUTED_EVENT_DISCRIMINATOR
                     && discriminator != ADJUSTMENT_REFUND_CLAIM_CREATED_EVENT_DISCRIMINATOR
@@ -5277,6 +5735,8 @@ impl ReceiptDecoder for SettlementExecutedDecoder {
                 let is_movement_event = discriminator == SETTLEMENT_EVENT_DISCRIMINATOR
                     || discriminator == DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR
                     || discriminator == SPLIT_SETTLEMENT_EVENT_DISCRIMINATOR
+                    || discriminator == APPLICABILITY_SETTLEMENT_EVENT_DISCRIMINATOR
+                    || discriminator == APPLICABILITY_DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR
                     || discriminator == SETTLEMENT_ADJUSTMENT_RECORDED_EVENT_DISCRIMINATOR
                     || discriminator == ADJUSTMENT_REFUND_EXECUTED_EVENT_DISCRIMINATOR;
                 if saw_movement_event && is_movement_event {
@@ -5412,6 +5872,21 @@ impl ReceiptDecoder for SettlementExecutedDecoder {
                     )
                 } else if discriminator == DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR {
                     let event = DocumentSettlementExecutedEvent::decode(&event_data)?;
+                    (
+                        event.receipt,
+                        event.payer,
+                        event.merchant,
+                        event.mint,
+                        event.nonce,
+                        event.gross_atomic,
+                        event.tax_atomic,
+                        event.net_atomic,
+                        event.policy_digest,
+                    )
+                } else if discriminator == APPLICABILITY_SETTLEMENT_EVENT_DISCRIMINATOR
+                    || discriminator == APPLICABILITY_DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR
+                {
+                    let event = ApplicabilitySettlementExecutedEvent::decode(&event_data)?;
                     (
                         event.receipt,
                         event.payer,
@@ -6297,6 +6772,27 @@ mod tests {
         failing: bool,
     }
 
+    struct StaticApplicabilitySource {
+        binding: FinalizedApplicabilityBinding,
+        failing: bool,
+    }
+
+    #[async_trait]
+    impl FinalizedApplicabilityBindingSource for StaticApplicabilitySource {
+        async fn fetch_finalized_applicability_binding(
+            &self,
+            _target: &ApplicabilityBindingTarget,
+        ) -> Result<FinalizedApplicabilityBinding, ProviderError> {
+            if self.failing {
+                Err(ProviderError::Transport(
+                    "synthetic applicability outage".to_string(),
+                ))
+            } else {
+                Ok(self.binding)
+            }
+        }
+    }
+
     #[async_trait]
     impl FinalizedRefundBalanceSource for StaticRefundSource {
         async fn fetch_finalized_refund_balances(
@@ -6600,6 +7096,60 @@ mod tests {
                 .pop_front()
                 .ok_or_else(|| ProviderError::Transport("test response missing".to_string()))
         }
+    }
+
+    #[tokio::test]
+    async fn applicability_binding_verifier_requires_finalized_typed_account_state() {
+        let receipt = Pubkey::new_from_array([1; 32]);
+        let merchant = Pubkey::new_from_array([2; 32]);
+        let mint = Pubkey::new_from_array([3; 32]);
+        let context_id = [4; 16];
+        let attestation_digest = [5; 32];
+        let (binding, bump) = Pubkey::find_program_address(
+            &[b"applicability-binding", receipt.as_ref()],
+            &settlement_client::settlement_program_id(),
+        );
+        let mut discriminator = Sha256::new();
+        discriminator.update(b"account:ApplicabilitySettlementBinding");
+        let mut account_data = discriminator.finalize()[..8].to_vec();
+        account_data.extend_from_slice(receipt.as_ref());
+        account_data.extend_from_slice(merchant.as_ref());
+        account_data.extend_from_slice(mint.as_ref());
+        account_data.extend_from_slice(&context_id);
+        account_data.extend_from_slice(&attestation_digest);
+        account_data.push(bump);
+        let rpc = FakeRpc {
+            results: Mutex::new(VecDeque::from([json!({
+                "context": {"slot": 99},
+                "value": [{
+                    "owner": settlement_client::SETTLEMENT_PROGRAM_ID,
+                    "executable": false,
+                    "lamports": 1,
+                    "data": [BASE64.encode(account_data), "base64"]
+                }]
+            })])),
+            calls: Mutex::new(Vec::new()),
+        };
+        let source = SolanaRpcApplicabilityBindingSource::new(rpc);
+        let verified = source
+            .fetch_finalized_applicability_binding(&ApplicabilityBindingTarget {
+                binding: binding.to_string(),
+                receipt: receipt.to_string(),
+                merchant: merchant.to_string(),
+                mint: mint.to_string(),
+                context_id,
+                attestation_digest,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(verified.slot, 99);
+        assert_eq!(verified.binding, binding.to_bytes());
+        assert_eq!(verified.receipt, receipt.to_bytes());
+        assert_eq!(verified.merchant, merchant.to_bytes());
+        assert_eq!(verified.mint, mint.to_bytes());
+        assert_eq!(verified.context_id, context_id);
+        assert_eq!(verified.attestation_digest, attestation_digest);
     }
 
     fn test_signature(seed: u8) -> String {
@@ -6962,6 +7512,11 @@ mod tests {
     #[tokio::test]
     async fn route_verifier_requires_finalized_account_topology() {
         let (route, response) = verified_route_fixture();
+        let expected_asset_config_bump = response["value"][4]["data"][0]
+            .as_str()
+            .and_then(|encoded| BASE64.decode(encoded).ok())
+            .map(|data| data[107])
+            .expect("fixture asset configuration has a PDA bump");
         let rpc = FakeRpc {
             results: Mutex::new(VecDeque::from([response])),
             calls: Mutex::new(Vec::new()),
@@ -6969,6 +7524,9 @@ mod tests {
         let evidence = verify_settlement_route(&rpc, &route).await.unwrap();
         assert_eq!(evidence.verification_slot, 777);
         assert_eq!(evidence.mint_decimals, 6);
+        assert_eq!(evidence.asset_kind, STABLECOIN_ASSET_KIND);
+        assert!(evidence.asset_enabled);
+        assert_eq!(evidence.asset_config_bump, expected_asset_config_bump);
         assert_eq!(evidence.accounts.len(), 5);
         assert_ne!(evidence.verification_digest, [0; 32]);
         let calls = rpc.calls.lock().unwrap();
@@ -7221,6 +7779,37 @@ mod tests {
         BASE64.encode(data)
     }
 
+    fn encoded_applicability_settlement_event(
+        gross: u64,
+        tax: u64,
+        net: u64,
+        document: bool,
+    ) -> String {
+        let mut data = Vec::with_capacity(if document { 344 } else { 280 });
+        data.extend_from_slice(if document {
+            &APPLICABILITY_DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR
+        } else {
+            &APPLICABILITY_SETTLEMENT_EVENT_DISCRIMINATOR
+        });
+        data.extend_from_slice(&[51; 32]);
+        data.extend_from_slice(&[52; 32]);
+        data.extend_from_slice(&[53; 32]);
+        data.extend_from_slice(&[54; 32]);
+        data.extend_from_slice(&[55; 32]);
+        data.extend_from_slice(&59_u64.to_le_bytes());
+        data.extend_from_slice(&gross.to_le_bytes());
+        data.extend_from_slice(&tax.to_le_bytes());
+        data.extend_from_slice(&net.to_le_bytes());
+        data.extend_from_slice(&[56; 32]);
+        if document {
+            data.extend_from_slice(&[57; 32]);
+            data.extend_from_slice(&[58; 32]);
+        }
+        data.extend_from_slice(&[6; 16]);
+        data.extend_from_slice(&[7; 32]);
+        BASE64.encode(data)
+    }
+
     fn encoded_split_settlement_event(gross: u64, tax: u64, net: u64) -> String {
         let mut data = Vec::with_capacity(240);
         data.extend_from_slice(&SPLIT_SETTLEMENT_EVENT_DISCRIMINATOR);
@@ -7323,6 +7912,37 @@ mod tests {
             decoded.raw_evidence[0].evidence_digest
         );
         assert_eq!(decoded.raw_evidence[0].event_data.len(), 200);
+    }
+
+    #[tokio::test]
+    async fn settlement_decoder_retains_applicability_bound_event_evidence() {
+        let decoder = SettlementExecutedDecoder;
+        let block = json!({
+            "transactions": [{
+                "transaction": {"signatures": ["applicability-signature"]},
+                "meta": {
+                    "err": null,
+                    "logMessages": [
+                        "Program 4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi invoke [1]",
+                        format!("Program data: {}", encoded_applicability_settlement_event(100, 25, 75, false))
+                    ]
+                }
+            }]
+        });
+        let decoded = decoder.decode_block(42, block).await.unwrap();
+        assert_eq!(decoded.receipts.len(), 1);
+        assert_eq!(decoded.raw_evidence.len(), 1);
+        assert_eq!(
+            decoded.raw_evidence[0].event_discriminator,
+            APPLICABILITY_SETTLEMENT_EVENT_DISCRIMINATOR
+        );
+        let event =
+            ApplicabilitySettlementExecutedEvent::decode(&decoded.raw_evidence[0].event_data)
+                .unwrap();
+        assert_eq!(event.binding, [52; 32]);
+        assert_eq!(event.context_id, [6; 16]);
+        assert_eq!(event.applicability_attestation_digest, [7; 32]);
+        assert!(event.document_attestation_digest.is_none());
     }
 
     #[tokio::test]
@@ -8339,6 +8959,50 @@ mod tests {
         );
         assert!(matches!(
             FailoverRefundBalanceSource::new(Vec::new(), Duration::from_millis(100)),
+            Err(ProviderError::InvalidResponse(message)) if message.contains("between 1 and 3")
+        ));
+    }
+
+    #[tokio::test]
+    async fn applicability_provider_failover_returns_one_complete_finalized_binding() {
+        let binding = FinalizedApplicabilityBinding {
+            slot: 777,
+            binding: [1; 32],
+            receipt: [2; 32],
+            merchant: [3; 32],
+            mint: [4; 32],
+            context_id: [5; 16],
+            attestation_digest: [6; 32],
+            bump: 7,
+        };
+        let target = ApplicabilityBindingTarget {
+            binding: Pubkey::new_from_array(binding.binding).to_string(),
+            receipt: Pubkey::new_from_array(binding.receipt).to_string(),
+            merchant: Pubkey::new_from_array(binding.merchant).to_string(),
+            mint: Pubkey::new_from_array(binding.mint).to_string(),
+            context_id: binding.context_id,
+            attestation_digest: binding.attestation_digest,
+        };
+        let source = FailoverApplicabilityBindingSource::new(
+            vec![
+                Arc::new(StaticApplicabilitySource {
+                    binding,
+                    failing: true,
+                }),
+                Arc::new(StaticApplicabilitySource {
+                    binding,
+                    failing: false,
+                }),
+            ],
+            Duration::from_millis(100),
+        )
+        .unwrap();
+        assert_eq!(
+            source.fetch_finalized_applicability_binding(&target).await,
+            Ok(binding)
+        );
+        assert!(matches!(
+            FailoverApplicabilityBindingSource::new(Vec::new(), Duration::from_millis(100)),
             Err(ProviderError::InvalidResponse(message)) if message.contains("between 1 and 3")
         ));
     }

@@ -20,21 +20,21 @@ use deadpool_postgres::{
 };
 use document_payment::{DocumentPaymentAuthorization, PaymentScope};
 use indexer::{
-    BalanceExpectation, BalanceSnapshot, Checkpoint, FinalizedPage,
-    FinalizedRefundClaimCancellationEvidence, FinalizedRefundClaimEvidence,
-    IndexedAdjustmentRefundExecution, IndexedReceipt, IndexedSettlementAdjustment,
-    IndexedSplitSettlement, MAX_REPLAY_ATTEMPTS, MAX_SCAN_RANGE_SLOTS, ProtocolPauseChangedEvent,
-    RawChainEvidence, RawChainTransaction, Reconciliation, ReplayGap, ReplayGapReason, ReplayWork,
-    VaultBalanceExpectation, decode_refund_claim_cancelled_event,
+    ApplicabilitySettlementExecutedEvent, BalanceExpectation, BalanceSnapshot, Checkpoint,
+    FinalizedApplicabilityBinding, FinalizedPage, FinalizedRefundClaimCancellationEvidence,
+    FinalizedRefundClaimEvidence, IndexedAdjustmentRefundExecution, IndexedReceipt,
+    IndexedSettlementAdjustment, IndexedSplitSettlement, MAX_REPLAY_ATTEMPTS, MAX_SCAN_RANGE_SLOTS,
+    ProtocolPauseChangedEvent, RawChainEvidence, RawChainTransaction, Reconciliation, ReplayGap,
+    ReplayGapReason, ReplayWork, SETTLEMENT_ROUTE_VERIFICATION_SCHEMA, STABLECOIN_ASSET_KIND,
+    ScanRange, VaultBalanceExpectation, decode_refund_claim_cancelled_event,
     decode_refund_claim_created_event, merge_adjustment_refund_execution, merge_raw_evidence,
     merge_receipt, merge_settlement_adjustment, rebuild_receipt_from_raw_evidence,
     rebuild_split_settlement_from_raw_evidence, reconcile,
-    SETTLEMENT_ROUTE_VERIFICATION_SCHEMA,
 };
 use jurisdiction::{JurisdictionCandidate, ResolutionPolicy, candidate_set_digest};
 use policy::{
-    CalculationAttestation, DocumentAttestationBinding, DocumentCalculationAttestation,
-    merchant_identity_digest,
+    ApplicabilityAttestation, CalculationAttestation, DocumentAttestationBinding,
+    DocumentCalculationAttestation, merchant_identity_digest,
 };
 use refund_workflow::{
     RefundArtifact, RefundCancellationArtifact, RefundCancellationServerInputs,
@@ -102,6 +102,9 @@ pub const REFUND_FUNDING_VERIFICATION_LEASE: Duration = Duration::from_secs(60);
 pub const REFUND_PROOF_CANDIDATE_LEASE: Duration = Duration::from_secs(60);
 pub const MAX_REFUND_PROOF_ATTEMPTS: i16 = 3;
 pub const MAX_REFUND_PROOF_ERROR_BYTES: usize = 1_024;
+pub const APPLICABILITY_BINDING_VERIFICATION_LEASE: Duration = Duration::from_secs(60);
+pub const MAX_APPLICABILITY_BINDING_ATTEMPTS: i16 = 8;
+pub const MAX_APPLICABILITY_BINDING_ERROR_BYTES: usize = 1_024;
 pub const REVENUE_STREAM_ACCRUAL_RECONCILIATION_LEASE: Duration = Duration::from_secs(60);
 pub const MAX_REVENUE_STREAM_ACCRUAL_ATTEMPTS: i16 = 8;
 pub const MAX_REVENUE_STREAM_RECONCILIATION_CONTEXTS: usize = 64;
@@ -113,6 +116,8 @@ pub const DEFAULT_REPLAY_LEASE: Duration = Duration::from_secs(30);
 pub const MAX_REPLAY_OPERATOR_NOTE_BYTES: usize = 1024;
 pub const MAX_REPLAY_OPERATOR_SUBJECT_BYTES: usize = 128;
 pub const MAX_REPLAY_LIST_LIMIT: usize = 100;
+pub const MAX_ROUTE_VERIFICATION_RUN_LIST_LIMIT: usize = 50;
+pub const MAX_EVIDENCE_ACCESS_AUDIT_LIST_LIMIT: usize = 100;
 pub const MAX_PROJECTION_REBUILD_BATCH_SIZE: usize = 1_000;
 pub const MAX_VAULT_RECONCILIATION_TARGETS: usize = 64;
 pub const VAULT_RECONCILIATION_STALE_AFTER_SECONDS: i64 = 90;
@@ -128,6 +133,7 @@ const EVIDENCE_LOOKUP_BACKOFF: Duration = Duration::from_millis(2);
 pub const MAX_RULE_GOVERNANCE_EVIDENCE_BYTES: usize = 16 * 1024;
 pub const MAX_RULE_DRAFT_PROVENANCE_BYTES: usize = 16 * 1024;
 pub const MAX_JURISDICTION_POLICY_PROVENANCE_BYTES: usize = 16 * 1024;
+pub const MAX_APPLICABILITY_CONTEXT_PROVENANCE_BYTES: usize = 16 * 1024;
 pub const MAX_FX_EVIDENCE_DOCUMENT_BYTES: usize = 64 * 1024;
 pub const MAX_VAULT_RELEASE_EVIDENCE_BYTES: usize = 16 * 1024;
 pub const MAX_REVENUE_STREAM_EVIDENCE_BYTES: usize = 16 * 1024;
@@ -145,6 +151,14 @@ const REPLAY_GAP_VIEW_SELECT: &str =
             to_char(operator_acknowledged_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),
             operator_acknowledged_by, operator_acknowledgement
      FROM indexer_replay_gaps";
+
+const ROUTE_VERIFICATION_RUN_VIEW_SELECT: &str =
+    "SELECT id, run_kind, status, batch_size, examined_count,
+            activated_count, already_active_count, failed_count, failure_code,
+            operator_approval_id,
+            to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),
+            to_char(completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')
+     FROM settlement_route_verification_runs";
 
 const SETTLEMENT_INTENT_TRANSITION_SQL: &str = "UPDATE settlement_intents
      SET status = $3,
@@ -224,6 +238,18 @@ pub enum StorageError {
     InvalidAttestation(String),
     #[error("calculation attestation evidence is too large")]
     AttestationEvidenceTooLarge,
+    #[error("tax applicability context was not found for this merchant")]
+    ApplicabilityContextNotFound,
+    #[error("tax applicability context conflicts with the stored record")]
+    ApplicabilityContextConflict,
+    #[error("tax applicability context is invalid: {0}")]
+    InvalidApplicabilityContext(String),
+    #[error("tax applicability context lifecycle transition is invalid")]
+    ApplicabilityContextTransitionConflict,
+    #[error("applicability binding verification conflicts with existing evidence")]
+    ApplicabilityBindingVerificationConflict,
+    #[error("applicability binding verification evidence is invalid: {0}")]
+    InvalidApplicabilityBindingVerification(String),
     #[error("settlement route was not found for this merchant")]
     SettlementRouteNotFound,
     #[error("settlement route is not active or is outside its effective window")]
@@ -234,6 +260,8 @@ pub enum StorageError {
     SettlementRouteIntegrity(String),
     #[error("settlement route cannot be activated in its current lifecycle state")]
     SettlementRouteActivationConflict,
+    #[error("settlement route verification run lifecycle conflict")]
+    SettlementRouteVerificationRunConflict,
     #[error("revenue stream destination route was not found for this merchant")]
     RevenueStreamDestinationRouteNotFound,
     #[error("revenue stream destination route is not active or is outside its effective window")]
@@ -955,6 +983,7 @@ pub struct QuoteCommand {
     pub jurisdiction: String,
     pub regime: String,
     pub facts: TaxFacts,
+    pub applicability_context_id: Option<Uuid>,
     pub jurisdiction_candidates: Vec<JurisdictionCandidate>,
     pub fx_evidence: Option<PersistedFxEvidence>,
 }
@@ -976,6 +1005,7 @@ pub struct DocumentQuoteCommand {
     pub jurisdiction: String,
     pub regime: String,
     pub facts: TaxDocumentFacts,
+    pub applicability_context_id: Option<Uuid>,
     pub jurisdiction_candidates: Vec<JurisdictionCandidate>,
     pub fx_evidence: Option<PersistedFxEvidence>,
 }
@@ -1354,6 +1384,10 @@ pub struct StoredQuote {
     pub status: String,
     #[serde(default)]
     pub expires_at_unix: i64,
+    #[serde(default)]
+    pub applicability_context_id: Option<Uuid>,
+    #[serde(default)]
+    pub applicability_attestation_digest: Option<Digest32>,
     pub result: CalculationResult,
 }
 
@@ -1363,6 +1397,10 @@ pub struct StoredDocumentQuote {
     pub status: String,
     pub expires_at_unix: i64,
     pub schema: String,
+    #[serde(default)]
+    pub applicability_context_id: Option<Uuid>,
+    #[serde(default)]
+    pub applicability_attestation_digest: Option<Digest32>,
     pub result: TaxDocumentResult,
 }
 
@@ -1382,6 +1420,53 @@ pub struct StoredDocumentCalculationAttestation {
     pub issuer_public_key: [u8; 32],
     pub expires_at_unix: i64,
     pub attestation: DocumentCalculationAttestation,
+}
+
+#[derive(Clone, Debug)]
+pub struct CreateApplicabilityContextCommand {
+    pub merchant_id: Uuid,
+    pub idempotency_key: String,
+    pub attestation: ApplicabilityAttestation,
+    pub effective_from_unix: i64,
+    pub effective_until_unix: Option<i64>,
+    pub provenance: Value,
+    pub actor_subject: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct StoredApplicabilityContext {
+    pub context_id: Uuid,
+    pub merchant_id: Uuid,
+    pub status: String,
+    pub policy_id: String,
+    pub policy_version: u32,
+    pub policy_digest: Digest32,
+    pub facts_digest: Digest32,
+    pub decision_digest: Digest32,
+    pub jurisdiction_resolution_digest: Digest32,
+    pub evidence_digest: Digest32,
+    pub attestation_digest: Digest32,
+    pub effective_from_unix: i64,
+    pub effective_until_unix: Option<i64>,
+    pub evidence_expires_at_unix: i64,
+    pub provenance: Value,
+    pub attestation: ApplicabilityAttestation,
+}
+
+#[derive(Clone, Debug)]
+pub enum ApplicabilityContextOutcome {
+    Created(StoredApplicabilityContext),
+    Replay(StoredApplicabilityContext),
+}
+
+#[derive(Clone, Debug)]
+pub struct ApplicabilityContextTransition {
+    pub context_id: Uuid,
+    pub merchant_id: Uuid,
+    pub expected_status: String,
+    pub next_status: String,
+    pub actor_subject: String,
+    pub evidence: Value,
 }
 
 #[derive(Clone, Debug)]
@@ -1454,6 +1539,20 @@ pub struct EvidenceAccessAuditCommand {
     pub purpose: String,
     pub outcome: String,
     pub facts_digest: Option<Digest32>,
+}
+
+/// Redacted, tenant-scoped projection for the evidence-access explorer.
+/// Decrypted facts and request bodies never cross this read boundary.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct EvidenceAccessAuditEventView {
+    pub id: Uuid,
+    pub calculation_id: Uuid,
+    pub actor_subject: String,
+    pub request_id: Uuid,
+    pub purpose: String,
+    pub outcome: String,
+    pub facts_digest: Option<Digest32>,
+    pub occurred_at: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1956,6 +2055,30 @@ pub struct SettlementRouteVerificationCandidate {
     pub token_program: String,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SettlementRouteVerificationRunSummary {
+    pub examined: usize,
+    pub activated: usize,
+    pub already_active: usize,
+    pub failed: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SettlementRouteVerificationRunView {
+    pub id: Uuid,
+    pub run_kind: String,
+    pub status: String,
+    pub batch_size: u32,
+    pub examined_count: u32,
+    pub activated_count: u32,
+    pub already_active_count: u32,
+    pub failed_count: u32,
+    pub failure_code: Option<String>,
+    pub operator_approval_id: Option<Uuid>,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RevenueStreamDestinationRouteVerificationCandidate {
     pub id: Uuid,
@@ -2008,6 +2131,38 @@ pub struct RefundBalanceProofTopology {
 pub struct RefundBalanceProofCandidate {
     pub execution: IndexedAdjustmentRefundExecution,
     pub lease_token: Uuid,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApplicabilityBindingVerificationCandidate {
+    pub stream_key: String,
+    pub signature: String,
+    pub event_index: u16,
+    pub evidence: RawChainEvidence,
+    pub claim_token: Uuid,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ApplicabilityBindingVerificationView {
+    pub settlement_intent_id: Uuid,
+    pub status: String,
+    pub signature: Option<String>,
+    pub event_index: Option<u16>,
+    pub event_slot: Option<String>,
+    pub provider_slot: Option<String>,
+    pub receipt: Option<String>,
+    pub binding: Option<String>,
+    pub merchant: Option<String>,
+    pub mint: Option<String>,
+    pub context_id_hex: Option<String>,
+    pub attestation_digest_hex: Option<String>,
+    pub event_evidence_digest_hex: Option<String>,
+    pub verification_commitment: Option<String>,
+    pub attempts: Option<u16>,
+    pub last_error_code: Option<String>,
+    pub verified_at: Option<String>,
+    pub claimed_at: Option<String>,
+    pub dead_lettered_at: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -2794,6 +2949,38 @@ impl PgStore {
         Ok(updated == 1)
     }
 
+    /// Enqueue only the bounded applicability event families. The raw event
+    /// is written in the same transaction, so a committed job can never point
+    /// at an event that is not available to the verifier.
+    async fn enqueue_applicability_binding_verification_jobs(
+        transaction: &deadpool_postgres::tokio_postgres::Transaction<'_>,
+        stream_key: &str,
+        page: &FinalizedPage,
+    ) -> Result<(), StorageError> {
+        for evidence in &page.raw_evidence {
+            if evidence.event_discriminator != indexer::APPLICABILITY_SETTLEMENT_EVENT_DISCRIMINATOR
+                && evidence.event_discriminator
+                    != indexer::APPLICABILITY_DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR
+            {
+                continue;
+            }
+            transaction
+                .execute(
+                    "INSERT INTO applicability_binding_verification_jobs
+                        (stream_key, signature, event_index)
+                     VALUES ($1, $2, $3::smallint)
+                     ON CONFLICT (stream_key, signature, event_index) DO NOTHING",
+                    &[
+                        &stream_key,
+                        &evidence.signature,
+                        &(evidence.event_index as i16),
+                    ],
+                )
+                .await?;
+        }
+        Ok(())
+    }
+
     /// Persist a validated replay page without moving the forward checkpoint.
     ///
     /// Replay repairs are projection work: they may cover a historical range
@@ -3010,6 +3197,8 @@ impl PgStore {
                 )
                 .await?;
         }
+        Self::enqueue_applicability_binding_verification_jobs(&transaction, stream_key, page)
+            .await?;
         persist_protocol_pause_events(
             &transaction,
             stream_key,
@@ -3019,6 +3208,446 @@ impl PgStore {
         )
         .await?;
         transaction.commit().await?;
+        Ok(())
+    }
+
+    async fn complete_applicability_binding_job_in_transaction(
+        transaction: &deadpool_postgres::tokio_postgres::Transaction<'_>,
+        stream_key: &str,
+        signature: &str,
+        event_index: u16,
+        claim_token: Uuid,
+    ) -> Result<(), StorageError> {
+        let updated = transaction
+            .execute(
+                "UPDATE applicability_binding_verification_jobs
+                 SET completed_at = now(), claim_token = NULL, claimed_at = NULL,
+                     last_error_code = NULL, updated_at = now()
+                 WHERE stream_key = $1 AND signature = $2
+                   AND event_index = $3::smallint AND claim_token = $4
+                   AND completed_at IS NULL AND dead_lettered_at IS NULL",
+                &[&stream_key, &signature, &(event_index as i16), &claim_token],
+            )
+            .await?;
+        if updated != 1 {
+            return Err(StorageError::InvalidApplicabilityBindingVerification(
+                "applicability verification lease was lost before completion".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Claims one raw applicability event without holding a database lock
+    /// across the finalized account RPC. The returned lease token fences both
+    /// successful completion and bounded failure updates.
+    pub async fn claim_applicability_binding_verification_candidate(
+        &self,
+        stream_key: &str,
+    ) -> Result<Option<ApplicabilityBindingVerificationCandidate>, StorageError> {
+        validate_indexer_stream_key(stream_key)?;
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::ReadCommitted)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let row = transaction
+            .query_opt(
+                "SELECT raw.signature, raw.slot::text, raw.event_index::text,
+                        raw.event_discriminator, raw.event_data, raw.evidence_digest
+                 FROM applicability_binding_verification_jobs AS jobs
+                 JOIN raw_chain_evidence AS raw
+                   ON raw.stream_key = jobs.stream_key
+                  AND raw.signature = jobs.signature
+                  AND raw.event_index = jobs.event_index
+                 WHERE jobs.stream_key = $1
+                   AND jobs.completed_at IS NULL
+                   AND jobs.dead_lettered_at IS NULL
+                   AND jobs.attempts < $3::smallint
+                   AND (jobs.claim_token IS NULL
+                        OR jobs.claimed_at < now() - ($2::bigint * interval '1 second'))
+                   AND NOT EXISTS (
+                       SELECT 1
+                       FROM applicability_binding_verifications AS verified
+                       WHERE verified.stream_key = jobs.stream_key
+                         AND verified.signature = jobs.signature
+                         AND verified.event_index = jobs.event_index
+                   )
+                 ORDER BY jobs.created_at, jobs.id
+                 FOR UPDATE OF jobs SKIP LOCKED
+                 LIMIT 1",
+                &[
+                    &stream_key,
+                    &(APPLICABILITY_BINDING_VERIFICATION_LEASE.as_secs() as i64),
+                    &MAX_APPLICABILITY_BINDING_ATTEMPTS,
+                ],
+            )
+            .await?;
+        let Some(row) = row else {
+            transaction.commit().await?;
+            return Ok(None);
+        };
+        let evidence = parse_raw_evidence_row(row)?;
+        if evidence.event_discriminator != indexer::APPLICABILITY_SETTLEMENT_EVENT_DISCRIMINATOR
+            && evidence.event_discriminator
+                != indexer::APPLICABILITY_DOCUMENT_SETTLEMENT_EVENT_DISCRIMINATOR
+        {
+            return Err(StorageError::InvalidApplicabilityBindingVerification(
+                "verification job references a non-applicability event".to_string(),
+            ));
+        }
+        evidence.validate(
+            ScanRange {
+                start_slot: evidence.slot,
+                end_slot: evidence.slot,
+            },
+            evidence.slot,
+        )?;
+        let claim_token = Uuid::now_v7();
+        let updated = transaction
+            .execute(
+                "UPDATE applicability_binding_verification_jobs
+                 SET claim_token = $4, claimed_at = now(), attempts = attempts + 1,
+                     updated_at = now()
+                 WHERE stream_key = $1 AND signature = $2
+                   AND event_index = $3::smallint
+                   AND completed_at IS NULL AND dead_lettered_at IS NULL
+                   AND attempts < $5::smallint
+                   AND (claim_token IS NULL
+                        OR claimed_at < now() - ($6::bigint * interval '1 second'))",
+                &[
+                    &stream_key,
+                    &evidence.signature,
+                    &(evidence.event_index as i16),
+                    &claim_token,
+                    &MAX_APPLICABILITY_BINDING_ATTEMPTS,
+                    &(APPLICABILITY_BINDING_VERIFICATION_LEASE.as_secs() as i64),
+                ],
+            )
+            .await?;
+        if updated != 1 {
+            transaction.rollback().await?;
+            return Ok(None);
+        }
+        transaction.commit().await?;
+        Ok(Some(ApplicabilityBindingVerificationCandidate {
+            stream_key: stream_key.to_string(),
+            signature: evidence.signature.clone(),
+            event_index: evidence.event_index,
+            evidence,
+            claim_token,
+        }))
+    }
+
+    /// Commits the typed finalized projection and clears the lease in one
+    /// serializable transaction. A stale worker cannot change job state.
+    pub async fn complete_applicability_binding_verification_candidate(
+        &self,
+        candidate: &ApplicabilityBindingVerificationCandidate,
+        verification: &FinalizedApplicabilityBinding,
+    ) -> Result<(), StorageError> {
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        Self::persist_finalized_applicability_binding_in_transaction(
+            &transaction,
+            &candidate.stream_key,
+            &candidate.signature,
+            candidate.event_index,
+            verification,
+            Some(candidate.claim_token),
+        )
+        .await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    /// Releases a failed lease for bounded retry and records explicit
+    /// dead-letter evidence after the attempt budget is exhausted.
+    pub async fn fail_applicability_binding_verification_candidate(
+        &self,
+        candidate: &ApplicabilityBindingVerificationCandidate,
+        error_code: &str,
+    ) -> Result<(), StorageError> {
+        if error_code.is_empty() || error_code.len() > MAX_APPLICABILITY_BINDING_ERROR_BYTES {
+            return Err(StorageError::InvalidApplicabilityBindingVerification(
+                "verification error code is outside the bounded domain".to_string(),
+            ));
+        }
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::ReadCommitted)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let updated = transaction
+            .execute(
+                "UPDATE applicability_binding_verification_jobs
+                 SET claim_token = NULL, claimed_at = NULL, last_error_code = $5,
+                     dead_lettered_at = CASE
+                         WHEN attempts >= $6::smallint THEN now()
+                         ELSE NULL
+                     END,
+                     updated_at = now()
+                 WHERE stream_key = $1 AND signature = $2
+                   AND event_index = $3::smallint AND claim_token = $4
+                   AND completed_at IS NULL AND dead_lettered_at IS NULL",
+                &[
+                    &candidate.stream_key,
+                    &candidate.signature,
+                    &(candidate.event_index as i16),
+                    &candidate.claim_token,
+                    &error_code,
+                    &MAX_APPLICABILITY_BINDING_ATTEMPTS,
+                ],
+            )
+            .await?;
+        if updated != 1 {
+            transaction.rollback().await?;
+            return Err(StorageError::InvalidApplicabilityBindingVerification(
+                "applicability verification lease was lost before failure update".to_string(),
+            ));
+        }
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    /// Persist one finalized applicability-account verification only after its
+    /// matching raw event is present. The serializable transaction makes the
+    /// verification projection idempotent while rejecting any substitution of
+    /// account, event, digest, or provider-slot evidence.
+    pub async fn persist_finalized_applicability_binding(
+        &self,
+        stream_key: &str,
+        signature: &str,
+        event_index: u16,
+        verification: &FinalizedApplicabilityBinding,
+    ) -> Result<(), StorageError> {
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        Self::persist_finalized_applicability_binding_in_transaction(
+            &transaction,
+            stream_key,
+            signature,
+            event_index,
+            verification,
+            None,
+        )
+        .await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    async fn persist_finalized_applicability_binding_in_transaction(
+        transaction: &deadpool_postgres::tokio_postgres::Transaction<'_>,
+        stream_key: &str,
+        signature: &str,
+        event_index: u16,
+        verification: &FinalizedApplicabilityBinding,
+        claim_token: Option<Uuid>,
+    ) -> Result<(), StorageError> {
+        validate_indexer_stream_key(stream_key)?;
+        if signature.trim().is_empty() || signature.len() > 128 || event_index > i16::MAX as u16 {
+            return Err(StorageError::InvalidApplicabilityBindingVerification(
+                "signature or event index is outside the bounded domain".to_string(),
+            ));
+        }
+        let receipt = Pubkey::new_from_array(verification.receipt);
+        let (expected_binding, expected_bump) = Pubkey::find_program_address(
+            &[b"applicability-binding", receipt.as_ref()],
+            &settlement_client::settlement_program_id(),
+        );
+        if expected_binding.to_bytes() != verification.binding || expected_bump != verification.bump
+        {
+            return Err(StorageError::InvalidApplicabilityBindingVerification(
+                "verification binding PDA or bump does not match the receipt".to_string(),
+            ));
+        }
+        if let Some(token) = claim_token
+            && token.get_version_num() != 7
+        {
+            return Err(StorageError::InvalidApplicabilityBindingVerification(
+                "applicability verification claim token must be UUIDv7".to_string(),
+            ));
+        }
+
+        let evidence_row = transaction
+            .query_opt(
+                "SELECT signature, slot::text, event_index::text,
+                        event_discriminator, event_data, evidence_digest
+                 FROM raw_chain_evidence
+                 WHERE stream_key = $1 AND signature = $2
+                   AND event_index = $3::text::smallint
+                 FOR UPDATE",
+                &[&stream_key, &signature, &(event_index as i16)],
+            )
+            .await?
+            .ok_or_else(|| {
+                StorageError::InvalidApplicabilityBindingVerification(
+                    "matching raw applicability event is not persisted".to_string(),
+                )
+            })?;
+        let evidence = parse_raw_evidence_row(evidence_row)?;
+        evidence.validate(
+            ScanRange {
+                start_slot: evidence.slot,
+                end_slot: evidence.slot,
+            },
+            verification.slot,
+        )?;
+        let event = ApplicabilitySettlementExecutedEvent::decode(&evidence.event_data).map_err(
+            |error| StorageError::InvalidApplicabilityBindingVerification(error.to_string()),
+        )?;
+        event.validate_binding(verification)?;
+
+        let existing = transaction
+            .query_opt(
+                "SELECT event_slot::text, provider_slot::text, receipt, binding,
+                        merchant, mint, context_id, attestation_digest,
+                        event_evidence_digest, verification_commitment
+                 FROM applicability_binding_verifications
+                 WHERE stream_key = $1 AND signature = $2
+                   AND event_index = $3::text::smallint
+                 FOR UPDATE",
+                &[&stream_key, &signature, &(event_index as i16)],
+            )
+            .await?;
+        if let Some(row) = existing {
+            let existing_event_slot = parse_u64(row.get(0), "applicability event slot")?;
+            let existing_provider_slot = parse_u64(row.get(1), "applicability provider slot")?;
+            let existing_receipt = parse_digest(row.get(2))?;
+            let existing_binding = parse_digest(row.get(3))?;
+            let existing_merchant = parse_digest(row.get(4))?;
+            let existing_mint = parse_digest(row.get(5))?;
+            let existing_context_id: [u8; 16] =
+                row.get::<_, Vec<u8>>(6).try_into().map_err(|_| {
+                    StorageError::InvalidApplicabilityBindingVerification(
+                        "stored applicability context ID is not 16 bytes".to_string(),
+                    )
+                })?;
+            let existing_attestation_digest = parse_digest(row.get(7))?;
+            let existing_event_evidence_digest = parse_digest(row.get(8))?;
+            let existing_commitment: String = row.get(9);
+            if existing_event_slot != evidence.slot
+                || existing_provider_slot != verification.slot
+                || existing_receipt != verification.receipt
+                || existing_binding != verification.binding
+                || existing_merchant != verification.merchant
+                || existing_mint != verification.mint
+                || existing_context_id != verification.context_id
+                || existing_attestation_digest != verification.attestation_digest
+                || existing_event_evidence_digest != evidence.evidence_digest
+                || existing_commitment != "finalized"
+            {
+                return Err(StorageError::ApplicabilityBindingVerificationConflict);
+            }
+            if let Some(claim_token) = claim_token {
+                Self::complete_applicability_binding_job_in_transaction(
+                    transaction,
+                    stream_key,
+                    signature,
+                    event_index,
+                    claim_token,
+                )
+                .await?;
+            }
+            return Ok(());
+        }
+
+        transaction
+            .execute(
+                "INSERT INTO applicability_binding_verifications
+                    (stream_key, signature, event_index, event_slot, provider_slot,
+                     receipt, binding, merchant, mint, context_id, attestation_digest,
+                     event_evidence_digest, verification_commitment)
+                 VALUES ($1, $2, $3::smallint, $4::text::numeric,
+                         $5::text::numeric, $6, $7, $8, $9, $10, $11, $12, 'finalized')",
+                &[
+                    &stream_key,
+                    &signature,
+                    &(event_index as i16),
+                    &evidence.slot.to_string(),
+                    &verification.slot.to_string(),
+                    &&verification.receipt[..],
+                    &&verification.binding[..],
+                    &&verification.merchant[..],
+                    &&verification.mint[..],
+                    &&verification.context_id[..],
+                    &&verification.attestation_digest[..],
+                    &&evidence.evidence_digest[..],
+                ],
+            )
+            .await
+            .map_err(|error| {
+                if error.code()
+                    == Some(&deadpool_postgres::tokio_postgres::error::SqlState::UNIQUE_VIOLATION)
+                {
+                    StorageError::ApplicabilityBindingVerificationConflict
+                } else {
+                    StorageError::Database(error)
+                }
+            })?;
+        if let Some(claim_token) = claim_token {
+            Self::complete_applicability_binding_job_in_transaction(
+                transaction,
+                stream_key,
+                signature,
+                event_index,
+                claim_token,
+            )
+            .await?;
+        }
         Ok(())
     }
 
@@ -3927,6 +4556,42 @@ impl PgStore {
         rows.into_iter().map(parse_replay_gap_view).collect()
     }
 
+    /// Lists bounded system-level route-verification evidence for an
+    /// authenticated indexer operator. This is operational metadata only;
+    /// finalized Solana account evidence and the settlement program remain
+    /// authoritative.
+    pub async fn list_settlement_route_verification_runs(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<SettlementRouteVerificationRunView>, StorageError> {
+        if !(1..=MAX_ROUTE_VERIFICATION_RUN_LIST_LIMIT).contains(&limit) {
+            return Err(StorageError::InvalidReplayOperatorInput(format!(
+                "route-verification run list limit must be between 1 and {MAX_ROUTE_VERIFICATION_RUN_LIST_LIMIT}"
+            )));
+        }
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let limit = i64::try_from(limit).map_err(|_| {
+            StorageError::InvalidReplayOperatorInput(
+                "route-verification run list limit is too large".into(),
+            )
+        })?;
+        let query = format!(
+            "{ROUTE_VERIFICATION_RUN_VIEW_SELECT}
+             ORDER BY started_at DESC, id DESC
+             LIMIT $1"
+        );
+        client
+            .query(&query, &[&limit])
+            .await?
+            .into_iter()
+            .map(parse_settlement_route_verification_run_view)
+            .collect()
+    }
+
     /// Acknowledge a dead-lettered replay gap as an operator review action.
     /// The row remains dead-lettered until a separate reviewed requeue.
     pub async fn acknowledge_replay_gap_for_operator(
@@ -4395,6 +5060,8 @@ impl PgStore {
                 )
                 .await?;
         }
+        Self::enqueue_applicability_binding_verification_jobs(&transaction, stream_key, page)
+            .await?;
         persist_protocol_pause_events(
             &transaction,
             stream_key,
@@ -5200,6 +5867,150 @@ impl PgStore {
             )
             .await?;
         row.map(parse_settlement_intent_row).transpose()
+    }
+
+    /// Loads one tenant-bound applicability verification state for the
+    /// settlement intent. This read model is evidence-only: `not_applicable`,
+    /// `pending`, `retrying`, and `dead_lettered` never authorize signing or
+    /// token movement.
+    pub async fn load_applicability_binding_verification(
+        &self,
+        intent_id: Uuid,
+        merchant_id: Uuid,
+        stream_key: &str,
+    ) -> Result<Option<ApplicabilityBindingVerificationView>, StorageError> {
+        if intent_id.get_version_num() != 7 || merchant_id.get_version_num() != 7 {
+            return Err(StorageError::InvalidApplicabilityBindingVerification(
+                "settlement and tenant identities must be UUIDv7".to_string(),
+            ));
+        }
+        validate_indexer_stream_key(stream_key)?;
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let row = client
+            .query_opt(
+                "SELECT intent.id, intent.signature, intent.slot::text,
+                        CASE
+                            WHEN verified.event_index IS NOT NULL THEN 'verified'
+                            WHEN job.dead_lettered_at IS NOT NULL THEN 'dead_lettered'
+                            WHEN job.claim_token IS NOT NULL THEN 'retrying'
+                            WHEN job.id IS NOT NULL THEN 'pending'
+                            ELSE 'not_applicable'
+                        END,
+                        COALESCE(verified.event_index::text, job.event_index::text),
+                        COALESCE(verified.event_slot::text, job.event_slot::text),
+                        verified.provider_slot::text,
+                        verified.receipt, verified.binding, verified.merchant,
+                        verified.mint, verified.context_id,
+                        verified.attestation_digest, verified.event_evidence_digest,
+                        verified.verification_commitment,
+                        job.attempts::text, job.last_error_code,
+                        to_char(verified.verified_at AT TIME ZONE 'UTC',
+                                'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),
+                        to_char(job.claimed_at AT TIME ZONE 'UTC',
+                                'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),
+                        to_char(job.dead_lettered_at AT TIME ZONE 'UTC',
+                                'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')
+                 FROM settlement_intents AS intent
+                 LEFT JOIN LATERAL (
+                     SELECT verification.event_index, verification.event_slot,
+                            verification.provider_slot, verification.receipt,
+                            verification.binding, verification.merchant,
+                            verification.mint, verification.context_id,
+                            verification.attestation_digest,
+                            verification.event_evidence_digest,
+                            verification.verification_commitment,
+                            verification.verified_at
+                     FROM applicability_binding_verifications AS verification
+                     WHERE verification.stream_key = $3
+                       AND verification.signature = intent.signature
+                       AND verification.event_slot = intent.slot
+                     ORDER BY verification.verified_at DESC, verification.id DESC
+                     LIMIT 1
+                 ) AS verified ON TRUE
+                 LEFT JOIN LATERAL (
+                     SELECT jobs.id, jobs.event_index, raw.slot AS event_slot,
+                            jobs.attempts, jobs.claim_token, jobs.last_error_code,
+                            jobs.claimed_at, jobs.dead_lettered_at, jobs.updated_at
+                     FROM applicability_binding_verification_jobs AS jobs
+                     JOIN raw_chain_evidence AS raw
+                       ON raw.stream_key = jobs.stream_key
+                      AND raw.signature = jobs.signature
+                      AND raw.event_index = jobs.event_index
+                     WHERE jobs.stream_key = $3
+                       AND jobs.signature = intent.signature
+                     ORDER BY jobs.updated_at DESC, jobs.id DESC
+                     LIMIT 1
+                 ) AS job ON TRUE
+                 WHERE intent.id = $1 AND intent.merchant_id = $2",
+                &[&intent_id, &merchant_id, &stream_key],
+            )
+            .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let parse_optional_u16 = |value: Option<String>, field: &str| {
+            value
+                .map(|value| {
+                    value.parse::<u16>().map_err(|_| {
+                        StorageError::InvalidApplicabilityBindingVerification(format!(
+                            "stored {field} is outside the bounded range"
+                        ))
+                    })
+                })
+                .transpose()
+        };
+        let parse_optional_pubkey = |value: Option<Vec<u8>>, field: &str| {
+            value
+                .map(|value| {
+                    let bytes: [u8; 32] = value.try_into().map_err(|value: Vec<u8>| {
+                        StorageError::InvalidApplicabilityBindingVerification(format!(
+                            "stored {field} must contain 32 bytes, got {}",
+                            value.len()
+                        ))
+                    })?;
+                    Ok::<String, StorageError>(Pubkey::new_from_array(bytes).to_string())
+                })
+                .transpose()
+        };
+        let parse_optional_hex = |value: Option<Vec<u8>>, field: &str| {
+            value
+                .map(|value| {
+                    if value.is_empty() || value.len() > 32 {
+                        return Err(StorageError::InvalidApplicabilityBindingVerification(
+                            format!("stored {field} has an invalid byte length"),
+                        ));
+                    }
+                    Ok::<String, StorageError>(
+                        value.iter().map(|byte| format!("{byte:02x}")).collect(),
+                    )
+                })
+                .transpose()
+        };
+        Ok(Some(ApplicabilityBindingVerificationView {
+            settlement_intent_id: row.get(0),
+            status: row.get(3),
+            signature: row.get(1),
+            event_index: parse_optional_u16(row.get(4), "event index")?,
+            event_slot: row.get(5),
+            provider_slot: row.get(6),
+            receipt: parse_optional_pubkey(row.get(7), "receipt")?,
+            binding: parse_optional_pubkey(row.get(8), "binding")?,
+            merchant: parse_optional_pubkey(row.get(9), "merchant")?,
+            mint: parse_optional_pubkey(row.get(10), "mint")?,
+            context_id_hex: parse_optional_hex(row.get(11), "context ID")?,
+            attestation_digest_hex: parse_optional_hex(row.get(12), "attestation digest")?,
+            event_evidence_digest_hex: parse_optional_hex(row.get(13), "event evidence digest")?,
+            verification_commitment: row.get(14),
+            attempts: parse_optional_u16(row.get(15), "attempt count")?,
+            last_error_code: row.get(16),
+            verified_at: row.get(17),
+            claimed_at: row.get(18),
+            dead_lettered_at: row.get(19),
+        }))
     }
 
     /// Resolves an adjustment's original settlement from server-owned,
@@ -8286,7 +9097,10 @@ impl PgStore {
         let tax_vault: String = route.get(3);
         let mint_decimals: i16 = route.get(4);
         if !(0..=9).contains(&mint_decimals)
-            || !matches!(token_program.as_str(), SPL_TOKEN_PROGRAM_ID | TOKEN_2022_PROGRAM_ID)
+            || !matches!(
+                token_program.as_str(),
+                SPL_TOKEN_PROGRAM_ID | TOKEN_2022_PROGRAM_ID
+            )
         {
             return Err(StorageError::SettlementRouteIntegrity(
                 "verified release route has unsupported asset metadata".to_string(),
@@ -8802,11 +9616,12 @@ impl PgStore {
         ))
     }
 
-    async fn document_quote_once(
+    pub async fn create_applicability_context(
         &self,
-        command: &DocumentQuoteCommand,
-        request_digest: Digest32,
-    ) -> Result<DocumentQuoteOutcome, StorageError> {
+        command: CreateApplicabilityContextCommand,
+    ) -> Result<ApplicabilityContextOutcome, StorageError> {
+        validate_create_applicability_context_command(&command)?;
+        let request_digest = applicability_context_request_digest(&command)?;
         let mut client = self
             .pool
             .get()
@@ -8857,11 +9672,374 @@ impl PgStore {
             let Some(stored_response) = stored_response else {
                 return Err(StorageError::IdempotencyInProgress);
             };
+            let response: StoredApplicabilityContext = serde_json::from_value(stored_response)
+                .map_err(|_| StorageError::InvalidStoredResponse)?;
+            transaction.commit().await?;
+            return Ok(ApplicabilityContextOutcome::Replay(response));
+        }
+
+        let context_id = Uuid::now_v7();
+        let unsigned = &command.attestation.unsigned;
+        let facts_document = serde_json::to_value(&unsigned.facts)?;
+        let decision_document = serde_json::to_value(&unsigned.decision)?;
+        let attestation_document = serde_json::to_value(&command.attestation)?;
+        let evidence_expires_at_unix = unsigned.facts.valid_until_unix;
+        let policy_digest = unsigned.decision.policy_digest;
+        let decision_digest = unsigned
+            .decision
+            .canonical_digest()
+            .map_err(|error| StorageError::InvalidApplicabilityContext(error.to_string()))?;
+        let stored = StoredApplicabilityContext {
+            context_id,
+            merchant_id: command.merchant_id,
+            status: "draft".to_string(),
+            policy_id: unsigned.decision.policy_id.clone(),
+            policy_version: unsigned.decision.policy_version,
+            policy_digest,
+            facts_digest: unsigned.decision.facts_digest,
+            decision_digest,
+            jurisdiction_resolution_digest: unsigned.jurisdiction_resolution_digest,
+            evidence_digest: unsigned.facts.evidence_digest,
+            attestation_digest: command.attestation.payload_digest,
+            effective_from_unix: command.effective_from_unix,
+            effective_until_unix: command.effective_until_unix,
+            evidence_expires_at_unix,
+            provenance: command.provenance.clone(),
+            attestation: command.attestation.clone(),
+        };
+        transaction
+            .execute(
+                "INSERT INTO tax_applicability_contexts
+                    (id, merchant_id, policy_id, policy_version, policy_digest,
+                     facts_digest, decision_digest, jurisdiction_resolution_digest,
+                     evidence_digest, attestation_digest, facts_document,
+                     decision_document, attestation_document, status,
+                     effective_from, effective_until, evidence_expires_at,
+                     provenance, author_subject)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+                         $13, $14,
+                         TIMESTAMPTZ 'epoch' + ($15::bigint * INTERVAL '1 second'),
+                         CASE WHEN $16::bigint IS NULL THEN NULL
+                              ELSE TIMESTAMPTZ 'epoch' + ($16::bigint * INTERVAL '1 second') END,
+                         TIMESTAMPTZ 'epoch' + ($17::bigint * INTERVAL '1 second'),
+                         $18, $19)",
+                &[
+                    &context_id,
+                    &command.merchant_id,
+                    &stored.policy_id,
+                    &(stored.policy_version as i32),
+                    &&stored.policy_digest[..],
+                    &&stored.facts_digest[..],
+                    &&stored.decision_digest[..],
+                    &&stored.jurisdiction_resolution_digest[..],
+                    &&stored.evidence_digest[..],
+                    &&stored.attestation_digest[..],
+                    &Json(facts_document),
+                    &Json(decision_document),
+                    &Json(attestation_document),
+                    &stored.status,
+                    &stored.effective_from_unix,
+                    &stored.effective_until_unix,
+                    &stored.evidence_expires_at_unix,
+                    &Json(stored.provenance.clone()),
+                    &command.actor_subject,
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "INSERT INTO tax_applicability_context_events
+                    (context_id, merchant_id, event_type, actor_subject, evidence)
+                 VALUES ($1, $2, 'created', $3, $4)",
+                &[
+                    &context_id,
+                    &command.merchant_id,
+                    &command.actor_subject,
+                    &Json(serde_json::json!({
+                        "schema_version": OUTBOX_PAYLOAD_SCHEMA_VERSION,
+                        "request_digest": request_digest,
+                    })),
+                ],
+            )
+            .await?;
+        let response_document = serde_json::to_value(&stored)?;
+        transaction
+            .execute(
+                "INSERT INTO outbox_events
+                    (aggregate_type, aggregate_id, event_type, payload)
+                 VALUES ($1, $2, $3, $4)",
+                &[
+                    &"tax_applicability_context",
+                    &context_id,
+                    &"tax.applicability.context.created",
+                    &Json(serde_json::json!({
+                        "schema_version": OUTBOX_PAYLOAD_SCHEMA_VERSION,
+                        "merchant_id": command.merchant_id,
+                        "context": response_document,
+                    })),
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "UPDATE idempotency_records
+                 SET response_status = 201, response_document = $3, completed_at = now()
+                 WHERE merchant_id = $1 AND idempotency_key = $2",
+                &[
+                    &command.merchant_id,
+                    &command.idempotency_key,
+                    &Json(response_document),
+                ],
+            )
+            .await?;
+        transaction.commit().await?;
+        Ok(ApplicabilityContextOutcome::Created(stored))
+    }
+
+    pub async fn transition_applicability_context(
+        &self,
+        transition: ApplicabilityContextTransition,
+    ) -> Result<(), StorageError> {
+        validate_applicability_context_transition(&transition)?;
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let row = transaction
+            .query_opt(
+                "SELECT status FROM tax_applicability_contexts
+                 WHERE id = $1 AND merchant_id = $2 FOR UPDATE",
+                &[&transition.context_id, &transition.merchant_id],
+            )
+            .await?
+            .ok_or(StorageError::ApplicabilityContextNotFound)?;
+        let current_status: String = row.get(0);
+        if current_status != transition.expected_status {
+            return Err(StorageError::ApplicabilityContextTransitionConflict);
+        }
+        let event_type = match transition.next_status.as_str() {
+            "review" => "submitted",
+            "approved" => "approved",
+            "published" => "published",
+            "rejected" => "rejected",
+            "retired" => "retired",
+            _ => return Err(StorageError::ApplicabilityContextTransitionConflict),
+        };
+        let transition_evidence = transition.evidence.clone();
+        transaction
+            .execute(
+                "UPDATE tax_applicability_contexts
+                 SET status = $3,
+                     reviewer_subject = CASE WHEN $3 = 'approved' THEN $4 ELSE reviewer_subject END,
+                     approver_subject = CASE WHEN $3 = 'published' THEN $4 ELSE approver_subject END,
+                     updated_at = now()
+                 WHERE id = $1 AND merchant_id = $2 AND status = $5",
+                &[
+                    &transition.context_id,
+                    &transition.merchant_id,
+                    &transition.next_status,
+                    &transition.actor_subject,
+                    &transition.expected_status,
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "INSERT INTO tax_applicability_context_events
+                    (context_id, merchant_id, event_type, actor_subject, evidence)
+                 VALUES ($1, $2, $3, $4, $5)",
+                &[
+                    &transition.context_id,
+                    &transition.merchant_id,
+                    &event_type,
+                    &transition.actor_subject,
+                    &Json(transition_evidence.clone()),
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "INSERT INTO outbox_events
+                    (aggregate_type, aggregate_id, event_type, payload)
+                 VALUES ($1, $2, $3, $4)",
+                &[
+                    &"tax_applicability_context",
+                    &transition.context_id,
+                    &format!("tax.applicability.context.{event_type}"),
+                    &Json(serde_json::json!({
+                        "schema_version": OUTBOX_PAYLOAD_SCHEMA_VERSION,
+                        "merchant_id": transition.merchant_id,
+                        "context_id": transition.context_id,
+                        "from_status": transition.expected_status,
+                        "to_status": transition.next_status,
+                        "actor_subject": transition.actor_subject,
+                        "evidence": transition_evidence,
+                    })),
+                ],
+            )
+            .await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    pub async fn load_applicability_context(
+        &self,
+        merchant_id: Uuid,
+        context_id: Uuid,
+        now_unix: i64,
+        require_published: bool,
+    ) -> Result<StoredApplicabilityContext, StorageError> {
+        if merchant_id.is_nil() || context_id.is_nil() || now_unix <= 0 {
+            return Err(StorageError::InvalidApplicabilityContext(
+                "context lookup identity or time is invalid".into(),
+            ));
+        }
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let row = client
+            .query_opt(
+                "SELECT status, policy_id, policy_version, policy_digest,
+                        facts_digest, decision_digest,
+                        jurisdiction_resolution_digest, evidence_digest,
+                        attestation_digest,
+                        floor(extract(epoch FROM effective_from))::bigint,
+                        CASE WHEN effective_until IS NULL THEN NULL
+                             ELSE floor(extract(epoch FROM effective_until))::bigint END,
+                        floor(extract(epoch FROM evidence_expires_at))::bigint,
+                        facts_document, decision_document, attestation_document,
+                        provenance
+                 FROM tax_applicability_contexts
+                 WHERE id = $1 AND merchant_id = $2
+                   AND ($4::boolean = false OR status = 'published')
+                   AND effective_from <= TIMESTAMPTZ 'epoch' + ($3::bigint * INTERVAL '1 second')
+                   AND (effective_until IS NULL OR effective_until > TIMESTAMPTZ 'epoch' + ($3::bigint * INTERVAL '1 second'))
+                   AND evidence_expires_at > TIMESTAMPTZ 'epoch' + ($3::bigint * INTERVAL '1 second')",
+                &[&context_id, &merchant_id, &now_unix, &require_published],
+            )
+            .await?
+            .ok_or(StorageError::ApplicabilityContextNotFound)?;
+        parse_stored_applicability_context(context_id, merchant_id, row)
+    }
+
+    /// Loads the complete tenant-owned projection for governance/read paths.
+    /// Unlike quote binding, operator history must remain inspectable after a
+    /// context is retired or its source evidence expires. Callers must still
+    /// authenticate the merchant boundary before invoking this port.
+    pub async fn load_applicability_context_for_operator(
+        &self,
+        merchant_id: Uuid,
+        context_id: Uuid,
+    ) -> Result<StoredApplicabilityContext, StorageError> {
+        if merchant_id.is_nil() || context_id.is_nil() {
+            return Err(StorageError::InvalidApplicabilityContext(
+                "context lookup identity is invalid".into(),
+            ));
+        }
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let row = client
+            .query_opt(
+                "SELECT status, policy_id, policy_version, policy_digest,
+                        facts_digest, decision_digest,
+                        jurisdiction_resolution_digest, evidence_digest,
+                        attestation_digest,
+                        floor(extract(epoch FROM effective_from))::bigint,
+                        CASE WHEN effective_until IS NULL THEN NULL
+                             ELSE floor(extract(epoch FROM effective_until))::bigint END,
+                        floor(extract(epoch FROM evidence_expires_at))::bigint,
+                        facts_document, decision_document, attestation_document,
+                        provenance
+                 FROM tax_applicability_contexts
+                 WHERE id = $1 AND merchant_id = $2",
+                &[&context_id, &merchant_id],
+            )
+            .await?
+            .ok_or(StorageError::ApplicabilityContextNotFound)?;
+        parse_stored_applicability_context(context_id, merchant_id, row)
+    }
+
+    async fn document_quote_once(
+        &self,
+        command: &DocumentQuoteCommand,
+        request_digest: Digest32,
+    ) -> Result<DocumentQuoteOutcome, StorageError> {
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let inserted = transaction
+            .query_opt(
+                "INSERT INTO idempotency_records
+                    (merchant_id, idempotency_key, request_digest)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (merchant_id, idempotency_key) DO NOTHING
+                 RETURNING id",
+                &[
+                    &command.merchant_id,
+                    &command.idempotency_key,
+                    &&request_digest[..],
+                ],
+            )
+            .await?;
+        if inserted.is_none() {
+            let existing = transaction
+                .query_one(
+                    "SELECT request_digest, response_document
+                     FROM idempotency_records
+                     WHERE merchant_id = $1 AND idempotency_key = $2
+                     FOR UPDATE",
+                    &[&command.merchant_id, &command.idempotency_key],
+                )
+                .await?;
+            let existing_digest: Vec<u8> = existing.get(0);
+            if existing_digest.as_slice() != request_digest {
+                return Err(StorageError::IdempotencyConflict);
+            }
+            let stored_response: Option<Value> = existing.get(1);
+            let Some(stored_response) = stored_response else {
+                return Err(StorageError::IdempotencyInProgress);
+            };
             let response: StoredDocumentQuote = serde_json::from_value(stored_response)
                 .map_err(|_| StorageError::InvalidStoredResponse)?;
             transaction.commit().await?;
             return Ok(DocumentQuoteOutcome::Replay(response));
         }
+
+        let applicability_binding =
+            load_quote_applicability_binding(&transaction, command.applicability_context_id)
+                .await?;
 
         let rule_row = transaction
             .query_opt(
@@ -8942,8 +10120,11 @@ impl PgStore {
             &persisted_facts,
             database_rule_id,
             &result,
-            &self.engine_version,
-            self.evidence_cipher.as_ref(),
+            &CalculationInsertOptions {
+                engine_version: &self.engine_version,
+                evidence_cipher: self.evidence_cipher.as_ref(),
+                applicability_binding: applicability_binding.as_ref(),
+            },
         )
         .await?;
         let response = StoredDocumentQuote {
@@ -8951,6 +10132,9 @@ impl PgStore {
             status: CALCULATION_STATUS.to_string(),
             expires_at_unix,
             schema: command.schema.clone(),
+            applicability_context_id: applicability_binding.map(|binding| binding.context_id),
+            applicability_attestation_digest: applicability_binding
+                .map(|binding| binding.attestation_digest),
             result,
         };
         let response_document = serde_json::to_value(&response)?;
@@ -9099,7 +10283,6 @@ impl PgStore {
                 DEFAULT_STATEMENT_TIMEOUT.as_millis()
             ))
             .await?;
-
         let inserted = transaction
             .query_opt(
                 "INSERT INTO idempotency_records
@@ -9138,6 +10321,10 @@ impl PgStore {
             transaction.commit().await?;
             return Ok(QuoteOutcome::Replay(response));
         }
+
+        let applicability_binding =
+            load_quote_applicability_binding(&transaction, command.applicability_context_id)
+                .await?;
 
         let rule_row = transaction
             .query_opt(
@@ -9219,14 +10406,20 @@ impl PgStore {
             &persisted_facts,
             database_rule_id,
             &result,
-            &self.engine_version,
-            self.evidence_cipher.as_ref(),
+            &CalculationInsertOptions {
+                engine_version: &self.engine_version,
+                evidence_cipher: self.evidence_cipher.as_ref(),
+                applicability_binding: applicability_binding.as_ref(),
+            },
         )
         .await?;
         let response = StoredQuote {
             calculation_id,
             status: CALCULATION_STATUS.to_string(),
             expires_at_unix,
+            applicability_context_id: applicability_binding.map(|binding| binding.context_id),
+            applicability_attestation_digest: applicability_binding
+                .map(|binding| binding.attestation_digest),
             result,
         };
         let response_document = serde_json::to_value(&response)?;
@@ -9278,7 +10471,8 @@ impl PgStore {
             .query_opt(
                 "SELECT status, result_document,
                         floor(extract(epoch FROM expires_at))::bigint,
-                        expires_at <= now()
+                        expires_at <= now(), applicability_context_id,
+                        applicability_attestation_digest
                  FROM tax_calculations
                  WHERE id = $1 AND merchant_id = $2",
                 &[&calculation_id, &merchant_id],
@@ -9308,10 +10502,17 @@ impl PgStore {
         }
         let result: CalculationResult =
             serde_json::from_value(row.get(1)).map_err(|_| StorageError::InvalidStoredResponse)?;
+        let applicability_context_id: Option<Uuid> = row.get(4);
+        let applicability_attestation_digest = row
+            .get::<_, Option<Vec<u8>>>(5)
+            .map(parse_digest)
+            .transpose()?;
         Ok(StoredQuote {
             calculation_id,
             status,
             expires_at_unix: row.get(2),
+            applicability_context_id,
+            applicability_attestation_digest,
             result,
         })
     }
@@ -9332,7 +10533,8 @@ impl PgStore {
             .query_opt(
                 "SELECT status, document_schema, result_document,
                         floor(extract(epoch FROM expires_at))::bigint,
-                        expires_at <= now()
+                        expires_at <= now(), applicability_context_id,
+                        applicability_attestation_digest
                  FROM tax_document_calculations
                  WHERE id = $1 AND merchant_id = $2",
                 &[&calculation_id, &merchant_id],
@@ -9361,11 +10563,18 @@ impl PgStore {
         }
         let result: TaxDocumentResult =
             serde_json::from_value(row.get(2)).map_err(|_| StorageError::InvalidStoredResponse)?;
+        let applicability_context_id: Option<Uuid> = row.get(5);
+        let applicability_attestation_digest = row
+            .get::<_, Option<Vec<u8>>>(6)
+            .map(parse_digest)
+            .transpose()?;
         Ok(StoredDocumentQuote {
             calculation_id,
             status,
             expires_at_unix: row.get(3),
             schema: row.get(1),
+            applicability_context_id,
+            applicability_attestation_digest,
             result,
         })
     }
@@ -9714,6 +10923,16 @@ impl PgStore {
             gross_atomic,
             tax_atomic,
             net_atomic,
+            treatment_outcome_digest: policy::treatment_outcome_binding(
+                attestation.unsigned.schema_version,
+                result.treatment_outcome.treatment,
+                result.treatment_outcome.arithmetic_tax_atomic,
+                result.treatment_outcome.collected_tax_atomic,
+                result.treatment_outcome.self_assessed_tax_atomic,
+                result.treatment_outcome.withheld_tax_atomic,
+                result.treatment_outcome.taxable_base_atomic,
+            )
+            .map_err(|error| StorageError::InvalidAttestation(error.to_string()))?,
         };
         attestation
             .verify_binding(&binding)
@@ -9994,6 +11213,77 @@ impl PgStore {
             )
             .await?;
         Ok(())
+    }
+
+    /// Lists a bounded, tenant-scoped projection of sensitive evidence access.
+    /// This is an audit read model only; it never returns decrypted facts or
+    /// authorizes replay or settlement.
+    pub async fn list_evidence_access_audit_events(
+        &self,
+        merchant_id: Uuid,
+        calculation_id: Option<Uuid>,
+        limit: usize,
+    ) -> Result<Vec<EvidenceAccessAuditEventView>, StorageError> {
+        validate_evidence_access_audit_limit(limit)?;
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let limit = i64::try_from(limit).map_err(|_| {
+            StorageError::InvalidConfiguration(
+                "evidence access audit list limit is too large".into(),
+            )
+        })?;
+        let rows = match calculation_id {
+            Some(calculation_id) => {
+                client
+                    .query(
+                        "SELECT id, calculation_id, actor_subject, request_id,
+                                purpose, outcome, facts_digest,
+                                to_char(occurred_at AT TIME ZONE 'UTC',
+                                        'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')
+                         FROM evidence_access_audit_events
+                         WHERE merchant_id = $1 AND calculation_id = $2
+                         ORDER BY occurred_at DESC, id DESC
+                         LIMIT $3",
+                        &[&merchant_id, &calculation_id, &limit],
+                    )
+                    .await?
+            }
+            None => {
+                client
+                    .query(
+                        "SELECT id, calculation_id, actor_subject, request_id,
+                                purpose, outcome, facts_digest,
+                                to_char(occurred_at AT TIME ZONE 'UTC',
+                                        'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')
+                         FROM evidence_access_audit_events
+                         WHERE merchant_id = $1
+                         ORDER BY occurred_at DESC, id DESC
+                         LIMIT $2",
+                        &[&merchant_id, &limit],
+                    )
+                    .await?
+            }
+        };
+        rows.into_iter()
+            .map(|row| {
+                Ok(EvidenceAccessAuditEventView {
+                    id: row.get(0),
+                    calculation_id: row.get(1),
+                    actor_subject: row.get(2),
+                    request_id: row.get(3),
+                    purpose: row.get(4),
+                    outcome: row.get(5),
+                    facts_digest: row
+                        .get::<_, Option<Vec<u8>>>(6)
+                        .map(parse_digest)
+                        .transpose()?,
+                    occurred_at: row.get(7),
+                })
+            })
+            .collect()
     }
 
     /// Creates one immutable, tenant-scoped refund funding topology. The row
@@ -12457,6 +13747,116 @@ impl PgStore {
         Ok(true)
     }
 
+    pub async fn begin_settlement_route_verification_run(
+        &self,
+        run_kind: &str,
+        batch_size: usize,
+        operator_approval_id: Option<Uuid>,
+    ) -> Result<Uuid, StorageError> {
+        validate_settlement_route_verification_run_start(run_kind, operator_approval_id)?;
+        if !(1..=64).contains(&batch_size) {
+            return Err(StorageError::InvalidConfiguration(
+                "settlement route verification run batch must be between 1 and 64".to_string(),
+            ));
+        }
+        let run_id = Uuid::now_v7();
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        client
+            .execute(
+                "INSERT INTO settlement_route_verification_runs
+                    (id, run_kind, status, batch_size, operator_approval_id)
+                 VALUES ($1, $2, 'running', $3, $4)",
+                &[
+                    &run_id,
+                    &run_kind,
+                    &(batch_size as i16),
+                    &operator_approval_id,
+                ],
+            )
+            .await?;
+        Ok(run_id)
+    }
+
+    pub async fn complete_settlement_route_verification_run(
+        &self,
+        run_id: Uuid,
+        summary: SettlementRouteVerificationRunSummary,
+    ) -> Result<(), StorageError> {
+        validate_settlement_route_verification_run_summary(summary)?;
+        let status = if summary.failed == 0 {
+            "completed"
+        } else {
+            "completed_with_failures"
+        };
+        let failure_code = (summary.failed > 0).then_some("route_attempts_failed");
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let updated = client
+            .execute(
+                "UPDATE settlement_route_verification_runs
+                 SET status = $2, examined_count = $3, activated_count = $4,
+                     already_active_count = $5, failed_count = $6,
+                     failure_code = $7, completed_at = now(), updated_at = now()
+                 WHERE id = $1 AND status = 'running'",
+                &[
+                    &run_id,
+                    &status,
+                    &(summary.examined as i32),
+                    &(summary.activated as i32),
+                    &(summary.already_active as i32),
+                    &(summary.failed as i32),
+                    &failure_code,
+                ],
+            )
+            .await?;
+        if updated != 1 {
+            return Err(StorageError::SettlementRouteVerificationRunConflict);
+        }
+        Ok(())
+    }
+
+    pub async fn fail_settlement_route_verification_run(
+        &self,
+        run_id: Uuid,
+        failure_code: &str,
+    ) -> Result<(), StorageError> {
+        if failure_code.is_empty()
+            || failure_code.len() > 128
+            || !failure_code
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            return Err(StorageError::InvalidConfiguration(
+                "settlement route verification failure code is invalid".to_string(),
+            ));
+        }
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let updated = client
+            .execute(
+                "UPDATE settlement_route_verification_runs
+                 SET status = 'failed', failure_code = $2,
+                     completed_at = now(), updated_at = now()
+                 WHERE id = $1 AND status = 'running'",
+                &[&run_id, &failure_code],
+            )
+            .await?;
+        if updated != 1 {
+            return Err(StorageError::SettlementRouteVerificationRunConflict);
+        }
+        Ok(())
+    }
+
     /// Returns a bounded batch of routes that require a separately authorized
     /// finalized chain verification. This read is intentionally not used by
     /// checkout or settlement compilation.
@@ -12516,6 +13916,8 @@ impl PgStore {
             || verification.accounts.len() != 5
             || verification.verification_schema != SETTLEMENT_ROUTE_VERIFICATION_SCHEMA
             || verification.asset_config.trim().is_empty()
+            || verification.asset_kind != STABLECOIN_ASSET_KIND
+            || !verification.asset_enabled
             || verification.mint_decimals > 9
             || !matches!(
                 verification.verification_commitment,
@@ -12532,13 +13934,18 @@ impl PgStore {
                 "verification mint is not a canonical public key".to_string(),
             )
         })?;
-        let (expected_asset_config, _) = Pubkey::find_program_address(
+        let (expected_asset_config, expected_asset_config_bump) = Pubkey::find_program_address(
             &[b"asset-config", mint.as_ref()],
             &settlement_client::settlement_program_id(),
         );
         if verification.asset_config != expected_asset_config.to_string() {
             return Err(StorageError::SettlementRouteVerificationInvalid(
                 "verification asset admission PDA does not match the route mint".to_string(),
+            ));
+        }
+        if verification.asset_config_bump != expected_asset_config_bump {
+            return Err(StorageError::SettlementRouteVerificationInvalid(
+                "verification asset admission PDA bump does not match the route mint".to_string(),
             ));
         }
         let evidence = serde_json::to_value(verification)?;
@@ -12633,8 +14040,10 @@ impl PgStore {
                      verification_slot = $3::text::numeric,
                      verification_commitment = $4,
                      verification_evidence = $5, mint_decimals = $6,
-                     verification_schema = $7, verified_at = now(), updated_at = now()
-                 WHERE id = $1 AND merchant_id = $8
+                     asset_config = $7, asset_kind = $8, asset_enabled = $9,
+                     asset_config_bump = $10, verification_schema = $11,
+                     verified_at = now(), updated_at = now()
+                 WHERE id = $1 AND merchant_id = $12
                    AND status IN ('pending_verification', 'suspended')",
                 &[
                     &route_id,
@@ -12643,6 +14052,10 @@ impl PgStore {
                     &verification.verification_commitment,
                     &evidence,
                     &mint_decimals,
+                    &verification.asset_config,
+                    &i16::from(verification.asset_kind),
+                    &verification.asset_enabled,
+                    &i16::from(verification.asset_config_bump),
                     &verification.verification_schema,
                     &merchant_id,
                 ],
@@ -12733,6 +14146,8 @@ impl PgStore {
                  WHERE merchant_id = $1
                    AND status = 'active'
                    AND verification_schema = 'settlement-route-verification/v2'
+                   AND asset_kind = 1 AND asset_enabled = true
+                   AND asset_config IS NOT NULL AND asset_config_bump IS NOT NULL
                    AND effective_from <= now()
                    AND (effective_until IS NULL OR now() < effective_until)
                    AND merchant_account = $2
@@ -12791,6 +14206,8 @@ impl PgStore {
                  WHERE merchant_id = $1
                    AND status = 'active'
                    AND verification_schema = 'settlement-route-verification/v2'
+                   AND asset_kind = 1 AND asset_enabled = true
+                   AND asset_config IS NOT NULL AND asset_config_bump IS NOT NULL
                    AND effective_from <= now()
                    AND (effective_until IS NULL OR now() < effective_until)
                    AND mint = $2
@@ -13167,6 +14584,8 @@ impl PgStore {
                  WHERE merchant_id = $1
                    AND status = 'active'
                    AND verification_schema = 'settlement-route-verification/v2'
+                   AND asset_kind = 1 AND asset_enabled = true
+                   AND asset_config IS NOT NULL AND asset_config_bump IS NOT NULL
                    AND effective_from <= now()
                    AND (effective_until IS NULL OR now() < effective_until)
                  ORDER BY route_key, version DESC, id
@@ -13458,6 +14877,15 @@ impl PgStore {
             .map(parse_revenue_stream_policy_reference)
             .collect()
     }
+}
+
+fn validate_evidence_access_audit_limit(limit: usize) -> Result<(), StorageError> {
+    if !(1..=MAX_EVIDENCE_ACCESS_AUDIT_LIST_LIMIT).contains(&limit) {
+        return Err(StorageError::InvalidConfiguration(format!(
+            "evidence access audit list limit must be between 1 and {MAX_EVIDENCE_ACCESS_AUDIT_LIST_LIMIT}"
+        )));
+    }
+    Ok(())
 }
 
 async fn persist_revenue_stream_accrual_jobs(
@@ -13753,19 +15181,59 @@ fn build_document_fx_evidence_ref(
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct QuoteApplicabilityBinding {
+    context_id: Uuid,
+    attestation_digest: Digest32,
+}
+
+struct CalculationInsertOptions<'a> {
+    engine_version: &'a str,
+    evidence_cipher: Option<&'a EvidenceCipher>,
+    applicability_binding: Option<&'a QuoteApplicabilityBinding>,
+}
+
+async fn load_quote_applicability_binding(
+    transaction: &deadpool_postgres::Transaction<'_>,
+    context_id: Option<Uuid>,
+) -> Result<Option<QuoteApplicabilityBinding>, StorageError> {
+    let Some(context_id) = context_id else {
+        return Ok(None);
+    };
+    let row = transaction
+        .query_opt(
+            "SELECT attestation_digest
+             FROM tax_applicability_contexts
+             WHERE id = $1
+               AND status = 'published'
+               AND effective_from <= now()
+               AND (effective_until IS NULL OR effective_until > now())
+               AND evidence_expires_at > now()",
+            &[&context_id],
+        )
+        .await?
+        .ok_or(StorageError::ApplicabilityContextNotFound)?;
+    let attestation_digest = parse_digest(row.get(0))?;
+    Ok(Some(QuoteApplicabilityBinding {
+        context_id,
+        attestation_digest,
+    }))
+}
+
 async fn insert_calculation(
     transaction: &deadpool_postgres::Transaction<'_>,
     command: &QuoteCommand,
     persisted_facts: &TaxFacts,
     database_rule_id: Uuid,
     result: &CalculationResult,
-    engine_version: &str,
-    evidence_cipher: Option<&EvidenceCipher>,
+    options: &CalculationInsertOptions<'_>,
 ) -> Result<(Uuid, i64), StorageError> {
     let total_tax = result.total_tax_atomic.to_string();
     let total_net = result.total_net_atomic.to_string();
     let result_document = serde_json::to_value(result)?;
-    let evidence_cipher = evidence_cipher.ok_or(StorageError::EvidenceCipherUnavailable)?;
+    let evidence_cipher = options
+        .evidence_cipher
+        .ok_or(StorageError::EvidenceCipherUnavailable)?;
     let fx_evidence = build_fx_evidence_ref(
         command.merchant_id,
         &command.facts,
@@ -13782,8 +15250,20 @@ async fn insert_calculation(
         "facts_ciphertext": "tax_calculations.facts_ciphertext",
         "facts_key_id": encrypted_facts.key_id,
         "rule_digest": result.rule_digest,
-        "engine_version": engine_version,
+        "engine_version": options.engine_version,
     });
+    if let Some(binding) = options.applicability_binding
+        && let Some(object) = evidence_refs.as_object_mut()
+    {
+        object.insert(
+            "applicability_context_id".to_string(),
+            serde_json::json!(binding.context_id.to_string()),
+        );
+        object.insert(
+            "applicability_attestation_digest".to_string(),
+            serde_json::json!(binding.attestation_digest),
+        );
+    }
     if let Some(fx_evidence) = fx_evidence
         && let Some(object) = evidence_refs.as_object_mut()
     {
@@ -13794,17 +15274,18 @@ async fn insert_calculation(
             "INSERT INTO tax_calculations
                 (merchant_id, rule_set_id, facts_digest, engine_version, currency,
                 jurisdiction, total_tax_atomic, total_net_atomic, status,
-                 result_document, facts_document, facts_ciphertext, facts_nonce,
-                 facts_key_id, evidence_refs, expires_at)
+                result_document, facts_document, facts_ciphertext, facts_nonce,
+                facts_key_id, evidence_refs, expires_at, applicability_context_id,
+                applicability_attestation_digest)
              VALUES ($1, $2, $3, $4, $5, $6, $7::text::numeric, $8::text::numeric,
                      $9, $10, NULL, $11, $12, $13, $14,
-                     now() + ($15::bigint * interval '1 second'))
+                     now() + ($15::bigint * interval '1 second'), $16, $17)
              RETURNING id, floor(extract(epoch FROM expires_at))::bigint",
             &[
                 &command.merchant_id,
                 &database_rule_id,
                 &&result.facts_digest[..],
-                &engine_version,
+                &options.engine_version,
                 &command.facts.currency,
                 &command.facts.jurisdiction,
                 &total_tax,
@@ -13816,6 +15297,12 @@ async fn insert_calculation(
                 &encrypted_facts.key_id,
                 &evidence_refs,
                 &(DEFAULT_QUOTE_TTL.as_secs() as i64),
+                &options
+                    .applicability_binding
+                    .map(|binding| binding.context_id),
+                &options
+                    .applicability_binding
+                    .map(|binding| binding.attestation_digest.to_vec()),
             ],
         )
         .await?;
@@ -13828,14 +15315,15 @@ async fn insert_document_calculation(
     persisted_facts: &TaxDocumentFacts,
     database_rule_id: Uuid,
     result: &TaxDocumentResult,
-    engine_version: &str,
-    evidence_cipher: Option<&EvidenceCipher>,
+    options: &CalculationInsertOptions<'_>,
 ) -> Result<(Uuid, i64), StorageError> {
     let gross = result.gross_atomic.to_string();
     let total_tax = result.total_tax_atomic.to_string();
     let total_net = result.total_net_atomic.to_string();
     let result_document = serde_json::to_value(result)?;
-    let evidence_cipher = evidence_cipher.ok_or(StorageError::EvidenceCipherUnavailable)?;
+    let evidence_cipher = options
+        .evidence_cipher
+        .ok_or(StorageError::EvidenceCipherUnavailable)?;
     let fx_evidence = build_document_fx_evidence_ref(
         command.merchant_id,
         &command.facts,
@@ -13853,8 +15341,20 @@ async fn insert_document_calculation(
         "facts_ciphertext": "tax_document_calculations.facts_ciphertext",
         "facts_key_id": encrypted_facts.key_id,
         "rule_digest": result.rule_digest,
-        "engine_version": engine_version,
+        "engine_version": options.engine_version,
     });
+    if let Some(binding) = options.applicability_binding
+        && let Some(object) = evidence_refs.as_object_mut()
+    {
+        object.insert(
+            "applicability_context_id".to_string(),
+            serde_json::json!(binding.context_id.to_string()),
+        );
+        object.insert(
+            "applicability_attestation_digest".to_string(),
+            serde_json::json!(binding.attestation_digest),
+        );
+    }
     if let Some(fx_evidence) = fx_evidence
         && let Some(object) = evidence_refs.as_object_mut()
     {
@@ -13867,11 +15367,12 @@ async fn insert_document_calculation(
                  facts_digest, rule_digest, engine_version, currency, jurisdiction,
                  gross_atomic, total_tax_atomic, total_net_atomic, status,
                  result_document, facts_ciphertext, facts_nonce, facts_key_id,
-                 evidence_refs, expires_at)
+                 evidence_refs, expires_at, applicability_context_id,
+                 applicability_attestation_digest)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
                      $10::text::numeric, $11::text::numeric, $12::text::numeric,
                      $13, $14, $15, $16, $17, $18,
-                     now() + ($19::bigint * interval '1 second'))
+                     now() + ($19::bigint * interval '1 second'), $20, $21)
              RETURNING id, floor(extract(epoch FROM expires_at))::bigint",
             &[
                 &command.merchant_id,
@@ -13880,7 +15381,7 @@ async fn insert_document_calculation(
                 &result.document_id,
                 &&result.facts_digest[..],
                 &&result.rule_digest[..],
-                &engine_version,
+                &options.engine_version,
                 &result.currency,
                 &result.jurisdiction,
                 &gross,
@@ -13893,6 +15394,12 @@ async fn insert_document_calculation(
                 &encrypted_facts.key_id,
                 &evidence_refs,
                 &(DEFAULT_QUOTE_TTL.as_secs() as i64),
+                &options
+                    .applicability_binding
+                    .map(|binding| binding.context_id),
+                &options
+                    .applicability_binding
+                    .map(|binding| binding.attestation_digest.to_vec()),
             ],
         )
         .await?;
@@ -14036,6 +15543,10 @@ pub fn quote_request_digest(command: &QuoteCommand) -> Result<[u8; 32], StorageE
     write_text(&mut hasher, &command.regime)?;
     hasher.update(facts_digest);
     hasher.update(candidate_digest);
+    if let Some(context_id) = command.applicability_context_id {
+        hasher.update(b"solana-tax-protocol/quote-applicability-context/v1");
+        hasher.update(context_id.as_bytes());
+    }
     if let Some(evidence) = command.fx_evidence.as_ref() {
         hasher.update(b"solana-tax-protocol/quote-fx-source/v1");
         write_text(&mut hasher, &evidence.envelope.unsigned.source_currency)?;
@@ -14061,6 +15572,10 @@ pub fn document_quote_request_digest(
     write_text(&mut hasher, &command.regime)?;
     hasher.update(facts_digest);
     hasher.update(candidate_digest);
+    if let Some(context_id) = command.applicability_context_id {
+        hasher.update(b"solana-tax-protocol/document-quote-applicability-context/v1");
+        hasher.update(context_id.as_bytes());
+    }
     if let Some(evidence) = command.fx_evidence.as_ref() {
         hasher.update(b"solana-tax-protocol/document-quote-fx-source/v1");
         write_text(&mut hasher, &evidence.envelope.unsigned.source_currency)?;
@@ -14107,6 +15622,14 @@ fn document_quote_request_facts_digest(
 }
 
 fn validate_document_quote_command(command: &DocumentQuoteCommand) -> Result<(), StorageError> {
+    if command
+        .applicability_context_id
+        .is_some_and(|context_id| context_id.is_nil())
+    {
+        return Err(StorageError::InvalidDocumentQuote(
+            "applicability context reference must not be nil".to_string(),
+        ));
+    }
     if command.merchant_id.is_nil()
         || command.idempotency_key.trim().is_empty()
         || command.idempotency_key.len() > 200
@@ -14132,6 +15655,111 @@ fn validate_document_quote_command(command: &DocumentQuoteCommand) -> Result<(),
     i32::try_from(command.rule_version).map_err(|_| {
         StorageError::InvalidDocumentQuote("rule version exceeds the PostgreSQL range".to_string())
     })?;
+    Ok(())
+}
+
+pub fn validate_create_applicability_context_command(
+    command: &CreateApplicabilityContextCommand,
+) -> Result<(), StorageError> {
+    if command.merchant_id.is_nil()
+        || command.idempotency_key.trim().is_empty()
+        || command.idempotency_key.len() > 256
+        || command
+            .idempotency_key
+            .bytes()
+            .any(|byte| byte.is_ascii_control())
+        || command.actor_subject.trim().is_empty()
+        || command.actor_subject.len() > 256
+        || command
+            .actor_subject
+            .bytes()
+            .any(|byte| byte.is_ascii_control())
+        || command.effective_from_unix <= 0
+        || command
+            .effective_until_unix
+            .is_some_and(|until| until <= command.effective_from_unix)
+        || serde_json::to_vec(&command.provenance)
+            .map(|bytes| bytes.len() > MAX_APPLICABILITY_CONTEXT_PROVENANCE_BYTES)
+            .unwrap_or(true)
+    {
+        return Err(StorageError::InvalidApplicabilityContext(
+            "context identity, lifecycle window, actor, or provenance is invalid".into(),
+        ));
+    }
+    command
+        .attestation
+        .verify()
+        .map_err(|error| StorageError::InvalidApplicabilityContext(error.to_string()))?;
+    let unsigned = &command.attestation.unsigned;
+    if unsigned.merchant_id != merchant_identity_digest(command.merchant_id.as_bytes()) {
+        return Err(StorageError::InvalidApplicabilityContext(
+            "attestation merchant identity does not match the tenant".into(),
+        ));
+    }
+    if command.effective_from_unix < unsigned.issued_at_unix
+        || command
+            .effective_until_unix
+            .is_some_and(|until| until > unsigned.expires_at_unix)
+    {
+        return Err(StorageError::InvalidApplicabilityContext(
+            "context effective window exceeds signed attestation validity".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub fn applicability_context_request_digest(
+    command: &CreateApplicabilityContextCommand,
+) -> Result<Digest32, StorageError> {
+    validate_create_applicability_context_command(command)?;
+    let canonical = serde_json::to_vec(&serde_json::json!({
+        "schema": "tax-applicability-context/v1",
+        "merchant_id": command.merchant_id,
+        "idempotency_key": command.idempotency_key,
+        "attestation": command.attestation,
+        "effective_from_unix": command.effective_from_unix,
+        "effective_until_unix": command.effective_until_unix,
+        "provenance": command.provenance,
+        "actor_subject": command.actor_subject,
+    }))?;
+    Ok(Sha256::digest(canonical).into())
+}
+
+pub fn validate_applicability_context_transition(
+    transition: &ApplicabilityContextTransition,
+) -> Result<(), StorageError> {
+    if transition.context_id.is_nil()
+        || transition.merchant_id.is_nil()
+        || transition.actor_subject.trim().is_empty()
+        || transition.actor_subject.len() > 256
+        || transition
+            .actor_subject
+            .bytes()
+            .any(|byte| byte.is_ascii_control())
+        || serde_json::to_vec(&transition.evidence)
+            .map(|bytes| bytes.len() > MAX_APPLICABILITY_CONTEXT_PROVENANCE_BYTES)
+            .unwrap_or(true)
+    {
+        return Err(StorageError::InvalidApplicabilityContext(
+            "transition identity, actor, or evidence is invalid".into(),
+        ));
+    }
+    let valid = matches!(
+        (
+            transition.expected_status.as_str(),
+            transition.next_status.as_str()
+        ),
+        ("draft", "review")
+            | ("draft", "rejected")
+            | ("review", "approved")
+            | ("review", "rejected")
+            | ("approved", "published")
+            | ("approved", "rejected")
+            | ("published", "retired")
+    );
+    if !valid {
+        return Err(StorageError::ApplicabilityContextTransitionConflict);
+    }
     Ok(())
 }
 
@@ -14326,6 +15954,14 @@ fn write_text(hasher: &mut Sha256, value: &str) -> Result<(), StorageError> {
 }
 
 fn validate_command(command: &QuoteCommand) -> Result<(), StorageError> {
+    if command
+        .applicability_context_id
+        .is_some_and(|context_id| context_id.is_nil())
+    {
+        return Err(StorageError::InvalidConfiguration(
+            "applicability context reference must not be nil".to_string(),
+        ));
+    }
     if command.idempotency_key.trim().is_empty() || command.idempotency_key.len() > 200 {
         return Err(StorageError::InvalidConfiguration(
             "idempotency key must contain 1 to 200 bytes".to_string(),
@@ -15136,6 +16772,89 @@ fn parse_stored_document_calculation_attestation(
         payload_digest,
         issuer_public_key,
         expires_at_unix,
+        attestation,
+    })
+}
+
+fn parse_stored_applicability_context(
+    context_id: Uuid,
+    merchant_id: Uuid,
+    row: deadpool_postgres::tokio_postgres::Row,
+) -> Result<StoredApplicabilityContext, StorageError> {
+    let status: String = row.get(0);
+    let policy_id: String = row.get(1);
+    let policy_version: i32 = row.get(2);
+    let policy_digest = parse_digest(row.get(3))?;
+    let facts_digest = parse_digest(row.get(4))?;
+    let decision_digest = parse_digest(row.get(5))?;
+    let jurisdiction_resolution_digest = parse_digest(row.get(6))?;
+    let evidence_digest = parse_digest(row.get(7))?;
+    let attestation_digest = parse_digest(row.get(8))?;
+    let effective_from_unix: i64 = row.get(9);
+    let effective_until_unix: Option<i64> = row.get(10);
+    let evidence_expires_at_unix: i64 = row.get(11);
+    let facts_document: Value = row.get(12);
+    let decision_document: Value = row.get(13);
+    let attestation_document: Value = row.get(14);
+    let provenance: Value = row.get(15);
+    if policy_version <= 0 {
+        return Err(StorageError::InvalidApplicabilityContext(
+            "stored applicability policy version is invalid".into(),
+        ));
+    }
+    let attestation: ApplicabilityAttestation = serde_json::from_value(attestation_document)
+        .map_err(|error| StorageError::InvalidApplicabilityContext(error.to_string()))?;
+    attestation
+        .verify()
+        .map_err(|error| StorageError::InvalidApplicabilityContext(error.to_string()))?;
+    let unsigned = &attestation.unsigned;
+    let expected_merchant = merchant_identity_digest(merchant_id.as_bytes());
+    let expected_facts = serde_json::to_value(&unsigned.facts)?;
+    let expected_decision = serde_json::to_value(&unsigned.decision)?;
+    let expected_facts_digest = unsigned
+        .facts
+        .canonical_digest()
+        .map_err(|error| StorageError::InvalidApplicabilityContext(error.to_string()))?;
+    let expected_decision_digest = unsigned
+        .decision
+        .canonical_digest()
+        .map_err(|error| StorageError::InvalidApplicabilityContext(error.to_string()))?;
+    if unsigned.merchant_id != expected_merchant
+        || policy_id != unsigned.decision.policy_id
+        || policy_version as u32 != unsigned.decision.policy_version
+        || policy_digest != unsigned.decision.policy_digest
+        || facts_digest != expected_facts_digest
+        || decision_digest != expected_decision_digest
+        || unsigned.decision.facts_digest != facts_digest
+        || jurisdiction_resolution_digest != unsigned.jurisdiction_resolution_digest
+        || evidence_digest != unsigned.facts.evidence_digest
+        || attestation_digest != attestation.payload_digest
+        || effective_from_unix < unsigned.issued_at_unix
+        || effective_until_unix.is_some_and(|until| until > unsigned.expires_at_unix)
+        || evidence_expires_at_unix != unsigned.facts.valid_until_unix
+        || facts_document != expected_facts
+        || decision_document != expected_decision
+    {
+        return Err(StorageError::InvalidApplicabilityContext(
+            "stored applicability context columns do not match signed evidence".into(),
+        ));
+    }
+    Ok(StoredApplicabilityContext {
+        context_id,
+        merchant_id,
+        status,
+        policy_id,
+        policy_version: policy_version as u32,
+        policy_digest,
+        facts_digest,
+        decision_digest,
+        jurisdiction_resolution_digest,
+        evidence_digest,
+        attestation_digest,
+        effective_from_unix,
+        effective_until_unix,
+        evidence_expires_at_unix,
+        provenance,
         attestation,
     })
 }
@@ -17617,6 +19336,176 @@ fn parse_replay_gap_view(
     })
 }
 
+fn parse_settlement_route_verification_run_view(
+    row: deadpool_postgres::tokio_postgres::Row,
+) -> Result<SettlementRouteVerificationRunView, StorageError> {
+    let view = SettlementRouteVerificationRunView {
+        id: row.get(0),
+        run_kind: row.get(1),
+        status: row.get(2),
+        batch_size: parse_route_verification_run_count(row.get::<_, i16>(3) as i32, "batch_size")?,
+        examined_count: parse_route_verification_run_count(row.get(4), "examined_count")?,
+        activated_count: parse_route_verification_run_count(row.get(5), "activated_count")?,
+        already_active_count: parse_route_verification_run_count(
+            row.get(6),
+            "already_active_count",
+        )?,
+        failed_count: parse_route_verification_run_count(row.get(7), "failed_count")?,
+        failure_code: row.get(8),
+        operator_approval_id: row.get(9),
+        started_at: row.get(10),
+        completed_at: row.get(11),
+    };
+    validate_settlement_route_verification_run_view(&view)?;
+    Ok(view)
+}
+
+fn parse_route_verification_run_count(value: i32, field: &str) -> Result<u32, StorageError> {
+    if !(0..=64).contains(&value) {
+        return Err(StorageError::SettlementRouteVerificationInvalid(format!(
+            "{field} is outside the bounded range"
+        )));
+    }
+    Ok(value as u32)
+}
+
+fn validate_settlement_route_verification_run_view(
+    view: &SettlementRouteVerificationRunView,
+) -> Result<(), StorageError> {
+    if view.id.get_version_num() != 7 {
+        return Err(StorageError::SettlementRouteVerificationInvalid(
+            "run ID must be UUIDv7".into(),
+        ));
+    }
+    if !(1..=64).contains(&view.batch_size) {
+        return Err(StorageError::SettlementRouteVerificationInvalid(
+            "batch size is outside the bounded range".into(),
+        ));
+    }
+    if !matches!(view.run_kind.as_str(), "scheduled" | "backfill")
+        || !matches!(
+            view.status.as_str(),
+            "running" | "completed" | "completed_with_failures" | "failed"
+        )
+    {
+        return Err(StorageError::SettlementRouteVerificationInvalid(
+            "run kind or status is invalid".into(),
+        ));
+    }
+    if (view.run_kind == "backfill") != view.operator_approval_id.is_some() {
+        return Err(StorageError::SettlementRouteVerificationInvalid(
+            "approval binding does not match run kind".into(),
+        ));
+    }
+    if view
+        .operator_approval_id
+        .is_some_and(|approval_id| approval_id.get_version_num() != 7)
+    {
+        return Err(StorageError::SettlementRouteVerificationInvalid(
+            "operator approval ID must be UUIDv7".into(),
+        ));
+    }
+    if view.started_at.is_empty()
+        || view.started_at.len() > 64
+        || view.started_at.bytes().any(|byte| byte.is_ascii_control())
+    {
+        return Err(StorageError::SettlementRouteVerificationInvalid(
+            "started_at is invalid".into(),
+        ));
+    }
+    if let Some(completed_at) = view.completed_at.as_deref()
+        && (completed_at.is_empty()
+            || completed_at.len() > 64
+            || completed_at.bytes().any(|byte| byte.is_ascii_control()))
+    {
+        return Err(StorageError::SettlementRouteVerificationInvalid(
+            "completed_at is invalid".into(),
+        ));
+    }
+    if let Some(failure_code) = view.failure_code.as_deref()
+        && (failure_code.is_empty()
+            || failure_code.len() > 128
+            || failure_code
+                .bytes()
+                .any(|byte| !byte.is_ascii_alphanumeric() && !matches!(byte, b'_' | b'-')))
+    {
+        return Err(StorageError::SettlementRouteVerificationInvalid(
+            "failure code is invalid".into(),
+        ));
+    }
+    let terminal = view.status != "running";
+    if terminal {
+        if view.completed_at.is_none()
+            || view.examined_count
+                != view.activated_count + view.already_active_count + view.failed_count
+        {
+            return Err(StorageError::SettlementRouteVerificationInvalid(
+                "terminal counters or completion timestamp are invalid".into(),
+            ));
+        }
+    } else if view.completed_at.is_some() {
+        return Err(StorageError::SettlementRouteVerificationInvalid(
+            "running evidence cannot have a completion timestamp".into(),
+        ));
+    }
+    match view.status.as_str() {
+        "completed" if view.failed_count != 0 || view.failure_code.is_some() => {
+            Err(StorageError::SettlementRouteVerificationInvalid(
+                "completed evidence cannot contain failures".into(),
+            ))
+        }
+        "completed_with_failures" if view.failed_count == 0 || view.failure_code.is_none() => {
+            Err(StorageError::SettlementRouteVerificationInvalid(
+                "completed-with-failures evidence is incomplete".into(),
+            ))
+        }
+        "failed" if view.failure_code.is_none() => {
+            Err(StorageError::SettlementRouteVerificationInvalid(
+                "failed evidence requires a failure code".into(),
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
+fn validate_settlement_route_verification_run_summary(
+    summary: SettlementRouteVerificationRunSummary,
+) -> Result<(), StorageError> {
+    let counts = [
+        summary.examined,
+        summary.activated,
+        summary.already_active,
+        summary.failed,
+    ];
+    if counts.iter().any(|count| *count > 64)
+        || summary.examined != summary.activated + summary.already_active + summary.failed
+    {
+        return Err(StorageError::InvalidConfiguration(
+            "settlement route verification run counters are inconsistent".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_settlement_route_verification_run_start(
+    run_kind: &str,
+    operator_approval_id: Option<Uuid>,
+) -> Result<(), StorageError> {
+    match (run_kind, operator_approval_id) {
+        ("scheduled", None) => Ok(()),
+        ("backfill", Some(approval_id)) if approval_id.get_version_num() == 7 => Ok(()),
+        ("scheduled", Some(_)) => Err(StorageError::InvalidConfiguration(
+            "scheduled route verification runs cannot carry an approval ID".to_string(),
+        )),
+        ("backfill", None) => Err(StorageError::InvalidConfiguration(
+            "backfill route verification runs require an approval ID".to_string(),
+        )),
+        _ => Err(StorageError::InvalidConfiguration(
+            "settlement route verification run kind is invalid".to_string(),
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -17624,6 +19513,91 @@ mod tests {
         BaseReference, Rate, RateSpec, RoundingMode, RoundingScope, RoundingSpec, TaxBase,
         TaxComponentRule,
     };
+
+    #[test]
+    fn route_verification_run_summary_requires_bounded_conserving_counts() {
+        assert!(
+            validate_settlement_route_verification_run_summary(
+                SettlementRouteVerificationRunSummary {
+                    examined: 4,
+                    activated: 2,
+                    already_active: 1,
+                    failed: 1,
+                }
+            )
+            .is_ok()
+        );
+        assert!(matches!(
+            validate_settlement_route_verification_run_summary(
+                SettlementRouteVerificationRunSummary {
+                    examined: 4,
+                    activated: 2,
+                    already_active: 1,
+                    failed: 0,
+                }
+            ),
+            Err(StorageError::InvalidConfiguration(_))
+        ));
+        assert!(matches!(
+            validate_settlement_route_verification_run_summary(
+                SettlementRouteVerificationRunSummary {
+                    examined: 65,
+                    activated: 65,
+                    already_active: 0,
+                    failed: 0,
+                }
+            ),
+            Err(StorageError::InvalidConfiguration(_))
+        ));
+    }
+
+    #[test]
+    fn route_verification_run_kind_requires_the_matching_approval_reference() {
+        let approval_id = Uuid::now_v7();
+        assert!(validate_settlement_route_verification_run_start("scheduled", None).is_ok());
+        assert!(
+            validate_settlement_route_verification_run_start("backfill", Some(approval_id)).is_ok()
+        );
+        assert!(
+            validate_settlement_route_verification_run_start("scheduled", Some(approval_id))
+                .is_err()
+        );
+        assert!(validate_settlement_route_verification_run_start("backfill", None).is_err());
+        assert!(
+            validate_settlement_route_verification_run_start("backfill", Some(Uuid::from_u128(1)))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn route_verification_run_view_requires_bounded_terminal_evidence() {
+        let id = Uuid::now_v7();
+        let approval_id = Uuid::now_v7();
+        let valid = SettlementRouteVerificationRunView {
+            id,
+            run_kind: "backfill".to_string(),
+            status: "completed".to_string(),
+            batch_size: 8,
+            examined_count: 2,
+            activated_count: 1,
+            already_active_count: 1,
+            failed_count: 0,
+            failure_code: None,
+            operator_approval_id: Some(approval_id),
+            started_at: "2026-10-05T10:00:00Z".to_string(),
+            completed_at: Some("2026-10-05T10:00:01Z".to_string()),
+        };
+        assert!(validate_settlement_route_verification_run_view(&valid).is_ok());
+        let mut invalid = valid.clone();
+        invalid.failed_count = 1;
+        assert!(validate_settlement_route_verification_run_view(&invalid).is_err());
+        let mut invalid = valid.clone();
+        invalid.operator_approval_id = None;
+        assert!(validate_settlement_route_verification_run_view(&invalid).is_err());
+        let mut invalid = valid;
+        invalid.status = "running".to_string();
+        assert!(validate_settlement_route_verification_run_view(&invalid).is_err());
+    }
 
     fn command() -> QuoteCommand {
         QuoteCommand {
@@ -17636,13 +19610,16 @@ mod tests {
             facts: TaxFacts {
                 gross_atomic: 1_100,
                 net_atomic: 1_000,
+                atomic_decimals: 2,
                 currency: "USD".to_string(),
                 jurisdiction: "US-CA".to_string(),
                 jurisdiction_resolution: None,
                 fx_conversion: None,
                 exemption_codes: Vec::new(),
                 cumulative_period: None,
+                applicability: None,
             },
+            applicability_context_id: None,
             jurisdiction_candidates: vec![JurisdictionCandidate {
                 jurisdiction_code: "US-CA".to_string(),
                 source: jurisdiction::EvidenceSource::ShippingDestination,
@@ -17650,6 +19627,129 @@ mod tests {
             }],
             fx_evidence: None,
         }
+    }
+
+    fn applicability_context_command() -> CreateApplicabilityContextCommand {
+        let merchant_id = Uuid::now_v7();
+        let facts = tax_applicability::ApplicabilityFacts {
+            schema: tax_applicability::APPLICABILITY_SCHEMA_V1.to_string(),
+            product_category: "digital-service".to_string(),
+            supply_type: "cross-border".to_string(),
+            customer_class: "business".to_string(),
+            merchant_registration: "registered".to_string(),
+            customer_registration: "unregistered".to_string(),
+            transaction_type: "sale".to_string(),
+            evidence_digest: [6; 32],
+            valid_until_unix: 1_800_000_600,
+        };
+        let decision = tax_applicability::ApplicabilityDecision {
+            schema: tax_applicability::APPLICABILITY_SCHEMA_V1.to_string(),
+            policy_id: "policy-us-ca-digital".to_string(),
+            policy_version: 3,
+            policy_digest: [7; 32],
+            facts_digest: facts.canonical_digest().unwrap(),
+            treatment: tax_applicability::Treatment::Taxable,
+            selected_rule_id: Some("taxable-digital-service".to_string()),
+            matched_rule_ids: vec!["taxable-digital-service".to_string()],
+            evaluated_at_unix: 1_800_000_100,
+        };
+        let unsigned = policy::UnsignedApplicabilityAttestation {
+            schema_version: policy::APPLICABILITY_ATTESTATION_SCHEMA_VERSION,
+            merchant_id: merchant_identity_digest(merchant_id.as_bytes()),
+            jurisdiction_resolution_digest: [2; 32],
+            facts,
+            decision,
+            rule_set_id: "us-ca-sales-tax".to_string(),
+            rule_version: 7,
+            rule_digest: [3; 32],
+            issued_at_unix: 1_800_000_100,
+            expires_at_unix: 1_800_000_500,
+            sequence: 9,
+            issuer_key_id: [4; 32],
+        };
+        CreateApplicabilityContextCommand {
+            merchant_id,
+            idempotency_key: "applicability-context-1".to_string(),
+            attestation: policy::ApplicabilityAttestation::sign(
+                unsigned,
+                &ed25519_dalek::SigningKey::from_bytes(&[7; 32]),
+            )
+            .unwrap(),
+            effective_from_unix: 1_800_000_100,
+            effective_until_unix: Some(1_800_000_500),
+            provenance: serde_json::json!({"owner": "tax-domain"}),
+            actor_subject: "tax-author".to_string(),
+        }
+    }
+
+    #[test]
+    fn applicability_context_validation_binds_attestation_and_window() {
+        let command = applicability_context_command();
+        assert!(validate_create_applicability_context_command(&command).is_ok());
+        let digest = applicability_context_request_digest(&command).unwrap();
+        assert_eq!(
+            digest,
+            applicability_context_request_digest(&command).unwrap()
+        );
+
+        let mut invalid = command.clone();
+        invalid.effective_until_unix = Some(invalid.attestation.unsigned.expires_at_unix + 1);
+        assert!(matches!(
+            validate_create_applicability_context_command(&invalid),
+            Err(StorageError::InvalidApplicabilityContext(message))
+                if message.contains("signed attestation validity")
+        ));
+
+        let mut changed = command;
+        changed.attestation.unsigned.facts.product_category = "physical-good".to_string();
+        assert!(matches!(
+            validate_create_applicability_context_command(&changed),
+            Err(StorageError::InvalidApplicabilityContext(_))
+        ));
+    }
+
+    #[test]
+    fn applicability_context_request_digest_is_tenant_and_evidence_bound() {
+        let command = applicability_context_command();
+        let digest = applicability_context_request_digest(&command).unwrap();
+        let mut tenant_changed = command.clone();
+        tenant_changed.merchant_id = Uuid::now_v7();
+        assert!(matches!(
+            applicability_context_request_digest(&tenant_changed),
+            Err(StorageError::InvalidApplicabilityContext(message))
+                if message.contains("tenant")
+        ));
+        let mut evidence_changed = command;
+        evidence_changed.provenance = serde_json::json!({"owner": "different-owner"});
+        assert_ne!(
+            digest,
+            applicability_context_request_digest(&evidence_changed).unwrap()
+        );
+    }
+
+    #[test]
+    fn applicability_context_transitions_are_bounded_and_ordered() {
+        let valid = ApplicabilityContextTransition {
+            context_id: Uuid::now_v7(),
+            merchant_id: Uuid::now_v7(),
+            expected_status: "draft".to_string(),
+            next_status: "review".to_string(),
+            actor_subject: "reviewer".to_string(),
+            evidence: serde_json::json!({"reason": "ready"}),
+        };
+        assert!(validate_applicability_context_transition(&valid).is_ok());
+        let mut invalid = valid.clone();
+        invalid.next_status = "published".to_string();
+        assert!(matches!(
+            validate_applicability_context_transition(&invalid),
+            Err(StorageError::ApplicabilityContextTransitionConflict)
+        ));
+        invalid = valid;
+        invalid.actor_subject = "operator\nforged".to_string();
+        assert!(matches!(
+            validate_applicability_context_transition(&invalid),
+            Err(StorageError::InvalidApplicabilityContext(_))
+        ));
     }
 
     fn revenue_stream_plan_command() -> CreateRevenueStreamPlanCommand {
@@ -18341,7 +20441,7 @@ mod tests {
         assert_eq!(decode_persisted_rule_document(legacy).unwrap(), rule);
 
         let mut unsupported = serde_json::to_value(RuleSetDocument::new(rule)).unwrap();
-        unsupported["schema"] = serde_json::Value::String("solana-tax-protocol/tax-rule/v2".into());
+        unsupported["schema"] = serde_json::Value::String("solana-tax-protocol/tax-rule/v3".into());
         assert!(matches!(
             decode_persisted_rule_document(unsupported),
             Err(StorageError::Tax(TaxError::InvalidRuleDocumentSchema))
@@ -18354,12 +20454,14 @@ mod tests {
         let facts = TaxFacts {
             gross_atomic: 1_100,
             net_atomic: 1_000,
+            atomic_decimals: 2,
             currency: "USD".to_string(),
             jurisdiction: "US-CA".to_string(),
             jurisdiction_resolution: None,
             fx_conversion: None,
             exemption_codes: Vec::new(),
             cumulative_period: None,
+            applicability: None,
         };
         let digest = rule.canonical_digest().unwrap();
         let envelope = serde_json::to_value(RuleSetDocument::new(rule.clone())).unwrap();
@@ -18528,11 +20630,13 @@ mod tests {
     fn document_quote_digest_is_schema_and_selector_bound() {
         let facts = TaxDocumentFacts {
             id: "invoice-1".to_string(),
+            atomic_decimals: 2,
             currency: "USD".to_string(),
             jurisdiction: "US-CA".to_string(),
             jurisdiction_resolution: None,
             fx_conversion: None,
             cumulative_period: None,
+            applicability: None,
             lines: vec![tax_engine::TaxLineFacts {
                 id: "line-1".to_string(),
                 gross_atomic: 1_100,
@@ -18549,6 +20653,7 @@ mod tests {
             jurisdiction: "US-CA".to_string(),
             regime: "sales-tax".to_string(),
             facts,
+            applicability_context_id: None,
             jurisdiction_candidates: vec![JurisdictionCandidate {
                 jurisdiction_code: "US-CA".to_string(),
                 source: jurisdiction::EvidenceSource::ShippingDestination,
@@ -18567,6 +20672,53 @@ mod tests {
         ));
         first.rule_version = 2;
         assert_ne!(digest, document_quote_request_digest(&first).unwrap());
+    }
+
+    #[test]
+    fn quote_request_digest_binds_server_owned_applicability_context_reference() {
+        let mut first = command();
+        let baseline = quote_request_digest(&first).unwrap();
+        first.applicability_context_id = Some(Uuid::now_v7());
+        assert_ne!(baseline, quote_request_digest(&first).unwrap());
+
+        let mut document = DocumentQuoteCommand {
+            merchant_id: first.merchant_id,
+            idempotency_key: "document-context-digest".to_string(),
+            schema: TAX_DOCUMENT_SCHEMA_V1.to_string(),
+            rule_set_id: "us-ca-sales-tax".to_string(),
+            rule_version: 1,
+            jurisdiction: "US-CA".to_string(),
+            regime: "sales-tax".to_string(),
+            facts: TaxDocumentFacts {
+                id: "invoice-context".to_string(),
+                atomic_decimals: 2,
+                currency: "USD".to_string(),
+                jurisdiction: "US-CA".to_string(),
+                jurisdiction_resolution: None,
+                fx_conversion: None,
+                cumulative_period: None,
+                applicability: None,
+                lines: vec![tax_engine::TaxLineFacts {
+                    id: "line-1".to_string(),
+                    gross_atomic: 100,
+                    net_atomic: 100,
+                    exemption_codes: Vec::new(),
+                }],
+            },
+            applicability_context_id: None,
+            jurisdiction_candidates: vec![JurisdictionCandidate {
+                jurisdiction_code: "US-CA".to_string(),
+                source: jurisdiction::EvidenceSource::ShippingDestination,
+                evidence_digest: [7; 32],
+            }],
+            fx_evidence: None,
+        };
+        let document_baseline = document_quote_request_digest(&document).unwrap();
+        document.applicability_context_id = Some(first.applicability_context_id.unwrap());
+        assert_ne!(
+            document_baseline,
+            document_quote_request_digest(&document).unwrap()
+        );
     }
 
     fn persisted_split_plan_fixture() -> (String, String, Vec<split_plan::SplitRecipient>) {
@@ -18765,6 +20917,8 @@ mod tests {
             calculation_id: Uuid::now_v7(),
             status: CALCULATION_STATUS.to_string(),
             expires_at_unix: 1_800_000_900,
+            applicability_context_id: None,
+            applicability_attestation_digest: None,
             result,
         };
         let encoded = serde_json::to_string(&quote).unwrap();

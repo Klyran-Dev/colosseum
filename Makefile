@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 
-.PHONY: fmt lint test bench-tax-engine benchmark-tax-engine-service benchmark-quote-service benchmark-document-quote-service benchmark-rule-simulation benchmark-authorization-capabilities postgres-pool-drill postgres-index-plan-drill postgres-pitr-drill vault-reconciliation-drill migration-integrity-drill migration-rollback-rehearsal adjustment-authority-drill refund-funding-verifier-drill refund-proof-lease-drill refund-execute-api-contention-drill refund-proof-integration-drill refund-cancellation-reconciliation-drill indexer-replay-drill indexer-replay-dead-letter-drill alert-delivery-drill otel-trace-drill web-install web-check web-browser-check web-csp-contract web-color-contract material-palette-contract ui-language-contract non-custodial-wallet-contract rule-release-provenance-contract security-scan observability-config api-metric-registry-contract public-docs-check environment-contract deployment-config-contract migration-bootstrap-contract refund-claim-cancellation-reconciliation-contract rust-panic-safety-contract container-pinning-contract solana-conformance-workflow-contract program-pause-coverage-contract bootstrap-contract reset-local-contract release-bundle-integrity-contract service-lifecycle-contract tax-engine-service-contract tax-engine-runtime-contract tax-engine-mtls-runtime-contract api-auth-jwks-reload-contract api-jurisdiction-provider-reload-contract tier1-local-check tier1-local-check-contract check compose-config migrate backup-restore-drill encrypted-backup-restore-drill projection-rebuild-drill postgres-contention-drill integration-check solana-build solana-conformance solana-up solana-down indexer-up indexer-down route-verifier-up route-verifier-down observability-up observability-down bootstrap reset-local up down logs
+.PHONY: fmt lint test bench-tax-engine benchmark-tax-engine-service benchmark-quote-service benchmark-document-quote-service benchmark-rule-simulation benchmark-authorization-capabilities authorization-benchmark-contract postgres-pool-drill postgres-index-plan-drill postgres-pitr-drill vault-reconciliation-drill migration-integrity-drill migration-rollback-rehearsal adjustment-authority-drill refund-funding-verifier-drill refund-proof-lease-drill refund-execute-api-contention-drill refund-proof-integration-drill refund-cancellation-reconciliation-drill indexer-replay-drill indexer-replay-dead-letter-drill alert-delivery-drill otel-trace-drill web-install web-check web-browser-check web-csp-contract web-color-contract material-palette-contract forced-colors-contract ui-language-contract non-custodial-wallet-contract rule-release-provenance-contract security-scan observability-config grafana-dashboard-contract api-metric-registry-contract public-docs-check release-claim-contract environment-contract deployment-config-contract migration-bootstrap-contract refund-claim-cancellation-reconciliation-contract rust-panic-safety-contract container-pinning-contract solana-conformance-workflow-contract program-pause-coverage-contract bootstrap-contract reset-local-contract release-bundle-integrity-contract service-lifecycle-contract tax-engine-service-contract tax-engine-runtime-contract tax-engine-mtls-runtime-contract api-auth-jwks-reload-contract api-jurisdiction-provider-reload-contract route-verifier-backfill-contract ci-toolchain-contract evm-adapter-contract evm-adapter-check tier1-local-check tier1-local-check-contract check compose-config migrate backup-restore-drill encrypted-backup-restore-drill projection-rebuild-drill postgres-contention-drill integration-check solana-build solana-conformance solana-up solana-down indexer-up indexer-down route-verifier-up route-verifier-down observability-up observability-down bootstrap reset-local up down logs
 
 fmt:
 	cargo fmt --all
@@ -28,6 +28,9 @@ benchmark-rule-simulation:
 
 benchmark-authorization-capabilities:
 	./scripts/benchmark_authorization_capabilities.sh
+
+authorization-benchmark-contract:
+	./scripts/verify_authorization_benchmark_contract.sh
 
 postgres-pool-drill:
 	./scripts/postgres_pool_drill.sh
@@ -60,8 +63,15 @@ web-csp-contract:
 web-color-contract:
 	./scripts/verify_web_color_contract.sh
 
+release-claim-contract:
+	./scripts/verify_release_claim_contract.sh
+	./scripts/release_claim_contract_test.sh
+
 material-palette-contract:
 	node scripts/verify_material_palette_contract.mjs
+
+forced-colors-contract:
+	./scripts/verify_forced_colors_contract.sh
 
 tier1-local-check-contract:
 	./scripts/verify_tier1_local_check_contract.sh
@@ -87,6 +97,9 @@ security-scan:
 observability-config:
 	./scripts/verify_observability_config.sh
 
+grafana-dashboard-contract:
+	node scripts/verify_grafana_dashboard_contract.mjs
+
 api-metric-registry-contract:
 	./scripts/verify_api_metric_registry_contract.sh
 
@@ -111,6 +124,12 @@ rust-panic-safety-contract:
 
 container-pinning-contract:
 	./scripts/verify_container_pinning_contract.sh
+
+evm-adapter-contract:
+	./scripts/verify_evm_adapter_contract.sh
+
+evm-adapter-check: evm-adapter-contract
+	docker build --platform linux/amd64 --file ops/docker/Dockerfile.evm-adapter --tag solana-tax-protocol/evm-adapter-check:0.8.37 .
 
 solana-conformance-workflow-contract:
 	./scripts/verify_solana_conformance_workflow_contract.sh
@@ -144,6 +163,12 @@ api-auth-jwks-reload-contract:
 
 api-jurisdiction-provider-reload-contract:
 	./scripts/verify_api_jurisdiction_provider_reload_contract.sh
+
+route-verifier-backfill-contract:
+	./scripts/verify_route_verifier_backfill_contract.sh
+
+ci-toolchain-contract:
+	./scripts/verify_ci_toolchain_contract.sh
 
 compose-config:
 	docker compose --profile browser --profile cache --profile observability --profile indexer --profile route-verifier --profile solana config --quiet
@@ -238,7 +263,7 @@ observability-up:
 observability-down:
 	docker compose --profile observability stop grafana prometheus alertmanager alert-receiver otel-collector redis
 
-check: lint test web-check web-csp-contract web-color-contract material-palette-contract tier1-local-check-contract ui-language-contract non-custodial-wallet-contract rule-release-provenance-contract security-scan compose-config observability-config api-metric-registry-contract public-docs-check environment-contract deployment-config-contract migration-bootstrap-contract refund-claim-cancellation-reconciliation-contract rust-panic-safety-contract container-pinning-contract solana-conformance-workflow-contract program-pause-coverage-contract bootstrap-contract reset-local-contract service-lifecycle-contract tax-engine-service-contract tax-engine-runtime-contract tax-engine-mtls-runtime-contract api-auth-jwks-reload-contract api-jurisdiction-provider-reload-contract
+check: lint test web-check web-csp-contract web-color-contract material-palette-contract forced-colors-contract release-claim-contract release-bundle-integrity-contract tier1-local-check-contract ui-language-contract non-custodial-wallet-contract rule-release-provenance-contract authorization-benchmark-contract security-scan compose-config observability-config grafana-dashboard-contract api-metric-registry-contract public-docs-check environment-contract deployment-config-contract migration-bootstrap-contract refund-claim-cancellation-reconciliation-contract rust-panic-safety-contract container-pinning-contract solana-conformance-workflow-contract program-pause-coverage-contract bootstrap-contract reset-local-contract service-lifecycle-contract tax-engine-service-contract tax-engine-runtime-contract tax-engine-mtls-runtime-contract api-auth-jwks-reload-contract api-jurisdiction-provider-reload-contract route-verifier-backfill-contract ci-toolchain-contract evm-adapter-check
 
 bootstrap:
 	./scripts/bootstrap_local.sh

@@ -4,6 +4,7 @@ WORKDIR /workspace
 RUN corepack enable && corepack prepare pnpm@12.3.4 --activate
 COPY apps/web/package.json apps/web/pnpm-lock.yaml apps/web/pnpm-workspace.yaml ./apps/web/
 RUN pnpm --dir apps/web install --frozen-lockfile
+COPY contracts ./contracts
 COPY test-vectors ./test-vectors
 COPY apps/web ./apps/web
 COPY ops/nginx/nginx.conf ./ops/nginx/nginx.conf
@@ -16,6 +17,7 @@ ARG VITE_OIDC_CLIENT_ID
 ARG VITE_OIDC_REDIRECT_URI
 ARG VITE_OIDC_SCOPE
 ARG VITE_OIDC_AUDIENCE
+ARG VITE_INDEXER_STREAM_KEY
 ENV VITE_DEPLOYMENT_ENVIRONMENT=${VITE_DEPLOYMENT_ENVIRONMENT}
 ENV VITE_SOLANA_NETWORK=${VITE_SOLANA_NETWORK}
 ENV VITE_LOCAL_UI_MODE=${VITE_LOCAL_UI_MODE}
@@ -24,6 +26,7 @@ ENV VITE_OIDC_CLIENT_ID=${VITE_OIDC_CLIENT_ID}
 ENV VITE_OIDC_REDIRECT_URI=${VITE_OIDC_REDIRECT_URI}
 ENV VITE_OIDC_SCOPE=${VITE_OIDC_SCOPE}
 ENV VITE_OIDC_AUDIENCE=${VITE_OIDC_AUDIENCE}
+ENV VITE_INDEXER_STREAM_KEY=${VITE_INDEXER_STREAM_KEY}
 RUN pnpm --dir apps/web build
 RUN node scripts/render_web_nginx_config.mjs ops/nginx/nginx.conf /workspace/generated-nginx.conf
 
