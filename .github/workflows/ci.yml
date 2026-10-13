@@ -90,7 +90,7 @@ jobs:
         run: make web-browser-check
       - name: Upload browser failure evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: web-e2e-${{ github.run_id }}
           path: test-results/web-e2e/
@@ -140,7 +140,7 @@ jobs:
             make benchmark-tax-engine-service | tee test-results/tax-engine-load/evidence.txt
       - name: Upload Tax Engine service evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: tax-engine-load-${{ github.run_id }}
           path: test-results/tax-engine-load/
@@ -190,7 +190,7 @@ jobs:
         run: make otel-trace-drill
       - name: Upload OTLP trace evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: otel-trace-${{ github.run_id }}
           path: test-results/otel-trace/
@@ -223,7 +223,7 @@ jobs:
         run: ./scripts/verify_solana_conformance_evidence.sh
       - name: Upload validator conformance evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: solana-conformance-${{ github.run_id }}
           path: test-results/solana-conformance/
@@ -265,7 +265,7 @@ jobs:
           ./scripts/verify_local_stack.sh 2>&1 | tee test-results/local-stack-integration/evidence.txt
       - name: Upload Docker integration evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: local-stack-integration-${{ github.run_id }}
           path: test-results/local-stack-integration/
@@ -283,7 +283,7 @@ jobs:
         run: make indexer-replay-drill
       - name: Upload replay recovery evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: indexer-replay-${{ github.run_id }}
           path: test-results/indexer-replay/
@@ -303,7 +303,7 @@ jobs:
           make refund-proof-integration-drill | tee test-results/refund-proof-integration/evidence.txt
       - name: Upload transaction-bound proof evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: refund-proof-integration-${{ github.run_id }}
           path: test-results/refund-proof-integration/
@@ -321,7 +321,7 @@ jobs:
         run: make indexer-replay-dead-letter-drill
       - name: Upload retry-exhaustion evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: indexer-replay-dead-letter-${{ github.run_id }}
           path: test-results/indexer-replay-dead-letter/
@@ -339,7 +339,7 @@ jobs:
         run: make alert-delivery-drill
       - name: Upload alert delivery evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: alert-delivery-${{ github.run_id }}
           path: test-results/alert-delivery/
@@ -359,7 +359,7 @@ jobs:
         run: make refund-funding-verifier-drill
       - name: Upload verifier evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: refund-funding-verifier-${{ github.run_id }}
           path: test-results/refund-funding-verifier/
@@ -379,7 +379,7 @@ jobs:
           make refund-proof-lease-drill | tee test-results/refund-proof-lease/evidence.txt
       - name: Upload refund-proof lease evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: refund-proof-lease-${{ github.run_id }}
           path: test-results/refund-proof-lease/
@@ -399,7 +399,7 @@ jobs:
           make refund-execute-api-contention-drill | tee test-results/refund-execute-api-contention/evidence.txt
       - name: Upload execute API contention evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: refund-execute-api-contention-${{ github.run_id }}
           path: test-results/refund-execute-api-contention/
@@ -420,7 +420,7 @@ jobs:
             make benchmark-quote-service | tee test-results/quote-load/evidence.txt
       - name: Upload quote-service evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: quote-load-${{ github.run_id }}
           path: test-results/quote-load/
@@ -441,7 +441,7 @@ jobs:
             make benchmark-document-quote-service | tee test-results/document-quote-load/evidence.txt
       - name: Upload document-quote evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: document-quote-load-${{ github.run_id }}
           path: test-results/document-quote-load/
@@ -461,7 +461,7 @@ jobs:
           make benchmark-rule-simulation | tee test-results/rule-simulation-load/evidence.txt
       - name: Upload persisted-rule simulation evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: rule-simulation-load-${{ github.run_id }}
           path: test-results/rule-simulation-load/
@@ -492,7 +492,7 @@ jobs:
           make encrypted-backup-restore-drill | tee test-results/encrypted-backup/evidence.txt
       - name: Upload encrypted backup evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: encrypted-backup-${{ github.run_id }}
           path: test-results/encrypted-backup/
@@ -595,7 +595,7 @@ jobs:
           make migration-rollback-rehearsal | tee test-results/migration-rollback/evidence.txt
       - name: Upload migration rollback evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: migration-rollback-${{ github.run_id }}
           path: test-results/migration-rollback/

@@ -56,7 +56,7 @@ jobs:
           printf 'git_revision=%s\n' "$(git rev-parse HEAD)" > release-bundle/integration/source-revision.txt
       - name: Upload release integration failure evidence
         if: failure() && steps.authenticated_integration.outcome == 'failure'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-integration-failure-${{ github.run_id }}
           path: release-bundle/integration/
@@ -72,7 +72,7 @@ jobs:
           printf 'git_revision=%s\n' "$(git rev-parse HEAD)" > release-bundle/web-e2e/source-revision.txt
       - name: Upload release browser failure evidence
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-web-e2e-failure-${{ github.run_id }}
           path: test-results/web-e2e/
@@ -103,7 +103,7 @@ jobs:
         run: ./scripts/verify_solana_conformance_evidence.sh
       - name: Upload validator failure evidence
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-validator-conformance-failure-${{ github.run_id }}
           path: test-results/solana-conformance/
@@ -215,7 +215,7 @@ jobs:
         run: ./scripts/create_release_bundle.sh
 
       - name: Upload release-candidate evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-candidate-${{ github.ref_name }}-${{ github.sha }}
           path: release-bundle/
