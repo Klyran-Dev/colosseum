@@ -7,6 +7,10 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 project_name="${COMPOSE_PROJECT_NAME:-solana-tax-protocol-rule-simulation-load}"
+# The simulation workload reads the synthetic published rule seeded by the
+# migration runner. This is a local/CI evidence setting, never a deployment
+# setting.
+export SEED_DIR="/seeds"
 load_requests="${SIMULATION_LOAD_REQUESTS:-200}"
 load_concurrency="${SIMULATION_LOAD_CONCURRENCY:-32}"
 load_timeout_seconds="${SIMULATION_LOAD_TIMEOUT_SECONDS:-10}"

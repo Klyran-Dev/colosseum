@@ -4810,3 +4810,16 @@ fabricates workspace data.
 Chosen: admin HTTP failures become a typed `AdminRequestError`. Protected
 services remain authoritative, and only their reviewed message plus a safe
 correlation identifier crosses into the UI.
+
+### Synthetic fixture seeding for persisted load drills (ADR-0534)
+
+| Alternative | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| Seed directly from each benchmark script | Local control | Duplicates fixture ownership and bypasses migrations | Rejected |
+| Enable Compose seeds by default | Less harness configuration | Risks synthetic data entering staging or production | Rejected |
+| Remove persisted load drills | Fewer CI jobs | Removes evidence for pool, idempotency, and rule-cache behavior | Rejected |
+| **Explicitly export `/seeds` in bounded benchmark scripts** | Reproducible authenticated evidence with production isolation | Requires a small contract gate | **Selected** |
+
+Chosen: persisted quote and rule-simulation benchmarks explicitly enable the
+mounted synthetic seed directory. Deployment validation continues to reject
+`SEED_DIR` outside local development.

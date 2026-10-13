@@ -6,6 +6,10 @@ set -eu
 # It deliberately owns an isolated Compose project and synthetic credentials.
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 project_name="${COMPOSE_PROJECT_NAME:-solana-tax-protocol-quote-load}"
+# This benchmark exercises the persisted quote path against the synthetic
+# published rules mounted at /seeds. SEED_DIR is intentionally limited to the
+# local/CI evidence harness; production and staging fail closed when it is set.
+export SEED_DIR="/seeds"
 benchmark_mode="${BENCHMARK_MODE:-aggregate}"
 load_requests="${LOAD_REQUESTS:-200}"
 load_concurrency="${LOAD_CONCURRENCY:-16}"
