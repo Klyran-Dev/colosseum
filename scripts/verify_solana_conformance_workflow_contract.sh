@@ -71,6 +71,37 @@ dedicated_workflow="$repo_root/.github/workflows/solana-conformance.yml"
 [ -f "$release_workflow" ] || fail "missing $release_workflow"
 [ -f "$dedicated_workflow" ] || fail "missing $dedicated_workflow"
 
+require_text "$ci_workflow" '  workflow_dispatch:'
+require_text "$ci_workflow" '      run_extended:'
+require_text "$ci_workflow" '        default: false'
+require_text "$ci_workflow" '        type: boolean'
+for extended_job in \
+    tax-engine-load \
+    otel-trace \
+    solana-conformance \
+    indexer-replay \
+    indexer-replay-dead-letter \
+    alert-delivery \
+    refund-funding-verifier \
+    refund-proof-lease \
+    refund-execute-api-contention \
+    quote-load \
+    document-quote-load \
+    rule-simulation-load \
+    postgres-recovery \
+    postgres-encrypted-recovery \
+    projection-recovery \
+    vault-reconciliation \
+    rpc-failover \
+    postgres-contention \
+    postgres-pool \
+    postgres-index-plan \
+    postgres-pitr \
+    migration-integrity \
+    migration-rollback; do
+    require_job_text "$ci_workflow" "$extended_job" "if: \${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}"
+done
+
 check_workflow "$ci_workflow" solana-conformance
 check_workflow "$release_workflow" release-candidate
 check_workflow "$dedicated_workflow" solana-conformance

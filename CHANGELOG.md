@@ -1,5 +1,10 @@
 # Changelog
 
+- Added ADR-0535 and tiered GitHub Actions validation: ordinary review keeps
+  security, correctness, API, schema, Docker, and UI gates strict, while
+  timing-sensitive operational drills are manually dispatched with
+  `run_extended=true` and remain strict when enabled.
+
 - Added ADR-0440: pinned overrides (`source-map-js` 1.2.2, `uuid` 11.1.1) cut `pnpm audit`
   findings for apps/web from 6 to 4, and a fail-closed audit gate enforces the AGENTS.md
   rule (fail on high/critical unless a time-bounded, approved exception). The remaining

@@ -4823,3 +4823,16 @@ correlation identifier crosses into the UI.
 Chosen: persisted quote and rule-simulation benchmarks explicitly enable the
 mounted synthetic seed directory. Deployment validation continues to reject
 `SEED_DIR` outside local development.
+
+### Tiered CI for public development (ADR-0535)
+
+| Alternative | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| Delete operational drills | Quietest public workflow | Removes release and recovery evidence | Rejected |
+| Mark failures non-blocking | Keeps every job visible | Hides real regressions behind green checks | Rejected |
+| Keep every drill required on every push | Maximum immediate coverage | Timing-sensitive Docker evidence obscures core review signal | Rejected |
+| **Gate extended drills behind an explicit manual input** | Keeps core CI deterministic while preserving strict evidence on demand | Requires an explicit release/operations run | **Selected** |
+
+Chosen: ordinary CI protects correctness and security; operational evidence is
+manually dispatched with `run_extended=true`, while release-candidate and
+dedicated conformance workflows remain authoritative.

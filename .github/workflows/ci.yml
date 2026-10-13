@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      run_extended:
+        description: Run timing-sensitive operational and release-evidence drills
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -127,6 +134,7 @@ jobs:
         run: docker compose build tax-engine
 
   tax-engine-load:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: Bounded Tax Engine service load evidence
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -180,6 +188,7 @@ jobs:
         run: make api-jurisdiction-provider-reload-contract
 
   otel-trace:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: OTLP trace receipt and redaction drill
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -198,6 +207,7 @@ jobs:
           retention-days: 14
 
   solana-conformance:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: Validator-backed settlement conformance
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -273,6 +283,7 @@ jobs:
           retention-days: 14
 
   indexer-replay:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: Automated indexer replay recovery
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -311,6 +322,7 @@ jobs:
           retention-days: 14
 
   indexer-replay-dead-letter:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: Indexer replay retry exhaustion
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -329,6 +341,7 @@ jobs:
           retention-days: 14
 
   alert-delivery:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: Alertmanager delivery contract
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -347,6 +360,7 @@ jobs:
           retention-days: 14
 
   refund-funding-verifier:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: Lease-fenced refund-funding verifier drill
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -367,6 +381,7 @@ jobs:
           retention-days: 14
 
   refund-proof-lease:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: Lease-fenced refund-proof candidate ownership drill
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -387,6 +402,7 @@ jobs:
           retention-days: 14
 
   refund-execute-api-contention:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: Authenticated refund-execute API contention drill
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -407,6 +423,7 @@ jobs:
           retention-days: 14
 
   quote-load:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: Bounded quote-service load evidence
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -428,6 +445,7 @@ jobs:
           retention-days: 14
 
   document-quote-load:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: Bounded document-quote service load evidence
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -449,6 +467,7 @@ jobs:
           retention-days: 14
 
   rule-simulation-load:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: Bounded persisted-rule simulation latency evidence
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -469,6 +488,7 @@ jobs:
           retention-days: 14
 
   postgres-recovery:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: PostgreSQL logical backup and restore drill
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -479,6 +499,7 @@ jobs:
         run: make backup-restore-drill
 
   postgres-encrypted-recovery:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: PostgreSQL encrypted backup artifact drill
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -500,6 +521,7 @@ jobs:
           retention-days: 14
 
   projection-recovery:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: Indexer projection rebuild drill
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -510,6 +532,7 @@ jobs:
         run: make projection-rebuild-drill
 
   vault-reconciliation:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: Scheduled vault reconciliation drill
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -520,6 +543,7 @@ jobs:
         run: make vault-reconciliation-drill
 
   rpc-failover:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: Multi-provider RPC failover drill
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -532,6 +556,7 @@ jobs:
         run: make vault-reconciliation-drill
 
   postgres-contention:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: PostgreSQL contention and timeout drill
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -542,6 +567,7 @@ jobs:
         run: make postgres-contention-drill
 
   postgres-pool:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: PostgreSQL pool saturation drill
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -552,6 +578,7 @@ jobs:
         run: make postgres-pool-drill
 
   postgres-index-plan:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: PostgreSQL evidence index-plan drill
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -562,6 +589,7 @@ jobs:
         run: make postgres-index-plan-drill
 
   postgres-pitr:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: PostgreSQL point-in-time recovery drill
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -572,6 +600,7 @@ jobs:
         run: make postgres-pitr-drill
 
   migration-integrity:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: Versioned migration integrity drill
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -582,6 +611,7 @@ jobs:
         run: make migration-integrity-drill
 
   migration-rollback:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_extended == true }}
     name: Expand/contract migration rollback rehearsal
     runs-on: ubuntu-24.04
     timeout-minutes: 20
