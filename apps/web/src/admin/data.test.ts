@@ -1,11 +1,28 @@
 // @vitest-environment happy-dom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchAdminSnapshot } from "./data";
+import { adminQueryErrorMessage, fetchAdminSnapshot, requestJson } from "./data";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("admin data adapters", () => {
+  it("preserves reviewed server error messages when requestJson throws a structured error", () => {
+    expect(adminQueryErrorMessage({ code: "unauthorized", message: "Administrator authorization is required." }, "Fallback")).toBe("Administrator authorization is required.");
+    expect(adminQueryErrorMessage(new Error("Network failed"), "Fallback")).toBe("Network failed");
+    expect(adminQueryErrorMessage({ code: "unknown" }, "Fallback")).toBe("Fallback");
+  });
+
+  it("keeps reviewed HTTP errors as Error instances for mutation surfaces", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ message: "Administrator authorization is required." }), { status: 403, headers: { "x-correlation-id": "corr-1" } })));
+
+    await expect(requestJson("/v1/admin/invitations", { accessToken: "token", email: "admin@example.com", expiresAtUnix: 1_800_000_060 })).rejects.toMatchObject({
+      name: "AdminRequestError",
+      code: "unauthorized",
+      message: "Administrator authorization is required.",
+      correlationId: "corr-1",
+    });
+  });
+
   it("maps the server capability snapshot and redacted evidence projection without inventing totals", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);

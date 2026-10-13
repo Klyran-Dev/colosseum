@@ -4798,3 +4798,15 @@ it never synthesizes a route when finalized evidence is unavailable.
 Chosen: the admin and checkout lazy surfaces use a shared error boundary around
 `Suspense`. The server and edge remain authoritative; no client fallback
 fabricates workspace data.
+
+### Reviewed admin service error contract (ADR-0533)
+
+| Alternative | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| Keep the generic mutation failure message | No client changes | Hides whether the operator lacks authority, has a duplicate invitation, or has an unavailable email service | Rejected |
+| Render raw response bodies | Maximum detail | Can expose internal service and provider details | Rejected |
+| **Use a typed `Error` at the admin data boundary with server-reviewed copy** | Preserves actionable operator feedback while keeping redaction at the service boundary | Requires a shared adapter contract and tests | **Selected** |
+
+Chosen: admin HTTP failures become a typed `AdminRequestError`. Protected
+services remain authoritative, and only their reviewed message plus a safe
+correlation identifier crosses into the UI.

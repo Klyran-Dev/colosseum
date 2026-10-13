@@ -2,6 +2,24 @@ import { AdminAction, AdminCapability, AdminDecision, AdminMetric, AdminQueryErr
 
 const REQUEST_TIMEOUT_MS = 8_000;
 
+class AdminRequestError extends Error implements AdminQueryError {
+  readonly code: AdminQueryError["code"];
+  readonly correlationId?: string;
+
+  constructor(code: AdminQueryError["code"], message: string, correlationId?: string) {
+    super(message);
+    this.name = "AdminRequestError";
+    this.code = code;
+    this.correlationId = correlationId;
+  }
+}
+
+export function adminQueryErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string" && error.message) return error.message;
+  return fallback;
+}
+
 function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
@@ -141,13 +159,13 @@ export async function requestJson(path: string, session: AdminSession | null, in
       const code: AdminQueryError["code"] = response.status === 401 || response.status === 403 ? "unauthorized" : response.status >= 500 ? "unavailable" : "invalid";
       const envelope = objectValue(payload);
       const detail = objectValue(envelope.error);
-      throw { code, message: stringValue(envelope.message) || stringValue(detail.message) || `The admin service returned HTTP ${response.status}.`, correlationId: stringValue(response.headers.get("x-correlation-id")) || undefined } satisfies AdminQueryError;
+      throw new AdminRequestError(code, stringValue(envelope.message) || stringValue(detail.message) || `The admin service returned HTTP ${response.status}.`, stringValue(response.headers.get("x-correlation-id")) || undefined);
     }
     return payload;
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw { code: "unavailable", message: "The admin service did not respond before the request deadline." } satisfies AdminQueryError;
+    if (error instanceof DOMException && error.name === "AbortError") throw new AdminRequestError("unavailable", "The admin service did not respond before the request deadline.");
     if (error && typeof error === "object" && "code" in error) throw error;
-    throw { code: "unavailable", message: "The admin service could not be reached." } satisfies AdminQueryError;
+    throw new AdminRequestError("unavailable", "The admin service could not be reached.");
   } finally {
     window.clearTimeout(timer);
   }
