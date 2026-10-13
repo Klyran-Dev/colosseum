@@ -515,6 +515,7 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0512](0512-metronic-typography-hierarchy.md) — Tune the Metronic typography hierarchy for readable operational density
 - [ADR-0513](0513-metronic-demo3-workspace-density.md) — Restore Metronic Demo 3 workspace density
 - [ADR-0514](0514-metronic-demo3-operational-callout.md) — Use a compact Metronic Demo 3 operational callout
+- [ADR-0515](0515-production-control-plane-ui-rewrite.md) — Rewrite the production control-plane UI with server-owned authorization
 - [ADR-0516](0516-full-react-admin-application-rewrite.md) — Rewrite the admin application with React, Tailwind, TanStack, and ECharts
 - [ADR-0517](0517-admin-typography-and-auth-density.md) — Bundle Plus Jakarta Sans and restrain auth typography density
 - [ADR-0518](0518-otp-expiry-and-resend-recovery.md) — Make OTP expiry recoverable in the admin sign-in flow

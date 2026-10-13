@@ -38,25 +38,25 @@ async function readOtpFor(recipient: string): Promise<LocalOtpMessage> {
 }
 
 async function completeInitialAdminOtp(page: Page): Promise<void> {
-  await page.goto("/auth/signup?next=%2Frules%2Faccess-approvals");
-  await expect(page.getByRole("heading", { name: "Create your workspace account", exact: true })).toBeVisible();
+  await page.goto("/auth/signup?next=%2Fadmin%2Faccess");
+  await expect(page.getByRole("heading", { name: "Create your operator account", exact: true })).toBeVisible();
   await page.getByLabel("Work email").fill(INITIAL_ADMIN_EMAIL);
   const requestResponse = page.waitForResponse((response) => response.url().endsWith("/v1/auth/email/request"));
   await page.getByRole("button", { name: "Create account" }).click();
   expect((await requestResponse).status()).toBe(202);
-  await expect(page.getByRole("heading", { name: "Check your email" })).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("Use the newest code sent to this email address.");
   const message = await readOtpFor(INITIAL_ADMIN_EMAIL);
   await page.getByLabel("One-time code").fill(message.code);
   const verifyResponse = page.waitForResponse((response) => response.url().endsWith("/v1/auth/email/verify"));
   await page.getByRole("button", { name: "Verify code" }).click();
   expect((await verifyResponse).status()).toBe(200);
-  await expect(page).toHaveURL(/\/rules\/access-approvals$/u);
+  await expect(page).toHaveURL(/\/admin\/access$/u);
 }
 
 test("provisions the first administrator through the configured mailbox boundary", async ({ page }) => {
   await completeInitialAdminOtp(page);
-  await expect(page.getByRole("heading", { name: "People and responsibilities", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Open account menu" }).click();
-  await expect(page.locator(".account-menu-panel").getByText("Administrator", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Access & approvals", exact: true })).toBeVisible();
+  await expect(page.getByText("Access confirmed", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
 });
 

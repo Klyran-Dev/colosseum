@@ -87,19 +87,15 @@ commands (`make solana-conformance`, `make auth-browser-check`, and
 The default local browser mode is now email OTP: the separate Rust
 `auth-service` persists challenge/user state in PostgreSQL, writes synthetic
 codes to the Docker-only `auth-inbox` volume, and issues the same EdDSA JWT
-claims the API verifies. Request a code at `http://localhost:8088`, then read
-the matching JSON artifact with `docker compose exec auth-service ls
-/var/lib/auth/inbox`; this inbox and self-signup are local-only and do not
-represent production email or identity provisioning.
-For the local administrator workflow, the Compose default fixture email is
-`admin@local.test`; sign up with it, then open `Rules & access` → `Access &
-approvals`. Administrators can invite a normalized email into the current
-tenant with either the `merchant_operator` or bounded `moderator` role. The
-recipient completes the normal Sign up email-OTP flow, and the auth service
-binds the new account, tenant, role, and audit events in one transaction. An
-uninvited local signup continues to create a new tenant. This bootstrap is
-rejected outside `AUTH_ENV=local` and is not a production email-delivery or
-role-provisioning policy.
+claims the API verifies. Open `http://localhost:8088` to reach the protected
+admin control plane, then read the matching synthetic code with `docker
+compose exec auth-service ls /var/lib/auth/inbox`; this inbox and self-signup
+are local-only and do not represent production email or identity provisioning.
+The Compose default fixture email is `admin@local.test`; after signup, open
+`Access & approvals`. Tenant, RBAC, ABAC, and PBAC decisions remain
+server-owned, and the admin surface fails closed when authorization data is
+unavailable. This bootstrap is rejected outside `AUTH_ENV=local` and is not a
+production email-delivery or role-provisioning policy.
 The local auth service also derives bounded scope profiles from durable roles:
 standard users receive `tax:quote`, moderators add `audit:read`, and
 administrators add `audit:read identity:role:manage`. The API still evaluates
@@ -197,19 +193,14 @@ Lazy operational workspaces are also protected by a redacted error boundary:
 chunk or render failures leave navigation available and expose an explicit
 reload action without implying a financial or Solana outcome.
 
-Run `make web-browser-check` for the opt-in real-browser UI contract. It uses
-the pinned Playwright Docker profile through the NGINX edge and verifies
-keyboard focus, lazy workspace loading, narrow RTL overflow, reduced motion,
-direct workspace links, browser back/forward navigation,
-redacted chunk-failure recovery, an API-unavailable fail-closed state, and
-pinned axe-core WCAG A/AA audits across the quote and operational workspaces.
-It also proves that replacing an opaque session replaces the rendered tenant
-account and capability decisions without retaining the previous tenant's
-context. The runner type-checks the e2e project before launching the browser.
-Client-only idempotency keys use a CSPRNG-only
-secure-context fallback; server UUIDv7 entity authority is unchanged. This
-automated gate does not replace manual assistive-technology, legal/tax,
-live-RPC, or mainnet evidence.
+Run `make web-browser-check` for the default admin control-plane browser
+contract. It uses the pinned Playwright Docker profile through the NGINX edge
+and verifies root-to-sign-in routing, server-owned signup language, protected
+route isolation, and the 320px auth-surface width contract. Run
+`make auth-browser-check` for Docker-backed email-OTP signup/signin, resend,
+and deep-link return-path coverage; run `make initial-admin-browser-check` for
+the first-administrator boundary. These automated gates do not replace manual
+assistive-technology, legal/tax, live-RPC, or mainnet evidence.
 
 Run `make deployment-config-contract` to check the non-local deployment
 preflight. It is intentionally synthetic and structural: it catches local

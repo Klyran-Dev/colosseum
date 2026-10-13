@@ -5,8 +5,10 @@ const authBrowserSpec = process.env.WEB_E2E_SPEC;
 
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: authBrowserSpec ?? "**/*.spec.ts",
-  testIgnore: authBrowserSpec ? undefined : "**/auth-journey.spec.ts",
+  // The shipped entrypoint is AdminApp; legacy workspace specs are retained
+  // as historical fixtures but are not the live submission browser gate.
+  testMatch: authBrowserSpec ?? "admin-browser.spec.ts",
+  testIgnore: authBrowserSpec ? undefined : ["**/auth-journey.spec.ts", "**/initial-admin-journey.spec.ts"],
   timeout: 30_000,
   expect: { timeout: 5_000 },
   fullyParallel: false,

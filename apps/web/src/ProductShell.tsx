@@ -90,6 +90,24 @@ function ProgressRing({ progress, label }: { progress: number; label: string }) 
   </svg>;
 }
 
+function DistributionRing({ confirmed, review, blocked, total }: { confirmed: number; review: number; blocked: number; total: number }) {
+  const confirmedProgress = total === 0 ? 0 : (confirmed / total) * 100;
+  const reviewProgress = total === 0 ? 0 : (review / total) * 100;
+  const blockedProgress = total === 0 ? 0 : (blocked / total) * 100;
+  const segments = [
+    { className: "dashboard-donut-confirmed", progress: confirmedProgress, offset: 0 },
+    { className: "dashboard-donut-review", progress: reviewProgress, offset: confirmedProgress },
+    { className: "dashboard-donut-blocked", progress: blockedProgress, offset: confirmedProgress + reviewProgress },
+  ];
+  return <div className="dashboard-donut" role="img" aria-label={`${confirmed} confirmed, ${review} review, ${blocked} blocked`}>
+    <svg viewBox="0 0 42 42" aria-hidden="true" focusable="false">
+      <circle className="dashboard-donut-track" cx="21" cy="21" r="16" pathLength="100" />
+      {segments.map((segment) => <circle className={segment.className} cx="21" cy="21" r="16" pathLength="100" strokeDasharray={`${segment.progress} ${100 - segment.progress}`} strokeDashoffset={`${-segment.offset}`} key={segment.className} />)}
+    </svg>
+    <div><strong>{total}</strong><span>capabilities</span></div>
+  </div>;
+}
+
 function ControlPlaneInsights({ snapshot, serviceState }: { snapshot: AuthorizationSnapshot; serviceState: ServiceState }) {
   const decisions = NAVIGATION.map((item) => navigationAccess(item, snapshot));
   const confirmed = decisions.filter((decision) => decision.kind === "allow").length;
@@ -114,7 +132,7 @@ function ControlPlaneInsights({ snapshot, serviceState }: { snapshot: Authorizat
       </article>
       <article className="dashboard-chart-card dashboard-chart-card-narrow" aria-labelledby="access-distribution-title">
         <div className="dashboard-chart-heading"><div><p className="dashboard-card-kicker">Capability posture</p><h2 id="access-distribution-title">Access distribution</h2></div><span className="dashboard-card-menu" aria-hidden="true">⋮</span></div>
-        <div className="dashboard-donut-wrap"><div className="dashboard-donut" style={{ background: `conic-gradient(var(--control-reference-primary) 0 ${confirmedProgress}%, var(--control-reference-info) ${confirmedProgress}% ${confirmedProgress + reviewProgress}%, var(--control-reference-danger) ${confirmedProgress + reviewProgress}% 100%)` }} role="img" aria-label={`${confirmed} confirmed, ${review} review, ${blocked} blocked`}><div><strong>{total}</strong><span>capabilities</span></div></div><div className="dashboard-distribution-list"><span><i className="dashboard-legend-dot dashboard-legend-confirmed" />{confirmed} confirmed</span><span><i className="dashboard-legend-dot dashboard-legend-review" />{review} review</span><span><i className="dashboard-legend-dot dashboard-legend-blocked" />{blocked} blocked</span></div></div>
+        <div className="dashboard-donut-wrap"><DistributionRing confirmed={confirmed} review={review} blocked={blocked} total={total} /><div className="dashboard-distribution-list"><span><i className="dashboard-legend-dot dashboard-legend-confirmed" />{confirmed} confirmed</span><span><i className="dashboard-legend-dot dashboard-legend-review" />{review} review</span><span><i className="dashboard-legend-dot dashboard-legend-blocked" />{blocked} blocked</span></div></div>
       </article>
     </div>
     <div className="dashboard-lower-grid">

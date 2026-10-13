@@ -18,9 +18,15 @@ docker run --rm \
   fs \
   --skip-version-check \
   --scanners vuln,license \
+  --skip-dirs /src/.git \
   --skip-dirs /src/target \
   --skip-dirs /src/apps/web/node_modules \
+  --skip-dirs /src/apps/web/dist \
+  --skip-dirs /src/evm-adapter/cache \
+  --skip-dirs /src/evm-adapter/out \
   --skip-dirs /src/release-bundle \
+  --skip-dirs /src/test-results \
+  --skip-dirs /src/tmp \
   --format cyclonedx \
   --output /src/release-bundle/sbom.cdx.json \
   /src

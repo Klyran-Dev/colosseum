@@ -89,7 +89,7 @@ done
 
 # Navigation glyphs are semantic, monochrome structure. They must not become
 # a data-dependent status surface or regress to first-letter avatars.
-if ! grep -Fq 'function NavigationGlyph' "$shell" || ! grep -Fq 'icon: NavigationIcon' "$shell"; then
+if ! grep -Fq 'function NavigationGlyph' "$shell" || ! grep -Fq '<NavigationGlyph workspace={item.workspace}' "$shell"; then
   echo "product navigation is missing the fixed semantic glyph contract" >&2
   exit 1
 fi

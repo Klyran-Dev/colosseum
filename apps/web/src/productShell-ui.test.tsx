@@ -68,6 +68,17 @@ describe("reference-driven control-plane shell", () => {
     expect(screen.getByText("Counts are derived from the server authorization snapshot.")).toBeTruthy();
   });
 
+  it("renders access distribution as an accessible semantic SVG ring", () => {
+    renderShell();
+
+    const distribution = screen.getByRole("img", { name: "1 confirmed, 0 review, 15 blocked" });
+    expect(distribution.querySelector("svg")).toBeTruthy();
+    expect(distribution.querySelector(".dashboard-donut-confirmed")).toBeTruthy();
+    expect(distribution.querySelector(".dashboard-donut-review")).toBeTruthy();
+    expect(distribution.querySelector(".dashboard-donut-blocked")).toBeTruthy();
+    expect(distribution.querySelector("[style*='gradient']")).toBeNull();
+  });
+
   it("keeps every workspace reachable with truthful access labels", () => {
     renderShell();
 

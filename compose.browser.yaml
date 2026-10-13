@@ -11,6 +11,7 @@ services:
     ports: !reset []
     build:
       args:
-        # Route-interception journeys intentionally use synthetic credentials;
-        # the normal local profile remains email-OTP based.
-        VITE_LOCAL_UI_MODE: credential
+        # The live entrypoint is the admin control plane. Keep browser coverage
+        # on the same email-OTP configuration as the documented local product.
+        VITE_LOCAL_UI_MODE: email-otp
+        VITE_AUTH_SERVICE_BASE_URL: http://auth-service:8085

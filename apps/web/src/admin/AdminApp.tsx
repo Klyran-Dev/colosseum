@@ -1,7 +1,7 @@
 import { lazy, ReactNode, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { createColumnHelper, flexRender, tableFeatures, useTable } from "@tanstack/react-table";
-import { Link, Outlet, RouterProvider, createBrowserHistory, createMemoryHistory, createRootRoute, createRoute, createRouter, useNavigate, useRouterState } from "@tanstack/react-router";
+import { Link, Navigate, Outlet, RouterProvider, createBrowserHistory, createMemoryHistory, createRootRoute, createRoute, createRouter, useNavigate, useRouterState } from "@tanstack/react-router";
 import { fetchAdminSnapshot } from "./data";
 import { AdminAction, AdminCapability, AdminMetric, AdminQueryError, AdminSection, AdminSession, AdminSnapshot, NAV_ITEMS, SECTION_COPY } from "./model";
 import WorkflowPanel from "./WorkflowPanel";
@@ -78,12 +78,13 @@ function AdminLayout() {
 function AdminRouteBoundary() {
   const { session, signOut } = useAdminSession();
   const navigate = useNavigate();
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [, refreshExpiry] = useState(0);
   const usable = sessionIsUsable(session);
   useEffect(() => {
     if (!usable) {
       if (session) signOut();
-      void navigate({ to: "/auth/signin", replace: true });
+      void navigate({ to: "/auth/signin", search: { next: pathname }, replace: true });
       return;
     }
     const timeout = window.setTimeout(() => refreshExpiry((value) => value + 1), Math.max(1_000, (session.expiresAtUnix - Math.floor(Date.now() / 1000)) * 1_000));
@@ -188,6 +189,7 @@ function SectionPage({ section }: { section: Exclude<AdminSection, "overview"> }
 }
 
 const rootRoute = createRootRoute({ component: () => <Outlet /> });
+const homeRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: () => <Navigate to="/admin" replace /> });
 const adminRoute = createRoute({ getParentRoute: () => rootRoute, path: "/admin", component: AdminRouteBoundary });
 const overviewRoute = createRoute({ getParentRoute: () => adminRoute, path: "/", component: OverviewPage });
 const quotesRoute = createRoute({ getParentRoute: () => adminRoute, path: "/tax/quotes", component: () => <SectionPage section="quotes" /> });
@@ -199,7 +201,7 @@ const evidenceRoute = createRoute({ getParentRoute: () => adminRoute, path: "/ev
 const settingsRoute = createRoute({ getParentRoute: () => adminRoute, path: "/settings", component: () => <SectionPage section="settings" /> });
 const signInRoute = createRoute({ getParentRoute: () => rootRoute, path: "/auth/signin", component: () => <AdminAuthPage intent="signin" /> });
 const signUpRoute = createRoute({ getParentRoute: () => rootRoute, path: "/auth/signup", component: () => <AdminAuthPage intent="signup" /> });
-const routeTree = rootRoute.addChildren([signInRoute, signUpRoute, adminRoute.addChildren([overviewRoute, quotesRoute, rulesRoute, settlementsRoute, treasuryRoute, accessRoute, evidenceRoute, settingsRoute])]);
+const routeTree = rootRoute.addChildren([homeRoute, signInRoute, signUpRoute, adminRoute.addChildren([overviewRoute, quotesRoute, rulesRoute, settlementsRoute, treasuryRoute, accessRoute, evidenceRoute, settingsRoute])]);
 
 export default function AdminApp({ initialPath }: AdminAppProps) {
   const [session, setSessionState] = useState<AdminSession | null>(null);
