@@ -1,9 +1,10 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { beginOidcAuthorization, completeOidcCallback } from "../oidcSession";
+import { fetchWithTimeout, REQUEST_TIMEOUT_MS } from "../api";
 import { BROWSER_AUTH_CONFIG, BROWSER_AUTH_SERVICE_BASE_URL } from "../authConfig";
 import { invitationIdFromSearch, safeAuthNextPath } from "../authFlow";
-import { requestJson } from "./data";
+import { authErrorMessage, authResponseError, AuthRecoveryAction, AuthResponseError } from "../authErrors";
 import { useAdminSession } from "./session";
 
 type AuthIntent = "signin" | "signup";
@@ -32,6 +33,15 @@ function errorMessage(value: unknown): string {
   return value instanceof Error ? value.message : "The authentication service could not complete this request.";
 }
 
+async function requestAuthJson(path: string, fallback: string, init: RequestInit = {}): Promise<unknown> {
+  const headers = new Headers(init.headers);
+  headers.set("accept", "application/json");
+  const response = await fetchWithTimeout(path, { ...init, headers }, REQUEST_TIMEOUT_MS.default);
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) throw authResponseError(response, payload, fallback);
+  return payload;
+}
+
 export default function AdminAuthPage({ intent }: { intent: AuthIntent }) {
   const { setSession } = useAdminSession();
   const navigate = useNavigate();
@@ -43,6 +53,7 @@ export default function AdminAuthPage({ intent }: { intent: AuthIntent }) {
   const [nowUnix, setNowUnix] = useState(() => Math.floor(Date.now() / 1000));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [recoveryAction, setRecoveryAction] = useState<AuthRecoveryAction>(null);
   const authBase = BROWSER_AUTH_SERVICE_BASE_URL || BROWSER_AUTH_CONFIG.emailOtp?.baseUrl || "";
   const emailOtpEnabled = BROWSER_AUTH_CONFIG.mode === "email-otp" && Boolean(authBase);
   const oidcEnabled = BROWSER_AUTH_CONFIG.mode === "oidc" && Boolean(BROWSER_AUTH_CONFIG.oidc);
@@ -80,7 +91,7 @@ export default function AdminAuthPage({ intent }: { intent: AuthIntent }) {
   async function requestChallenge(): Promise<void> {
     if (!emailOtpEnabled) throw new Error(BROWSER_AUTH_CONFIG.warnings[0] ?? "Sign-in is not configured for this deployment.");
     const endpoint = (operation: string) => `${authBase}/v1/auth/email/${operation}`;
-    const payload = await requestJson(endpoint("request"), null, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, intent, ...(invitationId ? { invitation_id: invitationId } : {}) }) });
+    const payload = await requestAuthJson(endpoint("request"), "The sign-in code could not be sent.", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, intent, ...(invitationId ? { invitation_id: invitationId } : {}) }) });
     const value = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
     const id = typeof value.challenge_id === "string" && value.challenge_id ? value.challenge_id : "";
     const expiresAtUnix = responseNumber(payload, "expires_at_unix");
@@ -90,12 +101,14 @@ export default function AdminAuthPage({ intent }: { intent: AuthIntent }) {
     setChallengeExpiresAtUnix(expiresAtUnix);
     setResendAvailableAtUnix(Math.floor(Date.now() / 1000) + retryAfterSeconds);
     setCode("");
+    setRecoveryAction(null);
   }
 
   async function resendChallenge(): Promise<void> {
     if (busy || !email.trim() || nowUnix < resendAvailableAtUnix) return;
     setBusy(true);
     setError(null);
+    setRecoveryAction(null);
     try {
       await requestChallenge();
     } catch (cause) {
@@ -111,12 +124,14 @@ export default function AdminAuthPage({ intent }: { intent: AuthIntent }) {
     setResendAvailableAtUnix(0);
     setCode("");
     setError(null);
+    setRecoveryAction(null);
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setError(null);
+    setRecoveryAction(null);
     try {
       if (oidcEnabled && BROWSER_AUTH_CONFIG.oidc) {
         const authorizationUrl = await beginOidcAuthorization(BROWSER_AUTH_CONFIG.oidc, window.sessionStorage);
@@ -128,14 +143,22 @@ export default function AdminAuthPage({ intent }: { intent: AuthIntent }) {
         await requestChallenge();
       } else {
         const endpoint = (operation: string) => `${authBase}/v1/auth/email/${operation}`;
-        const payload = await requestJson(endpoint("verify"), null, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, code, challenge_id: challengeId }) });
+        const payload = await requestAuthJson(endpoint("verify"), "The sign-in code could not be verified.", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, code, challenge_id: challengeId }) });
         const value = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
         if (typeof value.access_token !== "string" || !value.access_token || typeof value.expires_in !== "number" || !Number.isSafeInteger(value.expires_in) || value.expires_in <= 0) throw new Error("The authentication service returned an invalid session.");
         setSession({ accessToken: value.access_token, email, expiresAtUnix: Math.floor(Date.now() / 1000) + value.expires_in });
         await navigate({ to: nextPath });
       }
     } catch (cause) {
-      setError(errorMessage(cause));
+      const authError = cause instanceof AuthResponseError ? cause : null;
+      setRecoveryAction(authError?.recoveryAction ?? null);
+      if (authError?.recoveryAction) {
+        setChallengeId("");
+        setChallengeExpiresAtUnix(null);
+        setResendAvailableAtUnix(0);
+        setCode("");
+      }
+      setError(authErrorMessage(cause, "The sign-in code could not be completed."));
     } finally {
       setBusy(false);
     }
@@ -159,7 +182,7 @@ export default function AdminAuthPage({ intent }: { intent: AuthIntent }) {
                 <label className="block" htmlFor="admin-auth-email"><span className="mb-1.5 block text-[0.8125rem] font-bold text-admin-ink">Work email</span><input id="admin-auth-email" className="w-full rounded-xl border border-admin-line bg-admin-surface-muted px-4 py-2.5 text-sm text-admin-ink outline-none transition placeholder:text-admin-muted focus:border-admin-primary focus:bg-admin-surface focus:ring-4 focus:ring-admin-primary/10" type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" placeholder="you@company.com" required /></label>
                 {challengeId && <label className="block" htmlFor="admin-auth-code"><span className="mb-1.5 block text-[0.8125rem] font-bold text-admin-ink">One-time code</span><input id="admin-auth-code" className="w-full rounded-xl border border-admin-line bg-admin-surface-muted px-4 py-2.5 font-mono text-sm tracking-[0.3em] text-admin-ink outline-none transition placeholder:text-admin-muted focus:border-admin-primary focus:bg-admin-surface focus:ring-4 focus:ring-admin-primary/10" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(event) => setCode(event.target.value.replace(/\D/gu, "").slice(0, 6))} placeholder="000000" required /></label>}
               </>}
-              {error && <div className="rounded-xl border border-admin-red/30 bg-admin-red-soft p-3.5 text-[0.8125rem] leading-5 text-admin-red" role="alert">{error}</div>}
+              {error && <div className="rounded-xl border border-admin-red/30 bg-admin-red-soft p-3.5 text-[0.8125rem] leading-5 text-admin-red" role="alert"><p>{error}</p>{recoveryAction === "signup" && <a href={`/auth/signup?next=${encodeURIComponent(nextPath)}`} className="mt-3 inline-flex rounded-lg bg-admin-primary px-3 py-2 text-xs font-bold text-white">Finish account setup</a>}{recoveryAction === "signin" && <a href={`/auth/signin?next=${encodeURIComponent(nextPath)}`} className="mt-3 inline-flex rounded-lg bg-admin-primary px-3 py-2 text-xs font-bold text-white">Continue to sign in</a>}</div>}
               {challengeId && <div className="rounded-xl border border-admin-line bg-admin-surface-muted p-3 text-xs leading-5 text-admin-muted" role="status" aria-live="polite">
                 <p>{challengeExpiresAtUnix !== null && challengeExpiresAtUnix <= nowUnix ? "This code has expired. Request a new code to continue." : "Use the newest code sent to this email address."}</p>
                 <div className="mt-3 flex flex-wrap items-center gap-3">

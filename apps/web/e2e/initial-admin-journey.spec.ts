@@ -44,9 +44,11 @@ async function completeInitialAdminOtp(page: Page): Promise<void> {
   await page.getByLabel("Work email").fill(INITIAL_ADMIN_EMAIL);
   const requestResponse = page.waitForResponse((response) => response.url().endsWith("/v1/auth/email/request"));
   await page.getByRole("button", { name: "Create account" }).click();
-  expect((await requestResponse).status()).toBe(202);
+  const requested = await requestResponse;
+  expect(requested.status()).toBe(202);
+  const challenge = await requested.json() as { challenge_id: string };
   await expect(page.getByRole("status")).toContainText("Use the newest code sent to this email address.");
-  const message = await readOtpFor(INITIAL_ADMIN_EMAIL);
+  const message = await readOtpFor(INITIAL_ADMIN_EMAIL, challenge.challenge_id);
   await page.getByLabel("One-time code").fill(message.code);
   const verifyResponse = page.waitForResponse((response) => response.url().endsWith("/v1/auth/email/verify"));
   await page.getByRole("button", { name: "Verify code" }).click();
@@ -69,8 +71,8 @@ test("gives the configured bootstrap email an actionable setup outcome after sig
   await page.getByRole("button", { name: "Verify code" }).click();
   expect((await verifyResponse).status()).toBe(409);
   await expect(page.getByRole("alert")).toContainText("Your email was verified. Finish account setup to continue.");
-  await expect(page.getByRole("button", { name: "Finish account setup" })).toBeVisible();
-  await page.getByRole("button", { name: "Finish account setup" }).click();
+  await expect(page.getByRole("link", { name: "Finish account setup" })).toBeVisible();
+  await page.getByRole("link", { name: "Finish account setup" }).click();
   await expect(page).toHaveURL(/\/auth\/signup\?next=%2Fadmin%2Faccess$/u);
 });
 
