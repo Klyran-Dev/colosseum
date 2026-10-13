@@ -60,7 +60,7 @@ opentelemetry = "=0.33.0"
 opentelemetry_sdk = { package = "opentelemetry_sdk", version = "=0.33.0", features = ["trace"] }
 opentelemetry-otlp = { version = "=0.33.0", default-features = false, features = ["trace", "grpc-tonic", "tls-ring", "tls-roots"] }
 solana-keypair = "=4.0.0"
-solana-address-lookup-table-interface = { version = "=3.2.0", features = ["wincode", "bytemuck"] }
+solana-address-lookup-table-interface = { version = "=4.0.0", features = ["wincode", "bytemuck"] }
 solana-message = { version = "=5.1.0", features = ["wincode"] }
 solana-pubkey = "=4.4.0"
 solana-signature = "=3.6.0"

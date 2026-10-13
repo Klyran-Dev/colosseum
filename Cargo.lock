@@ -3678,17 +3678,17 @@ dependencies = [
 
 [[package]]
 name = "solana-address-lookup-table-interface"
-version = "3.2.0"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8dedafa11d25554279235dd0539d378adc144183eca65072a302c9592cc6a591"
+checksum = "29c09d0da218d985406ed11c1c84169fc9e02e61a5a0012398026b329b9af608"
 dependencies = [
  "bytemuck",
- "solana-clock 3.2.1",
- "solana-instruction 3.5.1",
- "solana-instruction-error 2.5.0",
+ "solana-clock 4.0.0",
+ "solana-instruction 4.0.0",
+ "solana-instruction-error 3.1.0",
  "solana-pubkey 4.4.0",
  "solana-sdk-ids",
- "solana-slot-hashes",
+ "solana-slot-hashes 4.0.0",
  "wincode",
 ]
 
@@ -4246,6 +4246,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-slot-hashes"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3da667c6de47dd04fa03cd3a29f2ce046627407f0de0dc56c5d78ed1ba23785"
+dependencies = [
+ "solana-hash",
+]
+
+[[package]]
 name = "solana-slot-history"
 version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4345,7 +4354,7 @@ dependencies = [
  "solana-rent",
  "solana-sdk-ids",
  "solana-sdk-macro",
- "solana-slot-hashes",
+ "solana-slot-hashes 3.2.0",
  "solana-slot-history",
  "solana-sysvar-id",
 ]
