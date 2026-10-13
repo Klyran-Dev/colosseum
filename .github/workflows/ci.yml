@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Install and select pinned Rust toolchain
         run: |
           rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy --no-self-update
@@ -35,7 +35,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Install and select pinned Rust toolchain
         run: |
           rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy --no-self-update
@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -85,7 +85,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run pinned Docker browser journeys through NGINX
         run: make web-browser-check
       - name: Upload browser failure evidence
@@ -103,7 +103,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run pinned Docker Solidity adapter tests
         run: make evm-adapter-check
 
@@ -112,7 +112,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Validate Compose configuration
         run: docker compose --profile browser --profile cache --profile observability --profile indexer --profile route-verifier --profile solana config --quiet
       - name: Verify immutable image and action pins
@@ -132,7 +132,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run the declared warm-service workload
         run: |
           mkdir -p test-results/tax-engine-load
@@ -153,7 +153,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run the synthetic pinned-image mTLS contract
         run: make tax-engine-mtls-runtime-contract
 
@@ -163,7 +163,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run the synthetic pinned-image token rotation contract
         run: make tax-engine-runtime-contract
 
@@ -173,7 +173,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run the synthetic API key-rotation contract
         run: make api-auth-jwks-reload-contract
       - name: Run the synthetic jurisdiction-provider key-rotation contract
@@ -185,7 +185,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run Docker collector receipt drill
         run: make otel-trace-drill
       - name: Upload OTLP trace evidence
@@ -203,7 +203,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Assert authoritative Linux validator runner
         run: |
           test "$(uname -s)" = Linux
@@ -235,7 +235,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run pinned Trivy scan
         run: ./scripts/security_scan.sh
 
@@ -244,7 +244,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Verify public repository contract
         run: make public-docs-check
       - name: Verify explicit host toolchain bootstrap contract
@@ -257,7 +257,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run isolated Docker integration checks
         run: |
           set -o pipefail
@@ -278,7 +278,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run two-replica replay recovery drill
         run: make indexer-replay-drill
       - name: Upload replay recovery evidence
@@ -296,7 +296,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run transaction-bound proof-worker drill
         run: |
           mkdir -p test-results/refund-proof-integration
@@ -316,7 +316,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run two-replica retry-exhaustion drill
         run: make indexer-replay-dead-letter-drill
       - name: Upload retry-exhaustion evidence
@@ -334,7 +334,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run Prometheus to Alertmanager delivery drill
         run: make alert-delivery-drill
       - name: Upload alert delivery evidence
@@ -352,7 +352,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run two-replica contention and crash-reclaim drill
         env:
           REFUND_FUNDING_VERIFIER_EVIDENCE_DIR: test-results/refund-funding-verifier
@@ -372,7 +372,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run concurrent claim, stale reclaim, and dead-letter drill
         run: |
           mkdir -p test-results/refund-proof-lease
@@ -392,7 +392,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run concurrent authenticated execute-preparation drill
         run: |
           mkdir -p test-results/refund-execute-api-contention
@@ -412,7 +412,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run the declared local workload
         run: |
           mkdir -p test-results/quote-load
@@ -433,7 +433,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run the declared document workload
         run: |
           mkdir -p test-results/document-quote-load
@@ -454,7 +454,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run the declared local workload
         run: |
           mkdir -p test-results/rule-simulation-load
@@ -474,7 +474,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run isolated PostgreSQL recovery drill
         run: make backup-restore-drill
 
@@ -484,7 +484,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run encrypted backup and integrity restore drill
         run: |
           set -o pipefail
@@ -505,7 +505,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run clean projection rebuild drill
         run: make projection-rebuild-drill
 
@@ -515,7 +515,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run scheduled RPC-to-indexer reconciliation drill
         run: make vault-reconciliation-drill
 
@@ -525,7 +525,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run two-provider RPC failover reconciliation drill
         env:
           VAULT_RECONCILIATION_PROVIDER_MODE: failover
@@ -537,7 +537,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run bounded PostgreSQL contention drill
         run: make postgres-contention-drill
 
@@ -547,7 +547,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run constrained pool and idempotency load
         run: make postgres-pool-drill
 
@@ -557,7 +557,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run synthetic evidence-volume plan assertions
         run: make postgres-index-plan-drill
 
@@ -567,7 +567,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run physical base-backup and WAL replay drill
         run: make postgres-pitr-drill
 
@@ -577,7 +577,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run checksum and advisory-lock migration drill
         run: make migration-integrity-drill
 
@@ -587,7 +587,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Run pre-deploy restore and forward-recovery rehearsal
         run: |
           set -o pipefail
