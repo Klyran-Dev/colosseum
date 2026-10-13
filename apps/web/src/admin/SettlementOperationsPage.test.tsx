@@ -11,6 +11,16 @@ const capability = { id: "settlement.wallet", label: "Review payment", decision:
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("SettlementOperationsPage", () => {
+  it("does not show route loading when settlement permission is unavailable", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SettlementOperationsPage session={session} capability={{ id: "settlement.wallet", label: "Review payment", decision: "deny", reason: "scope_missing", control: "server" }} /></QueryClientProvider>);
+
+    expect(screen.getByText(/Settlement access is not assigned to this account\./u)).toBeTruthy();
+    expect(screen.queryByText("Loading finalized route evidence…")).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("loads finalized routes and sends only quote-bound compilation inputs", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);

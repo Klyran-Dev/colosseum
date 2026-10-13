@@ -4774,3 +4774,15 @@ Chosen: backfill and provision `auth_tenants`, expose a server-owned tenant
 context, derive setup steps from durable route/policy evidence, and keep
 administrator promotion separate from the assignable role catalog. Readiness
 does not authorize money movement, and no platform-admin semantics are implied.
+
+### Settlement permission and route-loading UX (ADR-0531)
+
+| Alternative | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| Grant settlement scope to every administrator | Fewer blocked screens | Collapses tenant administration and money-moving responsibility | Rejected |
+| Keep the existing generic badge and query pending state | No code change | Misleading loading message when the query is disabled | Rejected |
+| **Keep server-gated settlement access and map disabled-query state to truthful operator copy** | Preserves least privilege, fail-closed behavior, and clear recovery guidance | Requires capability-aware UI state mapping and regression coverage | **Selected** |
+
+Chosen: settlement access remains a separately assigned responsibility. The
+frontend never treats an unauthorized or disabled route query as loading, and
+it never synthesizes a route when finalized evidence is unavailable.
