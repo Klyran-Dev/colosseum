@@ -51,6 +51,8 @@ The Solana core uses Rust/Anchor-compatible interfaces. The Tier-1 Tax Engine is
 - [Security policy](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
 - [Code of conduct](CODE_OF_CONDUCT.md)
+- [License](LICENSE)
+- [Third-party and attribution notices](NOTICE)
 - [Operations runbooks](docs/runbooks/README.md)
 - [Tier-1 decision register](docs/operations/decision-register.md)
 - [Requirements traceability and evidence matrix](docs/operations/requirements-traceability.md)

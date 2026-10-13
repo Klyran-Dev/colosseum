@@ -6,11 +6,24 @@ remaining Solana, security, operations, legal, performance, and accessibility
 gates in the [production-readiness plan](plans/production-readiness.md) are
 open.
 
+## License decision
+
+The repository source is released under the [Apache License, Version 2.0](../LICENSE).
+Apache-2.0 permits commercial use, modification, redistribution, and paid
+support services. Hosted service access, implementation work, support/SLA
+commitments, customization, and trademarks are separate commercial offerings
+and are not restrictions on the rights granted by the software license.
+
+The [NOTICE](../NOTICE) file records project attribution. Third-party
+dependencies retain their own licenses and notices; redistributors must review
+the dependency metadata and include any notices required by those licenses.
+Before this decision, the source must not be represented as licensed for
+general reuse.
+
 ## Required before public source release
 
-- An explicit license decision is approved by the repository owner and the
-  selected `LICENSE` or `LICENSE.md` file is committed. Until then, the source
-  must not be represented as licensed for general reuse.
+- The repository owner has approved the Apache-2.0 license decision and the
+  selected `LICENSE` and `NOTICE` files are committed.
 - The root [README](../README.md), [AGENTS.md](../AGENTS.md),
   [contribution guide](../CONTRIBUTING.md), [security policy](../SECURITY.md),
   [code of conduct](../CODE_OF_CONDUCT.md), and [changelog](../CHANGELOG.md)
