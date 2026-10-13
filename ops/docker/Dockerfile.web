@@ -36,7 +36,7 @@ ENV VITE_INDEXER_STREAM_KEY=${VITE_INDEXER_STREAM_KEY}
 RUN pnpm --dir apps/web build
 RUN node scripts/render_web_nginx_config.mjs ops/nginx/nginx.conf /workspace/generated-nginx.conf
 
-FROM nginx:1.30.5-alpine@sha256:bf3201ab56f23e5954646379c775d511fc466e9f11376d9725361064ad07ed35 AS runtime
+FROM nginx:1.31.0-alpine@sha256:2f07d83bf561b506400dc183b1b2003803e39efbd22451f848adaba14d28c7c7 AS runtime
 COPY ops/nginx/nginx-main.conf /etc/nginx/nginx.conf
 COPY --from=builder /workspace/generated-nginx.conf /etc/nginx/conf.d/default.conf
 # The upstream name is supplied by Compose DNS at runtime and is not
