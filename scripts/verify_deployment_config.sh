@@ -90,7 +90,21 @@ case "$deployment_env" in
 esac
 
 require_exact AUTH_ENV "$deployment_env"
-require_exact AUTH_SELF_SIGNUP false
+auth_self_signup=$(read_env AUTH_SELF_SIGNUP)
+case "$auth_self_signup:$deployment_env" in
+  false:staging|false:production) ;;
+  true:staging) ;;
+  true:production) fail "AUTH_SELF_SIGNUP must be false in production" ;;
+  *) fail "AUTH_SELF_SIGNUP must be true or false" ;;
+esac
+if [ "$auth_self_signup" = true ]; then
+  self_signup_limit=$(read_env AUTH_SELF_SIGNUP_DAILY_LIMIT)
+  case "$self_signup_limit" in
+    ''|*[!0-9]*) fail "AUTH_SELF_SIGNUP_DAILY_LIMIT must be a bounded integer" ;;
+  esac
+  [ "$self_signup_limit" -ge 1 ] 2>/dev/null || fail "AUTH_SELF_SIGNUP_DAILY_LIMIT must be at least 1"
+  [ "$self_signup_limit" -le 10000 ] 2>/dev/null || fail "AUTH_SELF_SIGNUP_DAILY_LIMIT must be at most 10000"
+fi
 [ -z "$(read_env AUTH_LOCAL_BOOTSTRAP_ADMIN_EMAIL)" ] || fail "AUTH_LOCAL_BOOTSTRAP_ADMIN_EMAIL must be empty outside local development"
 validate_database_url AUTH_DATABASE_URL
 validate_https_url AUTH_ISSUER

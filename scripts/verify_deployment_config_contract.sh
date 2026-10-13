@@ -33,6 +33,7 @@ run_checker() {
     DEPLOYMENT_ENV=staging \
     AUTH_ENV="$auth_environment" \
     AUTH_SELF_SIGNUP="$auth_self_signup" \
+    AUTH_SELF_SIGNUP_DAILY_LIMIT=25 \
     AUTH_LOCAL_BOOTSTRAP_ADMIN_EMAIL= \
     AUTH_DATABASE_URL="$synthetic_database" \
     AUTH_ISSUER=https://identity.example.invalid \
@@ -172,14 +173,10 @@ if run_checker false '' false pair pair staging synthetic-nonlocal-service-token
   exit 1
 fi
 
-if run_checker false '' false pair pair staging synthetic-nonlocal-service-token \
+run_checker false '' false pair pair staging synthetic-nonlocal-service-token \
   /run/secrets/tax-engine/tls.crt /run/secrets/tax-engine/tls.key \
   /run/secrets/tax-engine/client-ca.pem \
   '["spiffe://solana-tax-protocol/api"]' '' staging true provider email-otp \
-  >/dev/null 2>&1; then
-  echo "auth self-signup negative contract did not fail" >&2
-  exit 1
-fi
 
 if run_checker false '' false pair pair staging synthetic-nonlocal-service-token \
   /run/secrets/tax-engine/tls.crt /run/secrets/tax-engine/tls.key \
