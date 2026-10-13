@@ -4786,3 +4786,15 @@ does not authorize money movement, and no platform-admin semantics are implied.
 Chosen: settlement access remains a separately assigned responsibility. The
 frontend never treats an unauthorized or disabled route query as loading, and
 it never synthesizes a route when finalized evidence is unavailable.
+
+### Stale admin lazy-chunk recovery (ADR-0532)
+
+| Alternative | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| Ask users to hard-refresh after every deployment | Minimal implementation | Poor tier-1 UX and does not contain raw chunk errors | Rejected |
+| Disable code splitting | Avoids lazy chunk mismatch | Increases initial bundle and delays every route | Rejected |
+| **Wrap lazy surfaces in the existing bounded error boundary** | Recovers open tabs once, preserves redacted UX, and keeps immutable asset delivery | Does not replace a future blue/green asset retention strategy | **Selected** |
+
+Chosen: the admin and checkout lazy surfaces use a shared error boundary around
+`Suspense`. The server and edge remain authoritative; no client fallback
+fabricates workspace data.

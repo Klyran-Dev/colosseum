@@ -532,3 +532,4 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0529](0529-otp-verification-outcome-and-recovery.md) — Make OTP verification outcomes terminal and actionable
 - [ADR-0530](0530-capability-context-and-tenant-identity-presentation.md) — Resolve deployment context and remove unnamed-workspace leakage from the UI
 - [ADR-0531](0531-settlement-permission-state-ux.md) — Make settlement permission and route-loading states truthful
+- [ADR-0532](0532-admin-lazy-chunk-recovery.md) — Contain stale admin lazy-chunk failures
