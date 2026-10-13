@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 ghcr.io/foundry-rs/foundry:v1.8.1@sha256:3a16888f6fe5abee49b0a3e8210255c5d89445b5c08fbcef443dd4e3703146aa
+FROM --platform=linux/amd64 ghcr.io/foundry-rs/foundry:v1.8.5@sha256:32c8ea9ef052a440cb1620175987a3f49eff8b068a0c6a3d09ebf7f5f9a0e043
 
 WORKDIR /workspace
 COPY --chown=foundry:foundry evm-adapter ./evm-adapter
