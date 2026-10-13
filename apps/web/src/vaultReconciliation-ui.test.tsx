@@ -7,6 +7,13 @@ import VaultReconciliationPanel from "./VaultReconciliationPanel";
 afterEach(() => cleanup());
 
 describe("vault reconciliation operator workspace", () => {
+  it("explains the protected read-only boundary while signed out", () => {
+    render(<VaultReconciliationPanel apiBase="/api" serviceOnline accessToken="" />);
+
+    expect(screen.getByRole("note").textContent).toContain("Sign in to continue");
+    expect(screen.getByRole("button", { name: "Load reconciliation targets" }).closest("fieldset")?.disabled).toBe(true);
+  });
+
   it("localizes the read-only balance boundary and release-stop language", () => {
     render(<VaultReconciliationPanel apiBase="/api" serviceOnline accessToken="operator-token" locale="de-DE" />);
 

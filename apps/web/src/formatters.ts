@@ -120,6 +120,80 @@ export function formatEpoch(value: number, locale = DEFAULT_LOCALE, timeZone = D
   }).format(new Date(value * 1_000));
 }
 
+function dateTimePart(parts: Intl.DateTimeFormatPart[], type: Intl.DateTimeFormatPartTypes): string {
+  return parts.find((part) => part.type === type)?.value ?? "";
+}
+
+function timeZoneOffsetMilliseconds(value: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(value);
+  const wallClock = Date.UTC(
+    Number(dateTimePart(parts, "year")),
+    Number(dateTimePart(parts, "month")) - 1,
+    Number(dateTimePart(parts, "day")),
+    Number(dateTimePart(parts, "hour")),
+    Number(dateTimePart(parts, "minute")),
+    Number(dateTimePart(parts, "second")),
+  );
+  return wallClock - value.getTime();
+}
+
+/** Formats an epoch second as the exact value accepted by a datetime-local input in timeZone. */
+export function formatDateTimeLocal(value: number, timeZone = DEFAULT_TIME_ZONE): string {
+  if (!Number.isSafeInteger(value) || !isValidTimeZone(timeZone)) return "";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(value * 1_000));
+  return `${dateTimePart(parts, "year")}-${dateTimePart(parts, "month")}-${dateTimePart(parts, "day")}T${dateTimePart(parts, "hour")}:${dateTimePart(parts, "minute")}:${dateTimePart(parts, "second")}`;
+}
+
+/** Parses a datetime-local value in timeZone without converting through the browser's local zone. */
+export function parseDateTimeLocal(value: string, timeZone = DEFAULT_TIME_ZONE): number | null {
+  if (!isValidTimeZone(timeZone)) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value.trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6] ?? "0");
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) return null;
+
+  const wallDate = new Date(0);
+  wallDate.setUTCFullYear(year, month - 1, day);
+  wallDate.setUTCHours(hour, minute, second, 0);
+  if (wallDate.getUTCFullYear() !== year || wallDate.getUTCMonth() !== month - 1 || wallDate.getUTCDate() !== day) return null;
+
+  const wallClock = wallDate.getTime();
+  let candidate = wallClock;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const next = wallClock - timeZoneOffsetMilliseconds(new Date(candidate), timeZone);
+    if (next === candidate) break;
+    candidate = next;
+  }
+  const epochSeconds = candidate / 1_000;
+  if (!Number.isSafeInteger(epochSeconds)) return null;
+  const normalized = formatDateTimeLocal(epochSeconds, timeZone);
+  const requested = `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6] ?? "00"}`;
+  return normalized === requested ? epochSeconds : null;
+}
+
 export function directionForLocale(locale: string): "ltr" | "rtl" {
   const language = locale.toLowerCase().split("-")[0];
   return RTL_LANGUAGES.has(language) ? "rtl" : "ltr";

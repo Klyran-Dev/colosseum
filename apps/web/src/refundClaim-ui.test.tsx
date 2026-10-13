@@ -10,6 +10,13 @@ afterEach(() => {
 });
 
 describe("refund claim localized operator surface", () => {
+  it("makes refund preparation unavailable before sign-in", () => {
+    render(<RefundClaimPanel apiBase="/api" serviceOnline accessToken="" locale="en-US" />);
+
+    expect(screen.getByRole("note").textContent).toContain("Sign in to continue");
+    expect(screen.getByRole("textbox", { name: /Approved correction reference/ }).closest("fieldset")).toHaveProperty("disabled", true);
+  });
+
   it("localizes German copy while keeping the wallet action fail-closed", () => {
     vi.stubGlobal("fetch", vi.fn());
     render(<RefundClaimPanel apiBase="/api" serviceOnline={false} accessToken="" locale="de-DE" />);

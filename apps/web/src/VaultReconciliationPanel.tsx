@@ -11,6 +11,7 @@ import {
   VaultReconciliationTargetView,
 } from "./vaultReconciliation";
 import { operatorErrorMessage } from "./operatorError";
+import { shellMessagesFor } from "./shellMessages";
 
 type VaultReconciliationPanelProps = {
   apiBase: string;
@@ -34,6 +35,8 @@ function statusClass(run: VaultReconciliationRun | null): string {
 
 export default function VaultReconciliationPanel({ apiBase, serviceOnline, accessToken, locale = DEFAULT_LOCALE, timeZone = DEFAULT_TIME_ZONE }: VaultReconciliationPanelProps) {
   const messages = vaultReconciliationMessagesFor(locale);
+  const shellMessages = shellMessagesFor(locale);
+  const workflowLocked = !serviceOnline || !accessToken.trim();
   const formatBalance = (value: string) => formatInteger(value, locale);
   const [targets, setTargets] = useState<VaultReconciliationTargetView[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
@@ -77,6 +80,10 @@ export default function VaultReconciliationPanel({ apiBase, serviceOnline, acces
   }
 
   async function loadRuns(targetId: string) {
+    if (!accessToken.trim()) {
+      setError(messages.common.lookupError);
+      return;
+    }
     setSelectedTargetId(targetId);
     setError(null);
     setNotice(null);
@@ -107,8 +114,12 @@ export default function VaultReconciliationPanel({ apiBase, serviceOnline, acces
           <span className="status-pill">{messages.control.badge}</span>
         </div>
         <p className="panel-copy">{messages.control.description}</p>
+        {!accessToken.trim() && <div className="workflow-lock" role="note"><strong>{shellMessages.session.signInToContinue}</strong><p>{shellMessages.session.signInToContinueCopy}</p></div>}
         <form onSubmit={loadTargets} className="form-grid">
-          <button type="submit" disabled={isLoading || !serviceOnline || !accessToken.trim()}>{isLoading ? messages.control.loading : messages.control.load}</button>
+          <fieldset className="workflow-fieldset" disabled={workflowLocked || isLoading}>
+            <legend className="sr-only">{messages.control.title}</legend>
+            <button type="submit">{isLoading ? messages.control.loading : messages.control.load}</button>
+          </fieldset>
         </form>
         {!serviceOnline && <p className="inline-warning" role="alert">{messages.control.unavailable}</p>}
         {error && <p className="inline-error" role="alert">{error}</p>}
@@ -117,7 +128,7 @@ export default function VaultReconciliationPanel({ apiBase, serviceOnline, acces
 
       <article className="panel vault-targets-panel" aria-live="polite">
         <div className="panel-heading"><div><p className="eyebrow">{messages.targets.eyebrow}</p><h2>{messages.targets.title}</h2></div>{hasLoaded && <span className="status-pill">{messages.targets.count(targets.length)}</span>}</div>
-        {!hasLoaded ? <div className="empty-state"><span className="empty-icon">◎</span><strong>{messages.targets.notLoaded}</strong><p>{messages.targets.notLoadedCopy}</p></div> : targets.length === 0 ? <div className="empty-state"><span className="empty-icon">—</span><strong>{messages.targets.empty}</strong><p>{messages.targets.emptyCopy}</p></div> : <div className="vault-target-list">{targets.map((view) => <button type="button" className={`vault-target-card ${view.target.id === selectedTargetId ? "vault-target-selected" : ""}`} key={view.target.id} onClick={() => loadRuns(view.target.id)} disabled={isLoadingRuns} aria-pressed={view.target.id === selectedTargetId}><span className="vault-target-topline"><strong>{view.target.tax_vault}</strong><span className={statusClass(view.latest_run)}>{statusLabel(view.latest_run, messages)}</span></span><small>{messages.targets.account} {view.target.stream_key} · {messages.targets.observationSlot} {view.latest_run?.observed_slot ?? "—"}</small><small>{messages.targets.expected} {view.latest_run?.expected_balance_atomic === null || view.latest_run?.expected_balance_atomic === undefined ? "—" : formatBalance(view.latest_run.expected_balance_atomic)} · {messages.targets.observed} {view.latest_run?.observed_balance_atomic === null || view.latest_run?.observed_balance_atomic === undefined ? "—" : formatBalance(view.latest_run.observed_balance_atomic)}</small></button>)}</div>}
+        {!hasLoaded ? <div className="empty-state"><span className="empty-icon">◎</span><strong>{messages.targets.notLoaded}</strong><p>{messages.targets.notLoadedCopy}</p></div> : targets.length === 0 ? <div className="empty-state"><span className="empty-icon">—</span><strong>{messages.targets.empty}</strong><p>{messages.targets.emptyCopy}</p></div> : <div className="vault-target-list">{targets.map((view) => <button type="button" className={`vault-target-card ${view.target.id === selectedTargetId ? "vault-target-selected" : ""}`} key={view.target.id} onClick={() => loadRuns(view.target.id)} disabled={isLoadingRuns || workflowLocked} aria-pressed={view.target.id === selectedTargetId}><span className="vault-target-topline"><strong>{view.target.tax_vault}</strong><span className={statusClass(view.latest_run)}>{statusLabel(view.latest_run, messages)}</span></span><small>{messages.targets.account} {view.target.stream_key} · {messages.targets.observationSlot} {view.latest_run?.observed_slot ?? "—"}</small><small>{messages.targets.expected} {view.latest_run?.expected_balance_atomic === null || view.latest_run?.expected_balance_atomic === undefined ? "—" : formatBalance(view.latest_run.expected_balance_atomic)} · {messages.targets.observed} {view.latest_run?.observed_balance_atomic === null || view.latest_run?.observed_balance_atomic === undefined ? "—" : formatBalance(view.latest_run.observed_balance_atomic)}</small></button>)}</div>}
       </article>
 
       {selected && <article className="panel vault-detail-panel">

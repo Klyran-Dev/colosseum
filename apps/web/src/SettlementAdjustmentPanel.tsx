@@ -26,6 +26,7 @@ import { ensureConnectedWallet } from "./wallet";
 import { DEFAULT_LOCALE } from "./formatters";
 import { settlementAdjustmentMessagesFor, type SettlementAdjustmentMessages } from "./settlementAdjustmentMessages";
 import { operatorErrorMessage, operatorFacingError } from "./operatorError";
+import { shellMessagesFor } from "./shellMessages";
 
 type SettlementAdjustmentPanelProps = {
   apiBase: string;
@@ -51,11 +52,13 @@ function parseBytes(value: string, label: string, invalidJsonMessage: string): n
 }
 
 function statusLabel(status: string, messages: SettlementAdjustmentMessages): string {
-  return messages.status.labels[status] ?? status.replaceAll("_", " ");
+  return messages.status.labels[status] ?? messages.status.labels.unknown;
 }
 
 export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, accessToken, locale = DEFAULT_LOCALE }: SettlementAdjustmentPanelProps) {
   const messages = settlementAdjustmentMessagesFor(locale);
+  const shellMessages = shellMessagesFor(locale);
+  const workflowLocked = !serviceOnline || !accessToken.trim();
   const [idempotencyKey, setIdempotencyKey] = useState(() => createClientUuid());
   const [originalSettlementId, setOriginalSettlementId] = useState("");
   const [assetId, setAssetId] = useState("");
@@ -329,9 +332,14 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
       <article className="panel">
         <div className="panel-heading"><div><p className="eyebrow">{messages.proposal.eyebrow}</p><h2>{messages.proposal.title}</h2></div><span className="status-pill">{messages.proposal.badge}</span></div>
         <p className="panel-copy">{messages.proposal.description}</p>
+        {!accessToken.trim() && <div className="workflow-lock" role="note"><strong>{shellMessages.session.signInToContinue}</strong><p>{shellMessages.session.signInToContinueCopy}</p></div>}
+        <fieldset className="workflow-fieldset" disabled={workflowLocked || busy}>
+        <legend className="sr-only">{messages.proposal.title}</legend>
         <form className="form-grid" onSubmit={propose}>
-          <label className="full-field"><span>{messages.proposal.signInStatus}</span><textarea value={accessToken ? messages.proposal.accountReady : ""} readOnly placeholder={messages.proposal.signInPlaceholder} aria-describedby="adjustment-token-help" /></label>
-          <small id="adjustment-token-help" className="field-help full-field">{messages.proposal.accountHelp}</small>
+          <div className="workflow-status full-field" role="status" aria-describedby="adjustment-token-help">
+            <div className="workflow-status-heading"><span>{messages.proposal.signInStatus}</span><strong>{accessToken ? messages.proposal.accountReady : shellMessages.session.signInToContinue}</strong></div>
+            <small id="adjustment-token-help">{messages.proposal.accountHelp}</small>
+          </div>
           <label className="full-field"><span>{messages.proposal.requestReference}</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} aria-describedby="adjustment-reference-help" required /><small id="adjustment-reference-help">{messages.proposal.requestHelp}</small></label>
           <label><span>{messages.proposal.correctionType}</span><select value={kind} onChange={(event) => setKind(event.target.value as AdjustmentKind)}>{KINDS.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
           <label><span>{messages.proposal.reason}</span><input value={reasonCode} onChange={(event) => setReasonCode(event.target.value)} maxLength={256} required /></label>
@@ -346,15 +354,19 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
           <label><span>{messages.proposal.replacement}</span><input value={replacementCalculationId} onChange={(event) => setReplacementCalculationId(event.target.value)} /></label>
           <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>{busy ? messages.proposal.saving : messages.proposal.create}</button>
         </form>
+        </fieldset>
       </article>
 
       <article className="panel" aria-label={messages.review.ariaLabel}>
         <div className="panel-heading"><div><p className="eyebrow">{messages.review.eyebrow}</p><h2>{messages.review.title}</h2></div><span className="status-pill status-pill-warning">{messages.review.badge}</span></div>
         <p className="panel-copy">{messages.review.description}</p>
+        <fieldset className="workflow-fieldset" disabled={workflowLocked || busy}>
+        <legend className="sr-only">{messages.review.title}</legend>
         <form className="form-grid" onSubmit={load}>
           <label className="full-field"><span>{messages.review.adjustmentReference}</span><input value={lookupId} onChange={(event) => setLookupId(event.target.value)} placeholder={messages.review.placeholder} required /></label>
           <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>{busy ? messages.review.loading : messages.review.load}</button>
         </form>
+        </fieldset>
         {record ? <>
           <div className="adjustment-record-card" aria-live="polite">
             <div className="adjustment-status-line"><strong>{statusLabel(record.status, messages)}</strong><span className="status-pill">{record.kind}</span></div>
@@ -369,6 +381,8 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
               <div><dt>{messages.review.supportingEvidence}</dt><dd><code>{digestPreview(record.evidence_digest)}</code></dd></div>
             </dl>
           </div>
+          <fieldset className="workflow-fieldset" disabled={workflowLocked || busy}>
+          <legend className="sr-only">{messages.review.nextStep}</legend>
           <form className="adjustment-transition-form" onSubmit={transition}>
             <h3>{messages.review.nextStep}</h3>
             {availableTransitions.length ? <>
@@ -377,14 +391,15 @@ export default function SettlementAdjustmentPanel({ apiBase, serviceOnline, acce
               <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>{messages.review.recordDecision} {statusLabel(transitionStatus, messages)}</button>
             </> : <p className="inline-warning">{messages.review.noTransition}</p>}
           </form>
+          </fieldset>
           {record.status === "approved" && <div className="adjustment-chain-card" aria-label={messages.chain.ariaLabel}>
             <h3>{messages.chain.title}</h3>
             <p className="panel-copy">{messages.chain.description}</p>
-            <WalletPicker locale={locale} disabled={busy} connectEnabled={Boolean(chainArtifact)} connectedAddress={walletAddress?.toBase58()} onConnected={setWalletAddress} />
-            {!chainArtifact ? <button type="button" onClick={compileChainEvidence} disabled={busy || !serviceOnline || !accessToken.trim()}>{messages.chain.prepare}</button> : <>
+            <WalletPicker locale={locale} disabled={busy || workflowLocked} connectEnabled={Boolean(chainArtifact)} connectedAddress={walletAddress?.toBase58()} onConnected={setWalletAddress} />
+            {!chainArtifact ? <button type="button" onClick={compileChainEvidence} disabled={busy || workflowLocked}>{messages.chain.prepare}</button> : <>
               <dl className="summary-list"><div><dt>{messages.chain.ledgerReference}</dt><dd><code>{chainArtifact.chain_intent_id}</code></dd></div><div><dt>{messages.chain.ledgerRegistry}</dt><dd><code>{chainArtifact.registry}</code></dd></div><div><dt>{messages.chain.registryProof}</dt><dd>Confirmed ledger position {chainArtifact.registry_slot} · {chainArtifact.instruction.accounts.length} exact account records</dd></div><div><dt>{messages.chain.wallet}</dt><dd>{walletAddress?.toBase58() ?? messages.chain.notConnected}</dd></div></dl>
               <p className="inline-warning">{messages.chain.warning}</p>
-              <button type="button" onClick={signAndSubmitChainEvidence} disabled={busy || !serviceOnline || !accessToken.trim()}>{busy ? messages.chain.waiting : messages.chain.signSubmit}</button>
+              <button type="button" onClick={signAndSubmitChainEvidence} disabled={busy || workflowLocked}>{busy ? messages.chain.waiting : messages.chain.signSubmit}</button>
               {chainStatus && <div className="settlement-status" aria-live="polite"><strong>{messages.chain.durableStatus}: {statusLabel(chainStatus.status, messages)}</strong><small>{chainStatus.signature ? `Signature ${chainStatus.signature}` : messages.chain.noSignature}</small>{chainStatus.status === "unknown" && <small role="status">{messages.chain.providerAmbiguous}</small>}{chainStatus.status !== "finalized" && chainStatus.signature && <div className="status-actions"><button type="button" onClick={refreshChainStatus} disabled={busy}>{messages.chain.refresh}</button><button type="button" onClick={reconcileChainEvidence} disabled={busy}>{messages.chain.reconcile}</button></div>}{chainStatus.status === "finalized" && chainStatus.finalized_evidence && <><small role="status">{messages.chain.finalizedEvidence}</small><details><summary>{messages.chain.finalizedProof}</summary><dl className="summary-list"><div><dt>{messages.chain.event}</dt><dd>{chainStatus.finalized_evidence.event_type} · {chainStatus.finalized_evidence.event_version}</dd></div><div><dt>{messages.chain.slot}</dt><dd>{chainStatus.finalized_evidence.slot}</dd></div><div><dt>{messages.chain.index}</dt><dd>{chainStatus.finalized_evidence.event_index}</dd></div><div><dt>{messages.chain.evidenceDigest}</dt><dd><code>{digestPreview(chainStatus.finalized_evidence.event_evidence_digest)}</code></dd></div></dl></details></>}</div>}
             </>}
           </div>}

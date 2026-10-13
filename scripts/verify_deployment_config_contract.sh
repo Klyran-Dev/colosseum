@@ -21,9 +21,31 @@ run_checker() {
   tax_engine_mtls_ca=${10-/run/secrets/tax-engine/client-ca.pem}
   tax_engine_client_uris=${11-'["spiffe://solana-tax-protocol/api"]'}
   tax_engine_token_file=${12-}
+  auth_environment=${13-staging}
+  auth_self_signup=${14-false}
+  auth_email_mode=${15-provider}
+  browser_auth_method=${16-email-otp}
+  browser_auth_service_url=${17-https://auth.example.invalid}
   set -- env -i \
     PATH="$PATH" \
     DEPLOYMENT_ENV=staging \
+    AUTH_ENV="$auth_environment" \
+    AUTH_SELF_SIGNUP="$auth_self_signup" \
+    AUTH_LOCAL_BOOTSTRAP_ADMIN_EMAIL= \
+    AUTH_DATABASE_URL="$synthetic_database" \
+    AUTH_ISSUER=https://identity.example.invalid \
+    AUTH_AUDIENCE=tax-api-staging \
+    AUTH_SIGNING_KEY_ID=staging-auth-signing-key-v1 \
+    AUTH_SIGNING_KEY_HEX=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    AUTH_EMAIL_MODE="$auth_email_mode" \
+    AUTH_EMAIL_PROVIDER_ENDPOINT=https://api.resend.com/emails \
+    AUTH_EMAIL_PROVIDER_API_KEY=synthetic-provider-key \
+    AUTH_EMAIL_FROM='Solana Tax Protocol <auth@example.invalid>' \
+    AUTH_APP_BASE_URL=https://app.example.invalid \
+    AUTH_INITIAL_ADMIN_EMAIL= \
+    VITE_DEPLOYMENT_ENVIRONMENT=staging \
+    VITE_AUTH_METHOD="$browser_auth_method" \
+    VITE_AUTH_SERVICE_BASE_URL="$browser_auth_service_url" \
     API_ENV=staging \
     API_SIMULATION_MODE="$simulation_mode" \
     API_ALLOW_INSECURE_LOCAL_RPC="$insecure_rpc" \
@@ -123,6 +145,42 @@ if run_checker false '' false pair pair staging synthetic-nonlocal-service-token
   '["spiffe://solana-tax-protocol/api"]' \
   /run/secrets/tax-engine/auth-token >/dev/null 2>&1; then
   echo "simultaneous Tax Engine token sources did not fail" >&2
+  exit 1
+fi
+
+if run_checker false '' false pair pair staging synthetic-nonlocal-service-token \
+  /run/secrets/tax-engine/tls.crt /run/secrets/tax-engine/tls.key \
+  /run/secrets/tax-engine/client-ca.pem \
+  '["spiffe://solana-tax-protocol/api"]' '' production false provider email-otp \
+  >/dev/null 2>&1; then
+  echo "auth environment mismatch did not fail" >&2
+  exit 1
+fi
+
+if run_checker false '' false pair pair staging synthetic-nonlocal-service-token \
+  /run/secrets/tax-engine/tls.crt /run/secrets/tax-engine/tls.key \
+  /run/secrets/tax-engine/client-ca.pem \
+  '["spiffe://solana-tax-protocol/api"]' '' staging true provider email-otp \
+  >/dev/null 2>&1; then
+  echo "auth self-signup negative contract did not fail" >&2
+  exit 1
+fi
+
+if run_checker false '' false pair pair staging synthetic-nonlocal-service-token \
+  /run/secrets/tax-engine/tls.crt /run/secrets/tax-engine/tls.key \
+  /run/secrets/tax-engine/client-ca.pem \
+  '["spiffe://solana-tax-protocol/api"]' '' staging false local-file email-otp \
+  >/dev/null 2>&1; then
+  echo "local email mode outside local did not fail" >&2
+  exit 1
+fi
+
+if run_checker false '' false pair pair staging synthetic-nonlocal-service-token \
+  /run/secrets/tax-engine/tls.crt /run/secrets/tax-engine/tls.key \
+  /run/secrets/tax-engine/client-ca.pem \
+  '["spiffe://solana-tax-protocol/api"]' '' staging false provider unconfigured \
+  >/dev/null 2>&1; then
+  echo "unconfigured browser auth method did not fail" >&2
   exit 1
 fi
 

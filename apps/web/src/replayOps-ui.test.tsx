@@ -25,6 +25,13 @@ afterEach(() => {
 });
 
 describe("route-verification operator evidence UI", () => {
+  it("makes recovery controls unavailable before sign-in", () => {
+    render(<ReplayOpsPanel apiBase="/api" serviceOnline accessToken="" locale="en-US" />);
+
+    expect(screen.getByRole("note").textContent).toContain("Sign in to continue");
+    expect(screen.getByPlaceholderText("mainnet/settlement").closest("fieldset")).toHaveProperty("disabled", true);
+  });
+
   it("localizes recovery controls and preserves operator-safe language", () => {
     render(<ReplayOpsPanel apiBase="/api" serviceOnline accessToken="operator-token" locale="de-DE" />);
 

@@ -7,6 +7,23 @@ server-owned quote-bound calculation-attestation ingestion, and a cached
 on-chain policy attestation binding. These are foundation gates, not completed
 production readiness. Unchecked items remain release blockers.
 
+On 2026-10-11, the repository-owned authentication slice was extended with an
+explicit `VITE_AUTH_METHOD=email-otp` production browser path. The static SPA
+now accepts provider-backed email OTP only with an HTTPS auth-service origin;
+the Rust service still requires provider mode, secret injection, verified
+sender, provisioning policy, and key/revocation controls. Current local
+evidence includes 514 frontend tests, Rust auth-service tests and Clippy,
+production email-OTP bundle compilation, and the isolated Docker signup/signin
+administrator/moderator journey (3 passed). This does not close the live
+provider account, DNS, staging identity, or production authorization gates.
+The isolated `make initial-admin-browser-check` also passed (1 test), proving
+that a deployment with self-signup and local bootstrap disabled can enroll only
+the configured first mailbox into the administrator path.
+The deployment configuration contract now also validates the auth-service
+database/issuer/signing/provider settings and the SPA's explicit email-OTP or
+OIDC release method, including negative cases for local email mode, open
+self-signup, environment mismatch, and an unconfigured browser method.
+
 On 2026-10-06, the Docker/NGINX browser gate passed 49/49 journeys after
 ADR-0406's mobile shell action-row change. The new journey proves the 568 CSS
 pixel top bar remains a two-row Material composition with wrapped horizontal

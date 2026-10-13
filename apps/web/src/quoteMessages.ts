@@ -6,6 +6,12 @@ export interface QuoteModeMessages {
   status: string;
   description: string;
   submit: string;
+  result: {
+    whyTax: string;
+    explanation: string;
+    ruleLabel: string;
+    emptyCopy: string;
+  };
 }
 
 export interface QuoteWorkspaceMessages {
@@ -92,6 +98,12 @@ const ENGLISH: QuoteWorkspaceMessages = {
     status: "Ready to review",
     description: "Create a quote from an approved tax rule. Your account and the quote details are checked by the service, and the result can be reviewed later.",
     submit: "Prepare quote",
+    result: {
+      whyTax: "Why this tax?",
+      explanation: "The service applied the approved tax rule to the location and amounts you entered. This explanation helps you review the result; it is not tax advice, a filing, or a compliance guarantee.",
+      ruleLabel: "Approved tax rule",
+      emptyCopy: "Prepare a quote to review the tax amount and its explanation.",
+    },
   },
   previewMode: {
     eyebrow: "Try a scenario",
@@ -99,6 +111,12 @@ const ENGLISH: QuoteWorkspaceMessages = {
     status: "No live changes",
     description: "Explore a what-if scenario. It does not change a live rule or authorize a payment.",
     submit: "Calculate scenario",
+    result: {
+      whyTax: "How this scenario was calculated",
+      explanation: "The service calculated this read-only scenario from the amounts and rate you entered. It does not use or change a live tax rule. This explanation helps you review the result; it is not tax advice, a filing, or a compliance guarantee.",
+      ruleLabel: "Scenario rule",
+      emptyCopy: "Explore a scenario to review the tax amount and its explanation.",
+    },
   },
   readOnlyWarning: "This workspace is read-only until secure sign-in is configured. No quote will be submitted.",
   location: {
@@ -181,6 +199,12 @@ const GERMAN: QuoteWorkspaceMessages = {
     status: "Bereit zur Prüfung",
     description: "Erstellen Sie ein Angebot aus einer genehmigten Steuerregel. Konto und Angebotsdaten werden vom Dienst geprüft und können später erneut eingesehen werden.",
     submit: "Angebot vorbereiten",
+    result: {
+      whyTax: "Warum diese Steuer?",
+      explanation: "Der Dienst hat die genehmigte Steuerregel auf Standort und eingegebene Beträge angewendet. Diese Erklärung unterstützt die Prüfung; sie ist keine Steuerberatung, Steuererklärung oder Compliance-Garantie.",
+      ruleLabel: "Genehmigte Steuerregel",
+      emptyCopy: "Bereiten Sie ein Angebot vor, um Steuerbetrag und Erklärung zu prüfen.",
+    },
   },
   previewMode: {
     eyebrow: "Szenario testen",
@@ -188,6 +212,12 @@ const GERMAN: QuoteWorkspaceMessages = {
     status: "Keine Live-Änderungen",
     description: "Prüfen Sie ein Was-wäre-wenn-Szenario. Eine aktive Regel wird nicht geändert und keine Zahlung autorisiert.",
     submit: "Szenario berechnen",
+    result: {
+      whyTax: "So wurde dieses Szenario berechnet",
+      explanation: "Der Dienst hat dieses schreibgeschützte Szenario anhand der eingegebenen Beträge und des eingegebenen Satzes berechnet. Eine aktive Steuerregel wird weder verwendet noch geändert. Diese Erklärung unterstützt die Prüfung; sie ist keine Steuerberatung, Steuererklärung oder Compliance-Garantie.",
+      ruleLabel: "Szenarioregel",
+      emptyCopy: "Erkunden Sie ein Szenario, um Steuerbetrag und Erklärung zu prüfen.",
+    },
   },
   readOnlyWarning: "Dieser Arbeitsbereich ist schreibgeschützt, bis die sichere Anmeldung eingerichtet ist. Es wird kein Angebot übermittelt.",
   location: {
@@ -270,6 +300,12 @@ const ARABIC: QuoteWorkspaceMessages = {
     status: "جاهز للمراجعة",
     description: "أنشئ عرضًا من قاعدة ضريبية معتمدة. يتحقق النظام من حسابك وتفاصيل العرض ويمكن مراجعة النتيجة لاحقًا.",
     submit: "إعداد العرض",
+    result: {
+      whyTax: "لماذا هذه الضريبة؟",
+      explanation: "طبّق النظام القاعدة الضريبية المعتمدة على الموقع والمبالغ التي أدخلتها. تساعدك هذه الشروحات على المراجعة؛ وليست استشارة ضريبية أو إقرارًا أو ضمانًا للامتثال.",
+      ruleLabel: "القاعدة الضريبية المعتمدة",
+      emptyCopy: "أعد عرضًا لمراجعة مبلغ الضريبة وشرحه.",
+    },
   },
   previewMode: {
     eyebrow: "تجربة سيناريو",
@@ -277,6 +313,12 @@ const ARABIC: QuoteWorkspaceMessages = {
     status: "لا تغييرات مباشرة",
     description: "استكشف سيناريو افتراضيًا. لا يغيّر قاعدة مباشرة ولا يصرّح بدفعة.",
     submit: "حساب السيناريو",
+    result: {
+      whyTax: "كيف حُسب هذا السيناريو؟",
+      explanation: "حسب النظام هذا السيناريو للقراءة فقط باستخدام المبالغ والمعدل اللذين أدخلتهما. لا يستخدم قاعدة ضريبية مباشرة ولا يغيّرها. تساعدك هذه الشروحات على المراجعة؛ وليست استشارة ضريبية أو إقرارًا أو ضمانًا للامتثال.",
+      ruleLabel: "قاعدة السيناريو",
+      emptyCopy: "استكشف سيناريو لمراجعة مبلغ الضريبة وشرحه.",
+    },
   },
   readOnlyWarning: "مساحة العمل للقراءة فقط حتى يتم إعداد تسجيل الدخول الآمن. لن يتم إرسال أي عرض.",
   location: {
@@ -359,6 +401,12 @@ const JAPANESE: QuoteWorkspaceMessages = {
     status: "確認の準備完了",
     description: "承認済みの税ルールから見積もりを作成します。アカウントと見積もりの詳細はサービスで確認され、後で再確認できます。",
     submit: "見積もりを準備",
+    result: {
+      whyTax: "なぜこの税額ですか？",
+      explanation: "サービスは入力された所在地と金額に承認済み税ルールを適用しました。この説明は結果の確認用であり、税務助言、申告、コンプライアンス保証ではありません。",
+      ruleLabel: "承認済み税ルール",
+      emptyCopy: "見積もりを準備すると、税額と説明を確認できます。",
+    },
   },
   previewMode: {
     eyebrow: "シナリオを試す",
@@ -366,6 +414,12 @@ const JAPANESE: QuoteWorkspaceMessages = {
     status: "本番変更なし",
     description: "仮のシナリオを確認します。公開済みのルールを変更したり、支払いを承認したりすることはありません。",
     submit: "シナリオを計算",
+    result: {
+      whyTax: "このシナリオはどのように計算されましたか？",
+      explanation: "サービスは入力された金額と税率から、この読み取り専用シナリオを計算しました。公開済みの税ルールは使用も変更もしません。この説明は結果の確認用であり、税務助言、申告、コンプライアンス保証ではありません。",
+      ruleLabel: "シナリオルール",
+      emptyCopy: "シナリオを確認すると、税額と説明を確認できます。",
+    },
   },
   readOnlyWarning: "安全なサインインが設定されるまで、このワークスペースは読み取り専用です。見積もりは送信されません。",
   location: {

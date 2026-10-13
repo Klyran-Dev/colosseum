@@ -24,6 +24,8 @@ describe("evidence access explorer workspace", () => {
   it("starts empty and does not enable protected reads without a session", () => {
     render(<EvidenceAccessPanel apiBase="/api" serviceOnline accessToken="" />);
     expect(screen.getByRole("heading", { name: "Review evidence access" })).toBeTruthy();
+    expect(screen.getByRole("note").textContent).toContain("Sign in to continue");
+    expect(screen.getByRole("textbox", { name: /Calculation reference/ }).closest("fieldset")).toHaveProperty("disabled", true);
     expect(screen.getByRole("button", { name: "Load access history" }).hasAttribute("disabled")).toBe(true);
     expect(screen.getByText("No access history loaded")).toBeTruthy();
   });

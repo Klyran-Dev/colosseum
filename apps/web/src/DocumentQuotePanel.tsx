@@ -64,10 +64,12 @@ export default function DocumentQuotePanel({
   const [idempotencyKey, setIdempotencyKey] = useState(() => createClientUuid());
   const [jurisdictionEvidenceJson, setJurisdictionEvidenceJson] = useState("");
   const [lines, setLines] = useState<TaxDocumentLineDraft[]>(() => emptyDocumentLines());
+  const [openLineIndexes, setOpenLineIndexes] = useState<Set<number>>(() => new Set([0]));
   const [quote, setQuote] = useState<TaxDocumentQuote | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const interactionDisabled = isSubmitting || !serviceOnline || !accessToken.trim();
 
   useEffect(() => {
     setIdempotencyKey(createClientUuid());
@@ -80,18 +82,21 @@ export default function DocumentQuotePanel({
 
   function addLine() {
     if (lines.length >= 256) return;
+    const nextIndex = lines.length;
     setLines((current) => [...current, { id: "", grossAtomic: "", netAtomic: "", exemptionCodes: "" }]);
+    setOpenLineIndexes((current) => new Set([...current, nextIndex]));
     setQuote(null);
   }
 
   function removeLine(index: number) {
     if (lines.length <= 1) return;
     setLines((current) => current.filter((_, lineIndex) => lineIndex !== index));
+    setOpenLineIndexes((current) => new Set([...current].filter((lineIndex) => lineIndex !== index).map((lineIndex) => lineIndex > index ? lineIndex - 1 : lineIndex)));
     setQuote(null);
   }
 
-  async function createQuote(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function createQuote(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
     setError(null);
     setNotice(null);
     setQuote(null);
@@ -146,8 +151,11 @@ export default function DocumentQuotePanel({
     <article className="panel calculator-panel">
       <div className="panel-heading"><div><p className="eyebrow">{messages.form.eyebrow}</p><h2 id="document-quote-title">{messages.form.title}</h2></div><span className="status-pill">{messages.form.status}</span></div>
       <p className="panel-copy">{messages.form.description}</p>
+      {!accessToken.trim() && <div className="workflow-lock" role="note"><strong>{messages.form.signInRequired}</strong><p>{messages.form.signInHelp}</p></div>}
       <form onSubmit={createQuote} className="form-grid">
         <div className="route-evidence full-field" role="status" aria-label={messages.form.sessionStatus}><strong>{accessToken.trim() ? messages.form.signedInSession : messages.form.signInRequired}</strong><small>{accessToken.trim() ? messages.form.signedInHelp : messages.form.signInHelp}</small></div>
+        <fieldset className="workflow-fieldset" disabled={interactionDisabled}>
+        <legend className="sr-only">{messages.form.title}</legend>
         <label><span>{messages.form.fields.documentId}</span><input value={documentId} onChange={(event) => { setDocumentId(event.target.value); setQuote(null); }} maxLength={64} required /></label>
         <label><span>{messages.form.fields.currency}</span><input value={currency} onChange={(event) => { setCurrency(event.target.value.toUpperCase()); setQuote(null); }} maxLength={12} required /></label>
         <label><span>{messages.form.fields.jurisdiction}</span><input value={jurisdiction} onChange={(event) => { setJurisdiction(event.target.value.toUpperCase()); setQuote(null); }} maxLength={64} required /></label>
@@ -162,20 +170,41 @@ export default function DocumentQuotePanel({
         </details>
         <div className="document-lines full-field" role="group" aria-labelledby="document-quote-lines-heading">
           <label><span>{assetScaleMessages.label}</span><input inputMode="numeric" min="0" max="9" value={atomicDecimals} onChange={(event) => setAtomicDecimals(event.target.value)} aria-describedby="document-asset-precision-help" required /><small id="document-asset-precision-help" className="field-help">{assetScaleMessages.help}</small></label>
-          <div className="document-lines-heading"><div><h3 id="document-quote-lines-heading">{messages.form.lines.heading}</h3><p className="field-help">{messages.form.lines.description}</p></div><button type="button" className="secondary-button" onClick={addLine} disabled={lines.length >= 256}>{messages.form.lines.add}</button></div>
-          {lines.map((line, index) => <fieldset className="document-line" key={`${line.id}-${index}`}>
-            <legend>{messages.form.lines.line(index + 1)}</legend>
+          <div className="document-lines-heading"><div><h3 id="document-quote-lines-heading">{messages.form.lines.heading}</h3><p className="field-help">{messages.form.lines.description}</p></div><button type="button" className="secondary-button" onClick={addLine} disabled={interactionDisabled || lines.length >= 256}>{messages.form.lines.add}</button></div>
+          {lines.map((line, index) => <details
+            className="document-line"
+            key={`${line.id}-${index}`}
+            open={openLineIndexes.has(index)}
+            onToggle={(event) => {
+              const isOpen = event.currentTarget.open;
+              setOpenLineIndexes((current) => {
+                const next = new Set(current);
+                if (isOpen) next.add(index);
+                else next.delete(index);
+                return next;
+              });
+            }}
+          >
+            <summary className="document-line-summary">
+              <span className="document-line-summary-title">{messages.form.lines.line(index + 1)}</span>
+              <span className="document-line-summary-id">{line.id.trim() || "—"}</span>
+              <span className="document-line-summary-meta">{messages.form.lines.beforeTax} {line.grossAtomic || "—"} · {messages.form.lines.afterTax} {line.netAtomic || "—"}</span>
+            </summary>
+            <fieldset className="document-line-fields">
+              <legend className="sr-only">{messages.form.lines.line(index + 1)}</legend>
             <label><span>{messages.form.lines.id}</span><input value={line.id} onChange={(event) => updateLine(index, { id: event.target.value })} maxLength={64} placeholder={messages.form.lines.idPlaceholder} required /></label>
             <label><span>{messages.form.lines.beforeTax}</span><input inputMode="numeric" value={line.grossAtomic} onChange={(event) => updateLine(index, { grossAtomic: event.target.value })} placeholder={messages.form.lines.beforeTaxPlaceholder} required /></label>
             <label><span>{messages.form.lines.afterTax}</span><input inputMode="numeric" value={line.netAtomic} onChange={(event) => updateLine(index, { netAtomic: event.target.value })} placeholder={messages.form.lines.afterTaxPlaceholder} required /></label>
             <label><span>{messages.form.lines.exemptions}</span><input value={line.exemptionCodes} onChange={(event) => updateLine(index, { exemptionCodes: event.target.value })} placeholder={messages.form.lines.optional} /></label>
-            <button type="button" className="secondary-button" onClick={() => removeLine(index)} disabled={lines.length <= 1}>{messages.form.lines.remove}</button>
-          </fieldset>)}
+            <button type="button" className="secondary-button" onClick={() => removeLine(index)} disabled={interactionDisabled || lines.length <= 1}>{messages.form.lines.remove}</button>
+            </fieldset>
+          </details>)}
         </div>
-        <button type="submit" disabled={!serviceOnline || isSubmitting || !accessToken.trim()}>{isSubmitting ? messages.form.calculating : messages.form.submit}</button>
+        <button type="submit" disabled={interactionDisabled}>{isSubmitting ? messages.form.calculating : messages.form.submit}</button>
+        </fieldset>
       </form>
       {!serviceOnline && <p className="inline-warning" role="alert">{messages.form.offline}</p>}
-      {error && <p className="inline-error" role="alert">{error}</p>}
+      {error && <p className="inline-error" role="alert">{error} <button type="button" className="inline-retry" onClick={() => { void createQuote(); }} disabled={interactionDisabled}>{messages.form.retry}</button></p>}
       {notice && <p className="inline-success" role="status">{notice}</p>}
     </article>
 

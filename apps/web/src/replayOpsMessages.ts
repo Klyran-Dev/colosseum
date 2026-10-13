@@ -66,7 +66,7 @@ const ENGLISH: ReplayOpsMessages = {
     slotRange: "Slot range", observedSlot: "Observed finalized slot", reason: "Reason", lastError: "Last error", none: "None recorded", created: "Created", deadLettered: "Dead-lettered", reviewedBy: "Reviewed by", attempts: (attempts) => `${attempts}/8 attempts`, note: "Incident / operator note (required, max 512 UTF-8 bytes)", notePlaceholder: "Reference the incident and review decision", acknowledgedPlaceholder: "Explain why bounded repair may be requeued", acknowledgeBusy: "Recording review…", acknowledge: "Acknowledge review", requeueBusy: "Requeueing bounded repair…", requeue: "Requeue repair", noMutation: "No operator mutation is available for this state. The API remains the authority for replay lifecycle transitions.",
   },
   actions: { acknowledge: "Acknowledge review", requeue: "Requeue repair" },
-  status: { labels: { pending: "Pending", processing: "Processing", completed: "Completed", dead_lettered: "Dead-lettered", failed: "Failed" } },
+  status: { labels: { pending: "Pending", processing: "Processing", completed: "Completed", dead_lettered: "Dead-lettered", failed: "Failed", unknown: "Unknown" } },
   common: {
     unavailable: "The service is unavailable.", error: "Replay recovery failed.", recoveryError: "Targeted recovery failed; inspect the server audit state before retrying.", routeError: "Route-verification evidence lookup failed",
     malformedRouteEvidence: "Route-verification evidence is malformed. No evidence was rendered.",
@@ -84,7 +84,7 @@ const GERMAN: ReplayOpsMessages = {
   queue: { eyebrow: "Gespeicherte Wiederherstellungsdatensätze", title: "Wiederherstellungswarteschlange", returned: (count) => `${count} zurückgegeben`, notLoaded: "Keine Wiederherstellungselemente geladen", notLoadedCopy: "Melden Sie sich mit einer Wiederherstellungsrolle an und laden Sie die aktuellen Dienstaufzeichnungen, bevor Sie handeln.", noMatches: "Keine Elemente entsprechen diesem Filter", noMatchesCopy: "Dies ist eine Dienstantwort und keine Aussage, dass jeder Chain-Datensatz gesund ist.", },
   gap: { slotRange: "Slot-Bereich", observedSlot: "Beobachteter endgültiger Slot", reason: "Grund", lastError: "Letzter Fehler", none: "Nichts erfasst", created: "Erstellt", deadLettered: "In Fehlerwarteschlange", reviewedBy: "Geprüft von", attempts: (attempts) => `${attempts}/8 Versuche`, note: "Vorfalls- / Bedienernotiz (erforderlich, max. 512 UTF-8-Bytes)", notePlaceholder: "Vorfall und Prüfentscheidung angeben", acknowledgedPlaceholder: "Begründen Sie, warum die begrenzte Reparatur erneut eingereiht werden darf", acknowledgeBusy: "Prüfung wird erfasst…", acknowledge: "Prüfung bestätigen", requeueBusy: "Begrenzte Reparatur wird erneut eingereiht…", requeue: "Reparatur erneut einreihen", noMutation: "Für diesen Status ist keine Bedieneränderung verfügbar. Die API bleibt maßgeblich für Übergänge im Wiederherstellungslebenszyklus.", },
   actions: { acknowledge: "Prüfung bestätigen", requeue: "Reparatur erneut einreihen" },
-  status: { labels: { pending: "Ausstehend", processing: "In Verarbeitung", completed: "Abgeschlossen", dead_lettered: "In Fehlerwarteschlange", failed: "Fehlgeschlagen" } },
+  status: { labels: { pending: "Ausstehend", processing: "In Verarbeitung", completed: "Abgeschlossen", dead_lettered: "In Fehlerwarteschlange", failed: "Fehlgeschlagen", unknown: "Unbekannt" } },
   common: {
     unavailable: "Der Dienst ist nicht verfügbar.", error: "Die Wiederherstellung ist fehlgeschlagen.", recoveryError: "Die gezielte Wiederherstellung ist fehlgeschlagen; prüfen Sie den Server-Prüfstatus vor einem erneuten Versuch.", routeError: "Die Routenprüfungsnachweise konnten nicht geladen werden",
     malformedRouteEvidence: "Die Routenprüfungsnachweise sind fehlerhaft. Es wurden keine Nachweise angezeigt.",
@@ -103,7 +103,7 @@ const ARABIC: ReplayOpsMessages = {
   queue: { ...ENGLISH.queue, eyebrow: "سجلات الاستعادة المحفوظة", title: "قائمة انتظار الاستعادة", returned: (count) => `${count} مُعاد`, notLoaded: "لم يتم تحميل عناصر الاستعادة", notLoadedCopy: "سجّل الدخول بدور استعادة وحمّل سجلات الخدمة الحالية قبل اتخاذ أي إجراء.", noMatches: "لا توجد عناصر تطابق هذا المرشح", noMatchesCopy: "هذه استجابة من الخدمة وليست ادعاءً بأن كل سجل سلسلة سليم.", },
   gap: { ...ENGLISH.gap, slotRange: "نطاق الموضع", observedSlot: "الموضع النهائي المرصود", reason: "السبب", lastError: "آخر خطأ", none: "لم يسجل شيء", created: "أُنشئ", deadLettered: "في قائمة الأخطاء", reviewedBy: "راجعه", attempts: (attempts) => `${attempts}/8 محاولات`, note: "ملاحظة الحادث / المشغل (مطلوبة، بحد أقصى 512 بايت UTF-8)", notePlaceholder: "اذكر الحادث وقرار المراجعة", acknowledgedPlaceholder: "اشرح سبب السماح بإعادة إدراج الإصلاح المحدود", acknowledgeBusy: "جارٍ تسجيل المراجعة…", acknowledge: "تأكيد المراجعة", requeueBusy: "جارٍ إعادة إدراج الإصلاح المحدود…", requeue: "إعادة إدراج الإصلاح", noMutation: "لا يتوفر تعديل للمشغل في هذه الحالة. تظل واجهة API هي المرجع لانتقالات دورة حياة الاستعادة.", },
   actions: { acknowledge: "تأكيد المراجعة", requeue: "إعادة إدراج الإصلاح" },
-  status: { labels: { pending: "معلّق", processing: "قيد المعالجة", completed: "مكتمل", dead_lettered: "في قائمة الأخطاء", failed: "فشل" } },
+  status: { labels: { pending: "معلّق", processing: "قيد المعالجة", completed: "مكتمل", dead_lettered: "في قائمة الأخطاء", failed: "فشل", unknown: "غير معروف" } },
   common: {
     ...ENGLISH.common,
     unavailable: "الخدمة غير متاحة.", recoveryError: "فشلت الاستعادة المستهدفة؛ افحص حالة تدقيق الخادم قبل إعادة المحاولة.", routeError: "تعذر تحميل أدلة التحقق من المسار",
@@ -120,6 +120,7 @@ const JAPANESE: ReplayOpsMessages = { ...ENGLISH,
   route: { ...ENGLISH.route, summary: "ルート検証証拠", title: "ルート検証証拠", load: "ルート検証証拠を読み込む", loading: "ルート検証証拠を読み込み中…" },
   targeted: { ...ENGLISH.targeted, title: "1件の取引を復旧", recover: "確定証拠を復旧" },
   queue: { ...ENGLISH.queue, title: "復旧キュー", notLoaded: "復旧項目が読み込まれていません" },
+  status: { labels: { pending: "保留中", processing: "処理中", completed: "完了", dead_lettered: "デッドレター", failed: "失敗", unknown: "不明" } },
   common: {
     ...ENGLISH.common,
     unavailable: "サービスを利用できません。",

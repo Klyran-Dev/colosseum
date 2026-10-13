@@ -112,7 +112,7 @@ describe("primary product accessibility contract", () => {
     window.history.replaceState(null, "", "/money/balance-checks");
     window.dispatchEvent(new PopStateEvent("popstate"));
 
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Check tax balances" })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Balance checks" })).toBeTruthy());
     expect(window.location.pathname).toBe("/money/balance-checks");
     expect(pushState).toHaveBeenCalledTimes(1);
   });

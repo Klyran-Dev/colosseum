@@ -1,0 +1,139 @@
+{
+  "schema": "authorization-roles/v1",
+  "version": 1,
+  "roles": [
+    {
+      "id": "merchant_operator",
+      "label": "Merchant operator",
+      "description": "Standard tenant membership for day-to-day operational work.",
+      "assignable": false,
+      "scopes": []
+    },
+    {
+      "id": "moderator",
+      "label": "Moderator",
+      "description": "Bounded review responsibility for tenant evidence and support workflows.",
+      "assignable": true,
+      "scopes": []
+    },
+    {
+      "id": "administrator",
+      "label": "Administrator",
+      "description": "Tenant identity administration. This role does not imply financial or tax authority.",
+      "assignable": false,
+      "scopes": []
+    },
+    {
+      "id": "tax_rule_author",
+      "label": "Tax rule author",
+      "description": "Create and simulate governed tax-rule drafts.",
+      "assignable": true,
+      "scopes": ["tax:rule:read"]
+    },
+    {
+      "id": "tax_rule_reviewer",
+      "label": "Tax rule reviewer",
+      "description": "Review governed tax-rule drafts before approval.",
+      "assignable": true,
+      "scopes": ["tax:rule:read"]
+    },
+    {
+      "id": "tax_rule_approver",
+      "label": "Tax rule approver",
+      "description": "Approve governed tax-rule drafts for publication.",
+      "assignable": true,
+      "scopes": ["tax:rule:read"]
+    },
+    {
+      "id": "tax_applicability_author",
+      "label": "Tax treatment author",
+      "description": "Create and simulate governed tax-treatment evidence.",
+      "assignable": true,
+      "scopes": ["tax:applicability:read"]
+    },
+    {
+      "id": "tax_applicability_reviewer",
+      "label": "Tax treatment reviewer",
+      "description": "Review governed tax-treatment evidence before approval.",
+      "assignable": true,
+      "scopes": ["tax:applicability:read"]
+    },
+    {
+      "id": "tax_applicability_approver",
+      "label": "Tax treatment approver",
+      "description": "Approve governed tax-treatment evidence for publication.",
+      "assignable": true,
+      "scopes": ["tax:applicability:read"]
+    },
+    {
+      "id": "vault_release_proposer",
+      "label": "Treasury release proposer",
+      "description": "Prepare a bounded treasury release for separate approval.",
+      "assignable": true,
+      "scopes": ["tax:vault:propose"]
+    },
+    {
+      "id": "revenue_stream_proposer",
+      "label": "Partner payout proposer",
+      "description": "Propose a governed partner payout plan.",
+      "assignable": true,
+      "scopes": ["tax:stream:read", "tax:stream:propose"]
+    },
+    {
+      "id": "revenue_stream_approver",
+      "label": "Partner payout approver",
+      "description": "Approve a governed partner payout plan.",
+      "assignable": true,
+      "scopes": ["tax:stream:read", "tax:stream:govern"]
+    },
+    {
+      "id": "revenue_stream_operator",
+      "label": "Partner payout operator",
+      "description": "Prepare a release from an already governed partner payout plan.",
+      "assignable": true,
+      "scopes": ["tax:stream:read", "tax:stream:claim:prepare"]
+    },
+    {
+      "id": "revenue_stream_governance",
+      "label": "Partner payout governance",
+      "description": "Govern lifecycle transitions for partner payout plans.",
+      "assignable": true,
+      "scopes": ["tax:stream:govern"]
+    },
+    {
+      "id": "revenue_stream_auditor",
+      "label": "Partner payout auditor",
+      "description": "Review governed partner payout plans and balances.",
+      "assignable": true,
+      "scopes": ["tax:stream:read"]
+    },
+    {
+      "id": "settlement_adjustment_proposer",
+      "label": "Adjustment proposer",
+      "description": "Prepare a correction or refund request for review.",
+      "assignable": true,
+      "scopes": ["tax:adjustment:propose", "tax:refund:claim:prepare"]
+    },
+    {
+      "id": "settlement_adjustment_governance",
+      "label": "Adjustment governance",
+      "description": "Govern cancellation of refund requests and adjustment records.",
+      "assignable": true,
+      "scopes": ["tax:refund:claim:cancel:prepare"]
+    },
+    {
+      "id": "settlement_adjustment_approver",
+      "label": "Adjustment approver",
+      "description": "Approve a refund payment after all checks pass.",
+      "assignable": true,
+      "scopes": ["tax:refund:execute:prepare"]
+    },
+    {
+      "id": "indexer_operator",
+      "label": "Indexer operator",
+      "description": "Investigate and recover bounded indexer exceptions.",
+      "assignable": true,
+      "scopes": ["tax:indexer:read"]
+    }
+  ]
+}

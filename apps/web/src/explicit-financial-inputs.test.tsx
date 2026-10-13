@@ -17,17 +17,12 @@ describe("quote workspace financial-input boundary", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 200 })));
     render(<App />);
 
-    expect((screen.getByLabelText("Total before tax") as HTMLInputElement).value).toBe("");
-    expect((screen.getByLabelText("Amount subject to tax") as HTMLInputElement).value).toBe("");
-    expect((screen.getByLabelText("Currency") as HTMLInputElement).value).toBe("");
-    expect((screen.getByRole("textbox", { name: /Asset precision/ }) as HTMLInputElement).value).toBe("");
-    expect((screen.getByLabelText("Approved tax rule") as HTMLInputElement).value).toBe("");
-    expect((screen.getByLabelText("Rule version") as HTMLInputElement).value).toBe("");
-    expect((screen.getAllByLabelText("Jurisdiction")[0] as HTMLInputElement).value).toBe("");
-    expect((screen.getByLabelText("Tax category") as HTMLInputElement).value).toBe("");
+    expect(screen.getByRole("heading", { name: "Tax quotes" })).toBeTruthy();
+    expect(screen.queryByLabelText("Total before tax")).toBeNull();
+    expect(screen.queryByLabelText("Amount subject to tax")).toBeNull();
     expect(screen.queryByLabelText("Request reference")).toBeNull();
-    expect(screen.getByText(/secure retry reference is assigned automatically/i)).toBeTruthy();
     expect(screen.queryByText("Acme Treasury")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Sign in to continue" })).toBeTruthy();
   });
 
   it("localizes the quote workspace without translating financial or rule values", () => {
@@ -43,9 +38,9 @@ describe("quote workspace financial-input boundary", () => {
     try {
       render(<App />);
 
-      expect(screen.getByRole("heading", { name: "Steuerangebot erstellen" })).toBeTruthy();
-      expect(screen.getByLabelText("Gesamt vor Steuer")).toBeTruthy();
-      expect(screen.getByPlaceholderText("Währungscode eingeben")).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Steuerangebote" })).toBeTruthy();
+      expect(screen.queryByLabelText("Gesamt vor Steuer")).toBeNull();
+      expect(screen.queryByPlaceholderText("Währungscode eingeben")).toBeNull();
       expect(screen.queryByText("USD")).toBeNull();
       expect(screen.queryByText("019")).toBeNull();
     } finally {

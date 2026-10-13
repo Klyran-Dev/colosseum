@@ -16,6 +16,7 @@ export type ServerCapabilityReasonCode =
 
 export type UiAccessReasonCode =
   | "sign_in_required"
+  | "public_access"
   | "server_evaluation_required"
   | "server_denied"
   | "missing_expiry"
@@ -42,6 +43,7 @@ export interface WorkspacePolicy {
 export interface AuthorizationSnapshot {
   state: AuthorizationState;
   subject: string | null;
+  email?: string | null;
   tenantId: string | null;
   roles: readonly string[];
   scopes: readonly string[];
@@ -85,7 +87,7 @@ export const WORKSPACE_POLICIES: readonly WorkspacePolicy[] = Object.freeze(
 
 export function authorizationSnapshotForToken(accessToken: string): AuthorizationSnapshot {
   if (!accessToken.trim()) {
-    return { state: "anonymous", subject: null, tenantId: null, roles: [], scopes: [], attributes: {} };
+    return { state: "anonymous", subject: null, email: null, tenantId: null, roles: [], scopes: [], attributes: {} };
   }
 
   // JWT claims are deliberately not decoded in the browser. Until the API
@@ -94,6 +96,7 @@ export function authorizationSnapshotForToken(accessToken: string): Authorizatio
   return {
     state: "server-evaluation-required",
     subject: null,
+    email: null,
     tenantId: null,
     roles: [],
     scopes: [],
@@ -152,10 +155,20 @@ export function parseAuthorizationCapabilities(value: unknown, nowUnix = Math.fl
   const tenantId = stringValue(record.tenant_id, "The access response has no account reference.");
   if (!UUIDV7_PATTERN.test(snapshotId) || !UUID_PATTERN.test(tenantId)) throw new Error("The access response has invalid identifiers.");
   const subject = stringValue(record.subject, "The access response has no signed-in person.");
+  const email = record.email === undefined ? null : stringValue(record.email, "The access response contains an invalid email identity.", 320);
+  if (email !== null && (email !== email.toLowerCase() || email.trim() !== email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email))) {
+    throw new Error("The access response contains an invalid email identity.");
+  }
   if (!Number.isSafeInteger(record.expires_at_unix) || (record.expires_at_unix as number) <= nowUnix || (record.expires_at_unix as number) > nowUnix + MAX_SNAPSHOT_LIFETIME_SECONDS + 30) {
     throw new AuthorizationCapabilitiesError("The access response is expired or outside its allowed lifetime.");
   }
   const capabilitiesRecord = recordValue(record.capabilities, "The access response has no capability decisions.");
+  const roles = record.roles === undefined
+    ? []
+    : Array.isArray(record.roles)
+      ? record.roles.map((role) => stringValue(role, "The access response contains an invalid role.", 128))
+      : (() => { throw new Error("The access response contains invalid roles."); })();
+  if (roles.length > 32 || new Set(roles).size !== roles.length) throw new Error("The access response contains duplicate or excessive roles.");
   const entries = Object.entries(capabilitiesRecord);
   const expectedCapabilityIds = WORKSPACE_POLICIES.map((policy) => policy.id);
   if (entries.length !== expectedCapabilityIds.length || entries.length > MAX_CAPABILITIES) throw new Error("The access response has an incomplete capability catalog.");
@@ -178,8 +191,9 @@ export function parseAuthorizationCapabilities(value: unknown, nowUnix = Math.fl
   return {
     state: "server-allowed",
     subject,
+    email,
     tenantId,
-    roles: [],
+    roles,
     scopes: [],
     attributes: {},
     snapshotId,
@@ -194,6 +208,9 @@ export function evaluateUiAccess(
   nowUnix = Math.floor(Date.now() / 1000),
 ): UiAccessDecision {
   if (snapshot.state === "anonymous") {
+    if (!workspaceRequiresAuthentication(policy.workspace)) {
+      return { kind: "allow", reasonCode: "public_access", reason: "This workspace is available without a signed-in account." };
+    }
     return { kind: "deny", reasonCode: "sign_in_required", reason: "Sign in to request this action." };
   }
   if (snapshot.state === "server-evaluation-required") {
@@ -233,4 +250,10 @@ export function authorizationSnapshotRefreshDelayMs(
 
 export function policiesForGroup(group: WorkspaceGroup): readonly WorkspacePolicy[] {
   return WORKSPACE_POLICIES.filter((policy) => policy.group === group);
+}
+
+export function workspaceRequiresAuthentication(workspace: string): boolean {
+  const policies = WORKSPACE_POLICIES.filter((policy) => policy.workspace === workspace);
+  if (policies.length === 0) return true;
+  return policies.some((policy) => policy.requiredScopes.length > 0 || policy.requiredRoles.length > 0 || (policy.requiredAttributeKeys?.length ?? 0) > 0);
 }

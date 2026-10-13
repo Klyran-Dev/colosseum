@@ -18,9 +18,24 @@ describe("governance workbench submission boundary", () => {
     fireEvent.change(screen.getByLabelText("Review record"), { target: { value: "review://test/rule-001" } });
   }
 
+  it("makes governance authority actions visibly unavailable before sign-in", () => {
+    render(<GovernancePanel apiBase="/api" serviceOnline accessToken="" />);
+
+    expect(screen.getByRole("note").textContent).toContain("Sign in to continue");
+    expect(screen.getByLabelText("Rule name or reference").closest("fieldset")).toHaveProperty("disabled", true);
+    expect(screen.getByLabelText("Saved rule reference").closest("fieldset")).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Create governed draft" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Load rule details" })).toHaveProperty("disabled", true);
+  });
+
   it("presents rule authoring as a guided tax task", () => {
     render(<GovernancePanel apiBase="/api" serviceOnline accessToken="author-token" />);
 
+    const authoring = screen.getByText("Create a governed draft", { exact: true, selector: "summary" }).closest("details");
+    expect(authoring).toBeTruthy();
+    expect(authoring?.hasAttribute("open")).toBe(false);
+    fireEvent.click(screen.getByText("Create a governed draft", { exact: true, selector: "summary" }));
+    expect(authoring?.hasAttribute("open")).toBe(true);
     expect(screen.getByRole("heading", { name: "How the tax is calculated" })).toBeTruthy();
     expect(screen.getByText("Checked before publishing")).toBeTruthy();
     expect(screen.getByLabelText("Source record")).toBeTruthy();
@@ -38,6 +53,26 @@ describe("governance workbench submission boundary", () => {
     expect(screen.queryByText("Structured Tier-1 authoring")).toBeNull();
     expect(screen.queryByText("Rule components and semantics")).toBeNull();
     expect(screen.queryByText(/canonical rule document from explicit controls/i)).toBeNull();
+  });
+
+  it("keeps complex rule components progressively disclosed without changing the draft", () => {
+    render(<GovernancePanel apiBase="/api" serviceOnline accessToken="author-token" />);
+
+    fireEvent.click(screen.getByText("Create a governed draft", { exact: true, selector: "summary" }));
+    const firstSummary = screen.getByText("Component 1", { exact: true, selector: ".workbench-component-summary-title" }).closest("summary");
+    expect(firstSummary).toBeTruthy();
+    if (!firstSummary) throw new Error("Component 1 disclosure summary was not rendered");
+    expect(firstSummary.closest("details")?.hasAttribute("open")).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add tax component" }));
+    const secondSummary = screen.getByText("Component 2", { exact: true, selector: ".workbench-component-summary-title" }).closest("summary");
+    expect(secondSummary).toBeTruthy();
+    if (!secondSummary) throw new Error("Component 2 disclosure summary was not rendered");
+    expect(secondSummary.closest("details")?.hasAttribute("open")).toBe(true);
+
+    fireEvent.click(firstSummary);
+    expect(firstSummary.closest("details")?.hasAttribute("open")).toBe(false);
+    expect(secondSummary.closest("details")?.hasAttribute("open")).toBe(true);
   });
 
   it("localizes governance authoring while preserving protocol values", () => {

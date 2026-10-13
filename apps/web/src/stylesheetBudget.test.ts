@@ -7,13 +7,14 @@ import { describe, expect, it } from "vitest";
 
 /**
  * Performance budget for the one stylesheet every route downloads and parses
- * (ADR-0436). Measured when set: 123 KB source, about 14 KB gzipped in the build.
- * The ceilings leave roughly 25% headroom; raise them deliberately in an ADR, do
- * not let the stylesheet grow unnoticed.
+ * (ADR-0436). The licensed Demo 3 adapter adds the shell/auth composition while
+ * keeping the compressed artifact below the original 26 KB ceiling. The source
+ * and rule ceilings were deliberately revised in ADR-0490 and must not grow
+ * unnoticed.
  */
-const MAX_SOURCE_BYTES = 155_000;
+const MAX_SOURCE_BYTES = 170_000;
 const MAX_GZIP_BYTES = 26_000;
-const MAX_RULES = 950;
+const MAX_RULES = 1_050;
 
 const source = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
 

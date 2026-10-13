@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { PublicKey } from "@solana/web3.js";
 import { fetchWithTimeout, operatorResponseError, REQUEST_TIMEOUT_MS } from "./api";
 import { createClientNonce, createClientUuid } from "./clientIdentity";
-import { DEFAULT_LOCALE, DEFAULT_TIME_ZONE, formatEpoch } from "./formatters";
+import { DEFAULT_LOCALE, DEFAULT_TIME_ZONE, formatAtomic, formatEpoch, formatInteger } from "./formatters";
 import {
   CompiledDocumentSettlementResponse,
   SettlementRoute,
@@ -17,6 +17,7 @@ import {
 import WalletPicker from "./WalletPicker";
 import ApplicabilityVerificationCard from "./ApplicabilityVerificationCard";
 import { documentCheckoutMessagesFor } from "./documentCheckoutMessages";
+import { formatProtocolStatus } from "./protocolStatus";
 import { operatorErrorMessage } from "./operatorError";
 import {
   buildDocumentAttestationStatusUrl,
@@ -60,6 +61,7 @@ export default function DocumentCheckoutPanel({
   const [routeId, setRouteId] = useState("");
   const [routeState, setRouteState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [routeError, setRouteError] = useState<string | null>(null);
+  const [routeReload, setRouteReload] = useState(0);
   const [calculationId, setCalculationId] = useState("");
   const [scopeKind, setScopeKind] = useState<"full_document" | "line_subset">("full_document");
   const [lineIds, setLineIds] = useState("");
@@ -108,7 +110,7 @@ export default function DocumentCheckoutPanel({
       setRouteError(operatorErrorMessage(cause, messages.evidence.routesUnavailable));
     });
     return () => controller.abort();
-  }, [accessToken, apiBase, locale, serviceOnline]);
+  }, [accessToken, apiBase, locale, routeReload, serviceOnline]);
 
   function resetPreparedState() {
     setArtifact(null);
@@ -212,7 +214,7 @@ export default function DocumentCheckoutPanel({
           const recovered = await loadIntentStatus(artifact.intent_id);
           setSettlement(recovered);
           setFlow(settlementIntentAllowsRetry(recovered.status) ? "ready" : "complete");
-          setError(messages.errors.intentRecovery(recovered.status));
+          setError(messages.errors.intentRecovery(formatProtocolStatus(recovered.status, locale)));
           return;
         } catch {
           setFlow("complete");
@@ -254,6 +256,7 @@ export default function DocumentCheckoutPanel({
   }
 
   const isBusy = ["verifying", "compiling", "signing", "submitting"].includes(flow);
+  const interactionDisabled = isBusy || !serviceOnline || !accessToken.trim();
   const selectedRoute = routes.find((route) => route.id === routeId) ?? null;
   const expired = settlementQuoteExpired(attestation?.expires_at_unix, nowUnix);
   const indexerStreamKey = import.meta.env.VITE_INDEXER_STREAM_KEY ?? "";
@@ -261,14 +264,17 @@ export default function DocumentCheckoutPanel({
     <article className="panel">
       <div className="panel-heading"><div><p className="eyebrow">{messages.evidence.eyebrow}</p><h2 id="document-checkout-title">{messages.evidence.title}</h2></div><span className="status-pill">{messages.evidence.status}</span></div>
       <p className="panel-copy">{messages.evidence.description}</p>
-      <div className="checkout-step"><span className="step-number">1</span><div><strong>{walletAddress ? messages.evidence.walletConnected : messages.evidence.walletStep}</strong><p>{walletAddress ? walletAddress.toBase58() : messages.evidence.walletMissing}</p></div><WalletPicker locale={locale} disabled={isBusy} connectedAddress={walletAddress?.toBase58()} onConnected={setWalletAddress} /></div>
+      <div className="checkout-step"><span className="step-number">1</span><div><strong>{walletAddress ? messages.evidence.walletConnected : messages.evidence.walletStep}</strong>{!walletAddress && <p>{messages.evidence.walletMissing}</p>}</div><WalletPicker locale={locale} disabled={isBusy || !accessToken.trim()} connectedAddress={walletAddress?.toBase58()} onConnected={setWalletAddress} /></div>
+      {!accessToken.trim() && <div className="workflow-lock" role="note"><strong>{messages.access.title}</strong><p>{messages.access.copy}</p></div>}
       <form className="form-grid checkout-form" onSubmit={checkInvoiceEvidence}>
-        <label className="full-field"><span>{messages.evidence.invoiceReference}</span><input value={calculationId} onChange={(event) => { setCalculationId(event.target.value); setAttestation(null); resetPreparedState(); }} autoComplete="off" required /></label>
-        <label className="full-field"><span>{messages.evidence.paymentRoute}</span><select value={routeId} onChange={(event) => { setRouteId(event.target.value); setAttestation(null); resetPreparedState(); }} disabled={routeState !== "ready" || isBusy} required><option value="">{routeState === "loading" ? messages.evidence.loadingRoutes : routeState === "error" ? messages.evidence.routesUnavailable : routes.length ? messages.evidence.selectRoute : messages.evidence.noRoutes}</option>{routes.map((route) => <option value={route.id} key={route.id}>{route.route_key} · v{route.version} · {route.mint}</option>)}</select></label>
-        {routeError && <p className="inline-error full-field" role="alert">{routeError}</p>}
-        {selectedRoute && <div className="route-evidence full-field" aria-live="polite"><strong>{messages.evidence.verifiedRoute}</strong><small>{messages.evidence.paymentAsset} {selectedRoute.mint}</small><small>{messages.evidence.recipientProtection}</small></div>}
-        <div className="route-evidence full-field" aria-live="polite"><strong>{attestation ? messages.evidence.checkedTitle : messages.evidence.pendingTitle}</strong><small>{attestation ? messages.evidence.checkedCopy : messages.evidence.pendingCopy}</small>{attestation && <details className="technical-details"><summary>{messages.evidence.recordDetails}</summary><small>{messages.evidence.checkedAt} {formatEpoch(attestation.checked_at_unix, locale, timeZone)} · {messages.evidence.expires} {formatEpoch(attestation.expires_at_unix, locale, timeZone)}</small><small>{messages.evidence.evidenceFingerprint} <code>{shortDigest(attestation.payload_digest)}</code> · {messages.evidence.issuerKey} <code>{shortDigest(attestation.issuer_public_key)}</code></small></details>}</div>
-        <button type="submit" disabled={isBusy || !serviceOnline || !accessToken.trim()}>{flow === "verifying" ? messages.evidence.checking : attestation ? messages.evidence.checked : messages.evidence.check}</button>
+        <fieldset className="workflow-fieldset" disabled={interactionDisabled}>
+          <label className="full-field"><span>{messages.evidence.invoiceReference}</span><input value={calculationId} onChange={(event) => { setCalculationId(event.target.value); setAttestation(null); resetPreparedState(); }} autoComplete="off" disabled={interactionDisabled} required /></label>
+          <label className="full-field"><span>{messages.evidence.paymentRoute}</span><select value={routeId} onChange={(event) => { setRouteId(event.target.value); setAttestation(null); resetPreparedState(); }} disabled={routeState !== "ready" || interactionDisabled} required><option value="">{routeState === "loading" ? messages.evidence.loadingRoutes : routeState === "error" ? messages.evidence.routesUnavailable : routes.length ? messages.evidence.selectRoute : messages.evidence.noRoutes}</option>{routes.map((route) => <option value={route.id} key={route.id}>{route.route_key} · v{route.version} · {route.mint}</option>)}</select></label>
+          {routeError && <p className="inline-error full-field" role="alert">{routeError} <button type="button" className="inline-retry" onClick={() => setRouteReload((value) => value + 1)} disabled={isBusy}>{messages.evidence.retryRoutes}</button></p>}
+          {selectedRoute && <div className="route-evidence full-field" aria-live="polite"><strong>{messages.evidence.verifiedRoute}</strong><small>{messages.evidence.paymentAsset} {selectedRoute.mint}</small><small>{messages.evidence.recipientProtection}</small></div>}
+          <div className="route-evidence full-field" aria-live="polite"><strong>{attestation ? messages.evidence.checkedTitle : messages.evidence.pendingTitle}</strong><small>{attestation ? messages.evidence.checkedCopy : messages.evidence.pendingCopy}</small>{attestation && <details className="technical-details"><summary>{messages.evidence.recordDetails}</summary><small>{messages.evidence.checkedAt} {formatEpoch(attestation.checked_at_unix, locale, timeZone)} · {messages.evidence.expires} {formatEpoch(attestation.expires_at_unix, locale, timeZone)}</small><small>{messages.evidence.evidenceFingerprint} <code>{shortDigest(attestation.payload_digest)}</code> · {messages.evidence.issuerKey} <code>{shortDigest(attestation.issuer_public_key)}</code></small></details>}</div>
+          <button type="submit" disabled={isBusy || !serviceOnline || !accessToken.trim()}>{flow === "verifying" ? messages.evidence.checking : attestation ? messages.evidence.checked : messages.evidence.check}</button>
+        </fieldset>
       </form>
       {attestation && <div className="route-evidence" role="status"><strong>{messages.evidence.verifiedNotSent}</strong><small>{messages.evidence.evidenceRecord} <code>{shortDigest(attestation.payload_digest)}</code> · {messages.evidence.signingAuthority} <code>{shortDigest(attestation.issuer_public_key)}</code></small><small>{messages.evidence.expires} {formatEpoch(attestation.expires_at_unix, locale, timeZone)} · {messages.status.expiresChecked(expired)}</small></div>}
     </article>
@@ -276,18 +282,40 @@ export default function DocumentCheckoutPanel({
     <article className="panel">
       <div className="panel-heading"><div><p className="eyebrow">{messages.review.eyebrow}</p><h2>{messages.review.title}</h2></div><span className="status-pill">{messages.review.status}</span></div>
       <form className="form-grid checkout-form" onSubmit={compile}>
-        <label><span>{messages.review.paymentScope}</span><select value={scopeKind} onChange={(event) => { setScopeKind(event.target.value as typeof scopeKind); resetPreparedState(); }} disabled={isBusy}><option value="full_document">{messages.review.fullDocument}</option><option value="line_subset">{messages.review.lineSubset}</option></select></label>
-        {scopeKind === "line_subset" && <label className="full-field"><span>{messages.review.invoiceLines}</span><input value={lineIds} onChange={(event) => { setLineIds(event.target.value); resetPreparedState(); }} placeholder="line-a,line-c" disabled={isBusy} required /><small className="field-help">{messages.review.lineHelp}</small></label>}
-        <div className="route-evidence full-field"><strong>{messages.review.safeguardsTitle}</strong><small>{messages.review.safeguardsCopy}</small></div>
-        <button type="submit" disabled={isBusy || !attestation || expired || !walletAddress || !serviceOnline}>{flow === "compiling" ? messages.review.preparing : messages.review.prepare}</button>
+        <fieldset className="workflow-fieldset" disabled={interactionDisabled}>
+          <label><span>{messages.review.paymentScope}</span><select value={scopeKind} onChange={(event) => { setScopeKind(event.target.value as typeof scopeKind); resetPreparedState(); }} disabled={interactionDisabled}><option value="full_document">{messages.review.fullDocument}</option><option value="line_subset">{messages.review.lineSubset}</option></select></label>
+          {scopeKind === "line_subset" && <label className="full-field"><span>{messages.review.invoiceLines}</span><input value={lineIds} onChange={(event) => { setLineIds(event.target.value); resetPreparedState(); }} placeholder="line-a,line-c" disabled={interactionDisabled} required /><small className="field-help">{messages.review.lineHelp}</small></label>}
+          <div className="route-evidence full-field"><strong>{messages.review.safeguardsTitle}</strong><small>{messages.review.safeguardsCopy}</small></div>
+          <button type="submit" disabled={isBusy || !attestation || expired || !walletAddress || !serviceOnline}>{flow === "compiling" ? messages.review.preparing : messages.review.prepare}</button>
+        </fieldset>
       </form>
-      {artifact && <div className="settlement-status" aria-live="polite"><strong>{messages.review.readyTitle}</strong><p className="inline-success">{messages.review.readyCopy}</p><dl className="summary-list"><div><dt>{messages.review.amountBeforeTax}</dt><dd>{artifact.authorization.gross_atomic}</dd></div><div><dt>{messages.review.taxWithheld}</dt><dd>{artifact.authorization.tax_atomic}</dd></div><div><dt>{messages.review.amountSent}</dt><dd>{artifact.authorization.net_atomic}</dd></div><div><dt>{messages.review.paymentAsset}</dt><dd><code>{selectedRoute?.mint ?? messages.review.selectedByRoute}</code></dd></div><div><dt>{messages.review.paymentDetails}</dt><dd><code>{shortDigest(artifact.payment_scope_digest)}</code></dd></div></dl><small>{messages.review.verifiedInvoiceEvidence} <code>{shortDigest(artifact.document_attestation_digest)}</code> · {messages.review.paymentReference} {artifact.intent_id}</small><button type="button" onClick={signAndSubmit} disabled={isBusy || flow !== "ready" || expired}>{flow === "signing" ? messages.review.waitingWallet : flow === "submitting" ? messages.review.sendingPayment : messages.review.approve}</button>{settlement && <div className="settlement-status"><strong>{messages.review.paymentStatus}: {settlement.status}</strong><small>{settlement.signature ? messages.status.transactionReference(settlement.signature) : messages.review.noChainTransaction}</small><div className="status-actions"><button type="button" onClick={refreshStatus} disabled={isBusy}>{messages.review.refreshStatus}</button><button type="button" onClick={reconcile} disabled={isBusy || !settlement.signature}>{messages.review.checkRecord}</button></div></div>}</div>}
+      {artifact && <div className="settlement-status" aria-live="polite">
+        <strong>{messages.review.readyTitle}</strong>
+        <p className="inline-success">{messages.review.readyCopy}</p>
+        <dl className="summary-list">
+          <div><dt>{messages.review.amountBeforeTax}</dt><dd>{formatAtomic(artifact.authorization.gross_atomic, artifact.display.currency, locale, artifact.display.atomic_decimals)}</dd></div>
+          <div><dt>{messages.review.taxWithheld}</dt><dd>{formatAtomic(artifact.authorization.tax_atomic, artifact.display.currency, locale, artifact.display.atomic_decimals)}</dd></div>
+          <div><dt>{messages.review.amountSent}</dt><dd>{formatAtomic(artifact.authorization.net_atomic, artifact.display.currency, locale, artifact.display.atomic_decimals)}</dd></div>
+          <div><dt>{messages.review.paymentAsset}</dt><dd><code>{artifact.display.route_key} · v{artifact.display.route_version}</code></dd></div>
+        </dl>
+        <details className="technical-details">
+          <summary>{messages.review.technicalDetails}</summary>
+          <small>{messages.review.quoteContext}: {artifact.display.currency} · {messages.review.ruleVersion}: {artifact.display.rule_set_id} · v{artifact.display.rule_version} · {messages.evidence.expires} {formatEpoch(artifact.display.quote_expires_at_unix, locale, timeZone)}</small>
+          <small>{messages.review.route}: {artifact.display.route_key} · v{artifact.display.route_version} · {artifact.display.mint} · {artifact.display.mint_decimals} decimals · {artifact.display.token_program}</small>
+          <small>{messages.review.networkFee}: {messages.review.networkFeeUnavailable}</small>
+          <small>{messages.review.priorityFeePolicy}: {artifact.compute_budget_policy.compute_unit_limit.toLocaleString(locale)} CU · {artifact.compute_budget_policy.micro_lamports_per_compute_unit.toLocaleString(locale)} μ-lamports/CU</small>
+          <small>{messages.review.exactAtomicValue}: {formatInteger(artifact.authorization.gross_atomic, locale)} / {formatInteger(artifact.authorization.tax_atomic, locale)} / {formatInteger(artifact.authorization.net_atomic, locale)}</small>
+          <small>{messages.review.paymentDetails}: <code>{shortDigest(artifact.payment_scope_digest)}</code> · {messages.review.verifiedInvoiceEvidence} <code>{shortDigest(artifact.document_attestation_digest)}</code> · {messages.review.paymentReference} {artifact.intent_id}</small>
+        </details>
+        <button type="button" onClick={signAndSubmit} disabled={isBusy || !accessToken.trim() || flow !== "ready" || expired}>{flow === "signing" ? messages.review.waitingWallet : flow === "submitting" ? messages.review.sendingPayment : messages.review.approve}</button>
+        {settlement && <div className="settlement-status"><strong>{messages.review.paymentStatus}: {formatProtocolStatus(settlement.status, locale)}</strong><small>{settlement.signature ? messages.status.transactionReference(settlement.signature) : messages.review.noChainTransaction}</small><div className="status-actions"><button type="button" onClick={refreshStatus} disabled={isBusy}>{messages.review.refreshStatus}</button><button type="button" onClick={reconcile} disabled={isBusy || !settlement.signature}>{messages.review.checkRecord}</button></div></div>}
+      </div>}
       {!artifact && <div className="empty-state"><strong>{messages.review.emptyTitle}</strong><p>{messages.review.emptyCopy}</p></div>}
       <ApplicabilityVerificationCard
         apiBase={apiBase}
         accessToken={accessToken}
         serviceOnline={serviceOnline}
-        intentId={settlement?.intent_id ?? artifact?.intent_id ?? ""}
+        intentId={settlement?.intent_id ?? ""}
         streamKey={indexerStreamKey}
         locale={locale}
         refreshKey={settlement?.status ?? ""}

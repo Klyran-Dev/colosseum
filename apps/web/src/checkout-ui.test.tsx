@@ -12,7 +12,7 @@ describe("payment review language boundary", () => {
 
   it("keeps the operator path plain and the protocol evidence explicitly advanced", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 200 })));
-    render(
+    const { container } = render(
       <CheckoutPanel
         apiBase="/api"
         serviceOnline
@@ -25,12 +25,15 @@ describe("payment review language boundary", () => {
     expect(screen.getByRole("heading", { name: "Review payment before signing" })).toBeTruthy();
     expect(screen.getByText("Review the amount, tax, destination, and policy status before your wallet approves the payment. The service checks the payment again before it is sent to the network.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Prepare payment for review" })).toBeTruthy();
+    expect(screen.getAllByText("Sign in to continue", { exact: true }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("combobox").every((control) => control.closest("fieldset")?.hasAttribute("disabled"))).toBe(true);
 
     expect(screen.queryByText("Program ID")).toBeNull();
     expect(screen.queryByLabelText("Policy version")).toBeNull();
     expect(screen.queryByLabelText("Policy reference")).toBeNull();
     expect(screen.getByText(/verified quote supplies the policy/i)).toBeTruthy();
     expect(screen.getByText(/secure payment reference is assigned for safe retry/i)).toBeTruthy();
+    expect(container.querySelector(".checkout-step-wallet .wallet-picker-status")?.textContent).toContain("No compatible Solana wallet");
   });
 
   it("localizes aggregate payment review without translating financial or protocol values", () => {
@@ -52,6 +55,39 @@ describe("payment review language boundary", () => {
     expect(screen.getByRole("button", { name: "Zahlung zur Prüfung vorbereiten" })).toBeTruthy();
     expect(screen.getByText("Derzeit ist kein kompatibles Solana-Wallet verfügbar.", { exact: true })).toBeTruthy();
     expect(screen.queryByText(/Tokenkeg|0199|1000/)).toBeNull();
+  });
+
+  it("offers an explicit retry when the approved payment route cannot be loaded", async () => {
+    const route = {
+      id: "01992f1b-4a70-7e30-8ea2-b6e37a9d9d22",
+      route_key: "local-usdc",
+      version: 1,
+      merchant_account: "8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR",
+      mint: "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8",
+      mint_decimals: 6,
+      tax_vault: "8nGRRJuGoubpUKHVa5paPCvGLQU39nnu3zFWYREbSeNN",
+      net_destination: "QWmroo4YnnMqYW3cnxWkFdaTxGD3P7vMSzwMHGbUzwF",
+      token_program: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    };
+    let routeAttempts = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/v1/settlement/routes")) {
+        routeAttempts += 1;
+        return routeAttempts === 1
+          ? new Response(JSON.stringify({ error: "temporary" }), { status: 503 })
+          : new Response(JSON.stringify([route]), { status: 200 });
+      }
+      if (url.endsWith("/v1/settlement/split-plans")) return new Response("[]", { status: 200 });
+      return new Response(null, { status: 404 });
+    }));
+
+    render(<CheckoutPanel apiBase="/api" serviceOnline accessToken="token" calculation={null} formatAtomic={(value, currency) => `${currency} ${value}`} />);
+
+    await screen.findByText("Payment route request failed.");
+    fireEvent.click(screen.getByRole("button", { name: "Retry payment route" }));
+    await waitFor(() => expect(screen.getByRole("option", { name: /local-usdc/ })).toBeTruthy());
+    expect(routeAttempts).toBe(2);
   });
 
   it("warns when a recipient plan belongs to a different merchant account and accepts a matching one", async () => {

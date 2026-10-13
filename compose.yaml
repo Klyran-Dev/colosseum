@@ -48,10 +48,10 @@ services:
       API_INDEXER_RPC_ENDPOINTS: ${API_INDEXER_RPC_ENDPOINTS:-}
       API_INDEXER_STREAM_KEY: ${API_INDEXER_STREAM_KEY:-localnet/settlement/v1}
       API_INDEXER_TARGETED_RECOVERY_MAX_PAGES: ${API_INDEXER_TARGETED_RECOVERY_MAX_PAGES:-64}
-      API_AUTH_ISSUER: ${API_AUTH_ISSUER:-https://local-identity.invalid}
+      API_AUTH_ISSUER: ${API_AUTH_ISSUER:-http://localhost:18085}
       API_AUTH_AUDIENCE: ${API_AUTH_AUDIENCE:-tax-api}
-      API_AUTH_JWKS_KID: ${API_AUTH_JWKS_KID:-local-development-key}
-      API_AUTH_JWKS_PUBLIC_KEY: ${API_AUTH_JWKS_PUBLIC_KEY:-fBTjJ2wbKth0799nmehvmjl3jO_Qjjo18jfFqILUQWE}
+      API_AUTH_JWKS_KID: ${API_AUTH_JWKS_KID:-auth-local-v1}
+      API_AUTH_JWKS_PUBLIC_KEY: ${API_AUTH_JWKS_PUBLIC_KEY:-6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw}
       API_EVIDENCE_KEY_ID: ${API_EVIDENCE_KEY_ID-local-development-evidence-key-v1}
       API_EVIDENCE_KEY_B64: ${API_EVIDENCE_KEY_B64-bG9jYWwtZGV2LWV2aWRlbmNlLWtleS0zMi1ieXRlcyE=}
       API_EVIDENCE_KEY_RING_JSON: ${API_EVIDENCE_KEY_RING_JSON:-}
@@ -75,6 +75,76 @@ services:
       interval: 5s
       timeout: 3s
       retries: 12
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: ops/docker/Dockerfile.auth-service
+    environment:
+      AUTH_BIND_ADDRESS: 0.0.0.0:8085
+      AUTH_DATABASE_URL: postgres://tax_protocol:local-development-only@postgres:5432/tax_protocol
+      AUTH_DATABASE_POOL_SIZE: "${AUTH_DATABASE_POOL_SIZE:-8}"
+      AUTH_ENV: ${AUTH_ENV:-local}
+      AUTH_ISSUER: ${AUTH_ISSUER:-http://localhost:18085}
+      AUTH_AUDIENCE: ${AUTH_AUDIENCE:-tax-api}
+      AUTH_SIGNING_KEY_ID: ${AUTH_SIGNING_KEY_ID:-auth-local-v1}
+      AUTH_SIGNING_KEY_HEX: ${AUTH_SIGNING_KEY_HEX:-}
+      AUTH_OTP_PEPPER: ${AUTH_OTP_PEPPER:-local-development-otp-pepper}
+      AUTH_EMAIL_MODE: ${AUTH_EMAIL_MODE:-local-file}
+      AUTH_EMAIL_PROVIDER_ENDPOINT: ${AUTH_EMAIL_PROVIDER_ENDPOINT:-https://api.resend.com/emails}
+      AUTH_EMAIL_PROVIDER_API_KEY: ${AUTH_EMAIL_PROVIDER_API_KEY:-}
+      AUTH_EMAIL_FROM: ${AUTH_EMAIL_FROM:-}
+      AUTH_EMAIL_PROVIDER_TIMEOUT_MILLIS: ${AUTH_EMAIL_PROVIDER_TIMEOUT_MILLIS:-3000}
+      AUTH_APP_BASE_URL: ${AUTH_APP_BASE_URL:-http://localhost:8088}
+      AUTH_LOCAL_INBOX_DIR: /var/lib/auth/inbox
+      AUTH_SELF_SIGNUP: ${AUTH_SELF_SIGNUP:-true}
+      AUTH_DEFAULT_SCOPES: ${AUTH_DEFAULT_SCOPES:-tax:quote}
+      AUTH_ADMINISTRATOR_SCOPES: ${AUTH_ADMINISTRATOR_SCOPES:-audit:read identity:role:manage}
+      AUTH_MODERATOR_SCOPES: ${AUTH_MODERATOR_SCOPES:-audit:read}
+      AUTH_DEFAULT_ROLES: ${AUTH_DEFAULT_ROLES:-merchant_operator}
+      AUTH_LOCAL_BOOTSTRAP_ADMIN_EMAIL: ${AUTH_LOCAL_BOOTSTRAP_ADMIN_EMAIL:-admin@local.test}
+      AUTH_INITIAL_ADMIN_EMAIL: ${AUTH_INITIAL_ADMIN_EMAIL:-}
+      AUTH_CORS_ORIGIN: ${AUTH_CORS_ORIGIN:-http://localhost:8088,http://127.0.0.1:8088}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
+      OTEL_ENVIRONMENT: ${OTEL_ENVIRONMENT:-local}
+      OTEL_ALLOW_INSECURE_TELEMETRY: ${OTEL_ALLOW_INSECURE_TELEMETRY:-false}
+      OTEL_TRACE_SAMPLE_RATIO: ${OTEL_TRACE_SAMPLE_RATIO:-1.0}
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "${AUTH_PORT:-18085}:8085"
+    volumes:
+      - auth-inbox:/var/lib/auth/inbox
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+      auth-inbox-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:8085/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  auth-inbox-init:
+    build:
+      context: .
+      dockerfile: ops/docker/Dockerfile.auth-service
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown -R 10001:10001 /var/lib/auth/inbox && chmod 700 /var/lib/auth/inbox"]
+    user: "0:0"
+    volumes:
+      - auth-inbox:/var/lib/auth/inbox
+    restart: "no"
+    read_only: true
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER"]
+    security_opt: ["no-new-privileges:true"]
 
   tax-engine:
     build:
@@ -385,7 +455,9 @@ services:
       args:
         VITE_DEPLOYMENT_ENVIRONMENT: ${VITE_DEPLOYMENT_ENVIRONMENT:-local}
         VITE_SOLANA_NETWORK: ${VITE_SOLANA_NETWORK:-localnet}
-        VITE_LOCAL_UI_MODE: ${VITE_LOCAL_UI_MODE:-credential}
+        VITE_AUTH_METHOD: ${VITE_AUTH_METHOD:-}
+        VITE_LOCAL_UI_MODE: ${VITE_LOCAL_UI_MODE:-email-otp}
+        VITE_AUTH_SERVICE_BASE_URL: ${VITE_AUTH_SERVICE_BASE_URL:-http://localhost:18085}
         VITE_OIDC_ISSUER: ${VITE_OIDC_ISSUER:-}
         VITE_OIDC_CLIENT_ID: ${VITE_OIDC_CLIENT_ID:-}
         VITE_OIDC_REDIRECT_URI: ${VITE_OIDC_REDIRECT_URI:-}
@@ -396,6 +468,8 @@ services:
       - "${EDGE_PORT:-8088}:8080"
     depends_on:
       api:
+        condition: service_healthy
+      auth-service:
         condition: service_healthy
     read_only: true
     tmpfs:
@@ -546,6 +620,7 @@ services:
 
 volumes:
   postgres18-data:
+  auth-inbox:
   nats-data:
   solana-ledger:
   prometheus-data:

@@ -232,6 +232,17 @@
       "required_scopes": ["audit:read"],
       "required_roles": [],
       "required_attributes": []
+    },
+    {
+      "id": "identity.role.manage",
+      "label": "Manage workspace roles",
+      "description": "Assign or revoke the bounded moderator responsibility for users in this tenant.",
+      "group": "Rules & access",
+      "workspace": "access-control",
+      "risk": "governance",
+      "required_scopes": ["identity:role:manage"],
+      "required_roles": ["administrator"],
+      "required_attributes": []
     }
   ]
 }

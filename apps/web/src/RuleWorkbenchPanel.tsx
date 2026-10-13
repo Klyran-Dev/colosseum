@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   buildRuleSet,
   defaultComponentDraft,
@@ -46,6 +46,7 @@ function componentChoices(draft: RuleWorkbenchDraft, currentId: string): string[
 
 export default function RuleWorkbench({ draft, onChange, locale = DEFAULT_LOCALE }: RuleWorkbenchProps) {
   const messages = ruleWorkbenchMessagesFor(locale);
+  const [openComponents, setOpenComponents] = useState<Set<number>>(() => new Set([0]));
   const errors = useMemo(() => validateRuleWorkbench(draft), [draft]);
   const generated = useMemo(() => {
     try {
@@ -57,12 +58,15 @@ export default function RuleWorkbench({ draft, onChange, locale = DEFAULT_LOCALE
 
   function addComponent() {
     if (draft.components.length >= 128) return;
-    onChange({ ...draft, components: [...draft.components, defaultComponentDraft(draft.components.length + 1)] });
+    const nextIndex = draft.components.length;
+    onChange({ ...draft, components: [...draft.components, defaultComponentDraft(nextIndex + 1)] });
+    setOpenComponents((current) => new Set([...current, nextIndex]));
   }
 
   function removeComponent(index: number) {
     if (draft.components.length <= 1) return;
     onChange({ ...draft, components: draft.components.filter((_, componentIndex) => componentIndex !== index) });
+    setOpenComponents((current) => new Set([...current].filter((componentIndex) => componentIndex !== index).map((componentIndex) => componentIndex > index ? componentIndex - 1 : componentIndex)));
   }
 
   return (
@@ -80,8 +84,27 @@ export default function RuleWorkbench({ draft, onChange, locale = DEFAULT_LOCALE
         {draft.components.map((component, componentIndex) => {
           const choices = componentChoices(draft, component.id);
           return (
-            <fieldset className="workbench-component" key={`${component.id}-${componentIndex}`}>
-              <legend>{messages.component.label(componentIndex + 1)}</legend>
+            <details
+              className="workbench-component"
+              key={`${component.id}-${componentIndex}`}
+              open={openComponents.has(componentIndex)}
+              onToggle={(event) => {
+                const isOpen = event.currentTarget.open;
+                setOpenComponents((current) => {
+                  const next = new Set(current);
+                  if (isOpen) next.add(componentIndex);
+                  else next.delete(componentIndex);
+                  return next;
+                });
+              }}
+            >
+              <summary className="workbench-component-summary">
+                <span className="workbench-component-summary-title">{messages.component.label(componentIndex + 1)}</span>
+                <span className="workbench-component-summary-label">{component.label.trim() || messages.component.unnamed}</span>
+                <span className="workbench-component-summary-meta">{component.rateMode === "flat" ? messages.rate.flat : messages.rate.progressive}</span>
+              </summary>
+              <fieldset className="workbench-component-fields">
+                <legend className="sr-only">{messages.component.label(componentIndex + 1)}</legend>
               <div className="form-grid">
                 <label><span>{messages.component.internalName}</span><input value={component.id} onChange={(event) => onChange(updateComponent(draft, componentIndex, { id: event.target.value }))} autoComplete="off" /></label>
                 <label><span>{messages.component.customerLabel}</span><input value={component.label} onChange={(event) => onChange(updateComponent(draft, componentIndex, { label: event.target.value }))} /></label>
@@ -150,7 +173,8 @@ export default function RuleWorkbench({ draft, onChange, locale = DEFAULT_LOCALE
                 <label className="full-field"><span>{messages.component.exemptions}</span><textarea value={component.exemptionCodes} onChange={(event) => onChange(updateComponent(draft, componentIndex, { exemptionCodes: event.target.value }))} rows={2} /></label>
               </div>
               <button type="button" className="secondary-button" onClick={() => removeComponent(componentIndex)} disabled={draft.components.length <= 1}>{messages.actions.removeComponent}</button>
-            </fieldset>
+              </fieldset>
+            </details>
           );
         })}
       </div>

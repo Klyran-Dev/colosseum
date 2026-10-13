@@ -48,6 +48,23 @@ export interface ShellSessionMessages {
   signInSetupNeeded: string;
   signInSetupNeededSummary: string;
   secureSignInHelp: string;
+  emailOtpSignIn: string;
+  openEmailOtpSignIn: string;
+  emailLabel: string;
+  emailPlaceholder: string;
+  emailOtpHelp: string;
+  sendCode: string;
+  sendingCode: string;
+  emailOtpSent: string;
+  codeLabel: string;
+  codePlaceholder: string;
+  verifyCode: string;
+  verifyingCode: string;
+  changeEmail: string;
+  protectedWorkspace: string;
+  signInToContinue: string;
+  signInToContinueCopy: string;
+  signInInHeader: string;
 }
 
 export interface ShellMessages {
@@ -110,6 +127,7 @@ const ENGLISH_ACCESS_STATUS = {
 
 const ENGLISH_ACCESS_REASONS: Readonly<Record<UiAccessReasonCode, string>> = {
   sign_in_required: "Sign in before using this workspace.",
+  public_access: "This workspace is available without a signed-in account.",
   server_evaluation_required: "Your access is being checked before this workspace can be used.",
   server_denied: "Your account cannot use this workspace right now.",
   missing_expiry: "Your access check is missing an expiry; refresh before continuing.",
@@ -125,6 +143,7 @@ const ENGLISH_ACCESS_REASONS: Readonly<Record<UiAccessReasonCode, string>> = {
 
 const GERMAN_ACCESS_REASONS: Readonly<Record<UiAccessReasonCode, string>> = {
   sign_in_required: "Melden Sie sich an, bevor Sie diesen Arbeitsbereich verwenden.",
+  public_access: "Dieser Arbeitsbereich ist ohne Anmeldung verfügbar.",
   server_evaluation_required: "Ihr Zugriff wird geprüft, bevor dieser Arbeitsbereich verwendet werden kann.",
   server_denied: "Ihr Konto kann diesen Arbeitsbereich derzeit nicht verwenden.",
   missing_expiry: "Für die Zugriffsprüfung fehlt ein Ablaufzeitpunkt; aktualisieren Sie die Prüfung.",
@@ -140,6 +159,7 @@ const GERMAN_ACCESS_REASONS: Readonly<Record<UiAccessReasonCode, string>> = {
 
 const ARABIC_ACCESS_REASONS: Readonly<Record<UiAccessReasonCode, string>> = {
   sign_in_required: "سجّل الدخول قبل استخدام مساحة العمل هذه.",
+  public_access: "مساحة العمل هذه متاحة دون تسجيل الدخول.",
   server_evaluation_required: "يتم التحقق من وصولك قبل استخدام مساحة العمل هذه.",
   server_denied: "لا يمكن لحسابك استخدام مساحة العمل هذه حاليًا.",
   missing_expiry: "يفتقد فحص الوصول إلى وقت انتهاء؛ حدّث الفحص قبل المتابعة.",
@@ -155,6 +175,7 @@ const ARABIC_ACCESS_REASONS: Readonly<Record<UiAccessReasonCode, string>> = {
 
 const JAPANESE_ACCESS_REASONS: Readonly<Record<UiAccessReasonCode, string>> = {
   sign_in_required: "このワークスペースを使用するにはサインインしてください。",
+  public_access: "このワークスペースはサインインなしで利用できます。",
   server_evaluation_required: "このワークスペースを使用する前にアクセスを確認しています。",
   server_denied: "現在、このアカウントではこのワークスペースを使用できません。",
   missing_expiry: "アクセス確認に有効期限がありません。続行する前に更新してください。",
@@ -209,6 +230,23 @@ const ENGLISH_SESSION: ShellSessionMessages = {
   signInSetupNeeded: "Sign-in setup needed",
   signInSetupNeededSummary: "Sign-in setup needed",
   secureSignInHelp: "Ask your administrator to configure secure sign-in for this deployment.",
+  emailOtpSignIn: "Email sign-in",
+  openEmailOtpSignIn: "Open email sign-in",
+  emailLabel: "Email address",
+  emailPlaceholder: "you@example.com",
+  emailOtpHelp: "A one-time code is written to the local auth inbox in Docker.",
+  sendCode: "Send code",
+  sendingCode: "Sending code…",
+  emailOtpSent: "Enter the six-digit code from the local auth inbox.",
+  codeLabel: "One-time code",
+  codePlaceholder: "123456",
+  verifyCode: "Verify code",
+  verifyingCode: "Verifying code…",
+  changeEmail: "Use another email",
+  protectedWorkspace: "Protected workspace",
+  signInToContinue: "Sign in to continue",
+  signInToContinueCopy: "Your account and tenant access are checked before protected actions become available.",
+  signInInHeader: "Use the sign-in control in the header to continue.",
 };
 
 const ENGLISH: ShellMessages = {
@@ -301,6 +339,23 @@ const GERMAN: ShellMessages = {
     signInSetupNeeded: "Anmeldung muss eingerichtet werden",
     signInSetupNeededSummary: "Anmeldung muss eingerichtet werden",
     secureSignInHelp: "Bitten Sie die Administration, die sichere Anmeldung für diese Bereitstellung einzurichten.",
+    emailOtpSignIn: "Anmeldung per E-Mail",
+    openEmailOtpSignIn: "E-Mail-Anmeldung öffnen",
+    emailLabel: "E-Mail-Adresse",
+    emailPlaceholder: "sie@beispiel.de",
+    emailOtpHelp: "Ein Einmalcode wird im lokalen Auth-Posteingang von Docker abgelegt.",
+    sendCode: "Code senden",
+    sendingCode: "Code wird gesendet…",
+    emailOtpSent: "Geben Sie den sechsstelligen Code aus dem lokalen Auth-Posteingang ein.",
+    codeLabel: "Einmalcode",
+    codePlaceholder: "123456",
+    verifyCode: "Code prüfen",
+    verifyingCode: "Code wird geprüft…",
+    changeEmail: "Andere E-Mail verwenden",
+    protectedWorkspace: "Geschützter Arbeitsbereich",
+    signInToContinue: "Zum Fortfahren anmelden",
+    signInToContinueCopy: "Ihr Konto und Ihr Mandantenzugriff werden geprüft, bevor geschützte Aktionen verfügbar werden.",
+    signInInHeader: "Verwenden Sie zum Fortfahren die Anmeldesteuerung in der Kopfzeile.",
   },
   workspaceStatus: (label) => `Arbeitsbereich: ${label}`,
 };
@@ -384,6 +439,23 @@ const ARABIC: ShellMessages = {
     signInSetupNeeded: "يلزم إعداد تسجيل الدخول",
     signInSetupNeededSummary: "يلزم إعداد تسجيل الدخول",
     secureSignInHelp: "اطلب من المسؤول إعداد تسجيل الدخول الآمن لهذا النشر.",
+    emailOtpSignIn: "تسجيل الدخول بالبريد الإلكتروني",
+    openEmailOtpSignIn: "فتح تسجيل الدخول بالبريد الإلكتروني",
+    emailLabel: "عنوان البريد الإلكتروني",
+    emailPlaceholder: "you@example.com",
+    emailOtpHelp: "يُكتب الرمز لمرة واحدة في صندوق مصادقة Docker المحلي.",
+    sendCode: "إرسال الرمز",
+    sendingCode: "جارٍ إرسال الرمز…",
+    emailOtpSent: "أدخل الرمز المكوّن من ستة أرقام من صندوق المصادقة المحلي.",
+    codeLabel: "الرمز لمرة واحدة",
+    codePlaceholder: "123456",
+    verifyCode: "التحقق من الرمز",
+    verifyingCode: "جارٍ التحقق من الرمز…",
+    changeEmail: "استخدم بريدًا إلكترونيًا آخر",
+    protectedWorkspace: "مساحة عمل محمية",
+    signInToContinue: "سجّل الدخول للمتابعة",
+    signInToContinueCopy: "يتم التحقق من حسابك ووصولك إلى المستأجر قبل إتاحة الإجراءات المحمية.",
+    signInInHeader: "استخدم أداة تسجيل الدخول في الرأس للمتابعة.",
   },
   workspaceStatus: (label) => `مساحة العمل: ${label}`,
 };
@@ -467,6 +539,23 @@ const JAPANESE: ShellMessages = {
     signInSetupNeeded: "サインイン設定が必要です",
     signInSetupNeededSummary: "サインイン設定が必要です",
     secureSignInHelp: "管理者にこのデプロイメントの安全なサインイン設定を依頼してください。",
+    emailOtpSignIn: "メールでサインイン",
+    openEmailOtpSignIn: "メールサインインを開く",
+    emailLabel: "メールアドレス",
+    emailPlaceholder: "you@example.com",
+    emailOtpHelp: "ワンタイムコードはDockerのローカル認証受信箱に書き込まれます。",
+    sendCode: "コードを送信",
+    sendingCode: "コードを送信しています…",
+    emailOtpSent: "ローカル認証受信箱の6桁コードを入力してください。",
+    codeLabel: "ワンタイムコード",
+    codePlaceholder: "123456",
+    verifyCode: "コードを確認",
+    verifyingCode: "コードを確認しています…",
+    changeEmail: "別のメールを使用",
+    protectedWorkspace: "保護されたワークスペース",
+    signInToContinue: "続行するにはサインインしてください",
+    signInToContinueCopy: "保護された操作を利用できるようにする前に、アカウントとテナントへのアクセスを確認します。",
+    signInInHeader: "続行するにはヘッダーのサインイン操作を使用してください。",
   },
   workspaceStatus: (label) => `${label}ワークスペース`,
 };

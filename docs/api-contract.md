@@ -15,6 +15,35 @@ reference, not as an authorization, idempotency, nonce, signature, or evidence
 identifier. Clients should preserve the returned value when opening a support
 case and may forward it to an explicitly approved downstream service.
 
+## Email OTP sign-in and invited sign-up
+
+`POST /v1/auth/email/request` accepts an email and explicit `intent` of
+`signin` or `signup`. An administrator invitation email links to the dedicated
+sign-up route with `invite=<invitation_id>`. The browser may echo that UUIDv7 as
+optional `invitation_id`; the auth service accepts it only when it matches the
+normalized email, is still pending, and has not expired. The request response
+is:
+
+```json
+{
+  "challenge_id": "0192e6ec-4d8f-7d2e-a40e-2c095f871405",
+  "expires_at_unix": 1800000300,
+  "retry_after_seconds": 60,
+  "invitation_role": "moderator"
+}
+```
+
+`invitation_role` is present only after the server has matched an invitation to
+the email. It is presentation metadata and never grants access. The OTP
+challenge stores the invitation reference, so
+`POST /v1/auth/email/verify` cannot substitute a different invitation between
+request and verification. The verification transaction consumes the exact
+pending invitation, assigns its role and tenant, records the audit events, and
+issues the bounded OIDC-compatible EdDSA tokens. A request without an
+invitation reference keeps the ordinary self-sign-up behavior; non-local
+deployments may disable self-sign-up while still allowing valid administrator
+invitations.
+
 ## Calculation request
 
 ```json
@@ -382,6 +411,15 @@ case-sensitive OAuth-style tokens in the JWT `scope` claim; an authenticated
 principal without `tax:quote` receives `403 INSUFFICIENT_SCOPE`. Authorization
 is enforced in the API even when an edge gateway also applies policy.
 
+The repository-owned auth service derives token scopes from deployment-owned
+profiles rather than applying privileged scopes to every account. Base scopes
+apply to all active users; `AUTH_MODERATOR_SCOPES` is added only for the
+durable `moderator` role; `AUTH_ADMINISTRATOR_SCOPES` is added only for the
+durable `administrator` role. Local Docker defaults are `tax:quote` for the
+base profile, `audit:read` for moderators, and `audit:read
+identity:role:manage` for administrators. The browser cannot select or edit
+these profiles.
+
 ## Server-owned capability snapshot
 
 `GET /v1/authorization/capabilities` requires a valid bearer token but no
@@ -398,15 +436,20 @@ required-role explanations, and context requirements from drifting between the
 server decision and the access-review UI. It is metadata only; it never grants
 access or replaces handler-level authorization.
 
-The response schema is `authorization-capabilities/v1`:
+The response schema is `authorization-capabilities/v1`. `email` is the
+server-verified normalized identity when the issuer provides it; it is omitted
+for compatible external OIDC access tokens that do not carry an email claim.
+It is display identity only and does not grant authorization:
 
 ```json
 {
   "schema": "authorization-capabilities/v1",
   "snapshot_id": "019...",
   "subject": "operator-123",
+  "email": "operator@example.com",
   "tenant_id": "019...",
   "expires_at_unix": 1800000060,
+  "roles": ["merchant_operator", "moderator"],
   "capabilities": {
     "tax.quote.create": {
       "decision": "allow",
@@ -419,6 +462,10 @@ The response schema is `authorization-capabilities/v1`:
   }
 }
 ```
+
+`roles` is a server-owned projection of the signed principal and contains at
+most 32 unique bounded role names. It is informational for the shell; the API
+continues to enforce the role on every protected handler.
 
 The snapshot lifetime is at most 60 seconds and never exceeds the verified
 token expiry. `decision` is one of `allow`, `deny`, or `indeterminate`.
@@ -438,6 +485,44 @@ workspace: `access.control`, `evidence.applicability.read`, `evidence.audit.read
 describe the workspace affordance; they do not replace the handler-level
 authorization checks for read, approval, submission, reconciliation, or
 finalized chain evidence.
+
+## Auth-service role administration
+
+The dedicated auth service owns the tenant-scoped role lifecycle. An active
+administrator with the `identity:role:manage` scope may call
+`GET /v1/admin/users` to receive at most 100 active-tenant directory entries.
+The tenant is derived from the verified EdDSA bearer token; no tenant selector
+is accepted from the browser.
+
+`POST /v1/admin/users/{user_id}/roles/moderator` assigns the bounded moderator
+responsibility. `DELETE` on the same resource revokes it. Both mutations require
+an RFC 9562 UUIDv7 `Idempotency-Key` and commit the role state, idempotency
+record, and append-only auth audit event in one PostgreSQL transaction.
+Unknown roles, cross-tenant users, disabled users, stale/invalid tokens,
+revoked administrator assignments, and database uncertainty fail closed. A
+role change is visible in the target user's next token; the browser never
+decodes or authors role claims.
+
+`POST /v1/admin/invitations` creates an idempotent tenant invitation with a
+normalized email and either `merchant_operator` or `moderator` role. It
+requires the same administrator capability and a UUIDv7 `Idempotency-Key`;
+tenant membership is derived from the bearer token. When the invited email
+completes the existing signup OTP flow, the auth service consumes the pending
+invitation transactionally, provisions the account in that tenant, assigns the
+invited role, records audit events, and issues the tenant-bound token. An
+uninvited local signup continues to create a new tenant. Expired or reused
+invitations fail closed; the local administrator surface does not claim
+delivery until a provider-backed email adapter is configured.
+`GET /v1/admin/invitations` returns at most 100 tenant-scoped invitations,
+newest first, including pending and terminal history. It requires the same
+administrator capability and derives the tenant from the verified bearer
+token. The response schema is `auth-invitation-directory/v1`; invitation
+status and lifecycle timestamps are server-owned, and the browser cannot
+select a tenant or infer delivery from a pending record.
+`DELETE /v1/admin/invitations/{invitation_id}` revokes a pending invitation;
+it uses the same UUIDv7 idempotency contract and tenant-derived administrator
+authorization. Accepted, expired, already revoked, cross-tenant, and unknown
+invitations fail closed.
 
 ## Evidence-access audit explorer
 

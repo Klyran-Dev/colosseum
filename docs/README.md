@@ -161,6 +161,7 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [ADR-0208: Authenticated document-quote workspace](adr/0208-authenticated-document-quote-workspace.md)
 - [ADR-0209: Bounded document-quote latency evidence](adr/0209-document-quote-latency-evidence.md)
 - [ADR-0210: Docker full-topology bootstrap](adr/0210-docker-full-topology-bootstrap.md)
+- [ADR-0515: Production control-plane UI rewrite with server-owned authorization](adr/0515-production-control-plane-ui-rewrite.md)
 - [Operations runbooks](runbooks/README.md)
 
 ## Status and scope

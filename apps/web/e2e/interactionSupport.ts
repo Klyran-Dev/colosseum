@@ -78,6 +78,11 @@ export async function verifyInteractiveKind(page: Page, candidate: InteractiveCa
   const target = page.locator(INTERACTIVE).nth(candidate.index);
   const delta = (a: Record<string, string>, b: Record<string, string>) =>
     Object.keys(a).filter((key) => a[key] !== b[key]).map((key) => `${key}: ${a[key]} vs ${b[key]}`).join("; ");
+  // A popover may intentionally autofocus its first field for keyboard users.
+  // The sweep compares the unfocused resting style, so clear that transient
+  // focus state before taking the baseline; the candidate is focused again by
+  // the real press below.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.mouse.move(2, 2);
   await settleTransitions(page);
   const resting = await computed(target);

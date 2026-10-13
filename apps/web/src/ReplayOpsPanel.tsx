@@ -23,6 +23,7 @@ import {
   validateOperatorNote,
 } from "./replayOps";
 import { operatorErrorMessage, operatorFacingError } from "./operatorError";
+import { shellMessagesFor } from "./shellMessages";
 
 type ReplayOpsPanelProps = {
   apiBase: string;
@@ -33,7 +34,7 @@ type ReplayOpsPanelProps = {
 };
 
 function displayStatus(status: ReplayGapStatus, messages: ReplayOpsMessages): string {
-  return messages.status.labels[status] ?? status.replaceAll("_", " ");
+  return messages.status.labels[status] ?? messages.status.labels.unknown;
 }
 
 function actionLabel(action: ReplayGapAction, messages: ReplayOpsMessages): string {
@@ -42,6 +43,8 @@ function actionLabel(action: ReplayGapAction, messages: ReplayOpsMessages): stri
 
 export default function ReplayOpsPanel({ apiBase, serviceOnline, accessToken, locale = DEFAULT_LOCALE, timeZone = DEFAULT_TIME_ZONE }: ReplayOpsPanelProps) {
   const messages = replayOpsMessagesFor(locale);
+  const shellMessages = shellMessagesFor(locale);
+  const workflowLocked = !serviceOnline || !accessToken.trim();
   const [streamKey, setStreamKey] = useState("mainnet/settlement");
   const [status, setStatus] = useState<ReplayGapStatus>("dead_lettered");
   const [limit, setLimit] = useState("50");
@@ -210,12 +213,16 @@ export default function ReplayOpsPanel({ apiBase, serviceOnline, accessToken, lo
           <span className="status-pill">{messages.control.badge}</span>
         </div>
         <p className="panel-copy">{messages.control.description}</p>
+        {!accessToken.trim() && <div className="workflow-lock" role="note"><strong>{shellMessages.session.signInToContinue}</strong><p>{shellMessages.session.signInToContinueCopy}</p></div>}
+        <fieldset className="workflow-fieldset" disabled={workflowLocked || isLoading}>
+        <legend className="sr-only">{messages.control.title}</legend>
         <form onSubmit={loadGaps} className="form-grid">
           <label className="full-field"><span>{messages.control.stream}</span><input value={streamKey} onChange={(event) => setStreamKey(event.target.value)} placeholder={messages.control.streamPlaceholder} autoComplete="off" required /></label>
           <label><span>{messages.control.status}</span><select value={status} onChange={(event) => setStatus(event.target.value as ReplayGapStatus)}>{REPLAY_STATUSES.map((value) => <option value={value} key={value}>{displayStatus(value, messages)}</option>)}</select></label>
           <label><span>{messages.control.limit} (1–{MAX_REPLAY_LIST_LIMIT})</span><input inputMode="numeric" min="1" max={MAX_REPLAY_LIST_LIMIT} value={limit} onChange={(event) => setLimit(event.target.value)} required /></label>
           <button type="submit" disabled={!serviceOnline || isLoading || !accessToken.trim() || !streamKey.trim()}>{isLoading ? messages.control.loading : messages.control.load}</button>
         </form>
+        </fieldset>
         {!serviceOnline && <p className="inline-warning" role="alert">{messages.control.unavailable}</p>}
         {error && <p className="inline-error" role="alert">{error}</p>}
         {notice && <p className="inline-success" role="status">{notice}</p>}
@@ -238,6 +245,8 @@ export default function ReplayOpsPanel({ apiBase, serviceOnline, accessToken, lo
         <div className="replay-targeted-recovery">
           <div><p className="eyebrow">{messages.targeted.eyebrow}</p><h3>{messages.targeted.title}</h3></div>
           <p className="panel-copy">{messages.targeted.description}</p>
+          <fieldset className="workflow-fieldset" disabled={workflowLocked || isRecovering}>
+          <legend className="sr-only">{messages.targeted.title}</legend>
           <form onSubmit={recoverTargetedSignature} className="form-grid">
             <label><span>{messages.targeted.address}</span><input value={recoveryAddress} onChange={(event) => setRecoveryAddress(event.target.value)} placeholder={messages.targeted.addressPlaceholder} autoComplete="off" required /></label>
             <label><span>{messages.targeted.signature}</span><input value={recoverySignature} onChange={(event) => setRecoverySignature(event.target.value)} placeholder={messages.targeted.signaturePlaceholder} autoComplete="off" required /></label>
@@ -245,6 +254,7 @@ export default function ReplayOpsPanel({ apiBase, serviceOnline, accessToken, lo
             <label className="full-field"><span>{messages.targeted.note}</span><textarea value={recoveryNote} onChange={(event) => setRecoveryNote(event.target.value)} maxLength={MAX_OPERATOR_NOTE_LENGTH} rows={2} placeholder={messages.targeted.notePlaceholder} required /></label>
             <button type="submit" disabled={!serviceOnline || isRecovering || !accessToken.trim()}>{isRecovering ? messages.targeted.recovering : messages.targeted.recover}</button>
           </form>
+          </fieldset>
         </div>
       </article>
 
@@ -257,7 +267,7 @@ export default function ReplayOpsPanel({ apiBase, serviceOnline, accessToken, lo
           return <article className="replay-gap-card" key={gap.id}>
             <div className="replay-gap-heading"><div><strong>{displayStatus(gap.status, messages)}</strong><small>{gap.stream_key} · gap {gap.id}</small></div><span className="status-pill status-pill-warning">{messages.gap.attempts(gap.attempts)}</span></div>
             <dl className="summary-list replay-summary"><div><dt>{messages.gap.slotRange}</dt><dd>{gap.start_slot}–{gap.end_slot}</dd></div><div><dt>{messages.gap.observedSlot}</dt><dd>{gap.observed_finalized_slot}</dd></div><div><dt>{messages.gap.reason}</dt><dd>{gap.reason}</dd></div><div><dt>{messages.gap.lastError}</dt><dd>{gap.last_error_code ?? messages.gap.none}</dd></div><div><dt>{messages.gap.created}</dt><dd>{formatTimestamp(gap.created_at, locale, timeZone)}</dd></div>{gap.dead_lettered_at && <div><dt>{messages.gap.deadLettered}</dt><dd>{formatTimestamp(gap.dead_lettered_at, locale, timeZone)}</dd></div>}{acknowledged && <div><dt>{messages.gap.reviewedBy}</dt><dd>{gap.operator_acknowledged_by} · {formatTimestamp(gap.operator_acknowledged_at ?? gap.created_at, locale, timeZone)}</dd></div>}</dl>
-            {gap.status === "dead_lettered" && <div className="replay-action-box"><label><span>{messages.gap.note}</span><textarea value={notes[gap.id] ?? ""} onChange={(event) => setNotes((current) => ({ ...current, [gap.id]: event.target.value }))} rows={2} placeholder={acknowledged ? messages.gap.acknowledgedPlaceholder : messages.gap.notePlaceholder} disabled={busyKey !== null} /></label><div className="replay-action-buttons">{!acknowledged && <button type="button" onClick={() => performAction(gap, "acknowledge")} disabled={busyKey !== null}>{acknowledgeBusy ? messages.gap.acknowledgeBusy : messages.gap.acknowledge}</button>}{acknowledged && <button type="button" onClick={() => performAction(gap, "requeue")} disabled={busyKey !== null}>{requeueBusy ? messages.gap.requeueBusy : messages.gap.requeue}</button>}</div></div>}
+            {gap.status === "dead_lettered" && <div className="replay-action-box"><label><span>{messages.gap.note}</span><textarea value={notes[gap.id] ?? ""} onChange={(event) => setNotes((current) => ({ ...current, [gap.id]: event.target.value }))} rows={2} placeholder={acknowledged ? messages.gap.acknowledgedPlaceholder : messages.gap.notePlaceholder} disabled={busyKey !== null || workflowLocked} /></label><div className="replay-action-buttons">{!acknowledged && <button type="button" onClick={() => performAction(gap, "acknowledge")} disabled={busyKey !== null || workflowLocked}>{acknowledgeBusy ? messages.gap.acknowledgeBusy : messages.gap.acknowledge}</button>}{acknowledged && <button type="button" onClick={() => performAction(gap, "requeue")} disabled={busyKey !== null || workflowLocked}>{requeueBusy ? messages.gap.requeueBusy : messages.gap.requeue}</button>}</div></div>}
             {gap.status !== "dead_lettered" && <p className="evidence-note">{messages.gap.noMutation}</p>}
           </article>;
         })}</div>}

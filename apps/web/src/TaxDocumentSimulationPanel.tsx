@@ -29,10 +29,12 @@ export default function TaxDocumentSimulationPanel({ apiBase, serviceOnline, rul
   const [currency, setCurrency] = useState("");
   const [atomicDecimals, setAtomicDecimals] = useState("");
   const [lines, setLines] = useState<TaxDocumentLineDraft[]>(() => emptyDocumentLines());
+  const [openLineIndexes, setOpenLineIndexes] = useState<Set<number>>(() => new Set([0]));
   const [simulation, setSimulation] = useState<TaxDocumentSimulation | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
 
   function updateLine(index: number, patch: Partial<TaxDocumentLineDraft>) {
     setLines((current) => current.map((line, lineIndex) => lineIndex === index ? { ...line, ...patch } : line));
@@ -41,12 +43,15 @@ export default function TaxDocumentSimulationPanel({ apiBase, serviceOnline, rul
 
   function addLine() {
     if (lines.length >= 256) return;
+    const nextIndex = lines.length;
     setLines((current) => [...current, { id: "", grossAtomic: "", netAtomic: "", exemptionCodes: "" }]);
+    setOpenLineIndexes((current) => new Set([...current, nextIndex]));
   }
 
   function removeLine(index: number) {
     if (lines.length <= 1) return;
     setLines((current) => current.filter((_, lineIndex) => lineIndex !== index));
+    setOpenLineIndexes((current) => new Set([...current].filter((lineIndex) => lineIndex !== index).map((lineIndex) => lineIndex > index ? lineIndex - 1 : lineIndex)));
     setSimulation(null);
   }
 
@@ -78,6 +83,7 @@ export default function TaxDocumentSimulationPanel({ apiBase, serviceOnline, rul
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok) throw operatorResponseError(response, payload, messages.state.failed(response.status));
       setSimulation(parseTaxDocumentSimulation(payload));
+      setIsExpanded(true);
       setNotice(messages.state.notice);
     } catch (cause) {
       setSimulation(null);
@@ -88,7 +94,7 @@ export default function TaxDocumentSimulationPanel({ apiBase, serviceOnline, rul
   }
 
   return (
-    <details className="authoring-section simulation-section" open>
+    <details className="authoring-section simulation-section" open={isExpanded} onToggle={(event) => setIsExpanded(event.currentTarget.open)}>
       <summary>{messages.panel.summary}</summary>
       <p className="evidence-note">{messages.panel.evidenceNote}</p>
       <form onSubmit={simulate} className="document-simulation-form">
@@ -100,14 +106,34 @@ export default function TaxDocumentSimulationPanel({ apiBase, serviceOnline, rul
         </div>
         <div className="document-lines" role="group" aria-labelledby="document-lines-heading">
           <div className="document-lines-heading"><div><h3 id="document-lines-heading">{messages.form.linesHeading}</h3><p className="field-help">{messages.form.linesDescription}</p></div><button type="button" className="secondary-button" onClick={addLine} disabled={lines.length >= 256}>{messages.form.addLine}</button></div>
-          {lines.map((line, index) => <fieldset className="document-line" key={`${line.id}-${index}`}>
-            <legend>{messages.form.line(index + 1)}</legend>
+          {lines.map((line, index) => <details
+            className="document-line"
+            key={`${line.id}-${index}`}
+            open={openLineIndexes.has(index)}
+            onToggle={(event) => {
+              const isOpen = event.currentTarget.open;
+              setOpenLineIndexes((current) => {
+                const next = new Set(current);
+                if (isOpen) next.add(index);
+                else next.delete(index);
+                return next;
+              });
+            }}
+          >
+            <summary className="document-line-summary">
+              <span className="document-line-summary-title">{messages.form.line(index + 1)}</span>
+              <span className="document-line-summary-id">{line.id.trim() || "—"}</span>
+              <span className="document-line-summary-meta">{messages.form.gross} {line.grossAtomic || "—"} · {messages.form.net} {line.netAtomic || "—"}</span>
+            </summary>
+            <fieldset className="document-line-fields">
+              <legend className="sr-only">{messages.form.line(index + 1)}</legend>
             <label><span>{messages.form.lineId}</span><input value={line.id} onChange={(event) => updateLine(index, { id: event.target.value })} maxLength={64} required /></label>
             <label><span>{messages.form.gross}</span><input inputMode="numeric" value={line.grossAtomic} onChange={(event) => updateLine(index, { grossAtomic: event.target.value })} required /></label>
             <label><span>{messages.form.net}</span><input inputMode="numeric" value={line.netAtomic} onChange={(event) => updateLine(index, { netAtomic: event.target.value })} required /></label>
             <label><span>{messages.form.exemptions}</span><input value={line.exemptionCodes} onChange={(event) => updateLine(index, { exemptionCodes: event.target.value })} placeholder={messages.form.exemptionsPlaceholder} /></label>
             <button type="button" className="secondary-button" onClick={() => removeLine(index)} disabled={lines.length <= 1}>{messages.form.remove}</button>
-          </fieldset>)}
+            </fieldset>
+          </details>)}
         </div>
         <button type="submit" disabled={!serviceOnline || isSubmitting}>{isSubmitting ? messages.form.calculating : messages.form.submit}</button>
       </form>

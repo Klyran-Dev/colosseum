@@ -2,6 +2,7 @@ import { FormEvent, useState } from "react";
 import { fetchWithTimeout, operatorResponseError, REQUEST_TIMEOUT_MS } from "./api";
 import { DEFAULT_LOCALE, DEFAULT_TIME_ZONE, formatTimestamp } from "./formatters";
 import { evidenceAccessMessagesFor, type EvidenceAccessMessages } from "./evidenceAccessMessages";
+import { shellMessagesFor } from "./shellMessages";
 import {
   buildEvidenceAccessAuditUrl,
   MAX_EVIDENCE_ACCESS_AUDIT_LIST_LIMIT,
@@ -34,6 +35,8 @@ export default function EvidenceAccessPanel({
   timeZone = DEFAULT_TIME_ZONE,
 }: EvidenceAccessPanelProps) {
   const messages = evidenceAccessMessagesFor(locale);
+  const shellMessages = shellMessagesFor(locale);
+  const workflowLocked = !serviceOnline || !accessToken.trim();
   const [calculationId, setCalculationId] = useState("");
   const [limit, setLimit] = useState("50");
   const [events, setEvents] = useState<EvidenceAccessAuditEvent[]>([]);
@@ -77,6 +80,9 @@ export default function EvidenceAccessPanel({
           <span className="status-pill">{messages.control.badge}</span>
         </div>
         <p className="panel-copy">{messages.control.description}</p>
+        {!accessToken.trim() && <div className="workflow-lock" role="note"><strong>{shellMessages.session.signInToContinue}</strong><p>{shellMessages.session.signInToContinueCopy}</p></div>}
+        <fieldset className="workflow-fieldset" disabled={workflowLocked || isLoading}>
+        <legend className="sr-only">{messages.control.title}</legend>
         <form onSubmit={load} className="form-grid">
           <label className="full-field">
             <span>{messages.control.calculationFilter}</span>
@@ -89,6 +95,7 @@ export default function EvidenceAccessPanel({
           </label>
           <button type="submit" disabled={!serviceOnline || isLoading || !accessToken.trim()}>{isLoading ? messages.control.loading : messages.control.load}</button>
         </form>
+        </fieldset>
         {!serviceOnline && <p className="inline-warning" role="alert">{messages.control.unavailable}</p>}
         {error && <p className="inline-error" role="alert">{error}</p>}
         {notice && <p className="inline-success" role="status">{notice}</p>}

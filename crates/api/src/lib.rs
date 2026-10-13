@@ -170,8 +170,11 @@ pub struct AuthorizationCapabilitiesResponse {
     pub schema: &'static str,
     pub snapshot_id: Uuid,
     pub subject: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
     pub tenant_id: Uuid,
     pub expires_at_unix: i64,
+    pub roles: Vec<String>,
     pub capabilities: BTreeMap<String, AuthorizationCapability>,
 }
 
@@ -1295,6 +1298,21 @@ pub struct CompiledSettlementResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub struct DocumentPaymentDisplayMetadata {
+    pub schema: &'static str,
+    pub currency: String,
+    pub atomic_decimals: u8,
+    pub rule_set_id: String,
+    pub rule_version: u32,
+    pub quote_expires_at_unix: i64,
+    pub route_key: String,
+    pub route_version: i32,
+    pub mint: String,
+    pub mint_decimals: u8,
+    pub token_program: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct CompiledDocumentSettlementResponse {
     #[serde(flatten)]
     pub instruction: CompiledDocumentSettlementInstruction,
@@ -1303,6 +1321,7 @@ pub struct CompiledDocumentSettlementResponse {
     pub instruction_digest: Digest32,
     pub route_id: Uuid,
     pub authorization: storage::DocumentPaymentAuthorizationRecord,
+    pub display: DocumentPaymentDisplayMetadata,
 }
 
 #[derive(Debug, Serialize)]
@@ -2691,8 +2710,10 @@ fn authorization_capabilities_inner(
         schema: CAPABILITY_SNAPSHOT_SCHEMA,
         snapshot_id: Uuid::now_v7(),
         subject: principal.subject,
+        email: principal.email,
         tenant_id: principal.merchant_id,
         expires_at_unix,
+        roles: principal.roles.clone(),
         capabilities,
     }))
 }
@@ -8656,7 +8677,7 @@ async fn compile_document_settlement_from_quote_inner(
         mint: route.mint.clone(),
         tax_vault: route.tax_vault,
         net_destination: route.net_destination,
-        token_program: route.token_program,
+        token_program: route.token_program.clone(),
         nonce: request.nonce,
         policy_sequence: policy_binding.sequence,
         gross_atomic: authorization.gross_atomic.to_string(),
@@ -8713,6 +8734,19 @@ async fn compile_document_settlement_from_quote_inner(
         instruction_digest,
         route_id: request.route_id,
         authorization: document_intent.authorization,
+        display: DocumentPaymentDisplayMetadata {
+            schema: "solana-tax-protocol/document-payment-display/v1",
+            currency: document.result.currency,
+            atomic_decimals: document.result.atomic_decimals,
+            rule_set_id: document.result.rule_set_id,
+            rule_version: document.result.rule_version,
+            quote_expires_at_unix: document.expires_at_unix,
+            route_key: route.route_key,
+            route_version: route.version,
+            mint: route.mint,
+            mint_decimals: route.mint_decimals,
+            token_program: route.token_program,
+        },
     }))
 }
 
@@ -10698,6 +10732,7 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_slice(&body).expect("capability response");
         assert_eq!(parsed["schema"], CAPABILITY_SNAPSHOT_SCHEMA);
         assert_eq!(parsed["subject"], "capability-user");
+        assert_eq!(parsed["email"], "test-user@example.com");
         assert_eq!(parsed["tenant_id"], merchant_id.to_string());
         assert!(parsed["snapshot_id"].as_str().is_some_and(|value| {
             Uuid::parse_str(value).is_ok_and(|snapshot_id| snapshot_id.get_version_num() == 7)
@@ -10720,6 +10755,7 @@ mod tests {
                 "evidence.applicability.read",
                 "evidence.audit.read",
                 "evidence.replay",
+                "identity.role.manage",
                 "refund.claim.cancel",
                 "refund.claim.create",
                 "refund.payment.release",
@@ -10779,7 +10815,7 @@ mod tests {
         assert_eq!(catalog["schema"], "authorization-catalog/v1");
         assert_eq!(catalog["version"], 1);
         let policies = catalog["policies"].as_array().expect("policy array");
-        assert_eq!(policies.len(), 21);
+        assert_eq!(policies.len(), 22);
         assert!(policies.iter().all(|policy| {
             policy["id"].as_str().is_some_and(|id| !id.is_empty())
                 && policy["required_scopes"]

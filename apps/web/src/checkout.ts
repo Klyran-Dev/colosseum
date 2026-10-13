@@ -298,6 +298,19 @@ export type CompiledDocumentSettlementResponse = CompiledDocumentSettlementInstr
     tax_atomic: string;
     net_atomic: string;
   };
+  display: {
+    schema: "solana-tax-protocol/document-payment-display/v1";
+    currency: string;
+    atomic_decimals: number;
+    rule_set_id: string;
+    rule_version: number;
+    quote_expires_at_unix: number;
+    route_key: string;
+    route_version: number;
+    mint: string;
+    mint_decimals: number;
+    token_program: string;
+  };
 };
 
 export type CompiledSettlementArtifact =
@@ -400,7 +413,7 @@ export function parseCompiledSettlementArtifact(value: unknown): CompiledSettlem
     .some((field) => Object.prototype.hasOwnProperty.call(record, field));
   if (documentFieldsPresent) {
     if (routeId === null || !Array.isArray(record.document_attestation_digest)
-        || !Array.isArray(record.payment_scope_digest)) {
+        || !Array.isArray(record.payment_scope_digest) || !Object.prototype.hasOwnProperty.call(record, "display")) {
       throw new Error("The API returned an incomplete document settlement artifact.");
     }
     const document: CompiledDocumentSettlementResponse = {
@@ -412,6 +425,7 @@ export function parseCompiledSettlementArtifact(value: unknown): CompiledSettlem
       document_attestation_digest: parseDigestBytes(record.document_attestation_digest, "document attestation"),
       payment_scope_digest: parseDigestBytes(record.payment_scope_digest, "payment scope"),
       authorization: parseDocumentPaymentAuthorization(record.authorization),
+      display: parseDocumentPaymentDisplay(record.display),
     };
     validateCompiledSettlementInstruction(document, new PublicKey(document.accounts[0].pubkey));
     return document;
@@ -446,6 +460,45 @@ export function parseCompiledSettlementArtifact(value: unknown): CompiledSettlem
   };
   validateCompiledSettlementInstruction(splitPlan, new PublicKey(splitPlan.accounts[0].pubkey));
   return splitPlan;
+}
+
+function parseDocumentPaymentDisplay(value: unknown): CompiledDocumentSettlementResponse["display"] {
+  const record = recordValue(value, "The API returned invalid document payment display metadata.");
+  if (record.schema !== "solana-tax-protocol/document-payment-display/v1") {
+    throw new Error("The API returned an unsupported document payment display schema.");
+  }
+  const boundedText = (candidate: unknown, field: string, maximum: number): string => {
+    if (typeof candidate !== "string" || candidate.trim().length === 0 || candidate.length > maximum
+        || /\s/.test(candidate)) {
+      throw new Error(`The API returned an invalid document payment ${field}.`);
+    }
+    return candidate;
+  };
+  const atomicDecimals = record.atomic_decimals;
+  const ruleVersion = record.rule_version;
+  const quoteExpiresAtUnix = record.quote_expires_at_unix;
+  const routeVersion = record.route_version;
+  const mintDecimals = record.mint_decimals;
+  if (typeof atomicDecimals !== "number" || !Number.isInteger(atomicDecimals) || atomicDecimals < 0 || atomicDecimals > 9
+      || typeof ruleVersion !== "number" || !Number.isSafeInteger(ruleVersion) || ruleVersion < 1
+      || typeof quoteExpiresAtUnix !== "number" || !Number.isSafeInteger(quoteExpiresAtUnix) || quoteExpiresAtUnix <= 0
+      || typeof routeVersion !== "number" || !Number.isSafeInteger(routeVersion) || routeVersion < 1
+      || typeof mintDecimals !== "number" || !Number.isInteger(mintDecimals) || mintDecimals < 0 || mintDecimals > 9) {
+    throw new Error("The API returned invalid document payment display metadata bounds.");
+  }
+  return {
+    schema: "solana-tax-protocol/document-payment-display/v1",
+    currency: boundedText(record.currency, "currency", 16),
+    atomic_decimals: atomicDecimals,
+    rule_set_id: boundedText(record.rule_set_id, "rule-set identity", 128),
+    rule_version: ruleVersion,
+    quote_expires_at_unix: quoteExpiresAtUnix,
+    route_key: boundedText(record.route_key, "route identity", 128),
+    route_version: routeVersion,
+    mint: requirePublicKey(record.mint as string, "document payment mint").toBase58(),
+    mint_decimals: mintDecimals,
+    token_program: requirePublicKey(record.token_program as string, "document payment token program").toBase58(),
+  };
 }
 
 function parseDocumentPaymentAuthorization(value: unknown): CompiledDocumentSettlementResponse["authorization"] {

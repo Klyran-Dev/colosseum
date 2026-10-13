@@ -46,6 +46,23 @@ describe("authenticated document quote workspace", () => {
     vi.unstubAllGlobals();
   });
 
+  it("makes the invoice workflow visibly unavailable before sign-in", () => {
+    render(
+      <DocumentQuotePanel
+        apiBase="/api"
+        serviceOnline
+        accessToken=""
+        formatAtomic={(value, currency) => `${currency} ${value}`}
+        onOpenCheckout={() => undefined}
+      />,
+    );
+
+    expect(screen.getByRole("note").textContent).toContain("Sign-in required");
+    expect(screen.getByRole("note").textContent).toContain("Sign in before preparing an invoice calculation.");
+    expect(screen.getByLabelText("Document ID").closest("fieldset")).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Calculate invoice tax" })).toHaveProperty("disabled", true);
+  });
+
   it("posts invoice facts and hands the saved quote to checkout", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify(quote), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
@@ -101,6 +118,25 @@ describe("authenticated document quote workspace", () => {
     expect(screen.getByRole("button", { name: "Position hinzufügen" })).toBeTruthy();
     expect(screen.queryByText("invoice-1")).toBeNull();
     expect(screen.queryByText("USD")).toBeNull();
+  });
+
+  it("keeps invoice lines progressively disclosed while opening a newly added line", () => {
+    render(<DocumentQuotePanel apiBase="/api" serviceOnline accessToken="session" formatAtomic={(value, currency) => `${value} ${currency}`} onOpenCheckout={() => undefined} />);
+
+    const firstSummary = screen.getByText("Line 1", { exact: true, selector: ".document-line-summary-title" }).closest("summary");
+    expect(firstSummary).toBeTruthy();
+    if (!firstSummary) throw new Error("Line 1 disclosure summary was not rendered");
+    expect(firstSummary.closest("details")?.hasAttribute("open")).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add line" }));
+    const secondSummary = screen.getByText("Line 2", { exact: true, selector: ".document-line-summary-title" }).closest("summary");
+    expect(secondSummary).toBeTruthy();
+    if (!secondSummary) throw new Error("Line 2 disclosure summary was not rendered");
+    expect(secondSummary.closest("details")?.hasAttribute("open")).toBe(true);
+
+    fireEvent.click(firstSummary);
+    expect(firstSummary.closest("details")?.hasAttribute("open")).toBe(false);
+    expect(secondSummary.closest("details")?.hasAttribute("open")).toBe(true);
   });
 
   it("rejects an empty jurisdiction-evidence set before network submission", async () => {
@@ -196,5 +232,32 @@ describe("authenticated document quote workspace", () => {
 
     await screen.findByText(documentQuoteMessagesFor("en-US").errors.quoteFailed);
     expect(screen.queryByText(providerDetail)).toBeNull();
+  });
+
+  it("offers an in-context retry after a transport failure", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error("provider-internal document quote diagnostic"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(quote), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <DocumentQuotePanel
+        apiBase="/api"
+        serviceOnline
+        accessToken="signed-token"
+        formatAtomic={(value, currency) => `${currency} ${value}`}
+        onOpenCheckout={vi.fn()}
+      />,
+    );
+
+    fillRequiredInvoiceFields();
+    fireEvent.change(screen.getByRole("textbox", { name: /Provider-signed location record \(advanced\)/ }), {
+      target: { value: '[{"fixture":"provider-signed-evidence"}]' },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Calculate invoice tax" }));
+
+    await screen.findByText(documentQuoteMessagesFor("en-US").errors.quoteFailed);
+    fireEvent.click(screen.getByRole("button", { name: "Retry calculation" }));
+    await screen.findByText("Persisted document evidence returned by the authenticated API. It is not attested or settled yet.");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

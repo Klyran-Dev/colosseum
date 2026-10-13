@@ -50,6 +50,7 @@ export interface CheckoutMessages {
     technicalLabel: string;
     technicalDetails: string;
     payerSource: string;
+    retry: string;
     version: (version: number) => string;
   };
   split: {
@@ -287,6 +288,7 @@ const ENGLISH: CheckoutMessages = {
     technicalLabel: "Technical route details",
     technicalDetails: "Technical route details",
     payerSource: "The payer source account is derived as the canonical associated token account. No account address is accepted from this browser form.",
+    retry: "Retry payment route",
     version: (version) => `version ${version}`,
   },
   split: {
@@ -386,6 +388,7 @@ const GERMAN: CheckoutMessages = {
     technicalLabel: "Technische Routendetails",
     technicalDetails: "Technische Routendetails",
     payerSource: "Das Quellkonto des Zahlers wird als kanonisches Konto für verknüpfte Tokens abgeleitet. Dieses Formular akzeptiert keine Kontoadresse aus dem Browser.",
+    retry: "Zahlungsroute wiederholen",
     version: (version) => `Version ${version}`,
   },
   split: {
@@ -485,6 +488,7 @@ const ARABIC: CheckoutMessages = {
     technicalLabel: "تفاصيل المسار التقنية",
     technicalDetails: "تفاصيل المسار التقنية",
     payerSource: "يُشتق حساب مصدر الدافع باعتباره حساب الرمز المرتبط القياسي. لا يقبل هذا النموذج عنوان حساب من المتصفح.",
+    retry: "إعادة محاولة مسار الدفع",
     version: (version) => `الإصدار ${version}`,
   },
   split: {
@@ -584,6 +588,7 @@ const JAPANESE: CheckoutMessages = {
     technicalLabel: "技術的なルート詳細",
     technicalDetails: "技術的なルート詳細",
     payerSource: "支払人のソースアカウントは正規の関連トークンアカウントとして導出されます。このフォームはブラウザーからのアカウントアドレスを受け付けません。",
+    retry: "支払いルートを再試行",
     version: (version) => `バージョン ${version}`,
   },
   split: {

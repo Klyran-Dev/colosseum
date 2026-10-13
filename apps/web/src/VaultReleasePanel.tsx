@@ -1,9 +1,10 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { fetchWithTimeout, operatorResponseError, REQUEST_TIMEOUT_MS } from "./api";
 import { parseSettlementRoutes, type SettlementRoute } from "./checkout";
-import { DEFAULT_LOCALE, DEFAULT_TIME_ZONE, formatEpoch } from "./formatters";
+import { DEFAULT_LOCALE, DEFAULT_TIME_ZONE, formatDateTimeLocal, formatEpoch, isValidTimeZone, parseDateTimeLocal } from "./formatters";
 import { createClientUuid } from "./clientIdentity";
-import { vaultReleaseMessagesFor } from "./vaultReleaseMessages";
+import { vaultReleaseMessagesFor, type VaultReleaseMessages } from "./vaultReleaseMessages";
+import { shellMessagesFor } from "./shellMessages";
 import {
   VaultReleaseClaim,
   VaultReleaseStatus,
@@ -31,6 +32,17 @@ function digestPreview(value: number[]): string {
   return value.map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 16) + "…";
 }
 
+function releaseStatusLabel(status: VaultReleaseStatus, messages: VaultReleaseMessages): string {
+  switch (status) {
+    case "proposed": return messages.lifecycle.proposed;
+    case "approved": return messages.lifecycle.approved;
+    case "onchain_created": return messages.lifecycle.ledgerCreated;
+    case "executed": return messages.lifecycle.completed;
+    case "cancelled": return messages.lifecycle.cancelled;
+    case "unknown": return messages.lifecycle.needsInvestigation;
+  }
+}
+
 function parseOperatorClaim(payload: unknown, invalidMessage: string): VaultReleaseClaim {
   try {
     return parseVaultReleaseClaim(payload);
@@ -50,11 +62,14 @@ function parseOperatorTransition(payload: unknown, invalidMessage: string): Retu
 export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken, locale = DEFAULT_LOCALE, timeZone = DEFAULT_TIME_ZONE }: VaultReleasePanelProps) {
   const initialWindow = useMemo(defaultWindow, []);
   const messages = vaultReleaseMessagesFor(locale);
+  const shellMessages = shellMessagesFor(locale);
+  const workflowLocked = !serviceOnline || !accessToken.trim();
   const [idempotencyKey, setIdempotencyKey] = useState<string>(() => createClientUuid());
   const [routes, setRoutes] = useState<SettlementRoute[]>([]);
   const [routeId, setRouteId] = useState("");
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
+  const [routeReload, setRouteReload] = useState(0);
   const [destination, setDestination] = useState("");
   const [nonce, setNonce] = useState("");
   const [amountAtomic, setAmountAtomic] = useState("");
@@ -106,7 +121,7 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
       }
     })();
     return () => controller.abort();
-  }, [accessToken, apiBase, serviceOnline]);
+  }, [accessToken, apiBase, routeReload, serviceOnline]);
 
   function requireToken(): string {
     const token = accessToken.trim();
@@ -136,6 +151,11 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
     setBusy(true);
     try {
       const token = requireToken();
+      const executeAfterUnix = Number(executeAfter);
+      const expiresAtUnix = Number(expiresAt);
+      if (!Number.isSafeInteger(executeAfterUnix) || executeAfterUnix <= 0 || !Number.isSafeInteger(expiresAtUnix) || expiresAtUnix <= executeAfterUnix) {
+        throw operatorFacingError(messages.errors.invalidWindow);
+      }
       const parsedReference = JSON.parse(referenceDigest) as unknown;
       if (!Array.isArray(parsedReference) || parsedReference.length !== 32 || parsedReference.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) {
         throw operatorFacingError(messages.errors.referenceDigestInvalid);
@@ -150,8 +170,8 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
           nonce: nonce.trim(),
           amount_atomic: amountAtomic.trim(),
           reference_digest: parsedReference,
-          execute_after_unix: Number(executeAfter),
-          expires_at_unix: Number(expiresAt),
+          execute_after_unix: executeAfterUnix,
+          expires_at_unix: expiresAtUnix,
         }),
       });
       const payload: unknown = await response.json().catch(() => null);
@@ -233,36 +253,51 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
   const transitionNeedsChain = transitionStatus === "onchain_created" || transitionStatus === "executed";
   const transitionNeedsError = transitionStatus === "unknown";
   const selectedRoute = routes.find((route) => route.id === routeId);
+  const inputTimeZone = isValidTimeZone(timeZone) ? timeZone : DEFAULT_TIME_ZONE;
+  const executeAfterInput = executeAfter.trim() ? formatDateTimeLocal(Number(executeAfter), inputTimeZone) : "";
+  const expiresAtInput = expiresAt.trim() ? formatDateTimeLocal(Number(expiresAt), inputTimeZone) : "";
   return (
     <section className="vault-layout" aria-label={messages.proposal.ariaLabel}>
       <article className="panel">
         <div className="panel-heading"><div><p className="eyebrow">{messages.proposal.eyebrow}</p><h2>{messages.proposal.title}</h2></div><span className="status-pill">{messages.proposal.control}</span></div>
         <p className="panel-copy">{messages.proposal.description}</p>
+        {!accessToken.trim() && <div className="workflow-lock" role="note"><strong>{shellMessages.session.signInToContinue}</strong><p>{shellMessages.session.signInToContinueCopy}</p></div>}
+        <fieldset className="workflow-fieldset" disabled={workflowLocked || busy}>
+        <legend className="sr-only">{messages.proposal.title}</legend>
         <form onSubmit={createClaim} className="form-grid">
-          <label className="full-field"><span>{messages.proposal.signInStatus}</span><textarea value={accessToken ? messages.proposal.accountReady : ""} readOnly aria-describedby="vault-token-help" rows={2} /><small id="vault-token-help">{messages.proposal.accountHelp}</small></label>
+          <div className="workflow-status full-field" role="status" aria-describedby="vault-token-help">
+            <div className="workflow-status-heading"><span>{messages.proposal.signInStatus}</span><strong>{accessToken ? messages.proposal.accountReady : shellMessages.session.signInToContinue}</strong></div>
+            <small id="vault-token-help">{messages.proposal.accountHelp}</small>
+          </div>
           <label><span>{messages.proposal.requestReference}</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} aria-describedby="release-reference-help" required /><small id="release-reference-help">{messages.proposal.requestHelp}</small></label>
           <label><span>{messages.proposal.releaseNumber}</span><input aria-label={messages.proposal.releaseNumber} inputMode="numeric" value={nonce} onChange={(event) => setNonce(event.target.value)} aria-describedby="release-number-help" required /><small id="release-number-help">{messages.proposal.releaseNumberHelp}</small></label>
           <label><span>{messages.proposal.verifiedRoute}</span><select aria-label={messages.proposal.verifiedRoute} value={routeId} onChange={(event) => setRouteId(event.target.value)} disabled={routeLoading || routes.length === 0} required><option value="">{routeLoading ? messages.proposal.loadingRoutes : messages.proposal.selectRoute}</option>{routes.map((route) => <option key={route.id} value={route.id}>{route.route_key} · version {route.version}</option>)}</select><small>{messages.proposal.routeHelp}</small></label>
           <label><span>{messages.proposal.recipient}</span><input aria-label={messages.proposal.recipient} value={destination} onChange={(event) => setDestination(event.target.value)} placeholder={messages.proposal.recipientPlaceholder} required /></label>
           <label><span>{messages.proposal.amount}</span><input aria-label={messages.proposal.amount} inputMode="numeric" value={amountAtomic} onChange={(event) => setAmountAtomic(event.target.value)} aria-describedby="release-amount-help" required /><small id="release-amount-help">{messages.proposal.amountHelp}</small></label>
-          <label><span>{messages.proposal.earliest}</span><input aria-label={messages.proposal.earliest} inputMode="numeric" value={executeAfter} onChange={(event) => setExecuteAfter(event.target.value)} aria-describedby="release-start-help" required /><small id="release-start-help">{messages.proposal.earliestHelp}</small></label>
-          <label><span>{messages.proposal.expiry}</span><input aria-label={messages.proposal.expiry} inputMode="numeric" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} aria-describedby="release-expiry-help" required /><small id="release-expiry-help">{messages.proposal.expiryHelp}</small></label>
+          <label><span>{messages.proposal.earliest}</span><input aria-label={messages.proposal.earliest} type="datetime-local" step="1" value={executeAfterInput} onChange={(event) => { const parsed = parseDateTimeLocal(event.target.value, inputTimeZone); setExecuteAfter(parsed === null ? "" : String(parsed)); }} aria-describedby="release-start-help" required /><small id="release-start-help">{messages.proposal.earliestHelp} {messages.proposal.windowTimeZone(inputTimeZone)}</small></label>
+          <label><span>{messages.proposal.expiry}</span><input aria-label={messages.proposal.expiry} type="datetime-local" step="1" value={expiresAtInput} onChange={(event) => { const parsed = parseDateTimeLocal(event.target.value, inputTimeZone); setExpiresAt(parsed === null ? "" : String(parsed)); }} aria-describedby="release-expiry-help" required /><small id="release-expiry-help">{messages.proposal.expiryHelp} {messages.proposal.windowTimeZone(inputTimeZone)}</small></label>
           <label className="full-field"><span>{messages.proposal.evidenceReference}</span><textarea id="vault-release-evidence-reference" aria-label={messages.proposal.evidenceReference} value={referenceDigest} onChange={(event) => setReferenceDigest(event.target.value)} aria-describedby="release-evidence-help" rows={3} required /><small id="release-evidence-help">{messages.proposal.evidenceHelp}</small></label>
           <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim() || !routeId}>{busy ? messages.proposal.saving : messages.proposal.create}</button>
         </form>
-        {routeError && <p className="inline-warning" role="alert">{routeError} {messages.proposal.routeErrorSuffix}</p>}
+        </fieldset>
+        {routeError && <p className="inline-warning" role="alert">{routeError} {messages.proposal.routeErrorSuffix} <button type="button" className="inline-retry" onClick={() => setRouteReload((value) => value + 1)} disabled={busy}>{messages.proposal.retryRoutes}</button></p>}
         {selectedRoute && <div className="vault-route-summary" aria-label={messages.proposal.routeDetails}><strong>{messages.proposal.routeEvidence}</strong><span>{selectedRoute.mint}</span><span>{selectedRoute.token_program}</span><span>{messages.proposal.taxHoldingAccount} {selectedRoute.tax_vault}</span></div>}
         {!serviceOnline && <p className="inline-warning" role="alert">{messages.proposal.offline}</p>}
       </article>
 
       <article className="panel" aria-label={messages.lifecycle.ariaLabel}>
-        <div className="panel-heading"><div><p className="eyebrow">{messages.lifecycle.eyebrow}</p><h2>{messages.lifecycle.title}</h2></div>{claim && <span className="status-pill status-pill-warning">{claim.status.replaceAll("_", " ")}</span>}</div>
+        <div className="panel-heading"><div><p className="eyebrow">{messages.lifecycle.eyebrow}</p><h2>{messages.lifecycle.title}</h2></div>{claim && <span className="status-pill status-pill-warning">{releaseStatusLabel(claim.status, messages)}</span>}</div>
         <p className="panel-copy">{messages.lifecycle.description}</p>
+        <fieldset className="workflow-fieldset" disabled={workflowLocked || busy}>
+        <legend className="sr-only">{messages.lifecycle.title}</legend>
         <form onSubmit={loadClaim} className="form-grid">
           <label className="full-field"><span>{messages.lifecycle.requestReference}</span><input aria-label={messages.lifecycle.requestReference} value={claimId} onChange={(event) => setClaimId(event.target.value)} placeholder={messages.lifecycle.requestPlaceholder} required /></label>
           <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>{messages.lifecycle.load}</button>
         </form>
-        {claim && <div className="vault-claim-card"><dl className="summary-list"><div><dt>{messages.lifecycle.status}</dt><dd>{claim.status.replaceAll("_", " ")}</dd></div><div><dt>{messages.lifecycle.amount}</dt><dd>{claim.amount_atomic}</dd></div><div><dt>{messages.lifecycle.releaseNumber}</dt><dd>{claim.nonce}</dd></div><div><dt>{messages.lifecycle.releaseWindow}</dt><dd>{formatEpoch(claim.execute_after_unix, locale, timeZone)} → {formatEpoch(claim.expires_at_unix, locale, timeZone)}</dd></div><div><dt>{messages.lifecycle.requestEvidence}</dt><dd><code>{digestPreview(claim.request_digest)}</code></dd></div><div><dt>{messages.lifecycle.supportingEvidence}</dt><dd><code>{digestPreview(claim.reference_digest)}</code></dd></div><div><dt>{messages.lifecycle.createdBy}</dt><dd><code>{claim.proposer_subject}</code></dd></div><div><dt>{messages.lifecycle.approvedBy}</dt><dd><code>{claim.approver_subject ?? messages.lifecycle.notApproved}</code></dd></div></dl></div>}
+        </fieldset>
+        {claim && <div className="vault-claim-card"><dl className="summary-list"><div><dt>{messages.lifecycle.status}</dt><dd>{releaseStatusLabel(claim.status, messages)}</dd></div><div><dt>{messages.lifecycle.amount}</dt><dd>{claim.amount_atomic}</dd></div><div><dt>{messages.lifecycle.releaseNumber}</dt><dd>{claim.nonce}</dd></div><div><dt>{messages.lifecycle.releaseWindow}</dt><dd>{formatEpoch(claim.execute_after_unix, locale, timeZone)} → {formatEpoch(claim.expires_at_unix, locale, timeZone)}</dd></div><div><dt>{messages.lifecycle.requestEvidence}</dt><dd><code>{digestPreview(claim.request_digest)}</code></dd></div><div><dt>{messages.lifecycle.supportingEvidence}</dt><dd><code>{digestPreview(claim.reference_digest)}</code></dd></div><div><dt>{messages.lifecycle.createdBy}</dt><dd><code>{claim.proposer_subject}</code></dd></div><div><dt>{messages.lifecycle.approvedBy}</dt><dd><code>{claim.approver_subject ?? messages.lifecycle.notApproved}</code></dd></div></dl></div>}
+        <fieldset className="workflow-fieldset" disabled={workflowLocked || busy}>
+        <legend className="sr-only">{messages.lifecycle.nextStep}</legend>
         <form onSubmit={transitionClaim} className="vault-transition-form">
           <label><span>{messages.lifecycle.nextStep}</span><select aria-label={messages.lifecycle.nextStep} value={transitionStatus} onChange={(event) => setTransitionStatus(event.target.value as ReleaseStatus)}><option value="approved">{messages.lifecycle.approved}</option><option value="onchain_created">{messages.lifecycle.ledgerCreated}</option><option value="executed">{messages.lifecycle.completed}</option><option value="cancelled">{messages.lifecycle.cancelled}</option><option value="unknown">{messages.lifecycle.needsInvestigation}</option></select></label>
           {transitionNeedsChain && <label><span>{messages.lifecycle.onChainAccount} {transitionStatus === "onchain_created" ? `(${messages.lifecycle.required})` : `(${messages.lifecycle.ifAvailable})`}</span><input aria-label={messages.lifecycle.onChainAccount} value={claimPda} onChange={(event) => setClaimPda(event.target.value)} required={transitionStatus === "onchain_created"} /></label>}
@@ -272,6 +307,7 @@ export default function VaultReleasePanel({ apiBase, serviceOnline, accessToken,
           <label className="full-field"><span>{messages.lifecycle.decisionEvidence}</span><textarea aria-label={messages.lifecycle.decisionEvidence} value={evidence} onChange={(event) => setEvidence(event.target.value)} aria-describedby="release-transition-evidence-help" rows={3} required /><small id="release-transition-evidence-help">{messages.lifecycle.decisionEvidenceHelp}</small></label>
           <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim() || !(claim?.id ?? claimId).trim()}>{messages.lifecycle.record}</button>
         </form>
+        </fieldset>
         {notice && <p className="inline-success" role="status">{notice}</p>}
         {error && <p className="inline-error" role="alert">{error}</p>}
         <p className="vault-authority-note"><strong>{messages.authority.title}</strong> {messages.authority.copy}</p>

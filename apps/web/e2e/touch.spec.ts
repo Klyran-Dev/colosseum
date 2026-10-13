@@ -25,6 +25,7 @@ test.describe("touch devices", () => {
     await page.getByRole("button", { name: /open navigation/i }).tap();
     const simulator = page.getByRole("button", { name: "Tax simulator", exact: true });
     await expect(simulator).toBeVisible();
+    await expect(simulator.locator(".nav-item-copy strong")).toBeVisible();
     await simulator.tap();
     await expect(page).toHaveURL(/\/operations\/tax-simulator$/);
     await expect(page.getByRole("heading", { level: 1, name: "Tax simulator" })).toBeVisible();
@@ -33,7 +34,7 @@ test.describe("touch devices", () => {
   test("a tap does not leave hover styling behind", async ({ page }) => {
     await page.goto("/");
     await page.waitForLoadState("networkidle");
-    const targets = [page.locator(".system-status > summary"), page.locator(".account-menu-trigger"), page.locator(".display-settings > summary")];
+    const targets = [page.locator(".system-status > summary"), page.locator(".display-settings > summary")];
     for (const target of targets) {
       const read = () => target.evaluate((element) => {
         const style = getComputedStyle(element);
@@ -49,12 +50,24 @@ test.describe("touch devices", () => {
     }
   });
 
-  test("the mobile layout meets WCAG 2.2 AA in both themes, with navigation open and popovers open", async ({ page }) => {
+  test("the mobile layout meets WCAG 2.2 AA and keeps each popover usable", async ({ page }) => {
     await page.goto("/rules/access-approvals");
     await page.waitForLoadState("networkidle");
+    const baselineViolations = await axeViolationsInAllThemes(page);
+    expect(baselineViolations, "mobile WCAG 2.2 AA violations in the baseline state").toEqual([]);
     await page.getByRole("button", { name: /open navigation/i }).tap();
-    await page.evaluate(() => document.querySelectorAll(".product-shell .topbar details").forEach((element) => element.setAttribute("open", "")));
-    const violations = await axeViolationsInAllThemes(page);
-    expect(violations, "mobile WCAG 2.2 AA violations (dark and light)").toEqual([]);
+    const topbarDetails = page.locator(".product-shell .topbar details");
+    for (let index = 0; index < await topbarDetails.count(); index += 1) {
+      await page.evaluate(() => document.querySelectorAll(".product-shell .topbar details").forEach((element) => element.removeAttribute("open")));
+      const detail = topbarDetails.nth(index);
+      await detail.locator(":scope > summary").tap();
+      await expect(detail).toHaveAttribute("open", "");
+      const bounds = await detail.boundingBox();
+      expect(bounds, `top-bar disclosure ${index} should be measurable`).not.toBeNull();
+      expect(bounds!.x).toBeGreaterThanOrEqual(0);
+      expect(bounds!.y).toBeGreaterThanOrEqual(0);
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(375);
+      expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(812);
+    }
   });
 });

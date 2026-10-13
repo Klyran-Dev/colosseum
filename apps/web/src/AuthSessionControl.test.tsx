@@ -16,7 +16,6 @@ describe("shared browser sign-in control", () => {
       status="signed-out"
       onCredentialChange={onCredentialChange}
       onSignIn={() => undefined}
-      onSignOut={() => undefined}
     />);
 
     const field = screen.getByLabelText("Sign-in credential (held in memory)");
@@ -35,7 +34,6 @@ describe("shared browser sign-in control", () => {
       locale="de-DE"
       onCredentialChange={() => undefined}
       onSignIn={() => undefined}
-      onSignOut={() => undefined}
     />);
 
     expect(screen.getByRole("button", { name: "Lokale Anmeldung öffnen" })).toBeTruthy();
@@ -57,12 +55,81 @@ describe("shared browser sign-in control", () => {
       status="signed-out"
       onCredentialChange={() => undefined}
       onSignIn={onSignIn}
-      onSignOut={() => undefined}
     />);
 
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
     expect(onSignIn).toHaveBeenCalledTimes(1);
     expect(screen.queryByLabelText(/credential/i)).toBeNull();
+  });
+
+  it("renders the two-step email OTP flow without exposing an access token", () => {
+    const onRequestOtp = vi.fn();
+    const onVerifyOtp = vi.fn();
+    const onEmailChange = vi.fn();
+    const onOtpChange = vi.fn();
+    const config = parseBrowserAuthConfig({
+      VITE_DEPLOYMENT_ENVIRONMENT: "local",
+      VITE_LOCAL_UI_MODE: "email-otp",
+      VITE_AUTH_SERVICE_BASE_URL: "http://localhost:18085",
+    });
+    render(<AuthSessionControl
+      config={config}
+      accessToken=""
+      status="signed-out"
+      email="operator@example.com"
+      onEmailChange={onEmailChange}
+      onRequestOtp={onRequestOtp}
+      onOtpChange={onOtpChange}
+      onVerifyOtp={onVerifyOtp}
+      onCredentialChange={() => undefined}
+      onSignIn={() => undefined}
+    />);
+
+    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "new@example.com" } });
+    expect(onEmailChange).toHaveBeenCalledWith("new@example.com");
+    fireEvent.click(screen.getByRole("button", { name: "Send code" }));
+    expect(onRequestOtp).toHaveBeenCalledTimes(1);
+
+    cleanup();
+    render(<AuthSessionControl
+      config={config}
+      accessToken=""
+      status="signed-out"
+      email="operator@example.com"
+      otpCode="123456"
+      otpChallengeId="0192e6ec-4d8f-7d2e-a40e-2c095f871405"
+      onOtpChange={onOtpChange}
+      onVerifyOtp={onVerifyOtp}
+      onCredentialChange={() => undefined}
+      onSignIn={() => undefined}
+    />);
+    fireEvent.change(screen.getByLabelText("One-time code"), { target: { value: "654321" } });
+    fireEvent.click(screen.getByRole("button", { name: "Verify code" }));
+    expect(onOtpChange).toHaveBeenCalledWith("654321");
+    expect(onVerifyOtp).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps email sign-in compact until the user opens it", () => {
+    const onExpandedChange = vi.fn();
+    const config = parseBrowserAuthConfig({
+      VITE_DEPLOYMENT_ENVIRONMENT: "local",
+      VITE_LOCAL_UI_MODE: "email-otp",
+      VITE_AUTH_SERVICE_BASE_URL: "http://localhost:18085",
+    });
+
+    render(<AuthSessionControl
+      config={config}
+      accessToken=""
+      status="signed-out"
+      onExpandedChange={onExpandedChange}
+      onCredentialChange={() => undefined}
+      onSignIn={() => undefined}
+    />);
+
+    const disclosure = screen.getByRole("button", { name: "Open email sign-in" });
+    expect(disclosure.closest("details")?.hasAttribute("open")).toBe(false);
+    fireEvent.click(disclosure);
+    expect(onExpandedChange).toHaveBeenCalledWith(true);
   });
 
   it("keeps a configured failure visible and protected sign-in unavailable", () => {
@@ -73,7 +140,6 @@ describe("shared browser sign-in control", () => {
       error="The identity provider is not configured."
       onCredentialChange={() => undefined}
       onSignIn={() => undefined}
-      onSignOut={() => undefined}
     />);
 
     expect(screen.getByRole("alert").textContent).toContain("The identity provider is not configured.");
@@ -88,7 +154,6 @@ describe("shared browser sign-in control", () => {
       error="The identity provider is not configured."
       onCredentialChange={() => undefined}
       onSignIn={() => undefined}
-      onSignOut={() => undefined}
     />);
 
     const summary = screen.getByRole("button", { name: "Sign-in setup needed" });
@@ -97,8 +162,7 @@ describe("shared browser sign-in control", () => {
     expect(screen.getByRole("alert").textContent).toContain("The identity provider is not configured.");
   });
 
-  it("offers sign out without exposing the access token", () => {
-    const onSignOut = vi.fn();
+  it("leaves signed-in identity presentation to the account menu without exposing the access token", () => {
     render(<AuthSessionControl
       config={parseBrowserAuthConfig({
         VITE_DEPLOYMENT_ENVIRONMENT: "staging",
@@ -111,12 +175,10 @@ describe("shared browser sign-in control", () => {
       status="signed-in"
       onCredentialChange={() => undefined}
       onSignIn={() => undefined}
-      onSignOut={onSignOut}
     />);
 
-    expect(screen.getByText("Signed in")).toBeTruthy();
+    expect(screen.queryByText("Signed in")).toBeNull();
     expect(screen.queryByText("secret-access-token")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
-    expect(onSignOut).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
   });
 });

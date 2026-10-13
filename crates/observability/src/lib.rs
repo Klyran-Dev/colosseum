@@ -140,7 +140,7 @@ impl TelemetryConfig {
     ) -> Result<Self, TelemetryConfigError> {
         if !matches!(
             service_name,
-            "api" | "worker" | "indexer" | "route_verifier" | "tax_engine"
+            "api" | "worker" | "indexer" | "route_verifier" | "tax_engine" | "auth_service"
         ) {
             return Err(TelemetryConfigError::InvalidServiceName);
         }
@@ -556,6 +556,24 @@ mod tests {
         .expect("tax_engine is a supported service identity");
 
         assert_eq!(config.service_name, "tax_engine");
+    }
+
+    #[test]
+    fn accepts_the_authentication_service_name() {
+        let config = TelemetryConfig::from_values(
+            "auth_service",
+            None,
+            "local",
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("auth_service is a supported service identity");
+
+        assert_eq!(config.service_name, "auth_service");
     }
 
     #[test]

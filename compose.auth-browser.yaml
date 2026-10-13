@@ -1,0 +1,31 @@
+services:
+  auth-inbox-init:
+    command: ["chown -R 10001:1001 /var/lib/auth/inbox && chmod 750 /var/lib/auth/inbox"]
+
+  postgres:
+    ports: !reset []
+
+  api:
+    ports: !reset []
+
+  auth-service:
+    ports: !reset []
+    environment:
+      AUTH_CORS_ORIGIN: http://edge:8080
+      AUTH_OTP_RESEND_COOLDOWN_SECONDS: "0"
+
+  edge:
+    build:
+      args:
+        VITE_LOCAL_UI_MODE: email-otp
+        VITE_AUTH_SERVICE_BASE_URL: http://auth-service:8085
+    ports: !reset []
+
+  web-e2e:
+    environment:
+      AUTH_INBOX_DIR: /workspace/auth-inbox
+      WEB_E2E_SPEC: auth-journey.spec.ts
+    volumes:
+      - ./test-results/auth-e2e:/workspace/artifacts
+      - auth-inbox:/workspace/auth-inbox:ro
+

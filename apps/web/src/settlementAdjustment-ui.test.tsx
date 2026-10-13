@@ -41,6 +41,21 @@ function fillAdjustmentProposalForm(): void {
 }
 
 describe("settlement adjustment operator workspace", () => {
+  it("makes correction authority actions unavailable before sign-in", () => {
+    render(<SettlementAdjustmentPanel apiBase="/api" serviceOnline accessToken="" locale="en-US" />);
+
+    expect(screen.getByRole("note").textContent).toContain("Sign in to continue");
+    expect(screen.getByRole("textbox", { name: /Original payment reference/ }).closest("fieldset")).toHaveProperty("disabled", true);
+    expect(screen.getByRole("textbox", { name: /Adjustment reference/ }).closest("fieldset")).toHaveProperty("disabled", true);
+  });
+
+  it("renders sign-in readiness as status instead of an editable-looking field", () => {
+    render(<SettlementAdjustmentPanel apiBase="/api" serviceOnline accessToken="operator-token" locale="en-US" />);
+
+    expect(screen.getByRole("status").textContent).toContain("Account ready");
+    expect(screen.queryByRole("textbox", { name: /Sign-in status/ })).toBeNull();
+  });
+
   it("localizes the correction and record-only wallet boundary", () => {
     render(<SettlementAdjustmentPanel apiBase="/api" serviceOnline accessToken="operator-token" locale="de-DE" />);
 

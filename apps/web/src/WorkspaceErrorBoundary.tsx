@@ -12,6 +12,27 @@ type WorkspaceErrorBoundaryState = {
   error: Error | null;
 };
 
+const CHUNK_RECOVERY_KEY = "solana-tax-protocol:chunk-recovery";
+const CHUNK_RECOVERY_COOLDOWN_MS = 30_000;
+
+function isStaleChunkFailure(error: Error): boolean {
+  const message = error.message.toLowerCase();
+  return message.includes("dynamically imported module") || (message.includes("chunk") && message.includes("load"));
+}
+
+function recoverFromStaleChunk(error: Error): void {
+  if (!isStaleChunkFailure(error)) return;
+  try {
+    const previousRecoveryAt = Number(window.sessionStorage.getItem(CHUNK_RECOVERY_KEY));
+    if (Number.isFinite(previousRecoveryAt) && Date.now() - previousRecoveryAt < CHUNK_RECOVERY_COOLDOWN_MS) return;
+    window.sessionStorage.setItem(CHUNK_RECOVERY_KEY, String(Date.now()));
+    window.location.reload();
+  } catch {
+    // A storage or reload failure must leave the redacted recovery surface
+    // available rather than turning a deployment mismatch into a new error.
+  }
+}
+
 export default class WorkspaceErrorBoundary extends Component<WorkspaceErrorBoundaryProps, WorkspaceErrorBoundaryState> {
   state: WorkspaceErrorBoundaryState = { error: null };
 
@@ -19,9 +40,10 @@ export default class WorkspaceErrorBoundary extends Component<WorkspaceErrorBoun
     return { error };
   }
 
-  componentDidCatch(_error: Error, _errorInfo: ErrorInfo): void {
+  componentDidCatch(error: Error, _errorInfo: ErrorInfo): void {
     // Deliberately do not render or log exception details in the user surface.
     // A deployment may add a redacted, bounded telemetry sink at this boundary.
+    recoverFromStaleChunk(error);
   }
 
   render() {

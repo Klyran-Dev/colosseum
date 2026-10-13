@@ -20,5 +20,6 @@ describe("shell operational presentation catalogs", () => {
     expect(shellOperationalMessagesFor("ar-EG").protection.label).toBe("تفاصيل الحماية");
     expect(shellOperationalMessagesFor("de-DE").error.reload).toBe("Anwendung neu laden");
     expect(shellOperationalMessagesFor("ja-JP").loading.title("税ルール")).toBe("税ルールを読み込み中…");
+    expect(shellOperationalMessagesFor("en-US").account.roleLabel("tax_rule_author")).toBe("Tax rule author");
   });
 });

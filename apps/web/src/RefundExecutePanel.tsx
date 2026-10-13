@@ -5,6 +5,7 @@ import { createClientUuid } from "./clientIdentity";
 import { formatInteger } from "./formatters";
 import WalletPicker from "./WalletPicker";
 import { refundExecuteMessagesFor } from "./refundExecuteMessages";
+import { formatProtocolStatus } from "./protocolStatus";
 import { operatorErrorMessage } from "./operatorError";
 import {
   RefundExecuteResponse,
@@ -13,6 +14,7 @@ import {
   refundExecuteHasAllSignatures,
   signRefundExecuteRole,
 } from "./refundExecutions";
+import { shellMessagesFor } from "./shellMessages";
 
 type RefundExecutePanelProps = {
   apiBase: string;
@@ -21,16 +23,14 @@ type RefundExecutePanelProps = {
   locale: string;
 };
 
-function statusLabel(status: string): string {
-  return status.replaceAll("_", " ");
-}
-
 function amountValue(value: string | null, locale: string): string {
   return value === null ? "Not present" : formatInteger(value, locale);
 }
 
 export default function RefundExecutePanel({ apiBase, serviceOnline, accessToken, locale }: RefundExecutePanelProps) {
   const messages = refundExecuteMessagesFor(locale);
+  const shellMessages = shellMessagesFor(locale);
+  const workflowLocked = !serviceOnline || !accessToken.trim();
   const [claimIntentId, setClaimIntentId] = useState("");
   const [lookupId, setLookupId] = useState("");
   const [idempotencyKey, setIdempotencyKey] = useState(() => createClientUuid());
@@ -157,6 +157,9 @@ export default function RefundExecutePanel({ apiBase, serviceOnline, accessToken
       <article className="panel">
         <div className="panel-heading"><div><p className="eyebrow">{messages.proposal.eyebrow}</p><h2>{messages.proposal.title}</h2></div><span className="status-pill">{messages.proposal.badge}</span></div>
         <p className="panel-copy">{messages.proposal.description}</p>
+        {!accessToken.trim() && <div className="workflow-lock" role="note"><strong>{shellMessages.session.signInToContinue}</strong><p>{shellMessages.session.signInToContinueCopy}</p></div>}
+        <fieldset className="workflow-fieldset" disabled={workflowLocked || busy}>
+        <legend className="sr-only">{messages.proposal.title}</legend>
         <form className="form-grid" onSubmit={prepare}>
           <label className="full-field"><span>{messages.proposal.finalizedRequest}</span><input aria-label={messages.proposal.finalizedRequest} value={claimIntentId} onChange={(event) => setClaimIntentId(event.target.value)} placeholder={messages.proposal.finalizedPlaceholder} required /></label>
           <label className="full-field"><span>{messages.proposal.requestReference}</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} aria-describedby="refund-release-reference-help" required /><small id="refund-release-reference-help">{messages.proposal.requestHelp}</small></label>
@@ -166,15 +169,16 @@ export default function RefundExecutePanel({ apiBase, serviceOnline, accessToken
           <label className="full-field"><span>{messages.proposal.releaseReference}</span><input aria-label={messages.proposal.releaseReference} value={lookupId} onChange={(event) => setLookupId(event.target.value)} placeholder={messages.proposal.releasePlaceholder} /></label>
           <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>{messages.proposal.load}</button>
         </form>
+        </fieldset>
         {!serviceOnline && <p className="inline-warning" role="alert">{messages.proposal.serviceUnavailable}</p>}
         {error && <p className="inline-error" role="alert">{error}</p>}
         {notice && <p className="inline-success" role="status">{notice}</p>}
       </article>
 
       <article className="panel" aria-label={messages.review.ariaLabel} aria-live="polite">
-        <div className="panel-heading"><div><p className="eyebrow">{messages.review.eyebrow}</p><h2>{messages.review.title}</h2></div>{execute && <span className="status-pill">{statusLabel(execute.status)}</span>}</div>
+        <div className="panel-heading"><div><p className="eyebrow">{messages.review.eyebrow}</p><h2>{messages.review.title}</h2></div>{execute && <span className="status-pill">{formatProtocolStatus(execute.status, locale)}</span>}</div>
         <WalletPicker
-          disabled={busy}
+          disabled={busy || workflowLocked}
           connectEnabled={Boolean(execute && (execute.status === "prepared_unsubmitted" || execute.status === "signed"))}
           connectedAddress={walletAddress?.toBase58()}
           onConnected={setWalletAddress}
@@ -195,9 +199,9 @@ export default function RefundExecutePanel({ apiBase, serviceOnline, accessToken
           </dl>
           {(execute.status === "prepared_unsubmitted" || execute.status === "signed") && <div className="evidence-actions">
             <p className="evidence-note">{messages.wallet.twoPersonNote}</p>
-            <div className="button-row"><button type="button" onClick={() => sign("approver")} disabled={busy}>{messages.wallet.signApprover}</button><button type="button" onClick={() => sign("refund_funder")} disabled={busy || (!signedBytes && !recoveryBytes.trim())}>{messages.wallet.signFunder}</button></div>
+            <div className="button-row"><button type="button" onClick={() => sign("approver")} disabled={busy || workflowLocked}>{messages.wallet.signApprover}</button><button type="button" onClick={() => sign("refund_funder")} disabled={busy || workflowLocked || (!signedBytes && !recoveryBytes.trim())}>{messages.wallet.signFunder}</button></div>
             <label className="full-field"><span>{messages.wallet.recovery}</span><textarea aria-label={messages.wallet.recovery} value={recoveryBytes} onChange={(event) => setRecoveryBytes(event.target.value)} placeholder={messages.wallet.recoveryPlaceholder} aria-describedby="refund-release-recovery-help" rows={3} autoComplete="off" spellCheck={false} /><small id="refund-release-recovery-help">{messages.wallet.recoveryHelp}</small></label>
-            <button type="button" onClick={submit} disabled={busy || (!signedBytes && !recoveryBytes.trim())}>{busy ? messages.wallet.sending : messages.wallet.send}</button>
+            <button type="button" onClick={submit} disabled={busy || workflowLocked || (!signedBytes && !recoveryBytes.trim())}>{busy ? messages.wallet.sending : messages.wallet.send}</button>
           </div>}
           {(execute.status === "unknown" || execute.status === "submitted" || execute.status === "processed" || execute.status === "confirmed") && <p className="inline-warning">{messages.status.proofPending}</p>}
           {execute.status === "finalized" && <p className="inline-success" role="status">{messages.status.finalized}</p>}

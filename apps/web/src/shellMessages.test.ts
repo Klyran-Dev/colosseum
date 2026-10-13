@@ -26,6 +26,7 @@ const WORKSPACES: readonly ProductWorkspace[] = [
 const GROUPS: readonly WorkspaceGroup[] = ["Daily work", "Rules & access", "Money movement", "Records & issues"];
 const ACCESS_REASON_CODES: readonly UiAccessReasonCode[] = [
   "sign_in_required",
+  "public_access",
   "server_evaluation_required",
   "server_denied",
   "missing_expiry",

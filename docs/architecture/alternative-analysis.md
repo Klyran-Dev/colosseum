@@ -15,6 +15,115 @@ This document records the comparison baseline required before implementation. It
 - accessibility and product-quality UX;
 - support lifecycle and supply-chain reproducibility.
 
+### Tax-rule authoring density (ADR-0448)
+
+| Option | Result |
+| --- | --- |
+| Permanently expanded component forms | Rejected: expert controls overwhelm the review surface and increase component-selection errors. |
+| Separate simplified editor | Rejected: it would hide or split canonical tax semantics. |
+| Separate wizard step per component | Rejected: cross-component dependencies become harder to inspect. |
+| **Collapsible component sections with localized summaries** | **Selected: preserves the complete deterministic model while reducing cognitive load and keeping review in one surface.** |
+
+### Document-line authoring density (ADR-0449)
+
+| Option | Result |
+| --- | --- |
+| Permanently expanded line forms | Rejected: repeated controls overwhelm multi-line review. |
+| Opaque JSON line editor | Rejected: weakens field validation, localization, and accessibility. |
+| Separate wizard step per line | Rejected: obscures document-level relationships and totals. |
+| **Collapsible line sections with localized summaries** | **Selected: preserves field-level correctness while keeping multi-line documents scannable.** |
+
+### Signed-out authentication affordance (ADR-0450)
+
+| Option | Result |
+| --- | --- |
+| Keep email sign-in and a read-only account menu | Rejected: duplicates the next action and adds a competing popover. |
+| Make the account icon start sign-in | Rejected: hides the email-OTP method and weakens discoverability. |
+| **Keep email sign-in as the sole signed-out action; show account menu only for sessions** | **Selected: clear next step, fewer mobile controls, and a verified account menu when identity exists.** |
+
+### Single global signed-out sign-in entry point (ADR-0459)
+
+| Option | Discoverability | Visual hierarchy | Narrow-layout clarity | Decision |
+| --- | --- | --- | --- | --- |
+| Keep a header action and a workspace-gate action | Good | Weak: duplicate transition | Weak: action competition | Rejected |
+| Remove the header action | Weak | Partial | Partial | Rejected |
+| **Keep the header action; make the gate explanatory only** | **Good** | **Strong** | **Strong** | **Selected** |
+
+Chosen: retain one global signed-out transition while keeping the protected
+workspace gate focused on status, reason, and next-step guidance.
+
+### Auth-service browser origin policy (ADR-0460)
+
+| Option | Local usability | Trust boundary | Configuration determinism | Decision |
+| --- | --- | --- | --- | --- |
+| One fixed loopback origin | Partial | Strong | Strong | Rejected |
+| Wildcard origin | Good | Weak | Strong | Rejected |
+| Reflect any request origin | Good | Weak | Weak | Rejected |
+| **Explicit exact-origin allow-list** | **Good** | **Strong** | **Strong** | **Selected** |
+
+Chosen: support the documented local loopback forms while requiring every
+deployment to declare the origins that may call the authentication service.
+
+### Stable authorization context visibility (ADR-0461)
+
+| Option | Stable-task focus | Degraded-state clarity | Information discoverability | Decision |
+| --- | --- | --- | --- | --- |
+| Show the access card on every workspace | Weak | Strong | Strong | Rejected |
+| Remove access context everywhere | Strong | Weak | Weak | Rejected |
+| Keep a compact card on every workspace | Partial | Strong | Strong | Rejected |
+| **Show the card only for public or uncertain states** | **Strong** | **Strong** | **Strong via account menu** | **Selected** |
+
+Chosen: preserve access explanations when they carry decision-making value and
+remove only the stable authenticated repetition.
+
+### Workflow density follows panel width (ADR-0462)
+
+| Criterion | Viewport-only breakpoints | Always one form column | **Panel-width container query** |
+| --- | --- | --- | --- |
+| Narrow calculator readability | Partial | **Good** | **Good** |
+| Wide desktop scanability | Good | Poor | **Good** |
+| Collapsed-rail / variable shell behavior | Poor | Good | **Good** |
+| Empty result-space control | None | None | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: size field density from the calculator panel's available width and
+start-align an empty result surface so the task remains readable at laptop
+widths without sacrificing wide-desktop efficiency.
+
+### Authenticated session control ownership (ADR-0463)
+
+| Criterion | Duplicate direct action | Account menu only | **Passive status plus labelled account-menu action** |
+| --- | --- | --- | --- |
+| Session-action discoverability | Good | Partial | **Good** |
+| Account/access context | Partial | **Strong** | **Strong** |
+| Topbar density | Poor | Good | **Good** |
+| Keyboard/screen-reader clarity | Partial | Good | **Strong** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: keep the status visible as a passive signal and make the account menu
+the single owner of identity and session actions.
+
+### Wallet-step panel-width reflow (ADR-0464)
+
+| Criterion | Shorter copy | Always vertical | **Panel-width two-row reflow** |
+| --- | --- | --- | --- |
+| No-wallet readability | Partial | **Good** | **Good** |
+| Wide-desktop density | Good | Poor | **Good** |
+| Wallet-control usability | Partial | Good | **Strong** |
+| Localization resilience | Poor | Good | **Strong** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: reserve the narrow panel's width for readable prerequisite copy and a
+usable wallet control, while keeping the compact step on wide panels.
+
+### Mode-specific tax result language (ADR-0451)
+
+| Option | Result |
+| --- | --- |
+| Reuse quote language in the simulator | Rejected: falsely implies approved-rule authority and advertises an unavailable quote action. |
+| Duplicate the result component for each mode | Rejected: creates financial presentation drift and doubles accessibility maintenance. |
+| **Shared renderer with typed localized mode copy** | **Selected: preserves structural consistency while accurately communicating authority and next actions.** |
+
 ### Quiet tonal Material 3 Expressive shell (ADR-0408)
 
 | Alternative | Hierarchy clarity | Palette auditability | Accessibility/operations | Decision |
@@ -43,6 +152,20 @@ This document records the comparison baseline required before implementation. It
 | **Typed document-simulation presentation catalog** | **Pass** | **Pass** | **Pass** | **Selected; see ADR-0360** |
 
 ## Decisions
+
+### Tenant role-control-plane summary (ADR-0506)
+
+| Alternative | Scanability | Authority boundary | Operational cost | Decision |
+| --- | --- | --- | --- | --- |
+| Lead with detailed people and invitation tables | Weak | Pass | Pass | Rejected |
+| Client-only optimistic dashboard | Strong | Fail | Pass | Rejected |
+| Separate aggregate endpoint | Strong | Pass | Partial; adds another bounded contract | Rejected |
+| **Summary derived from the existing validated projections** | **Strong** | **Pass** | **Pass** | **Selected** |
+
+The selected summary improves the first-read experience of the Metronic
+administrator surface without creating a new source of truth or a browser
+authorization model. Unknown data remains visibly unknown while projections
+load or fail.
 
 ### Responsive product navigation
 
@@ -107,6 +230,30 @@ This document records the comparison baseline required before implementation. It
 | **OIDC Authorization Code + PKCE public client** | Standards-based, no client secret, memory-only access token, static-SPA compatible | Requires provider redirect/CORS configuration | **Selected; ADR-0268** |
 | Server-side BFF cookie session | HttpOnly session and central revocation | Adds a stateful callback service and operational surface | Deferred |
 | Wallet signature as workforce identity | Native wallet support | Does not establish tenant, role, employment, or revocation authority | Rejected |
+
+### Separate email-OTP identity issuance
+
+| Alternative | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Store passwords and OTPs inside the payment API | Few services; direct UI integration | Expands the settlement API trust boundary, increases credential/PII blast radius, couples identity outages to payment code, and complicates independent rotation | Rejected |
+| External OIDC provider only | Mature signup, recovery, email delivery, MFA, abuse controls, and identity governance | Requires provider selection, redirect/CORS setup, claim mapping, and external dependency evidence | Retained as the production target and fallback |
+| **Separate Rust email-OTP issuer with OIDC-compatible EdDSA tokens** | Isolates identity authority, reuses the existing API verifier and SPA session boundary, supports local deterministic tests, and keeps signing/email ports replaceable | Requires durable challenge state, provider account/DNS operations, key ceremony, privacy policy, and tenant provisioning decisions | **Selected; local and provider-backed slices are implemented, deployment enablement remains gated** |
+| Browser-only email OTP with a custom bearer token | Fastest apparent demo | Weakens standard discovery/PKCE interoperability and encourages client-owned authority | Rejected |
+| Wallet signature as account signup | No email dependency; native Solana UX | Proves key control, not email ownership, organizational identity, roles, tenant membership, or recovery | Rejected for account authentication |
+
+### Production transactional email delivery (ADR-0496)
+
+| Option | Provider compatibility | Secret/transport surface | Delivery idempotency | Decision |
+| --- | --- | --- | --- | --- |
+| SMTP from the auth service | Broad | Larger TLS, connection, and retry surface | Service-defined | Rejected for the first adapter |
+| **HTTPS Resend API adapter** | Resend account and verified sender | Bounded HTTPS JSON request with secret-manager API key | Provider idempotency key bound to challenge/invitation ID | **Selected** |
+| Provider SDK | One vendor | SDK/runtime abstraction and dependency surface | SDK/provider-defined | Rejected in favor of direct documented HTTP |
+| Browser/provider-direct delivery | Broad | Client-controlled credentials and authority | Unsafe | Rejected |
+
+Chosen: keep the local inbox deterministic for Docker while making staging and
+production use a server-owned, bounded HTTPS provider adapter. Provider account
+ownership, DNS authentication, retention, bounce handling, and on-call remain
+deployment decisions.
 
 ### OIDC edge connectivity and CSP
 
@@ -340,6 +487,10 @@ This document records the comparison baseline required before implementation. It
 | Chain truth | Solana finalized state + receipt evidence | API database, WebSocket notification alone | Correctness and auditability |
 
 ### Merchant authentication and authorization
+
+| Tenant onboarding | Auth-service invitation plus signup-time transactional binding | Caller-supplied tenant ID, single-tenant signup, hosted provider authority | Keeps tenant ownership server-side, preserves self-signup isolation, and binds identity/role/audit state atomically |
+
+| Role administration | Auth-service routes with EdDSA verification and PostgreSQL transaction | Browser role selector, settlement API ownership, hosted IdP migration | Keeps identity authority in the auth bounded context, prevents client privilege escalation, and commits role state plus audit evidence atomically |
 
 | Alternative | Strengths | Risks/trade-offs | Decision |
 | --- | --- | --- | --- |
@@ -3586,6 +3737,92 @@ accents for the active item.
 Chosen: outlined fields. Revisit if usability testing shows filled fields are
 easier to locate in dense forms.
 
+### Signed-out workspace gate and compact authentication control (ADR-0442)
+
+| Criterion | Hide workspace until sign-in | Inline auth form always open | Modal auth flow | **Compact disclosure plus shared workspace gate** |
+| --- | --- | --- | --- | --- |
+| Clear primary next action | Partial | Weak | **Strong** | **Strong** |
+| Preserves workspace context | No | Yes | Yes | **Yes** |
+| Mobile/reflow complexity | Low | Poor | High | **Low** |
+| Authorization semantics stay distinct | No | Partial | Yes | **Yes** |
+| **Selection** | Rejected | Rejected | Rejected for this slice | **Selected in ADR-0442** |
+
+Chosen: compact disclosure plus a shared signed-out gate. Revisit the modal
+option if the authentication service gains recovery, device verification, or
+multi-step identity flows that no longer fit a bounded shell disclosure.
+
+### Authenticated workflow data gating (ADR-0443)
+
+| Criterion | Editable fields with disabled submit | Hide workspace | **Visible workflow with explicit disabled controls and lock notice** |
+| --- | --- | --- | --- |
+| Communicates the missing prerequisite | Weak | Partial | **Strong** |
+| Preserves task orientation | Yes | No | **Yes** |
+| Keyboard and screen-reader semantics | Partial | Partial | **Strong** |
+| Matches server-owned evidence boundaries | Partial | Yes | **Yes** |
+| **Selection** | Rejected | Rejected | **Selected in ADR-0443** |
+
+Chosen: visible workflow with explicit disabled controls and a localized lock
+notice across payment, document quote, governance, treasury, balance checks,
+refund, adjustment, recovery, and evidence workspaces. Revisit per-workspace
+progressive disclosure when authenticated routes can provide safe read-only
+previews with a measured product need.
+
+The shell also fails closed while a token's server capability snapshot is
+pending or unavailable: protected workspace children are not mounted until the
+API confirms access. This prevents token-presence checks in individual panels
+from becoming an accidental authorization boundary.
+
+### Public simulator access boundary (ADR-0444)
+
+| Criterion | Gate every workspace | Hard-code the simulator route | **Derive from policy requirements** |
+| --- | --- | --- | --- |
+| Matches the product/API contract | No | Partial | **Yes** |
+| Avoids shell/policy drift | No | No | **Yes** |
+| Unknown workspace behavior | Inconsistent | Inconsistent | **Fail closed** |
+| **Selection** | Rejected | Rejected | **Selected in ADR-0444** |
+
+Chosen: derive public/protected presentation from the policy catalog while
+keeping server authorization authoritative.
+
+### Authentication state hierarchy and protected workspace preview (ADR-0445)
+
+| Criterion | Repeat shell and panel locks | Hide the whole page | **Single shell gate with protected children withheld** |
+| --- | --- | --- | --- |
+| Message hierarchy | Weak | Strong | **Strong** |
+| Deep-link orientation | Yes | No | **Yes** |
+| Keyboard and screen-reader safety | Partial | Strong | **Strong** |
+| Risk of implying a usable protected form | High | Low | **Low** |
+| **Selection** | Rejected | Rejected | **Selected in ADR-0445** |
+
+Chosen: one shell-owned signed-out state, with authenticated role denial still
+shown by the workspace when the server has actually evaluated the account.
+
+### Progressive disclosure for long tax workflows (ADR-0446)
+
+| Criterion | Expanded authoring and simulation | Separate simulation route | **Native disclosures in the Tax Rules workspace** |
+| --- | --- | --- | --- |
+| Initial cognitive load | High | Medium | **Low** |
+| Keeps loaded-rule context | **Yes** | No | **Yes** |
+| Keyboard and assistive-technology semantics | Partial | Yes | **Yes** |
+| Result visibility after a successful run | Yes | Yes | **Yes, auto-opens** |
+| Selection | Rejected | Rejected | **Selected** |
+
+Chosen: keep both workflows together but require an explicit operator choice
+before showing their long control sets. Native disclosures preserve semantics
+and make the result state self-revealing after a successful simulation.
+
+### Quiet navigation group metadata (ADR-0447)
+
+| Criterion | Visible count and text symbols | Remove count metadata | **Accessible count with a visual chevron** |
+| --- | --- | --- | --- |
+| Task-label prominence | Low | **High** | **High** |
+| Assistive-technology context | **Yes** | No | **Yes** |
+| Native disclosure semantics | **Yes** | **Yes** | **Yes** |
+| Selection | Rejected | Rejected | **Selected** |
+
+Chosen: keep count context in the accessible name while removing repeated
+visual metadata from the operator's primary navigation view.
+
 ### Canonical access-control and evidence surfaces (ADR-0427)
 
 | Criterion | Migrate every legacy surface now | **Migrate only verifiable surfaces** | Leave all legacy styles |
@@ -3620,3 +3857,746 @@ surfaces, or if pixel-level regressions (images, canvas) appear.
 
 Chosen: capture from unit tests. Revisit when a surface needs interaction
 states (hover, focus) in its snapshot.
+
+### Readable wallet availability guidance (ADR-0452)
+
+| Criterion | Single-line ellipsis | Tooltip-only guidance | **Wrapped supporting text** |
+| --- | --- | --- | --- |
+| Full message visible by default | No | No | **Yes** |
+| Keyboard/touch accessibility | Partial | Partial | **Yes** |
+| Layout cost | **Low** | Low | Low |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: wrap the checkout-step supporting text so wallet prerequisites and
+connected-account identity remain readable without relying on hover behavior.
+
+### Responsive short-field layout (ADR-0453)
+
+| Criterion | One vertical column | Viewport-specific two columns | **Container-bound auto-fit columns** |
+| --- | --- | --- | --- |
+| Desktop scan length | Poor | **Good** | **Good** |
+| Collapsed rail / narrow workspace behavior | Good | Partial | **Good** |
+| Evidence and action hierarchy | Good | Good | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: apply bounded auto-fit columns inside form-owned workflow fieldsets so
+short inputs group naturally while full-width evidence and actions remain easy
+to scan.
+
+### Single wallet identity display (ADR-0454)
+
+| Criterion | Duplicate summary and control | Hide full address | **State summary plus owned wallet control** |
+| --- | --- | --- | --- |
+| Account inspectability | Good | **Poor** | **Good** |
+| Review scanability | Poor | Good | **Good** |
+| Ownership of provider/account details | Ambiguous | Partial | **Clear** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: keep provider and full selected-account identity in the wallet control,
+while the surrounding step summary communicates only connection state.
+
+### Submit before chain evidence (ADR-0455)
+
+| Criterion | Show on prepared artifact | Disabled placeholder | **Show after submitted intent** |
+| --- | --- | --- | --- |
+| Evidence authority | **Ambiguous** | Partial | **Clear** |
+| Pre-signing scanability | Poor | Partial | **Good** |
+| Supports actionable retry | Misleading | Poor | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: begin chain-evidence verification only after a submitted settlement
+intent exists, when a signature and chain observation are possible.
+
+### Action-oriented payment-ready copy (ADR-0456)
+
+| Criterion | Repeat safeguards | Remove supporting copy | **Give next-action guidance** |
+| --- | --- | --- | --- |
+| Evidence clarity | **Good** | Partial | **Good** |
+| Decision hierarchy | Poor | Partial | **Good** |
+| Operator next step | Poor | Poor | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: retain the safeguard assertion once and use the ready-state supporting
+copy to direct review of the exact scope and amounts before approval.
+
+### Explicit atomic payment units (ADR-0457)
+
+| Criterion | Bare integers | Guessed human currency | **Grouped atomic units** |
+| --- | --- | --- | --- |
+| Unit clarity | Poor | **Ambiguous** | **Clear** |
+| Exactness | Good | Risk of conversion error | **Good** |
+| Requires new API contract | No | Yes, but not present | **No** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: improve scanability and unit clarity while preserving the artifact's
+exact protocol values until an authorized display-metadata contract exists.
+
+### Server-owned payment display metadata (ADR-0458)
+
+| Criterion | Bare atomic artifact | Separate metadata request | **Metadata bound to compiled artifact** |
+| --- | --- | --- | --- |
+| Review consistency | Poor | Race-prone | **Strong** |
+| Authority boundary | Ambiguous | Split | **Server-owned** |
+| Human-readable amounts | No | Yes | **Yes** |
+| Additional consistency boundary | None | **Yes** | **No** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: bind the display context generated from the same quote, attestation,
+and route used for the settlement instruction. Compute-budget policy remains
+distinct from an exact provider-backed network-fee estimate.
+
+### Authenticated identity presentation (ADR-0465)
+
+| Criterion | Passive status plus account menu | **Account menu only** | Sidebar only |
+| --- | --- | --- | --- |
+| Identity/action hierarchy | Partial | **Clear** | Poor |
+| Top-bar density | Poor | **Good** | Good |
+| Access and sign-out discoverability | **Good** | **Good** | Poor |
+| **Selection** | Rejected | **Selected** | Rejected |
+
+Chosen: keep the account menu as the one authenticated identity/session
+control. The sidebar can continue to show passive access posture, while the
+account menu owns the identity facts and session action.
+
+### Independent operational panel alignment (ADR-0466)
+
+| Criterion | Stretch siblings | Fixed shared height | **Intrinsic height with top alignment** |
+| --- | --- | --- | --- |
+| Empty-state scanability | Poor | Poor | **Good** |
+| Long/localized evidence safety | Partial | Poor | **Good** |
+| Responsive behavior | Partial | Poor | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: top-align the independent panels and preserve intrinsic content height;
+the existing container-query collapse remains the narrow-layout authority.
+
+### Narrow evidence-summary reflow (ADR-0467)
+
+| Criterion | Permanent two-column row | Truncate/hide values | **Container-bound stacked row** |
+| --- | --- | --- | --- |
+| Wide-panel scanability | **Good** | Good | Good |
+| Protocol evidence inspectability | **Good** | Poor | **Good** |
+| Narrow/localized readability | Poor | Partial | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: preserve the compact two-column summary at wide widths and stack the
+label/value pair only when the workspace container is narrow.
+
+### Multi-authority action grouping (ADR-0468)
+
+| Criterion | Independent full-width buttons | Permanent two-column grid | **Flexible wrapping action row** |
+| --- | --- | --- | --- |
+| Authority-step relationship | Poor | **Good** | **Good** |
+| Narrow/localized safety | Good | Poor | **Good** |
+| Vertical scan efficiency | Poor | **Good** | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: group related authority actions in a wrapping flex row with bounded
+flexible buttons, preserving DOM order and narrow-panel safety.
+
+### Mobile shell popover anchoring (ADR-0469)
+
+| Criterion | Viewport-fixed dialog | Inline top-bar expansion | **Positioned top-bar containing block** |
+| --- | --- | --- | --- |
+| Visual reachability | Good | Good | **Good** |
+| Workspace stability | Partial | Poor | **Good** |
+| Focus/positioning complexity | Poor | Good | **Good** |
+| Desktop interaction parity | Partial | Poor | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: preserve the compact shell interaction and give its existing absolute
+popovers the visible mobile top bar as their containing block and stacking
+context.
+
+### Typography and empty-panel rhythm (ADR-0470)
+
+| Criterion | Runtime webfont | Local heading-only tuning | **Explicit system stack and scoped rhythm** |
+| --- | --- | --- | --- |
+| Cross-platform determinism | Partial | Poor | **Good** |
+| Supply-chain/privacy cost | Poor | **Good** | **Good** |
+| Localized heading safety | Good | Partial | **Good** |
+| Workspace scanability | Good | Partial | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: establish one readable type/layout contract without adding a runtime
+font dependency, and scope empty-state compaction to multi-panel workspaces.
+
+### Authentication error placement (ADR-0471)
+
+| Criterion | Floating top-bar overlay | Duplicate workspace error | **In-form flow error** |
+| --- | --- | --- | --- |
+| Action/error association | Poor | Partial | **Strong** |
+| Workspace obstruction | Poor | Partial | **None** |
+| Announcement duplication | Good | Poor | **Good** |
+| Desktop/mobile parity | Partial | Good | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: keep the existing alert semantics, but render authentication failures
+inside the anchored form surface that owns the request.
+
+### Responsive calculator field rhythm (ADR-0472)
+
+| Criterion | One column at every width | Viewport breakpoint | **Container-aware two-column rhythm** |
+| --- | --- | --- | --- |
+| Desktop scanability | Poor | Good | **Good** |
+| Narrow/localized safety | Good | Partial | **Good** |
+| Persistent-shell compatibility | Good | Poor | **Good** |
+| DOM/financial semantics unchanged | **Good** | **Good** | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: let the calculator panel use two columns only when its own inline size
+can support them, preserving full-width evidence/help rows and a narrow-panel
+single-column fallback.
+
+### Stale SPA chunk recovery (ADR-0473)
+
+| Criterion | Retain all historical chunks | Disable immutable asset caching | **Guarded reload on known chunk failure** |
+| --- | --- | --- | --- |
+| Deployment recovery | Good | Good | **Good** |
+| Cache efficiency | Partial | Poor | **Good** |
+| Bounded storage/complexity | Poor | Good | **Good** |
+| Protection from reload loops | Good | Good | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: recover only from known lazy-import failures with a session marker,
+while retaining the localized manual recovery surface for other exceptions.
+
+### Governed-rule builder field rhythm (ADR-0474)
+
+| Criterion | One column | Viewport breakpoint | **Panel container-aware paired fields** |
+| --- | --- | --- | --- |
+| Authoring scanability | Poor | Good | **Good** |
+| Persistent-shell compatibility | Good | Poor | **Good** |
+| Localized/narrow safety | **Good** | Partial | **Good** |
+| Evidence/help reading width | Good | Good | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: pair short controls only when the governance panel itself has room,
+while preserving full-width evidence and narrative rows and the existing
+single-column fallback.
+
+### Invoice quote failure recovery (ADR-0475)
+
+| Criterion | Primary button only | Automatic retry | **Explicit in-alert retry** |
+| --- | --- | --- | --- |
+| Recovery discoverability | Poor | Good | **Good** |
+| Retry storm risk | **Good** | Poor | **Good** |
+| Provider-detail exposure | **Good** | Good | **Good** |
+| Idempotency preservation | Good | Partial | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: keep recovery explicit and local to the failure alert, reusing the
+unchanged idempotency key while preserving redacted operator-facing errors.
+
+### Payment-route failure recovery (ADR-0476)
+
+| Criterion | Full page reload | Automatic retry | **Explicit route-alert retry** |
+| --- | --- | --- | --- |
+| Operator recovery | Poor | Good | **Good** |
+| Preserves quote/wallet context | Poor | **Good** | **Good** |
+| Authority-boundary safety | Good | Partial | **Good** |
+| Outage amplification risk | Good | Poor | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: retry only the server-owned route read from the checkout alert while
+keeping compilation and signing fail-closed until a verified route is present.
+
+### Document-checkout route failure recovery (ADR-0477)
+
+| Criterion | Full page reload | Automatic retry | **Explicit route-alert retry** |
+| --- | --- | --- | --- |
+| Operator recovery | Poor | Good | **Good** |
+| Preserves document/wallet context | Poor | **Good** | **Good** |
+| Authority-boundary safety | Good | Partial | **Good** |
+| Outage amplification risk | Good | Poor | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: retry only the authenticated server-owned route read from the
+document-checkout alert while keeping evidence verification, compilation, and
+signing fail-closed until a verified route is available.
+
+### Treasury sign-in readiness surface (ADR-0478)
+
+| Criterion | Read-only textarea | Hide the state | **Semantic status surface** |
+| --- | --- | --- | --- |
+| Distinguishes state from input | Poor | Partial | **Good** |
+| In-context recovery explanation | Good | Poor | **Good** |
+| Credential disclosure risk | Good | Good | **Good** |
+| Visual density | Poor | **Good** | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: keep the authorization explanation in the treasury form, but render it
+as a status surface rather than an input control.
+
+### Treasury route failure recovery (ADR-0479)
+
+| Criterion | Full page reload | Automatic retry | **Explicit route-warning retry** |
+| --- | --- | --- | --- |
+| Operator recovery | Poor | Good | **Good** |
+| Preserves release context | Poor | **Good** | **Good** |
+| Authority-boundary safety | Good | Partial | **Good** |
+| Outage amplification risk | Good | Poor | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: retry only the authenticated, server-owned treasury route read from
+the warning while keeping release creation disabled until a verified route is
+available.
+
+### Treasury release-window input (ADR-0480)
+
+| Criterion | Raw epoch seconds | Browser-local date/time | **Selected-zone date/time with exact conversion** |
+| --- | --- | --- | --- |
+| Operator usability | Poor | Good | **Good** |
+| Time-zone correctness | Good | Poor | **Good** |
+| Seconds/protocol precision | **Good** | Partial | **Good** |
+| Invalid-window handling | Partial | Partial | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: present date/time controls in the selected application time zone and
+convert them to validated integer Unix seconds only at submission.
+
+### Treasury protocol status presentation (ADR-0481)
+
+| Criterion | Raw protocol value | Mechanical underscore formatting | **Localized catalog mapping** |
+| --- | --- | --- | --- |
+| Operator readability | Poor | Partial | **Good** |
+| Locale support | None | None | **Good** |
+| Stable API contract | **Good** | **Good** | **Good** |
+| Unknown-status safety | Partial | Partial | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: retain stable protocol values in the API and evidence model, then map
+the exhaustively validated status union to localized operator copy at render
+time.
+
+### Cross-workspace protocol status presentation (ADR-0482)
+
+| Criterion | Per-panel formatters | Raw/mechanical formatting | **Shared locale-backed presenter** |
+| --- | --- | --- | --- |
+| Consistent operator language | Partial | Poor | **Good** |
+| Locale coverage | Partial | None | **Good** |
+| Stable API/evidence values | **Good** | **Good** | **Good** |
+| Safe unknown-value handling | Partial | Poor | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: use one locale-backed web presenter for validated protocol statuses,
+with an explicit localized unknown label and no raw-value fallback.
+
+### Protected-workspace sign-in entry point (ADR-0483)
+
+| Criterion | Instruction-only gate | Duplicate inline auth form | **Action that expands the global auth control** |
+| --- | --- | --- | --- |
+| Operator next-step clarity | Poor | Good | **Good** |
+| Auth state ownership | **Good** | Poor | **Good** |
+| Security/validation surface | **Good** | Poor | **Good** |
+| Mobile and keyboard reachability | Partial | Good | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: keep authentication owned by the global shell control while allowing a
+protected workspace to open that control directly from its gate.
+
+### Editorial operational visual direction (ADR-0484)
+
+| Criterion | Uniform tonal shell | Reference copy | **Original semantic editorial shell** |
+| --- | --- | --- | --- |
+| Task hierarchy | Partial | Good | **Good** |
+| Zero-mock/data truth | **Good** | Poor | **Good** |
+| Product/domain clarity | **Good** | Poor | **Good** |
+| Theme/accessibility compatibility | **Good** | Partial | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: translate the reference's hierarchy, spacing, and rail/canvas
+relationship into this product's semantic roles and real operational states.
+
+### Signed-out protected-page sign-in action (ADR-0485)
+
+| Criterion | Duplicate header and gate actions | Header action removed on protected pages | **One header action plus explanatory gate** |
+| --- | --- | --- | --- |
+| Cognitive load | Poor | Good | **Good** |
+| Global discoverability | **Good** | Poor | **Good** |
+| Auth state ownership | Good | Good | **Good** |
+| Protected-state clarity | Good | Partial | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: keep one global sign-in action in the header and use the protected gate
+for local explanation and status only.
+
+### Premium dark workspace composition (ADR-0486)
+
+| Criterion | Flat control-plane canvas | Decorative dashboard treatment | **Semantic operational stage** |
+| --- | --- | --- | --- |
+| Premium visual hierarchy | Poor | Good | **Good** |
+| Zero-mock/data truth | **Good** | Poor | **Good** |
+| Protected-state clarity | Partial | Partial | **Good** |
+| Responsive/accessibility safety | **Good** | Partial | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: use semantic layers, editorial type, and a two-zone protected gate to
+create composition without inventing dashboard content.
+
+### Verified-context dashboard density (ADR-0487)
+
+| Criterion | Expanded navigation plus empty canvas | Mock dashboard metrics | **Compact rail plus verified context deck** |
+| --- | --- | --- | --- |
+| Workspace focus | Poor | Good | **Good** |
+| Data truthfulness | **Good** | Poor | **Good** |
+| Accessibility/discoverability | Good | Good | **Good** |
+| Signed-out usefulness | Poor | Partial | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: use the compact rail to return horizontal space to the task and fill
+the initial canvas only with access, deployment, network, and API facts already
+owned by the shell. Domain metrics and records appear only when real workspace
+data is available.
+
+### Single context header and neutral rail (ADR-0488)
+
+| Criterion | Repeated context cards | Context removed everywhere | **One verified deck plus neutral rail** |
+| --- | --- | --- | --- |
+| Cognitive load | Poor | Partial | **Good** |
+| Authorization clarity | Good | Poor | **Good** |
+| Workflow focus | Partial | Good | **Good** |
+| Navigation orientation | Good | Partial | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: keep one summary deck for stable context, retain a page-level card only
+for actionable authorization uncertainty, and let the rail support orientation
+without overpowering the work surface.
+
+### Expanded first-run control plane (ADR-0489)
+
+| Criterion | Expanded labeled rail | Compact icon rail | **Selection** |
+| --- | --- | --- | --- |
+| First-run discoverability | Workspace names and group hierarchy are immediately visible | Requires tooltip, memory, or exploration | **Expanded labeled rail** |
+| Operator density | Adds a narrow, persistent orientation column | Maximizes canvas width | **Expanded labeled rail for default; compact remains opt-in** |
+| Cognitive load | Makes the active area and available workflows explicit | Hides context and increases navigation uncertainty | **Expanded labeled rail** |
+| Truthfulness | Supports real context cards and access guidance | Encourages filling empty space with decorative or fake metrics | **Expanded labeled rail** |
+
+Chosen: keep the verified context deck, add an access sequence for protected
+workspaces, and do not fabricate activity or financial KPIs.
+
+### Licensed Metronic Demo 3 shell and dedicated authentication routes (ADR-0490)
+
+| Criterion | Current expanded shell | Full Metronic demo copy | **Licensed Demo 3 adapter plus repository auth service** |
+| --- | --- | --- | --- |
+| Match to licensed reference | Partial | Good | **Good** |
+| Domain/data truthfulness | **Good** | Poor | **Good** |
+| Auth authority boundary | **Good** | Partial | **Good** |
+| React/Vite compatibility | **Good** | Partial | **Good** |
+| Privileged role safety | **Good** | Partial | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: adapt the licensed Demo 3 shell hierarchy and use dedicated sign-in
+and sign-up routes backed by the existing Rust email-OTP issuer. User sign-up
+can provision only the base role; moderator and administrator roles remain
+durable server-side assignments.
+
+### Role-aware authentication scope profiles (ADR-0493)
+
+| Option | Result | Reason |
+| --- | --- | --- |
+| One global scope list | Rejected | Gives every account the same authority-shaped claims. |
+| Browser-composed role scopes | Rejected | The browser is not an authority boundary. |
+| Hosted-provider groups only | Deferred | Not sufficient to prove the repository-owned local auth vertical slice. |
+| **Auth-service role-aware scope profiles** | **Selected** | Durable roles and signed scope claims remain server-owned and deterministic. |
+
+### Docker-backed browser authentication evidence (ADR-0494)
+
+| Criterion | Synthetic credentials only | HTTP-only auth tests | **Dedicated Docker auth browser gate** |
+| --- | --- | --- | --- |
+| Form and redirect coverage | Poor | None | **Good** |
+| Browser CORS and token handoff | None | Partial | **Good** |
+| Isolation and repeatability | **Good** | Good | **Good** |
+| Coverage of tenant roles | Poor | Partial | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: retain the fast synthetic UI gate and add a separate isolated Docker
+browser gate for the real local OTP, token, invitation, and role paths.
+
+### Authentication return-path completion (ADR-0495)
+
+| Criterion | Stay on auth route | Local storage return state | **Validated memory/session return path** |
+| --- | --- | --- | --- |
+| End-to-end task completion | Poor | Good | **Good** |
+| Token exposure | **Good** | Poor | **Good** |
+| Redirect safety | Good | Partial | **Good** |
+| SPA and OIDC compatibility | Partial | Good | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: keep access tokens in memory, validate the internal return path, and
+use one-time session storage only across the OIDC provider redirect.
+
+### Licensed Metronic Demo 3 shell fidelity (ADR-0497)
+
+| Criterion | Existing custom shell | Full package copy | **Focused Demo 3 adapter** |
+| --- | --- | --- | --- |
+| Fidelity to licensed reference | Partial | Good | **Good** |
+| Product/domain ownership | **Good** | Poor | **Good** |
+| Upgrade and license risk | Good | Poor | **Good** |
+| Responsive/accessibility control | **Good** | Partial | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: reproduce the licensed Demo 3 composition—fixed header, compact icon
+rail, horizontal workspace navigation, and rounded content canvas—while keeping
+the repository's semantic tokens, real domain content, and accessible controls.
+
+### Branded authentication composition (ADR-0498)
+
+| Criterion | Generic centered form | Full Metronic auth copy | **Focused auth card plus context panel** |
+| --- | --- | --- | --- |
+| Sign-in task focus | **Good** | Partial | **Good** |
+| Product/security context | Poor | Good | **Good** |
+| Auth flow ownership | **Good** | Partial | **Good** |
+| Responsive/accessibility control | **Good** | Partial | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: adapt Metronic's branded authentication hierarchy into the existing
+email-OTP/OIDC routes. The context panel is noninteractive, role-neutral, and
+does not introduce a second sign-in action or browser-owned authority.
+
+### Tenant invitation lifecycle console (ADR-0499)
+
+| Criterion | Creation-only UI | Client-filtered records | **Auth-service lifecycle projection** |
+| --- | --- | --- | --- |
+| Tenant authority | Partial | Unsafe | **Server-derived** |
+| Revocation discoverability | Missing | Partial | **Complete** |
+| Auditability | Preserved | Unclear | **Preserved with terminal state** |
+| Bounded work | Good | Unbounded client risk | **100-record server cap** |
+| Idempotent mutation | Existing API unused | Existing API unused | **Existing API retained** |
+
+Chosen: expose a bounded tenant-scoped projection and keep revoke as the
+existing transactional, idempotent auth-service mutation.
+
+### Server-sourced responsibility summary (ADR-0500)
+
+| Option | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| Generic access state only | Minimal UI | Users, moderators, and administrators look identical after sign-in | Rejected |
+| Decode JWT roles in the browser | No extra response work | Treats client-decoded claims as presentation authority and couples the shell to token shape | Rejected |
+| Role badges across navigation | Highly visible | Repeats identity context and increases cognitive load on every workspace | Rejected |
+| Use roles in the server-owned capability snapshot inside the account menu | Uses an already verified bounded response, keeps one identity surface, and clearly differentiates responsibilities | Requires localized role labels and a safe unknown-role fallback | Selected |
+
+### Server-sourced verified email identity (ADR-0501)
+
+| Alternative | Decision | Rationale |
+| --- | --- | --- |
+| Keep displaying opaque subject | Rejected | Does not give an operator a useful identity confirmation. |
+| Decode JWT claims in the browser | Rejected | Duplicates token interpretation and makes client parsing part of the identity boundary. |
+| Add a separate profile endpoint | Rejected | Adds another bootstrap dependency and identity authority. |
+| Include the verified email in the access token and existing capability response | Selected | Reuses the authenticated server boundary and keeps the SPA identity display consistent with authorization evaluation. |
+
+### Single actionable workspace context (ADR-0502)
+
+| Criterion | Four visible status cards | No workspace status | **One access card plus global diagnostics** |
+| --- | --- | --- | --- |
+| Task focus | Poor | Good | **Good** |
+| Access-boundary clarity | Good | Poor | **Good** |
+| Duplication with header | Poor | Good | **Good** |
+| Verified server context | Good | Partial | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: show the actionable access state on the workspace and keep deployment,
+network, API, and session diagnostics in the existing global status disclosure.
+
+### Server-timed OTP resend recovery (ADR-0503)
+
+| Criterion | No recovery action | Client-only timer | **Server-timed reuse of request endpoint** |
+| --- | --- | --- | --- |
+| Expired/delayed-code recovery | Missing | Partial | **Good** |
+| Rate-limit authority | Good | Poor | **Good** |
+| Account-enumeration risk | Good | Good | **Good** |
+| Provider compatibility | Good | Partial | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: reuse the auth service request contract and honor its bounded
+`retry_after_seconds` response in the SPA.
+
+### Server-sourced Access & approvals responsibility summary (ADR-0507)
+
+| Option | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| Generic policy matrix only | Smallest UI | Leaves the current responsibility unclear and increases scanning cost | Rejected |
+| Decode JWT roles/scopes | No additional response data | Couples presentation to token shape and confuses claims with tenant/resource authorization | Rejected |
+| Client-side role-to-capability mapping | Concise role-specific UI | Can drift from server policy and create misleading permissions | Rejected |
+| **Summarize the existing server capability snapshot** | Concise, verified, localized, and no new authority boundary | Depends on the bounded snapshot remaining complete and fresh | **Selected** |
+
+Chosen: present only the roles and capability decisions already returned by the
+server-owned authorization snapshot. The browser never reconstructs which role
+grants which action.
+
+### Metronic v9.5.0 composition source boundary (ADR-0508)
+
+| Alternative | Decision | Rationale |
+| --- | --- | --- |
+| Copy the complete licensed React demo | Rejected | Adds unrelated routes, demo data, and identity dependencies. |
+| Screenshot-only visual imitation | Rejected | Layout intent is not a reproducible or testable source contract. |
+| Import Metronic authentication providers | Rejected | Conflicts with the repository-owned Rust OTP/OIDC service. |
+| **Adapt the licensed Demo 3 composition into the existing SPA** | **Selected** | Preserves the requested shell/auth composition and keeps authorization, tokens, and production behavior repository-owned. |
+
+Chosen: use the local v9.5.0 Demo 3 layout and branded-auth source files as the
+auditable composition reference, expose data-layout contracts in the DOM, and
+retain the repository's server-owned identity and authorization boundaries.
+
+### Explicit production email-OTP browser method (ADR-0510)
+
+| Alternative | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| Keep email OTP local-only | No additional release input | Production cannot use the repository-owned auth service | Rejected |
+| Infer the method from whichever settings are present | Fewer settings | Ambiguous or accidental auth-method selection | Rejected |
+| **Explicit `VITE_AUTH_METHOD` switch** | Auditable OIDC/email-OTP choice with fail-closed validation | One additional release input | **Selected** |
+
+Chosen: make provider-backed email OTP available to staging and production only
+through an explicit `VITE_AUTH_METHOD=email-otp` release setting; retain the
+local alias for Docker and enforce provider mode independently in the Rust auth
+service.
+
+### One-time initial administrator enrollment (ADR-0511)
+
+| Alternative | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| Manual SQL promotion | Fast bootstrap | Bypasses application audit and token contracts | Rejected |
+| Normal administrator invitation | Reuses the UI | Makes global authority delegable through normal tenant controls | Rejected |
+| Browser bootstrap secret | Explicit operator intent | Adds a client-visible credential boundary | Rejected |
+| **Configured mailbox with one-active-admin transaction fence** | Reuses OTP and produces durable tenant/role/audit evidence | Requires controlled deployment configuration and removal | **Selected** |
+
+Chosen: allow only the exact server-configured mailbox to complete the normal
+signup path while no active administrator exists; keep administrator outside
+the normal assignable role catalog.
+
+### Metronic typography hierarchy (ADR-0512)
+
+| Alternative | Result | Reason |
+| --- | --- | --- |
+| Keep display-sized workspace headings and 11px utility copy | Rejected | Creates an uneven hierarchy and weakens readability. |
+| Import the complete Metronic CSS bundle | Rejected | Adds a second style authority and unrelated surface rules. |
+| Remote webfont dependency | Rejected | Adds external loading/privacy variance to the static SPA. |
+| **Tune repository-owned semantic type roles and layout selectors** | **Selected** | Preserves the licensed composition while improving scale, wrapping, and accessibility. |
+
+Chosen: use a compact 32px workspace title, 16px explanatory copy, a 12/13px
+minimum for supporting text, and a grid-owned authentication context so the
+brand and context kicker remain separate at narrow widths.
+
+### Metronic Demo 3 workspace density (ADR-0513)
+
+| Alternative | Result | Reason |
+| --- | --- | --- |
+| Keep one narrow access card | Rejected | Creates a sparse stage and does not express the release/service context clearly. |
+| Import the full Metronic CSS bundle | Rejected | Adds a second styling authority and can weaken the repository's semantic color and accessibility contracts. |
+| Decorative dashboard art | Rejected | Adds noise without improving operational comprehension. |
+| **Repository-owned four-card Demo 3 status deck** | **Selected** | Restores the reference layout rhythm with truthful runtime-owned status values. |
+
+Chosen: retain the licensed Demo 3 shell geometry and express access,
+deployment, network, and API state as a compact responsive card grid before the
+protected workspace explanation.
+
+### Metronic Demo 3 operational callout (ADR-0514)
+
+| Alternative | Result | Reason |
+| --- | --- | --- |
+| Preserve the oversized authentication stage | Rejected | It consumes the visual hierarchy and repeats the access state. |
+| Add a second sign-in button in the workspace | Rejected | It increases cognitive load and creates competing authentication actions. |
+| Remove the protected-workspace explanation | Rejected | The user still needs a concise reason and next-step model. |
+| **Compact access callout with a process list** | **Selected** | It keeps the security explanation while matching Demo 3's dense operational rhythm. |
+
+Chosen: keep sign-in global, compress protected-workspace guidance into a
+two-column callout, and reflow it to one column on narrow screens.
+
+### Operator-facing responsibility and invitation labels (ADR-0504)
+
+| Criterion | Raw protocol values | Client-defined semantics | **Bounded presentation mapping** |
+| --- | --- | --- | --- |
+| Administrator readability | Poor | Good | **Good** |
+| Contract ownership | Good | Poor | **Good** |
+| Version-skew visibility | Good | Poor | **Good** |
+| Auditability | Good | Partial | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: preserve server-owned role/status codes for all protocol behavior and
+map only their presentation in the administrator directory, with a visible
+fallback for unknown values.
+
+### Production control-plane UI rewrite (ADR-0515)
+
+| Alternative | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| Incrementally patch the existing dense shell | Small diff | Preserves duplicated context, ambiguous hierarchy, and overlapping auth affordances | Rejected |
+| Decode JWT roles/scopes in the browser | Immediate labels without a capability request | Confuses identity claims with tenant/resource/policy authorization | Rejected |
+| Hide unauthorized navigation entries | Less visual noise | Hides governed product capability and makes support/audit harder | Rejected |
+| **Replace the presentation shell while preserving typed domain/auth boundaries** | Clear operator model, bounded scope, and no change to settlement authority | Requires new UI contract and regression coverage | **Selected** |
+
+Chosen: rewrite the React shell and auth route from scratch, retain the
+repository-owned auth/authorization contracts and workflow panels, and render
+server-owned RBAC/ABAC/PBAC decisions as explicit access states.
+
+### Reference-aligned dashboard composition (ADR-0515)
+
+| Alternative | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| Copy the reference's business metrics and chart values | Highest visual similarity | Fabricates product data and creates misleading operational state | Rejected |
+| Keep only status cards and the protected-workspace gate | Lowest implementation risk | Does not match the supplied dashboard composition or provide a useful overview | Rejected |
+| **Use the reference geometry with server-derived policy metrics and explicit empty states** | Preserves the rail/card/chart rhythm while remaining truthful and auditable | Requires responsive chart primitives and additional accessibility coverage | **Selected** |
+
+Chosen: reproduce the reference's light rail, rounded card rhythm, chart areas,
+and lower activity surfaces using authorization snapshot counts and service
+posture only. Business analytics remain absent until a versioned API contract
+provides verified evidence.
+
+### Invitation-bound sign-up (ADR-0505)
+
+| Criterion | Generic link and email lookup | Role/tenant URL fields | **Bound invitation reference** |
+| --- | --- | --- | --- |
+| End-to-end invitation traceability | Partial | Good | **Good** |
+| Server authority | Good | Poor | **Good** |
+| Credential exposure | Good | Poor | **Good** |
+| Backward compatibility | **Good** | Partial | **Good** |
+| **Selection** | Rejected | Rejected | **Selected** |
+
+Chosen: carry only the server-issued invitation reference, bind it to the OTP
+challenge after matching email/status/expiry, and keep role/tenant authority on
+the server.
+### Server-owned domain role catalog and explicit provisioning (ADR-0509)
+
+| Alternative | Result | Reason |
+| --- | --- | --- |
+| Map administrator/moderator to every domain scope | Rejected | Collapses identity administration into tax and money-moving authority. |
+| Browser-composed role-to-scope mapping | Rejected | The browser is not an authority boundary and can drift from the API. |
+| Arbitrary tenant policy database | Rejected for this slice | Adds a second mutable policy authority before ownership and approval semantics are settled. |
+| **Versioned role contract with explicit server-side assignment** | **Selected** | Keeps role semantics reviewable, scope derivation deterministic, tenant-scoped, and auditable. |
+
+### Full admin application rewrite (ADR-0516)
+
+| Area | Existing shell/panels | New React admin application | Selection reason |
+| --- | --- | --- | --- |
+| Presentation ownership | Shared legacy CSS and workflow tree | Dedicated admin route/application boundary | Makes the requested discard explicit and prevents legacy selectors from becoming dependencies |
+| Styling | Hand-authored global CSS | Tailwind utility composition with semantic tokens | Responsive composition, local ownership, and auditable design tokens |
+| Routing/server state | Browser pathname plus local fetch state | TanStack Router + TanStack Query | Typed routes, bounded cache lifecycle, retries, stale state, and invalidation |
+| Data tables | Per-panel ad hoc lists | TanStack Table | Consistent sorting, filtering, pagination, and accessible row semantics |
+| Visualization | CSS-only status blocks | Apache ECharts with typed API series | Production chart lifecycle and explicit loading/empty/error states |
+
+Chosen: mount the new admin application from `main.tsx`, keep the Rust/API and
+authorization contracts as integration boundaries, and stop importing the
+legacy React presentation tree into the production entrypoint.
+
+### Admin typography delivery and auth density (ADR-0517)
+
+| Alternative | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| Unbundled Inter fallback with the existing display scale | No asset change | Host-dependent rendering and oversized auth hierarchy | Rejected |
+| Runtime remote web font | Fast to trial | Third-party request, privacy/performance dependency, and fallback variance | Rejected |
+| System UI font only | No font asset | Cross-platform metrics and brand character vary | Rejected |
+| **Bundled Plus Jakarta Sans with responsive auth scale** | Deterministic delivery, modern geometry, and compact mobile hierarchy | Small font asset and explicit typography contract | **Selected** |
+
+Chosen: ship the font with the SPA, retain a resilient system fallback, keep
+controls at 1rem, use a 2rem auth heading until the desktop two-column layout
+is active, and reserve full-height composition for desktop.
+
+### OTP expiry and resend recovery (ADR-0518)
+
+| Alternative | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| Full page reload to retry | Small implementation | Loses context and obscures the active challenge | Rejected |
+| Client-side expiry extension | Appears forgiving | Violates server-owned authentication and replay boundaries | Rejected |
+| **Server-bounded resend with visible expiry** | Recoverable operator experience while preserving rate limits and authority | Adds bounded challenge state and UI contract coverage | **Selected** |
+
+Chosen: render the server expiry and cooldown, request a new server challenge
+after the cooldown, clear the old code, and provide a different-email reset.

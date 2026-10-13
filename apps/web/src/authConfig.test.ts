@@ -31,6 +31,76 @@ describe("browser authentication configuration", () => {
     })).toEqual({ mode: "local-credential", warnings: [] });
   });
 
+  it("accepts the local email OTP issuer only with an explicit loopback service URL", () => {
+    expect(parseBrowserAuthConfig({
+      VITE_DEPLOYMENT_ENVIRONMENT: "local",
+      VITE_LOCAL_UI_MODE: "email-otp",
+      VITE_AUTH_SERVICE_BASE_URL: "http://localhost:18085/",
+    })).toEqual({
+      mode: "email-otp",
+      emailOtp: { baseUrl: "http://localhost:18085" },
+      warnings: [],
+    });
+  });
+
+  it("accepts the bounded Compose auth-service hostname only in local email OTP mode", () => {
+    expect(parseBrowserAuthConfig({
+      VITE_DEPLOYMENT_ENVIRONMENT: "local",
+      VITE_LOCAL_UI_MODE: "email-otp",
+      VITE_AUTH_SERVICE_BASE_URL: "http://auth-service:8085",
+    })).toEqual({
+      mode: "email-otp",
+      emailOtp: { baseUrl: "http://auth-service:8085" },
+      warnings: [],
+    });
+  });
+
+  it("fails closed on email OTP outside local development", () => {
+    const config = parseBrowserAuthConfig({
+      VITE_DEPLOYMENT_ENVIRONMENT: "staging",
+      VITE_LOCAL_UI_MODE: "email-otp",
+      VITE_AUTH_SERVICE_BASE_URL: "https://auth.example.test",
+    });
+
+    expect(config.mode).toBe("unconfigured");
+    expect(config.warnings[0]).toContain("permitted only in a local build");
+  });
+
+  it("accepts production email OTP only when the release explicitly selects it", () => {
+    expect(parseBrowserAuthConfig({
+      VITE_DEPLOYMENT_ENVIRONMENT: "production",
+      VITE_AUTH_METHOD: "email-otp",
+      VITE_AUTH_SERVICE_BASE_URL: "https://auth.example.test/",
+    })).toEqual({
+      mode: "email-otp",
+      emailOtp: { baseUrl: "https://auth.example.test" },
+      warnings: [],
+    });
+  });
+
+  it("rejects an explicit production email OTP method without HTTPS transport", () => {
+    const config = parseBrowserAuthConfig({
+      VITE_DEPLOYMENT_ENVIRONMENT: "production",
+      VITE_AUTH_METHOD: "email-otp",
+      VITE_AUTH_SERVICE_BASE_URL: "http://auth.example.test",
+    });
+
+    expect(config.mode).toBe("unconfigured");
+    expect(config.warnings).toContain("The email OTP service URL must use HTTPS outside local development.");
+  });
+
+  it("does not allow an explicit email OTP release to also provide OIDC settings", () => {
+    const config = parseBrowserAuthConfig({
+      VITE_DEPLOYMENT_ENVIRONMENT: "production",
+      VITE_AUTH_METHOD: "email-otp",
+      VITE_AUTH_SERVICE_BASE_URL: "https://auth.example.test",
+      VITE_OIDC_ISSUER: "https://identity.example.test",
+    });
+
+    expect(config.mode).toBe("unconfigured");
+    expect(config.warnings).toEqual(["Email OTP sign-in cannot be combined with OIDC sign-in configuration."]);
+  });
+
   it("rejects local credential entry outside local development", () => {
     const config = parseBrowserAuthConfig({
       VITE_DEPLOYMENT_ENVIRONMENT: "staging",

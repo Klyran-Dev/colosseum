@@ -82,7 +82,38 @@ and fixtures, API, warm Tax Engine service, worker, NATS, Redis, indexer, route 
 the pinned local validator, and the real NGINX-served SPA. Compose waits for
 declared health checks and fails closed when a required runtime capability is
 unavailable. The one-shot conformance and browser gates remain explicit
-commands (`make solana-conformance` and `make web-browser-check`).
+commands (`make solana-conformance`, `make auth-browser-check`, and
+`make web-browser-check`).
+The default local browser mode is now email OTP: the separate Rust
+`auth-service` persists challenge/user state in PostgreSQL, writes synthetic
+codes to the Docker-only `auth-inbox` volume, and issues the same EdDSA JWT
+claims the API verifies. Request a code at `http://localhost:8088`, then read
+the matching JSON artifact with `docker compose exec auth-service ls
+/var/lib/auth/inbox`; this inbox and self-signup are local-only and do not
+represent production email or identity provisioning.
+For the local administrator workflow, the Compose default fixture email is
+`admin@local.test`; sign up with it, then open `Rules & access` → `Access &
+approvals`. Administrators can invite a normalized email into the current
+tenant with either the `merchant_operator` or bounded `moderator` role. The
+recipient completes the normal Sign up email-OTP flow, and the auth service
+binds the new account, tenant, role, and audit events in one transaction. An
+uninvited local signup continues to create a new tenant. This bootstrap is
+rejected outside `AUTH_ENV=local` and is not a production email-delivery or
+role-provisioning policy.
+The local auth service also derives bounded scope profiles from durable roles:
+standard users receive `tax:quote`, moderators add `audit:read`, and
+administrators add `audit:read identity:role:manage`. The API still evaluates
+the signed token and required role on every request.
+For staging and production, set `AUTH_EMAIL_MODE=provider` and inject the
+Resend API key, verified sender, HTTPS application origin, and provider
+endpoint through the deployment secret/configuration systems. See the
+[transactional email provider runbook](docs/runbooks/transactional-email-provider.md).
+To expose that same repository-owned email-OTP flow in the static SPA, set
+`VITE_AUTH_METHOD=email-otp` and an HTTPS `VITE_AUTH_SERVICE_BASE_URL` at
+image-build time. Releases may instead select `VITE_AUTH_METHOD=oidc` with
+the complete OIDC settings; the browser fails closed when both methods are
+ambiguous or incomplete. The release switch does not replace the auth
+service's provider-mode, provisioning, key-management, or revocation gates.
 If a host port is already in use, provide an explicit alternate port map (for
 example `REDIS_PORT=46380 SOLANA_RPC_PORT=18899 SOLANA_FAUCET_PORT=18900`)
 and keep the printed endpoints as the client configuration for that stack.

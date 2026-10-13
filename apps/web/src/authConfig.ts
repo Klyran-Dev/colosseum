@@ -1,4 +1,4 @@
-export type BrowserAuthMode = "oidc" | "local-credential" | "unconfigured";
+export type BrowserAuthMode = "oidc" | "email-otp" | "local-credential" | "unconfigured";
 
 export interface OidcBrowserConfig {
   issuer: string;
@@ -11,7 +11,15 @@ export interface OidcBrowserConfig {
 export interface BrowserAuthConfig {
   mode: BrowserAuthMode;
   oidc?: OidcBrowserConfig;
+  emailOtp?: { baseUrl: string };
   warnings: readonly string[];
+}
+
+export function parseAuthServiceBaseUrl(raw: Readonly<Record<string, unknown>>): string {
+  const environment = value(raw, "VITE_DEPLOYMENT_ENVIRONMENT");
+  const candidate = value(raw, "VITE_AUTH_SERVICE_BASE_URL");
+  if (!candidate || !isSafeUrl(candidate, environment, false, true)) return "";
+  return candidate.replace(/\/$/u, "");
 }
 
 const MAX_CLIENT_ID_LENGTH = 256;
@@ -24,20 +32,21 @@ const OIDC_KEYS = [
   "VITE_OIDC_SCOPE",
   "VITE_OIDC_AUDIENCE",
 ] as const;
+const LOCAL_AUTH_SERVICE_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "auth-service"]);
 
 function value(raw: Readonly<Record<string, unknown>>, key: string): string {
   const candidate = raw[key];
   return typeof candidate === "string" ? candidate.trim() : "";
 }
 
-function isSafeUrl(candidate: string, environment: string, requireOrigin: boolean): boolean {
+function isSafeUrl(candidate: string, environment: string, requireOrigin: boolean, allowLocalAuthService = false): boolean {
   try {
     const parsed = new URL(candidate);
     if (parsed.username || parsed.password || parsed.hash || (!requireOrigin && parsed.search)) return false;
     if (requireOrigin && !parsed.origin) return false;
     if (environment !== "local" && parsed.protocol !== "https:") return false;
     if (environment === "local" && parsed.protocol !== "https:") {
-      return parsed.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname);
+      return parsed.protocol === "http:" && (allowLocalAuthService ? LOCAL_AUTH_SERVICE_HOSTS : new Set(["localhost", "127.0.0.1", "[::1]"])).has(parsed.hostname);
     }
     return parsed.protocol === "https:" || parsed.protocol === "http:";
   } catch {
@@ -47,8 +56,25 @@ function isSafeUrl(candidate: string, environment: string, requireOrigin: boolea
 
 export function parseBrowserAuthConfig(raw: Readonly<Record<string, unknown>>): BrowserAuthConfig {
   const environment = value(raw, "VITE_DEPLOYMENT_ENVIRONMENT");
-  const localCredentialEntry = value(raw, "VITE_LOCAL_UI_MODE") === "credential" || value(raw, "VITE_LOCAL_CREDENTIAL_ENTRY") === "true";
+  const authMethod = value(raw, "VITE_AUTH_METHOD");
+  const localUiMode = value(raw, "VITE_LOCAL_UI_MODE");
+  const localCredentialEntry = localUiMode === "credential" || value(raw, "VITE_LOCAL_CREDENTIAL_ENTRY") === "true";
+  const explicitEmailOtpEntry = authMethod === "email-otp";
+  const explicitOidcEntry = authMethod === "oidc";
+  const legacyEmailOtpEntry = localUiMode === "email-otp";
+  const emailOtpEntry = explicitEmailOtpEntry || legacyEmailOtpEntry;
   const hasOidcInput = OIDC_KEYS.some((key) => value(raw, key) !== "");
+
+  if (authMethod && authMethod !== "oidc" && authMethod !== "email-otp") {
+    return { mode: "unconfigured", warnings: ["VITE_AUTH_METHOD must be oidc or email-otp."] };
+  }
+
+  if (explicitEmailOtpEntry && localCredentialEntry) {
+    return { mode: "unconfigured", warnings: ["Email OTP sign-in cannot be combined with local credential entry."] };
+  }
+  if (explicitOidcEntry && (localCredentialEntry || legacyEmailOtpEntry)) {
+    return { mode: "unconfigured", warnings: ["OIDC sign-in cannot be combined with local credential or email OTP entry."] };
+  }
 
   if (localCredentialEntry) {
     if (environment !== "local") {
@@ -58,6 +84,29 @@ export function parseBrowserAuthConfig(raw: Readonly<Record<string, unknown>>): 
       return { mode: "unconfigured", warnings: ["Local credential entry cannot be combined with OIDC sign-in configuration."] };
     }
     return { mode: "local-credential", warnings: [] };
+  }
+
+  if (emailOtpEntry) {
+    const baseUrl = value(raw, "VITE_AUTH_SERVICE_BASE_URL");
+    if (!explicitEmailOtpEntry && environment !== "local") {
+      return { mode: "unconfigured", warnings: ["Email OTP self-sign-in is permitted only in a local build until a delivery provider and provisioning policy are approved."] };
+    }
+    if (hasOidcInput) {
+      return { mode: "unconfigured", warnings: ["Email OTP sign-in cannot be combined with OIDC sign-in configuration."] };
+    }
+    if (!baseUrl || !isSafeUrl(baseUrl, environment, false, environment === "local")) {
+      return {
+        mode: "unconfigured",
+        warnings: [environment === "local"
+          ? "The local authentication service URL must use loopback HTTP or the bounded Compose auth-service hostname, without query or fragment data."
+          : "The email OTP service URL must use HTTPS outside local development."],
+      };
+    }
+    return { mode: "email-otp", emailOtp: { baseUrl: baseUrl.replace(/\/$/u, "") }, warnings: [] };
+  }
+
+  if (explicitOidcEntry && !hasOidcInput) {
+    return { mode: "unconfigured", warnings: ["The selected OIDC authentication method is missing its provider configuration."] };
   }
 
   if (!hasOidcInput) {
@@ -100,4 +149,10 @@ export const BROWSER_AUTH_CONFIG = parseBrowserAuthConfig({
   VITE_OIDC_AUDIENCE: import.meta.env.VITE_OIDC_AUDIENCE,
   VITE_LOCAL_UI_MODE: import.meta.env.VITE_LOCAL_UI_MODE ?? (import.meta.env.MODE === "test" ? "credential" : "disabled"),
   VITE_LOCAL_CREDENTIAL_ENTRY: import.meta.env.VITE_LOCAL_CREDENTIAL_ENTRY,
+  VITE_AUTH_SERVICE_BASE_URL: import.meta.env.VITE_AUTH_SERVICE_BASE_URL,
+});
+
+export const BROWSER_AUTH_SERVICE_BASE_URL = parseAuthServiceBaseUrl({
+  VITE_DEPLOYMENT_ENVIRONMENT: import.meta.env.VITE_DEPLOYMENT_ENVIRONMENT ?? (import.meta.env.MODE === "test" ? "local" : undefined),
+  VITE_AUTH_SERVICE_BASE_URL: import.meta.env.VITE_AUTH_SERVICE_BASE_URL,
 });

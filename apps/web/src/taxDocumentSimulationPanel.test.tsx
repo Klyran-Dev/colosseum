@@ -7,6 +7,15 @@ import TaxDocumentSimulationPanel from "./TaxDocumentSimulationPanel";
 afterEach(cleanup);
 
 describe("document simulation workspace", () => {
+  function openSimulation() {
+    const summary = screen.getByText(/Line and invoice tax simulation|Steuersimulation für Zeilen und Rechnung/, { selector: "summary" });
+    const details = summary.closest("details");
+    expect(details).toBeTruthy();
+    expect(details?.hasAttribute("open")).toBe(false);
+    fireEvent.click(summary);
+    expect(details?.hasAttribute("open")).toBe(true);
+  }
+
   it("localizes the form and fail-closed service state without changing jurisdiction data", () => {
     render(
       <TaxDocumentSimulationPanel
@@ -19,6 +28,7 @@ describe("document simulation workspace", () => {
     );
 
     expect(screen.getByText("Steuersimulation für Zeilen und Rechnung")).toBeTruthy();
+    openSimulation();
     expect(screen.getByLabelText("Dokument-ID")).toBeTruthy();
     expect(screen.getByLabelText("Betrag vor Steuer")).toBeTruthy();
     expect(screen.getByText("Die Jurisdiktion folgt der geladenen Regel: US-CA.")).toBeTruthy();
@@ -36,7 +46,28 @@ describe("document simulation workspace", () => {
       />,
     );
 
+    openSimulation();
     expect((screen.getByRole("textbox", { name: /Asset precision/ }) as HTMLInputElement).value).toBe("");
+  });
+
+  it("keeps simulation lines progressively disclosed while opening a newly added line", () => {
+    render(<TaxDocumentSimulationPanel apiBase="/api" serviceOnline ruleSet={{ id: "rule-1" }} jurisdiction="US-CA" />);
+
+    openSimulation();
+    const firstSummary = screen.getByText("Line 1", { exact: true, selector: ".document-line-summary-title" }).closest("summary");
+    expect(firstSummary).toBeTruthy();
+    if (!firstSummary) throw new Error("Line 1 disclosure summary was not rendered");
+    expect(firstSummary.closest("details")?.hasAttribute("open")).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add line" }));
+    const secondSummary = screen.getByText("Line 2", { exact: true, selector: ".document-line-summary-title" }).closest("summary");
+    expect(secondSummary).toBeTruthy();
+    if (!secondSummary) throw new Error("Line 2 disclosure summary was not rendered");
+    expect(secondSummary.closest("details")?.hasAttribute("open")).toBe(true);
+
+    fireEvent.click(firstSummary);
+    expect(firstSummary.closest("details")?.hasAttribute("open")).toBe(false);
+    expect(secondSummary.closest("details")?.hasAttribute("open")).toBe(true);
   });
 
   it("redacts provider and transport exceptions from the document simulation surface", async () => {
@@ -51,6 +82,7 @@ describe("document simulation workspace", () => {
       />,
     );
 
+    openSimulation();
     fireEvent.change(screen.getByLabelText("Document ID"), { target: { value: "invoice-1" } });
     fireEvent.change(screen.getByLabelText("Currency"), { target: { value: "USD" } });
     fireEvent.change(screen.getByRole("textbox", { name: /Asset precision/ }), { target: { value: "2" } });
@@ -100,15 +132,22 @@ describe("document simulation workspace", () => {
       <TaxDocumentSimulationPanel apiBase="/api" serviceOnline ruleSet={{ id: "rule-1" }} jurisdiction="US-CA" />,
     );
 
+    openSimulation();
     fireEvent.change(screen.getByLabelText("Document ID"), { target: { value: "invoice-1" } });
     fireEvent.change(screen.getByLabelText("Currency"), { target: { value: "USD" } });
     fireEvent.change(screen.getByRole("textbox", { name: /Asset precision/ }), { target: { value: "2" } });
     fireEvent.change(screen.getByLabelText("Line ID"), { target: { value: "line-a" } });
     fireEvent.change(screen.getByLabelText("Amount before tax"), { target: { value: "1000" } });
     fireEvent.change(screen.getByLabelText("Amount after tax"), { target: { value: "1000" } });
-    fireEvent.click(screen.getByRole("button", { name: "Simulate document tax" }));
+    const summary = screen.getByText("Line and invoice tax simulation", { exact: true, selector: "summary" });
+    const details = summary.closest("details");
+    expect(details?.hasAttribute("open")).toBe(true);
+    fireEvent.click(summary);
+    expect(details?.hasAttribute("open")).toBe(false);
+    fireEvent.submit(screen.getByRole("button", { name: "Simulate document tax" }).closest("form")!);
 
     await waitFor(() => expect(container.querySelectorAll(".document-result-line")).toHaveLength(2));
+    expect(details?.hasAttribute("open")).toBe(true);
     expect(container.querySelector(".document-result .total-card")).toBeTruthy();
     expect(container.querySelector(".document-result")?.textContent).toMatch(/line-b/);
   });

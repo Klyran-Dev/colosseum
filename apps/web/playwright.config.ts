@@ -1,9 +1,12 @@
 import { defineConfig } from "@playwright/test";
 
 const baseURL = process.env.WEB_E2E_BASE_URL ?? "http://127.0.0.1:8088";
+const authBrowserSpec = process.env.WEB_E2E_SPEC;
 
 export default defineConfig({
   testDir: "./e2e",
+  testMatch: authBrowserSpec ?? "**/*.spec.ts",
+  testIgnore: authBrowserSpec ? undefined : "**/auth-journey.spec.ts",
   timeout: 30_000,
   expect: { timeout: 5_000 },
   fullyParallel: false,

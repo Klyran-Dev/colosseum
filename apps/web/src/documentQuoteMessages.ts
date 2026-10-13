@@ -47,6 +47,7 @@ export interface DocumentQuoteMessages {
     };
     calculating: string;
     submit: string;
+    retry: string;
     offline: string;
   };
   result: {
@@ -206,6 +207,7 @@ const ENGLISH: DocumentQuoteMessages = {
     },
     calculating: "Calculating invoice tax…",
     submit: "Calculate invoice tax",
+    retry: "Retry calculation",
     offline: "The service is unavailable. No locally invented total is displayed.",
   },
   result: {
@@ -286,6 +288,7 @@ const GERMAN: DocumentQuoteMessages = {
     },
     calculating: "Rechnungssteuer wird berechnet…",
     submit: "Rechnungssteuer berechnen",
+    retry: "Berechnung wiederholen",
     offline: "Der Dienst ist nicht verfügbar. Es wird kein lokal erfundener Gesamtbetrag angezeigt.",
   },
   result: {
@@ -366,6 +369,7 @@ const ARABIC: DocumentQuoteMessages = {
     },
     calculating: "جارٍ حساب ضريبة الفاتورة…",
     submit: "حساب ضريبة الفاتورة",
+    retry: "إعادة محاولة الحساب",
     offline: "الخدمة غير متاحة. لا يتم عرض إجمالي مُخترع محلياً.",
   },
   result: {
@@ -446,6 +450,7 @@ const JAPANESE: DocumentQuoteMessages = {
     },
     calculating: "請求書の税額を計算中…",
     submit: "請求書の税額を計算",
+    retry: "計算を再試行",
     offline: "サービスを利用できません。ブラウザーで作成した合計は表示しません。",
   },
   result: {

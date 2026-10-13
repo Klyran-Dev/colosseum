@@ -12,6 +12,7 @@ import {
 import WalletPicker from "./WalletPicker";
 import { refundCancellationMessagesFor, type RefundCancellationMessages } from "./refundCancellationMessages";
 import { operatorErrorMessage } from "./operatorError";
+import { shellMessagesFor } from "./shellMessages";
 
 type RefundCancellationPanelProps = {
   apiBase: string;
@@ -25,11 +26,13 @@ function digestPreview(bytes: number[]): string {
 }
 
 function statusLabel(status: string, messages: RefundCancellationMessages): string {
-  return messages.status.labels[status] ?? status.replaceAll("_", " ");
+  return messages.status.labels[status] ?? messages.status.labels.unknown;
 }
 
 export default function RefundCancellationPanel({ apiBase, serviceOnline, accessToken, locale }: RefundCancellationPanelProps) {
   const messages = refundCancellationMessagesFor(locale);
+  const shellMessages = shellMessagesFor(locale);
+  const workflowLocked = !serviceOnline || !accessToken.trim();
   const [claimIntentId, setClaimIntentId] = useState("");
   const [lookupId, setLookupId] = useState("");
   const [idempotencyKey, setIdempotencyKey] = useState(() => createClientUuid());
@@ -179,6 +182,9 @@ export default function RefundCancellationPanel({ apiBase, serviceOnline, access
       <article className="panel">
         <div className="panel-heading"><div><p className="eyebrow">{messages.proposal.eyebrow}</p><h2>{messages.proposal.title}</h2></div><span className="status-pill">{messages.proposal.badge}</span></div>
         <p className="panel-copy">{messages.proposal.description}</p>
+        {!accessToken.trim() && <div className="workflow-lock" role="note"><strong>{shellMessages.session.signInToContinue}</strong><p>{shellMessages.session.signInToContinueCopy}</p></div>}
+        <fieldset className="workflow-fieldset" disabled={workflowLocked || busy}>
+        <legend className="sr-only">{messages.proposal.title}</legend>
         <form className="form-grid" onSubmit={prepare}>
           <label className="full-field"><span>{messages.proposal.finalizedRequest}</span><input value={claimIntentId} onChange={(event) => setClaimIntentId(event.target.value)} placeholder={messages.proposal.finalizedPlaceholder} required /></label>
           <label className="full-field"><span>{messages.proposal.requestReference}</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} aria-describedby="cancellation-reference-help" required /><small id="cancellation-reference-help">{messages.proposal.requestHelp}</small></label>
@@ -188,6 +194,7 @@ export default function RefundCancellationPanel({ apiBase, serviceOnline, access
           <label className="full-field"><span>{messages.proposal.cancellationReference}</span><input value={lookupId} onChange={(event) => setLookupId(event.target.value)} placeholder={messages.proposal.cancellationPlaceholder} /></label>
           <button type="submit" disabled={busy || !serviceOnline || !accessToken.trim()}>{messages.proposal.load}</button>
         </form>
+        </fieldset>
         {!serviceOnline && <p className="inline-warning" role="alert">{messages.proposal.serviceUnavailable}</p>}
         {error && <p className="inline-error" role="alert">{error}</p>}
         {notice && <p className="inline-success" role="status">{notice}</p>}
@@ -195,7 +202,7 @@ export default function RefundCancellationPanel({ apiBase, serviceOnline, access
 
       <article className="panel" aria-live="polite" aria-label={messages.review.ariaLabel}>
         <div className="panel-heading"><div><p className="eyebrow">{messages.review.eyebrow}</p><h2>{messages.review.title}</h2></div>{cancellation && <span className="status-pill">{statusLabel(cancellation.status, messages)}</span>}</div>
-        <WalletPicker locale={locale} disabled={busy} connectEnabled={Boolean(cancellation && (cancellation.status === "prepared_unsubmitted" || cancellation.status === "signed"))} connectedAddress={walletAddress?.toBase58()} onConnected={setWalletAddress} />
+        <WalletPicker locale={locale} disabled={busy || workflowLocked} connectEnabled={Boolean(cancellation && (cancellation.status === "prepared_unsubmitted" || cancellation.status === "signed"))} connectedAddress={walletAddress?.toBase58()} onConnected={setWalletAddress} />
         {!cancellation ? <div className="empty-state"><span className="empty-icon">⊘</span><strong>{messages.review.noCancellation}</strong><p>{messages.review.noCancellationCopy}</p></div> : <>
           <dl className="summary-list">
             <div><dt>{messages.review.onChainRecord}</dt><dd><code>{cancellation.claim}</code></dd></div>
@@ -229,7 +236,7 @@ export default function RefundCancellationPanel({ apiBase, serviceOnline, access
           </div>}
           {(cancellation.status === "prepared_unsubmitted" || cancellation.status === "signed") && <div className="evidence-actions">
             <p className="evidence-note">{messages.wallet.signNote}</p>
-            <div className="button-row"><button type="button" onClick={sign} disabled={busy}>{busy ? messages.wallet.sending : messages.wallet.sign}</button><button type="button" onClick={submit} disabled={busy || (!signedBytes && !recoveryBytes.trim())}>{messages.wallet.send}</button></div>
+            <div className="button-row"><button type="button" onClick={sign} disabled={busy || workflowLocked}>{busy ? messages.wallet.sending : messages.wallet.sign}</button><button type="button" onClick={submit} disabled={busy || workflowLocked || (!signedBytes && !recoveryBytes.trim())}>{messages.wallet.send}</button></div>
             <label className="full-field"><span>{messages.wallet.recovery}</span><textarea value={recoveryBytes} onChange={(event) => setRecoveryBytes(event.target.value)} aria-describedby="cancellation-recovery-help" placeholder={messages.wallet.recoveryPlaceholder} rows={3} autoComplete="off" spellCheck={false} /><small id="cancellation-recovery-help">{messages.wallet.recoveryHelp}</small></label>
           </div>}
           {(cancellation.status === "unknown" || cancellation.status === "submitted" || cancellation.status === "processed" || cancellation.status === "confirmed") && <div className="evidence-actions"><p className="inline-warning" role="alert">{messages.evidence.providerNotProof}</p><button type="button" onClick={reconcile} disabled={busy || !serviceOnline || !accessToken.trim()}>{messages.evidence.reconcile}</button></div>}

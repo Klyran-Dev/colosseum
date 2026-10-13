@@ -15,6 +15,7 @@ const CLOCK_SKEW_SECONDS: i64 = 30;
 const MAX_SCOPES: usize = 32;
 const MAX_ROLES: usize = 32;
 const MAX_CLAIM_VALUE_BYTES: usize = 128;
+const MAX_EMAIL_BYTES: usize = 320;
 
 #[derive(Clone, Debug)]
 pub struct JwtAuthenticator {
@@ -27,6 +28,7 @@ pub struct JwtAuthenticator {
 pub struct AuthenticatedPrincipal {
     pub subject: String,
     pub merchant_id: Uuid,
+    pub email: Option<String>,
     pub expires_at_unix: i64,
     pub scopes: Vec<String>,
     pub roles: Vec<String>,
@@ -155,6 +157,7 @@ struct JwtClaims {
     iat: i64,
     nbf: Option<i64>,
     merchant_id: String,
+    email: Option<String>,
     scope: Option<String>,
     roles: Option<Vec<String>>,
 }
@@ -353,9 +356,11 @@ impl JwtAuthenticator {
             Uuid::parse_str(&claims.merchant_id).map_err(|_| AuthError::InvalidToken)?;
         let scopes = parse_scopes(claims.scope.as_deref())?;
         let roles = parse_roles(claims.roles.as_deref())?;
+        let email = parse_email(claims.email.as_deref())?;
         Ok(AuthenticatedPrincipal {
             subject: claims.sub,
             merchant_id,
+            email,
             expires_at_unix: claims.exp,
             scopes,
             roles,
@@ -376,6 +381,37 @@ fn parse_scopes(scope: Option<&str>) -> Result<Vec<String>, AuthError> {
         return Err(AuthError::InvalidToken);
     }
     Ok(values.into_iter().map(str::to_owned).collect())
+}
+
+fn parse_email(email: Option<&str>) -> Result<Option<String>, AuthError> {
+    let Some(email) = email else {
+        return Ok(None);
+    };
+    if email.is_empty()
+        || email.len() > MAX_EMAIL_BYTES
+        || !email.is_ascii()
+        || email != email.to_ascii_lowercase()
+        || email
+            .bytes()
+            .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control())
+    {
+        return Err(AuthError::InvalidToken);
+    }
+    let Some((local, domain)) = email.split_once('@') else {
+        return Err(AuthError::InvalidToken);
+    };
+    if local.is_empty()
+        || local.len() > 64
+        || domain.is_empty()
+        || domain.len() > 255
+        || domain.starts_with('.')
+        || domain.ends_with('.')
+        || !domain.contains('.')
+        || domain.contains("..")
+    {
+        return Err(AuthError::InvalidToken);
+    }
+    Ok(Some(email.to_string()))
 }
 
 fn parse_roles(roles: Option<&[String]>) -> Result<Vec<String>, AuthError> {
@@ -434,6 +470,23 @@ pub(crate) fn test_token_with_scope_and_roles(
     subject: &str,
     roles: &[&str],
 ) -> (String, Uuid) {
+    test_token_with_scope_and_roles_and_email(
+        now_unix,
+        scope,
+        subject,
+        roles,
+        "test-user@example.com",
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn test_token_with_scope_and_roles_and_email(
+    now_unix: i64,
+    scope: &str,
+    subject: &str,
+    roles: &[&str],
+    email: &str,
+) -> (String, Uuid) {
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&[7; 32]);
     let merchant_id = Uuid::from_u128(0x1234567890abcdef1234567890abcdef);
     let header = URL_SAFE_NO_PAD.encode(
@@ -452,7 +505,8 @@ pub(crate) fn test_token_with_scope_and_roles(
             "nbf": now_unix - 100,
             "merchant_id": merchant_id.to_string(),
             "scope": scope,
-            "roles": roles
+            "roles": roles,
+            "email": email
         }))
         .expect("test claims"),
     );
@@ -486,6 +540,36 @@ mod tests {
             )
             .unwrap();
         assert_eq!(principal.merchant_id, merchant_id);
+        assert_eq!(principal.email.as_deref(), Some("test-user@example.com"));
+    }
+
+    #[test]
+    fn rejects_malformed_verified_email_claims_but_allows_legacy_missing_claims() {
+        let authenticator = test_authenticator();
+        let (malformed, _) = test_token_with_scope_and_roles_and_email(
+            1_800_000_000,
+            "tax:quote",
+            "malformed-email",
+            &[],
+            "Alice@example.com",
+        );
+        assert!(matches!(
+            authenticator.authenticate(
+                Some(&HeaderValue::from_str(&format!("Bearer {malformed}")).unwrap()),
+                1_800_000_100,
+            ),
+            Err(AuthError::InvalidToken)
+        ));
+
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&[7; 32]);
+        let legacy = token_for_key("test-key", &signing_key, 1_800_000_000);
+        let principal = authenticator
+            .authenticate(
+                Some(&HeaderValue::from_str(&format!("Bearer {legacy}")).unwrap()),
+                1_800_000_100,
+            )
+            .unwrap();
+        assert_eq!(principal.email, None);
     }
 
     #[test]

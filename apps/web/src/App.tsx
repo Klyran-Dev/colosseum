@@ -10,10 +10,13 @@ import WorkspaceErrorBoundary from "./WorkspaceErrorBoundary";
 import { createClientUuid } from "./clientIdentity";
 import ProductShell, { ProductWorkspace } from "./ProductShell";
 import { isAuthenticationCallback, pathForWorkspace, workspaceFromPath } from "./navigation";
+import AuthPage from "./AuthPage";
+import { AUTH_RETURN_PATH_STORAGE_KEY, AuthIntent, authIntentFromPath, authPathForIntent, consumeAuthReturnPath, invitationIdFromSearch, isAuthPath, safeAuthNextPath, storeAuthReturnPath } from "./authFlow";
 import AccessControlPanel from "./AccessControlPanel";
+import RoleManagementPanel from "./RoleManagementPanel";
 import { AuthorizationCapabilitiesError, authorizationSnapshotForToken, authorizationSnapshotRefreshDelayMs, AuthorizationSnapshot, parseAuthorizationCapabilities } from "./authorization";
 import { BROWSER_RUNTIME_CONTEXT } from "./runtimeContext";
-import { BROWSER_AUTH_CONFIG } from "./authConfig";
+import { BROWSER_AUTH_CONFIG, BROWSER_AUTH_SERVICE_BASE_URL } from "./authConfig";
 import { AuthSessionStatus } from "./AuthSessionControl";
 import { beginOidcAuthorization, completeOidcCallback, PKCE_TRANSACTION_STORAGE_KEY } from "./oidcSession";
 import { loadDisplayPreferences, saveDisplayPreferences, syncBrowserThemeColor } from "./displayPreferences";
@@ -50,6 +53,24 @@ type ServiceState = "checking" | "online" | "offline";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
+function stringField(payload: unknown, key: string): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const value = (payload as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function integerField(payload: unknown, key: string): number | null {
+  if (!payload || typeof payload !== "object") return null;
+  const value = (payload as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+function nonNegativeIntegerField(payload: unknown, key: string): number | null {
+  if (!payload || typeof payload !== "object") return null;
+  const value = (payload as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
 function shortDigest(value: number[]): string {
   return value.map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 16) + "…";
 }
@@ -57,6 +78,10 @@ function shortDigest(value: number[]): string {
 export default function App() {
   const [serviceState, setServiceState] = useState<ServiceState>("checking");
   const [workspace, setWorkspace] = useState<Workspace>(() => workspaceFromPath(window.location.pathname));
+  const [authIntent, setAuthIntent] = useState<AuthIntent>(() => authIntentFromPath(window.location.pathname));
+  const [authNextPath, setAuthNextPath] = useState(() => safeAuthNextPath(new URLSearchParams(window.location.search).get("next")));
+  const [authInvitationId, setAuthInvitationId] = useState<string | null>(() => invitationIdFromSearch(window.location.search));
+  const [authInvitationRole, setAuthInvitationRole] = useState<string | null>(null);
   const workspaceContentRef = useRef<HTMLDivElement>(null);
   const initialWorkspaceRender = useRef(true);
   const [gross, setGross] = useState("");
@@ -73,6 +98,11 @@ export default function App() {
   const [authSessionStatus, setAuthSessionStatus] = useState<AuthSessionStatus>(() => BROWSER_AUTH_CONFIG.mode === "unconfigured" ? "error" : "signed-out");
   const [authSessionError, setAuthSessionError] = useState<string | null>(null);
   const [authSessionExpiresAt, setAuthSessionExpiresAt] = useState<number | null>(null);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authOtpCode, setAuthOtpCode] = useState("");
+  const [authOtpChallengeId, setAuthOtpChallengeId] = useState<string | null>(null);
+  const [authOtpResendAtUnix, setAuthOtpResendAtUnix] = useState<number | null>(null);
+  const authRequestInFlight = useRef(false);
   const [authorizationSnapshot, setAuthorizationSnapshot] = useState<AuthorizationSnapshot>(() => authorizationSnapshotForToken(""));
   const [authorizationRefreshNonce, setAuthorizationRefreshNonce] = useState(0);
   const [authorizationErrorKey, setAuthorizationErrorKey] = useState<"unavailable" | "expired" | "missingExpiry" | null>(null);
@@ -96,10 +126,22 @@ export default function App() {
   useEffect(() => {
     const initialWorkspace = workspaceFromPath(window.location.pathname);
     const canonicalPath = pathForWorkspace(initialWorkspace);
-    if (!isAuthenticationCallback(window.location.search) && window.location.pathname !== canonicalPath) {
+    if (isAuthPath(window.location.pathname)) {
+      setAuthIntent(authIntentFromPath(window.location.pathname));
+      setAuthNextPath(safeAuthNextPath(new URLSearchParams(window.location.search).get("next")));
+      setAuthInvitationId(invitationIdFromSearch(window.location.search));
+    } else if (!isAuthenticationCallback(window.location.search) && window.location.pathname !== canonicalPath) {
       window.history.replaceState({ workspace: initialWorkspace }, "", canonicalPath);
     }
-    const onPopState = () => setWorkspace(workspaceFromPath(window.location.pathname));
+    const onPopState = () => {
+      if (isAuthPath(window.location.pathname)) {
+        setAuthIntent(authIntentFromPath(window.location.pathname));
+        setAuthNextPath(safeAuthNextPath(new URLSearchParams(window.location.search).get("next")));
+        setAuthInvitationId(invitationIdFromSearch(window.location.search));
+      } else {
+        setWorkspace(workspaceFromPath(window.location.pathname));
+      }
+    };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
@@ -111,6 +153,114 @@ export default function App() {
     setAuthSessionStatus(value.trim() ? "signed-in" : "signed-out");
   }
 
+  async function requestEmailOtp() {
+    const baseUrl = BROWSER_AUTH_CONFIG.emailOtp?.baseUrl;
+    if (BROWSER_AUTH_CONFIG.mode !== "email-otp" || !baseUrl) {
+      setAuthSessionStatus("error");
+      setAuthSessionError("Email sign-in is not configured for this deployment.");
+      return;
+    }
+    if (authRequestInFlight.current) return;
+    authRequestInFlight.current = true;
+    setAuthSessionStatus("signing-in");
+    setAuthSessionError(null);
+    try {
+      const response = await fetchWithTimeout(`${baseUrl}/v1/auth/email/request`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({
+          email: authEmail,
+          intent: authIntent,
+          ...(authIntent === "signup" && authInvitationId ? { invitation_id: authInvitationId } : {}),
+        }),
+      });
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok) throw operatorResponseError(response, payload, "The sign-in code could not be sent.");
+      const challengeId = stringField(payload, "challenge_id");
+      if (!challengeId) throw new Error("The authentication service returned an invalid challenge.");
+      setAuthInvitationRole(authIntent === "signup" ? stringField(payload, "invitation_role") : null);
+      setAuthOtpChallengeId(challengeId);
+      setAuthOtpCode("");
+      const retryAfterSeconds = nonNegativeIntegerField(payload, "retry_after_seconds") ?? 0;
+      setAuthOtpResendAtUnix(Math.floor(Date.now() / 1000) + retryAfterSeconds);
+      setAuthSessionStatus("signed-out");
+    } catch (cause) {
+      setAuthSessionStatus("error");
+      setAuthSessionError(operatorErrorMessage(cause, "The sign-in code could not be sent."));
+    } finally {
+      authRequestInFlight.current = false;
+    }
+  }
+
+  async function verifyEmailOtp() {
+    const baseUrl = BROWSER_AUTH_CONFIG.emailOtp?.baseUrl;
+    if (BROWSER_AUTH_CONFIG.mode !== "email-otp" || !baseUrl || !authOtpChallengeId) {
+      setAuthSessionStatus("error");
+      setAuthSessionError("The email sign-in challenge is missing. Request a new code.");
+      return;
+    }
+    if (authRequestInFlight.current) return;
+    authRequestInFlight.current = true;
+    setAuthSessionStatus("signing-in");
+    setAuthSessionError(null);
+    try {
+      const response = await fetchWithTimeout(`${baseUrl}/v1/auth/email/verify`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ challenge_id: authOtpChallengeId, email: authEmail, code: authOtpCode }),
+      });
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok) throw operatorResponseError(response, payload, "The sign-in code could not be verified.");
+      const accessToken = stringField(payload, "access_token");
+      const expiresIn = integerField(payload, "expires_in");
+      if (!accessToken || !expiresIn) throw new Error("The authentication service returned an invalid token response.");
+      setAccessToken(accessToken);
+      setAuthSessionExpiresAt(Math.floor(Date.now() / 1000) + expiresIn);
+      setAuthSessionStatus("signed-in");
+      setAuthOtpChallengeId(null);
+      setAuthOtpCode("");
+      setAuthOtpResendAtUnix(null);
+      returnToApplication();
+    } catch (cause) {
+      setAuthSessionStatus("error");
+      setAuthSessionError(operatorErrorMessage(cause, "The sign-in code could not be verified."));
+    } finally {
+      authRequestInFlight.current = false;
+    }
+  }
+
+  function resetEmailOtp() {
+    setAuthOtpChallengeId(null);
+    setAuthOtpCode("");
+    setAuthOtpResendAtUnix(null);
+    setAuthSessionStatus("signed-out");
+    setAuthSessionError(null);
+    setAuthInvitationRole(null);
+  }
+
+  function returnToApplication(returnPath = authNextPath) {
+    const nextPath = safeAuthNextPath(returnPath);
+    const nextWorkspace = workspaceFromPath(new URL(nextPath, window.location.origin).pathname);
+    window.history.replaceState({ workspace: nextWorkspace }, "", nextPath);
+    setWorkspace(nextWorkspace);
+  }
+
+  function openAuthPage(intent: AuthIntent) {
+    const nextPath = isAuthPath(window.location.pathname) ? authNextPath : window.location.pathname;
+    const invitationId = intent === "signup" ? authInvitationId : null;
+    const path = authPathForIntent(intent, nextPath, invitationId);
+    window.history.pushState({ auth: intent }, "", path);
+    setAuthIntent(intent);
+    setAuthNextPath(nextPath);
+    setAuthInvitationId(invitationId);
+    setAuthInvitationRole(null);
+    setAuthOtpChallengeId(null);
+    setAuthOtpCode("");
+    setAuthOtpResendAtUnix(null);
+    setAuthSessionError(null);
+    setAuthSessionStatus("signed-out");
+  }
+
   async function signIn() {
     if (BROWSER_AUTH_CONFIG.mode !== "oidc" || !BROWSER_AUTH_CONFIG.oidc) {
       setAuthSessionStatus("error");
@@ -120,6 +270,7 @@ export default function App() {
     setAuthSessionStatus("signing-in");
     setAuthSessionError(null);
     try {
+      storeAuthReturnPath(window.sessionStorage, authNextPath);
       const authorizationUrl = await beginOidcAuthorization(BROWSER_AUTH_CONFIG.oidc, window.sessionStorage);
       window.location.assign(authorizationUrl);
     } catch (cause) {
@@ -133,9 +284,13 @@ export default function App() {
     setAuthSessionExpiresAt(null);
     setAuthSessionError(null);
     setAuthSessionStatus("signed-out");
+    setAuthOtpChallengeId(null);
+    setAuthOtpCode("");
+    setAuthOtpResendAtUnix(null);
     setAuthorizationSnapshot(authorizationSnapshotForToken(""));
     try {
       window.sessionStorage.removeItem(PKCE_TRANSACTION_STORAGE_KEY);
+      window.sessionStorage.removeItem(AUTH_RETURN_PATH_STORAGE_KEY);
     } catch {
       // A failed cleanup cannot preserve an access token: it is memory-only.
     }
@@ -179,7 +334,7 @@ export default function App() {
           setAccessToken(token.accessToken);
           setAuthSessionExpiresAt(token.expiresAtUnix);
           setAuthSessionStatus("signed-in");
-          window.history.replaceState(null, document.title, `${callbackUrl.pathname}${callbackUrl.hash}`);
+          returnToApplication(consumeAuthReturnPath(window.sessionStorage));
         })
         .catch((cause: unknown) => {
           if (!active) return;
@@ -187,6 +342,7 @@ export default function App() {
           setAuthSessionExpiresAt(null);
           setAuthSessionStatus("error");
           setAuthSessionError(operatorErrorMessage(cause, "Sign-in could not be completed."));
+          try { window.sessionStorage.removeItem("solana-tax.auth.return-path.v1"); } catch { /* fail closed */ }
         });
     } catch (cause) {
       setAccessToken("");
@@ -205,6 +361,7 @@ export default function App() {
       setAuthSessionExpiresAt(null);
       setAuthSessionStatus("error");
       setAuthSessionError("Your sign-in expired. Sign in again before continuing.");
+      setAuthOtpResendAtUnix(null);
     }, delay);
     return () => globalThis.clearTimeout(timer);
   }, [authSessionExpiresAt]);
@@ -418,6 +575,31 @@ export default function App() {
   const quoteMessages = quoteMessagesFor(locale);
   const assetScaleMessages = assetScaleMessagesFor(locale);
   const modeMessages = workspace === "quote" ? quoteMessages.quoteMode : quoteMessages.previewMode;
+  const resultModeMessages = modeMessages.result;
+  const quoteWorkflowLocked = serviceState !== "online" || (workspace === "quote" && !accessToken.trim());
+
+  if (isAuthPath(window.location.pathname)) {
+    return <AuthPage
+      intent={authIntent}
+      config={BROWSER_AUTH_CONFIG}
+      status={authSessionStatus}
+      error={authSessionError}
+      email={authEmail}
+      otpCode={authOtpCode}
+      otpChallengeId={authOtpChallengeId}
+      resendAvailableAtUnix={authOtpResendAtUnix}
+      nextPath={authNextPath}
+      onEmailChange={setAuthEmail}
+      onOtpChange={setAuthOtpCode}
+      onRequestOtp={requestEmailOtp}
+      onVerifyOtp={verifyEmailOtp}
+      onResetOtp={resetEmailOtp}
+      invitationId={authInvitationId}
+      invitationRole={authInvitationRole}
+      onSignIn={signIn}
+      onNavigate={openAuthPage}
+    />;
+  }
 
   return (
     <ProductShell
@@ -435,7 +617,16 @@ export default function App() {
       authSessionStatus={authSessionStatus}
       authSessionError={authSessionError}
       onCredentialChange={setBrowserCredential}
+      authEmail={authEmail}
+      authOtpCode={authOtpCode}
+      authOtpChallengeId={authOtpChallengeId}
+      onAuthEmailChange={setAuthEmail}
+      onAuthOtpChange={setAuthOtpCode}
+      onRequestAuthOtp={requestEmailOtp}
+      onVerifyAuthOtp={verifyEmailOtp}
+      onResetAuthOtp={resetEmailOtp}
       onSignIn={signIn}
+      onOpenAuthPage={openAuthPage}
       onSignOut={signOut}
       locale={locale}
       timeZone={timeZone}
@@ -443,10 +634,10 @@ export default function App() {
       onTimeZoneChange={(nextTimeZone) => setDisplayPreferences((current) => ({ ...current, timeZone: nextTimeZone }))}
       themePreference={themePreference}
       onThemeChange={(nextTheme) => setDisplayPreferences((current) => ({ ...current, theme: nextTheme }))}
+      workspaceContentRef={workspaceContentRef}
     >
-        <div id="workspace-content" ref={workspaceContentRef} className="workspace-content" role="region" aria-label="Current tax workspace" tabIndex={-1}>
           <WorkspaceErrorBoundary key={workspace} workspace={workspace} locale={locale}>
-          {workspace === "access-control" ? <AccessControlPanel accessToken={accessToken} authorizationSnapshot={authorizationSnapshot} authorizationError={authorizationError} locale={locale} /> : workspace === "evidence-access" ? <Suspense fallback={<section className="evidence-layout" aria-live="polite"><article className="panel empty-state"><strong>{operationalMessages.loading.title(shellMessages.navigation["evidence-access"].label)}</strong><p>{operationalMessages.loading.copy}</p></article></section>}><EvidenceAccessPanel
+          {workspace === "access-control" ? <><AccessControlPanel accessToken={accessToken} authorizationSnapshot={authorizationSnapshot} authorizationError={authorizationError} locale={locale} /><RoleManagementPanel apiBase={BROWSER_AUTH_SERVICE_BASE_URL || BROWSER_AUTH_CONFIG.emailOtp?.baseUrl || ""} accessToken={accessToken} authorizationSnapshot={authorizationSnapshot} /></> : workspace === "evidence-access" ? <Suspense fallback={<section className="evidence-layout" aria-live="polite"><article className="panel empty-state"><strong>{operationalMessages.loading.title(shellMessages.navigation["evidence-access"].label)}</strong><p>{operationalMessages.loading.copy}</p></article></section>}><EvidenceAccessPanel
           apiBase={API_BASE}
           serviceOnline={serviceState === "online"}
           accessToken={accessToken}
@@ -524,17 +715,21 @@ export default function App() {
             <div className="panel-heading"><div><p className="eyebrow">{modeMessages.eyebrow}</p><h2>{modeMessages.title}</h2></div><span className="status-pill">{modeMessages.status}</span></div>
             <p className="panel-copy">{modeMessages.description}</p>
             {workspace === "quote" && BROWSER_AUTH_CONFIG.mode === "unconfigured" && <p className="inline-warning" role="alert">{quoteMessages.readOnlyWarning}</p>}
-            {workspace === "quote" && <details className="route-evidence full-field"><summary>{quoteMessages.location.summary}</summary><p className="field-help">{quoteMessages.location.description}</p><label htmlFor="aggregate-jurisdiction-evidence"><span>{quoteMessages.location.label}</span><textarea id="aggregate-jurisdiction-evidence" value={jurisdictionEvidenceJson} onChange={(event) => setJurisdictionEvidenceJson(event.target.value)} placeholder={quoteMessages.location.placeholder} autoComplete="off" spellCheck={false} rows={6} aria-describedby="jurisdiction-evidence-help" /><small id="jurisdiction-evidence-help">{quoteMessages.location.help}</small></label></details>}
+            {workspace === "quote" && <details className="route-evidence full-field"><summary>{quoteMessages.location.summary}</summary><p className="field-help">{quoteMessages.location.description}</p><label htmlFor="aggregate-jurisdiction-evidence"><span>{quoteMessages.location.label}</span><textarea id="aggregate-jurisdiction-evidence" value={jurisdictionEvidenceJson} onChange={(event) => setJurisdictionEvidenceJson(event.target.value)} placeholder={quoteMessages.location.placeholder} autoComplete="off" spellCheck={false} rows={6} aria-describedby="jurisdiction-evidence-help" disabled={quoteWorkflowLocked} /><small id="jurisdiction-evidence-help">{quoteMessages.location.help}</small></label></details>}
+            {serviceState === "offline" && <div className="workflow-lock" role="note"><strong>{quoteMessages.offlineWarning}</strong><p>{quoteMessages.offlineWarning}</p></div>}
+            {serviceState !== "offline" && workspace === "quote" && !accessToken.trim() && <div className="workflow-lock" role="note"><strong>{shellMessages.session.signInToContinue}</strong><p>{shellMessages.session.signInToContinueCopy}</p></div>}
             <form onSubmit={submit} className="form-grid">
-              <label><span>{quoteMessages.fields.grossLabel}</span><input inputMode="numeric" min="0" value={gross} onChange={(event) => setGross(event.target.value)} placeholder={quoteMessages.fields.grossPlaceholder} aria-describedby="amount-help" required /></label>
-              <label><span>{quoteMessages.fields.netLabel}</span><input inputMode="numeric" min="0" value={net} onChange={(event) => setNet(event.target.value)} placeholder={quoteMessages.fields.netPlaceholder} aria-describedby="amount-help" required /></label>
-              <label><span>{quoteMessages.fields.currencyLabel}</span><input value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase())} placeholder={quoteMessages.fields.currencyPlaceholder} maxLength={12} required /></label>
-              <label><span>{assetScaleMessages.label}</span><input inputMode="numeric" min="0" max="9" value={atomicDecimals} onChange={(event) => setAtomicDecimals(event.target.value)} aria-describedby="amount-help asset-precision-help" required /><small id="asset-precision-help" className="field-help">{assetScaleMessages.help}</small></label>
-              {workspace === "preview" ? <label><span>{quoteMessages.fields.rateLabel}</span><input inputMode="decimal" min="0" step="0.01" value={rate} onChange={(event) => setRate(event.target.value)} placeholder={quoteMessages.fields.ratePlaceholder} required /></label> : <label><span>{quoteMessages.fields.approvedRuleLabel}</span><input value={ruleSetId} onChange={(event) => setRuleSetId(event.target.value)} placeholder={quoteMessages.fields.approvedRulePlaceholder} required /></label>}
-              {workspace === "preview" ? <label><span>{quoteMessages.fields.jurisdictionLabel}</span><input value={jurisdiction} onChange={(event) => setJurisdiction(event.target.value.toUpperCase())} placeholder={quoteMessages.fields.jurisdictionPlaceholder} required /></label> : <label><span>{quoteMessages.fields.ruleVersionLabel}</span><input inputMode="numeric" min="1" value={ruleVersion} onChange={(event) => setRuleVersion(event.target.value)} placeholder={quoteMessages.fields.ruleVersionPlaceholder} required /> </label>}
-              {workspace === "quote" && <><label><span>{quoteMessages.fields.jurisdictionLabel}</span><input value={jurisdiction} onChange={(event) => setJurisdiction(event.target.value.toUpperCase())} placeholder={quoteMessages.fields.jurisdictionPlaceholder} required /></label><label><span>{quoteMessages.fields.categoryLabel}</span><input value={regime} onChange={(event) => setRegime(event.target.value)} placeholder={quoteMessages.fields.categoryPlaceholder} required /></label><div className="route-evidence full-field"><strong>{quoteMessages.retry.title}</strong><small>{quoteMessages.retry.description}</small></div></>}
-              <small id="amount-help" className="field-help full-field">{quoteMessages.amountHelp}</small>
-              <button type="submit" disabled={isSubmitting || serviceState !== "online" || (workspace === "quote" && !accessToken.trim())}>{isSubmitting ? quoteMessages.preparing : modeMessages.submit}</button>
+              <fieldset className="workflow-fieldset" disabled={quoteWorkflowLocked}>
+                <label><span>{quoteMessages.fields.grossLabel}</span><input inputMode="numeric" min="0" value={gross} onChange={(event) => setGross(event.target.value)} placeholder={quoteMessages.fields.grossPlaceholder} aria-describedby="amount-help" required /></label>
+                <label><span>{quoteMessages.fields.netLabel}</span><input inputMode="numeric" min="0" value={net} onChange={(event) => setNet(event.target.value)} placeholder={quoteMessages.fields.netPlaceholder} aria-describedby="amount-help" required /></label>
+                <label><span>{quoteMessages.fields.currencyLabel}</span><input value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase())} placeholder={quoteMessages.fields.currencyPlaceholder} maxLength={12} required /></label>
+                <label><span>{assetScaleMessages.label}</span><input inputMode="numeric" min="0" max="9" value={atomicDecimals} onChange={(event) => setAtomicDecimals(event.target.value)} aria-describedby="amount-help asset-precision-help" required /><small id="asset-precision-help" className="field-help">{assetScaleMessages.help}</small></label>
+                {workspace === "preview" ? <label><span>{quoteMessages.fields.rateLabel}</span><input inputMode="decimal" min="0" step="0.01" value={rate} onChange={(event) => setRate(event.target.value)} placeholder={quoteMessages.fields.ratePlaceholder} required /></label> : <label><span>{quoteMessages.fields.approvedRuleLabel}</span><input value={ruleSetId} onChange={(event) => setRuleSetId(event.target.value)} placeholder={quoteMessages.fields.approvedRulePlaceholder} required /></label>}
+                {workspace === "preview" ? <label><span>{quoteMessages.fields.jurisdictionLabel}</span><input value={jurisdiction} onChange={(event) => setJurisdiction(event.target.value.toUpperCase())} placeholder={quoteMessages.fields.jurisdictionPlaceholder} required /></label> : <label><span>{quoteMessages.fields.ruleVersionLabel}</span><input inputMode="numeric" min="1" value={ruleVersion} onChange={(event) => setRuleVersion(event.target.value)} placeholder={quoteMessages.fields.ruleVersionPlaceholder} required /> </label>}
+                {workspace === "quote" && <><label><span>{quoteMessages.fields.jurisdictionLabel}</span><input value={jurisdiction} onChange={(event) => setJurisdiction(event.target.value.toUpperCase())} placeholder={quoteMessages.fields.jurisdictionPlaceholder} required /></label><label><span>{quoteMessages.fields.categoryLabel}</span><input value={regime} onChange={(event) => setRegime(event.target.value)} placeholder={quoteMessages.fields.categoryPlaceholder} required /></label><div className="route-evidence full-field"><strong>{quoteMessages.retry.title}</strong><small>{quoteMessages.retry.description}</small></div></>}
+                <small id="amount-help" className="field-help full-field">{quoteMessages.amountHelp}</small>
+                <button type="submit" disabled={isSubmitting || quoteWorkflowLocked}>{isSubmitting ? quoteMessages.preparing : modeMessages.submit}</button>
+              </fieldset>
             </form>
             {serviceState === "offline" && <p className="inline-warning" role="alert">{quoteMessages.offlineWarning}</p>}
             {error && <p className="inline-error" role="alert">{error}</p>}
@@ -542,18 +737,17 @@ export default function App() {
 
           <article className="panel result-panel" aria-live="polite">
             <div className="panel-heading"><div><p className="eyebrow">{quoteMessages.result.eyebrow}</p><h2>{quoteMessages.result.title}</h2></div>{calculation && <span className={`status-pill ${calculation.status === "attested" ? "status-pill-success" : "status-pill-warning"}`}>{calculation.status === "attested" ? quoteMessages.result.verified : calculation.status === "calculated_unattested" ? quoteMessages.result.needsVerification : quoteMessages.result.scenarioOnly}</span>}</div>
-            {!calculation ? <div className="empty-state"><span className="empty-icon">∑</span><strong>{quoteMessages.result.emptyTitle}</strong><p>{quoteMessages.result.emptyCopy}</p></div> : <div className="result-content">
-              <details className="tax-explanation"><summary>{quoteMessages.result.whyTax}</summary><p>{quoteMessages.result.explanation}</p><dl className="summary-list"><div><dt>{quoteMessages.result.approvedRule}</dt><dd>{calculation.result.rule_set_id} v{calculation.result.rule_version}</dd></div>{calculation.result.fx_conversion && <div><dt>{quoteMessages.result.currencyConversion}</dt><dd>{calculation.result.fx_conversion.source_currency} → {calculation.result.fx_conversion.target_currency} · {calculation.result.fx_conversion.provider} · {calculation.result.fx_conversion.quote_id}</dd></div>}</dl><div className="trace-list">{calculation.result.components.map((component) => <div className="trace-row" key={component.id}><div><strong>{component.label}</strong><small>{component.explanation}</small></div><strong>{formatAtomic(component.tax_atomic, calculation.result.currency, calculation.result.atomic_decimals)}</strong></div>)}</div><details className="technical-details"><summary>{quoteMessages.result.recordFingerprints}</summary><dl className="summary-list"><div><dt>{quoteMessages.result.ruleFingerprint}</dt><dd><code>{shortDigest(calculation.result.rule_digest)}</code></dd></div><div><dt>{quoteMessages.result.inputFingerprint}</dt><dd><code>{shortDigest(calculation.result.facts_digest)}</code></dd></div></dl></details></details>
+            {!calculation ? <div className="empty-state"><span className="empty-icon">∑</span><strong>{quoteMessages.result.emptyTitle}</strong><p>{resultModeMessages.emptyCopy}</p></div> : <div className="result-content">
+              <details className="tax-explanation"><summary>{resultModeMessages.whyTax}</summary><p>{resultModeMessages.explanation}</p><dl className="summary-list"><div><dt>{resultModeMessages.ruleLabel}</dt><dd>{calculation.result.rule_set_id} v{calculation.result.rule_version}</dd></div>{calculation.result.fx_conversion && <div><dt>{quoteMessages.result.currencyConversion}</dt><dd>{calculation.result.fx_conversion.source_currency} → {calculation.result.fx_conversion.target_currency} · {calculation.result.fx_conversion.provider} · {calculation.result.fx_conversion.quote_id}</dd></div>}</dl><div className="trace-list">{calculation.result.components.map((component) => <div className="trace-row" key={component.id}><div><strong>{component.label}</strong><small>{component.explanation}</small></div><strong>{formatAtomic(component.tax_atomic, calculation.result.currency, calculation.result.atomic_decimals)}</strong></div>)}</div><details className="technical-details"><summary>{quoteMessages.result.recordFingerprints}</summary><dl className="summary-list"><div><dt>{quoteMessages.result.ruleFingerprint}</dt><dd><code>{shortDigest(calculation.result.rule_digest)}</code></dd></div><div><dt>{quoteMessages.result.inputFingerprint}</dt><dd><code>{shortDigest(calculation.result.facts_digest)}</code></dd></div></dl></details></details>
               <div className="total-card"><span>{quoteMessages.result.totalTax}</span><strong>{formatAtomic(calculation.result.total_tax_atomic, calculation.result.currency, calculation.result.atomic_decimals)}</strong><small>{quoteMessages.result.reference} {calculation.calculation_id}</small></div>
               <TaxTreatmentOutcome outcome={calculation.result.treatment_outcome} currency={calculation.result.currency} atomicDecimals={calculation.result.atomic_decimals} locale={locale} formatAtomic={formatAtomic} />
               <dl className="summary-list"><div><dt>{quoteMessages.result.jurisdiction}</dt><dd>{calculation.result.jurisdiction}</dd></div><div><dt>{quoteMessages.result.amountAfterTax}</dt><dd>{formatAtomic(calculation.result.total_net_atomic, calculation.result.currency, calculation.result.atomic_decimals)}</dd></div><div><dt>{quoteMessages.result.resultStatus}</dt><dd>{calculation.status === "attested" ? quoteMessages.result.verifiedStatus : calculation.status === "calculated_unattested" ? quoteMessages.result.calculatedStatus : quoteMessages.result.scenarioStatus}</dd></div></dl>
               <details className="technical-details"><summary>{quoteMessages.result.technicalDetails}</summary><dl className="summary-list"><div><dt>{quoteMessages.result.calculationReference}</dt><dd><code>{calculation.calculation_id}</code></dd></div><div><dt>{quoteMessages.result.engineVersion}</dt><dd>{calculation.result.engine_version || quoteMessages.result.legacyEvidence}</dd></div><div><dt>{quoteMessages.result.policyState}</dt><dd>{calculation.status === "attested" ? quoteMessages.result.publishedAttestation : calculation.status === "calculated_unattested" ? quoteMessages.result.publishedNotAttested : quoteMessages.result.callerPreview}</dd></div><div><dt>{assetScaleMessages.label}</dt><dd>{calculation.result.atomic_decimals}</dd></div></dl></details>
-              {["calculated_unattested", "attested"].includes(calculation.status) && <div className="evidence-actions"><button type="button" onClick={verifyPersistedReplay} disabled={isReplaying || !accessToken.trim()}>{isReplaying ? quoteMessages.result.checkingRecord : replayVerification ? quoteMessages.result.recordChecked : quoteMessages.result.checkRecord}</button><p className="evidence-note">{quoteMessages.result.evidenceNote}</p>{replayVerification && <dl className="summary-list evidence-summary"><div><dt>{quoteMessages.result.checkStatus}</dt><dd>{replayVerification.status}</dd></div><div><dt>{quoteMessages.result.factsDigest}</dt><dd><code>{shortDigest(replayVerification.facts_digest)}</code></dd></div><div><dt>{quoteMessages.result.ruleDigest}</dt><dd><code>{shortDigest(replayVerification.rule_digest)}</code></dd></div></dl>}</div>}
+              {["calculated_unattested", "attested"].includes(calculation.status) && <div className="evidence-actions"><button type="button" onClick={verifyPersistedReplay} disabled={isReplaying || !accessToken.trim()}>{isReplaying ? quoteMessages.result.checkingRecord : replayVerification ? quoteMessages.result.recordChecked : quoteMessages.result.checkRecord}</button><p className="evidence-note">{quoteMessages.result.evidenceNote}</p>{replayVerification && <dl className="summary-list evidence-summary"><div><dt>{quoteMessages.result.checkStatus}</dt><dd>{quoteMessages.result.recordChecked}</dd></div><div><dt>{quoteMessages.result.factsDigest}</dt><dd><code>{shortDigest(replayVerification.facts_digest)}</code></dd></div><div><dt>{quoteMessages.result.ruleDigest}</dt><dd><code>{shortDigest(replayVerification.rule_digest)}</code></dd></div></dl>}</div>}
             </div>}
           </article>
           </section>}
           </WorkspaceErrorBoundary>
-        </div>
     </ProductShell>
   );
 }

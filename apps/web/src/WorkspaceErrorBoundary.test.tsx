@@ -62,4 +62,40 @@ describe("workspace error containment", () => {
     expect(screen.getByRole("heading", { name: "Dieser Arbeitsbereich konnte nicht geladen werden" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Anwendung neu laden" })).toBeTruthy();
   });
+
+  it("self-recovers once when a stale lazy chunk is no longer available", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const reload = vi.spyOn(window.location, "reload").mockImplementation(() => undefined);
+    render(
+      <WorkspaceErrorBoundary workspace="governance">
+        <BrokenWorkspace />
+      </WorkspaceErrorBoundary>,
+    );
+
+    expect(reload).not.toHaveBeenCalled();
+
+    cleanup();
+    render(
+      <WorkspaceErrorBoundary workspace="governance">
+        <BrokenLazyWorkspace />
+      </WorkspaceErrorBoundary>,
+    );
+
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(window.sessionStorage.getItem("solana-tax-protocol:chunk-recovery")).toMatch(/^\d+$/);
+
+    cleanup();
+    render(
+      <WorkspaceErrorBoundary workspace="governance">
+        <BrokenLazyWorkspace />
+      </WorkspaceErrorBoundary>,
+    );
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
 });
+
+class BrokenLazyWorkspace extends Component {
+  render(): ReactNode {
+    throw new Error("Failed to fetch dynamically imported module: /assets/GovernancePanel-old.js");
+  }
+}

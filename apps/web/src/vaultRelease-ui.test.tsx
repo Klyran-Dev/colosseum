@@ -3,7 +3,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import VaultReleasePanel from "./VaultReleasePanel";
-import { SUPPORTED_LOCALES } from "./formatters";
+import { parseDateTimeLocal, SUPPORTED_LOCALES } from "./formatters";
 import { vaultReleaseMessagesFor } from "./vaultReleaseMessages";
 
 const claimId = "01992f1b-4a70-7e30-8ea2-b6e37a9d9d21";
@@ -88,6 +88,65 @@ describe("vault-release response and authority boundary", () => {
     expect(screen.getByText("Die API ist nicht verfügbar.", { exact: false })).toBeTruthy();
   });
 
+  it("makes treasury controls visibly unavailable before sign-in", () => {
+    render(<VaultReleasePanel apiBase="/api" serviceOnline accessToken="" />);
+
+    expect(screen.getByRole("note").textContent).toContain("Sign in to continue");
+    expect(screen.getByLabelText("Release reference number").closest("fieldset")).toHaveProperty("disabled", true);
+    expect(screen.getByLabelText("Release request reference").closest("fieldset")).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Create release request" })).toHaveProperty("disabled", true);
+  });
+
+  it("renders sign-in readiness as status instead of an editable-looking field", () => {
+    render(<VaultReleasePanel apiBase="/api" serviceOnline accessToken="proposer-token" />);
+
+    expect(screen.getByRole("status").textContent).toContain("Account ready");
+    expect(screen.queryByRole("textbox", { name: "Sign-in status" })).toBeNull();
+  });
+
+  it("uses operator-friendly date-time controls for the release window", () => {
+    render(<VaultReleasePanel apiBase="/api" serviceOnline accessToken="proposer-token" timeZone="Asia/Kolkata" />);
+
+    expect(screen.getByLabelText("Earliest release time")).toHaveProperty("type", "datetime-local");
+    expect(screen.getByLabelText("Release expiry")).toHaveProperty("type", "datetime-local");
+    expect((screen.getByLabelText("Earliest release time") as HTMLInputElement).value).toContain("T");
+  });
+
+  it("renders lifecycle statuses as localized operator labels", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(routeResponse()), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(claim("proposed")), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<VaultReleasePanel apiBase="/api" serviceOnline accessToken="operator-token" locale="de-DE" />);
+
+    await waitFor(() => expect((screen.getByLabelText("Verifizierte Zahlungsroute") as HTMLSelectElement).value).toBe(routeId));
+    fireEvent.change(screen.getByLabelText("Referenz des Freigabeantrags"), { target: { value: claimId } });
+    fireEvent.click(screen.getByRole("button", { name: "Freigabeantrag laden" }));
+
+    await waitFor(() => expect(screen.getAllByText("Vorgeschlagen").length).toBeGreaterThan(0));
+    expect(screen.queryByText("proposed")).toBeNull();
+    expect(screen.queryByText("proposed", { exact: false })).toBeNull();
+  });
+
+  it("converts selected-zone date-time values to exact Unix seconds at submission", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(routeResponse()), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(claim("proposed")), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<VaultReleasePanel apiBase="/api" serviceOnline accessToken="proposer-token" timeZone="Asia/Kolkata" />);
+
+    await waitFor(() => expect((screen.getByLabelText("Verified payment route") as HTMLSelectElement).value).toBe(routeId));
+    fillClaimProposalForm();
+    fireEvent.change(screen.getByLabelText("Earliest release time"), { target: { value: "2030-01-01T12:00:00" } });
+    fireEvent.change(screen.getByLabelText("Release expiry"), { target: { value: "2030-01-01T13:00:00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create release request" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const body = JSON.parse(fetchMock.mock.calls[1][1].body as string) as Record<string, unknown>;
+    expect(body.execute_after_unix).toBe(parseDateTimeLocal("2030-01-01T12:00:00", "Asia/Kolkata"));
+    expect(body.expires_at_unix).toBe(parseDateTimeLocal("2030-01-01T13:00:00", "Asia/Kolkata"));
+  });
+
   it("does not invent a release evidence digest", () => {
     vi.stubGlobal("fetch", vi.fn());
     render(<VaultReleasePanel apiBase="/api" serviceOnline accessToken="proposer-token" />);
@@ -131,14 +190,14 @@ describe("vault-release response and authority boundary", () => {
     await waitFor(() => expect((screen.getByLabelText("Verified payment route") as HTMLSelectElement).value).toBe(routeId));
     fillClaimProposalForm();
     fireEvent.click(screen.getByRole("button", { name: "Create release request" }));
-    await waitFor(() => expect(screen.getAllByText("proposed").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText("Proposed").length).toBeGreaterThan(0));
     fireEvent.click(screen.getByRole("button", { name: "Record next step" }));
 
     await waitFor(() => expect(screen.getByText(/page was refreshed from the service/)).toBeTruthy());
     expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(fetchMock.mock.calls[2][0]).toBe(`/api/v1/vault/release-claims/${claimId}/transition`);
     expect(fetchMock.mock.calls[3][0]).toBe(`/api/v1/vault/release-claims/${claimId}`);
-    expect(screen.getAllByText("approved").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Approved").length).toBeGreaterThan(0);
   });
 
   it("submits only the governed route reference for merchant-side accounts", async () => {
@@ -168,5 +227,22 @@ describe("vault-release response and authority boundary", () => {
     await screen.findByText("Payment routes could not be loaded.", { exact: false });
     expect(screen.queryByText(providerDetail)).toBeNull();
     expect(screen.getByRole("button", { name: "Create release request" }).getAttribute("disabled")).not.toBeNull();
+  });
+
+  it("offers an explicit retry when verified release routes cannot be loaded", async () => {
+    let routeAttempts = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (!String(input).endsWith("/v1/vault/release-routes")) return new Response("{}", { status: 200 });
+      routeAttempts += 1;
+      return routeAttempts === 1
+        ? new Response(JSON.stringify({ error: "temporary" }), { status: 503 })
+        : new Response(JSON.stringify(routeResponse()), { status: 200 });
+    }));
+    render(<VaultReleasePanel apiBase="/api" serviceOnline accessToken="proposer-token" />);
+
+    await screen.findByText("Verified payment routes could not be loaded.", { exact: false });
+    fireEvent.click(screen.getByRole("button", { name: "Retry payment routes" }));
+    await waitFor(() => expect((screen.getByLabelText("Verified payment route") as HTMLSelectElement).value).toBe(routeId));
+    expect(routeAttempts).toBe(2);
   });
 });

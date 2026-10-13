@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   directionForLocale,
   formatAtomic,
+  formatDateTimeLocal,
   formatEpoch,
   formatTimestamp,
   isValidTimeZone,
+  parseDateTimeLocal,
 } from "./formatters";
 
 describe("locale-aware financial and evidence formatting", () => {
@@ -38,6 +40,13 @@ describe("locale-aware financial and evidence formatting", () => {
     expect(formatTimestamp(value, "en-US", "UTC")).toContain("3:04");
     expect(formatTimestamp(value, "en-US", "Asia/Kolkata")).toContain("8:34");
     expect(formatEpoch(0, "en-US", "UTC")).toContain("12:00");
+  });
+
+  it("round-trips exact date-time inputs through the selected time zone", () => {
+    expect(formatDateTimeLocal(0, "UTC")).toBe("1970-01-01T00:00:00");
+    expect(formatDateTimeLocal(0, "Asia/Kolkata")).toBe("1970-01-01T05:30:00");
+    expect(parseDateTimeLocal("1970-01-01T05:30:00", "Asia/Kolkata")).toBe(0);
+    expect(parseDateTimeLocal("1970-01-01T00:00:00", "UTC")).toBe(0);
   });
 
   it("fails safely for invalid dates and time zones", () => {

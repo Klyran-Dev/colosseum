@@ -1,0 +1,78 @@
+@import "@fontsource-variable/plus-jakarta-sans";
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  --admin-bg: #f7f8fa;
+  --admin-surface: #ffffff;
+  --admin-surface-muted: #f2f3f6;
+  --admin-ink: #17171b;
+  --admin-muted: #73747c;
+  --admin-line: #e8e9ee;
+  --admin-primary: #6d5ce7;
+  --admin-primary-strong: #5545cf;
+  --admin-primary-soft: #eeebff;
+  --admin-cyan: #2fbfdc;
+  --admin-cyan-soft: #e4f8fc;
+  --admin-green: #2caf60;
+  --admin-green-soft: #e6f8ea;
+  --admin-amber: #d99a13;
+  --admin-amber-ink: #8a5e00;
+  --admin-amber-soft: #fff4d6;
+  --admin-red: #d9485d;
+  --admin-red-soft: #ffebee;
+  --admin-font-body: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+@theme {
+  --color-admin-bg: var(--admin-bg);
+  --color-admin-surface: var(--admin-surface);
+  --color-admin-surface-muted: var(--admin-surface-muted);
+  --color-admin-ink: var(--admin-ink);
+  --color-admin-muted: var(--admin-muted);
+  --color-admin-line: var(--admin-line);
+  --color-admin-primary: var(--admin-primary);
+  --color-admin-primary-strong: var(--admin-primary-strong);
+  --color-admin-primary-soft: var(--admin-primary-soft);
+  --color-admin-cyan: var(--admin-cyan);
+  --color-admin-cyan-soft: var(--admin-cyan-soft);
+  --color-admin-green: var(--admin-green);
+  --color-admin-green-soft: var(--admin-green-soft);
+  --color-admin-amber: var(--admin-amber);
+  --color-admin-amber-ink: var(--admin-amber-ink);
+  --color-admin-amber-soft: var(--admin-amber-soft);
+  --color-admin-red: var(--admin-red);
+  --color-admin-red-soft: var(--admin-red-soft);
+  --shadow-soft: 0 0.25rem 1rem color-mix(in srgb, var(--admin-ink) 5%, transparent);
+  --shadow-panel: 0 1.5rem 4rem color-mix(in srgb, var(--admin-ink) 10%, transparent);
+}
+
+@layer base {
+  * { box-sizing: border-box; }
+  html { background: var(--admin-bg); }
+  body { margin: 0; min-width: 20rem; background: var(--admin-bg); color: var(--admin-ink); font-family: var(--admin-font-body); font-size: 1rem; line-height: 1.5; text-rendering: optimizeLegibility; font-optical-sizing: auto; }
+  button, input { font: inherit; }
+  button, a { -webkit-tap-highlight-color: transparent; }
+  :focus-visible { outline: 0.18rem solid var(--admin-primary); outline-offset: 0.18rem; }
+}
+
+/* Keep mobile form controls at a readable 16px size and avoid browser auto-zoom. */
+input, textarea, select { font-size: 1rem; line-height: 1.5; }
+
+/* Auth uses a restrained display scale before the desktop two-column layout. */
+.admin-auth-title {
+  font-size: 2rem;
+  line-height: 1.08;
+  letter-spacing: -0.045em;
+}
+
+.admin-auth-shell { min-height: 0; }
+
+@media (min-width: 64rem) {
+  .admin-auth-title { font-size: 2.75rem; }
+  .admin-auth-shell { min-height: calc(100vh - 4rem); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}

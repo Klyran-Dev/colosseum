@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 const stylesheet = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
 const documentSource = readFileSync(resolve(process.cwd(), "index.html"), "utf8");
 
-describe("Material 3 Expressive shell contract", () => {
+describe("admin application chrome contract", () => {
   it("uses the v3 Material baseline role matrix and explicit semantic state containers", () => {
     expect(stylesheet).toContain("Material 3 Expressive theme family: Material Baseline / seed #6750A4 / TonalSpot / role matrix v3");
     expect(stylesheet).toContain("--app-success-container: var(--md-sys-color-primary-container);");
@@ -17,8 +17,8 @@ describe("Material 3 Expressive shell contract", () => {
   });
 
   it("keeps browser chrome on the approved M3 background roles", () => {
-    expect(documentSource).toContain('name="theme-color" content="#141218" data-theme-color="dark"');
-    expect(documentSource).toContain('name="theme-color" content="#FDF7FF" data-theme-color="light"');
+    expect(documentSource).toContain('name="theme-color" content="#f7f8fa"');
+    expect(documentSource).toContain('name="description" content="Tax operations control plane for governed Solana settlement and evidence"');
     expect(documentSource).not.toContain("#08111f");
     expect(documentSource).not.toContain("#0F1014");
   });
@@ -56,6 +56,59 @@ describe("Material 3 Expressive shell contract", () => {
 
   it("keeps active navigation tonal and free of a second border emphasis", () => {
     const finalLayer = stylesheet.slice(stylesheet.lastIndexOf("/* Material 3 Expressive final precedence layer."));
+  });
+
+  it("applies the editorial operational rail and canvas direction without decorative data", () => {
+    const layer = stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0484:"));
+    expect(stylesheet).toContain("--app-rail-surface:");
+    expect(stylesheet).toContain("--app-canvas:");
+    expect(layer).toContain("background: var(--app-rail-surface);");
+    expect(layer).toContain("background: var(--app-canvas);");
+    expect(layer).toContain("box-shadow: var(--md-sys-elevation-level1);");
+    expect(layer).not.toMatch(/#[0-9a-f]{3,8}|rgba?\(|gradient\(/i);
+  });
+
+  it("keeps the Metronic typography hierarchy compact but readable", () => {
+    expect(stylesheet).toContain("--md-sys-typescale-label-small-size: 0.75rem;");
+    expect(stylesheet).toContain("--md-sys-typescale-label-medium-size: 0.8125rem;");
+    expect(stylesheet).toContain("--md-sys-typescale-body-small-size: 0.8125rem;");
+    expect(stylesheet).toContain("font-size: var(--md-sys-typescale-headline-large-size);");
+    expect(stylesheet).toContain("font-size: var(--md-sys-typescale-body-large-size);");
+    expect(stylesheet).toContain(".auth-context-content { position: relative; max-width: 34rem; display: grid;");
+    expect(stylesheet).toContain("line-height: 1.1; letter-spacing: -.035em;");
+  });
+
+  it("keeps mobile navigation labels readable when the drawer is open", () => {
+    const layer = stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0484:"));
+    expect(layer).toContain(".product-shell .primary-nav-open .nav-item-copy");
+    expect(layer).toContain("display: grid;");
+    expect(layer).toContain("place-items: center stretch;");
+  });
+
+  it("composes the workspace as a semantic operational stage", () => {
+    const layer = stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0486:"));
+    expect(stylesheet).toContain("--app-stage:");
+    expect(layer).toContain("background: var(--app-stage);");
+    expect(layer).toContain("grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem);");
+    expect(layer).toContain(".workspace-auth-gate::before");
+    expect(layer).not.toMatch(/#[0-9a-f]{3,8}|rgba?\(|gradient\(/i);
+  });
+
+  it("uses one actionable access card and keeps diagnostics in the global status disclosure", () => {
+    const layer = stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0487:"));
+    expect(layer).toContain(".workspace-status-deck");
+    expect(layer).toContain("grid-template-columns: minmax(0, 1fr);");
+    expect(layer).toContain("background: var(--app-stage-surface);");
+    expect(layer).not.toMatch(/#[0-9a-f]{3,8}|rgba?\(|gradient\(/i);
+  });
+
+  it("keeps the rail neutral and reserves page context for actionable uncertainty", () => {
+    const layer = stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0488:"));
+    expect(stylesheet).toContain("--app-rail-surface: #FFFFFF;");
+    expect(stylesheet).toContain("--app-rail-active: #E9DDFF;");
+    expect(layer).toContain(".page-context-card");
+    expect(layer).toContain("background: var(--app-stage-surface);");
+    expect(layer).not.toMatch(/#[0-9a-f]{3,8}|rgba?\(|gradient\(/i);
   });
 
   it("does not retain styling for the removed duplicate sidebar account context", () => {
@@ -103,7 +156,7 @@ describe("Material 3 Expressive shell contract", () => {
   });
 
   describe("canonical navigation and panel skin (ADR-0423)", () => {
-    const canonical = () => stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0423:"));
+    const canonical = () => stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0423:"), stylesheet.lastIndexOf("/* ADR-0489:"));
     const outsideForcedColors = () => stylesheet.replace(/@media \(forced-colors: active\) \{[\s\S]*?\n\}\n/g, "");
 
     it("uses a pill active indicator in primary-container with plain icons (ADR-0425)", () => {
@@ -157,10 +210,11 @@ describe("Material 3 Expressive shell contract", () => {
     for (const rule of buttonRules) {
       expect(rule, "chrome toggle must stay out of the content-button rules").toContain(":not(.navigation-compact-toggle)");
     }
+    expect(layer).toContain(":not(.metronic-navbar-link)");
   });
 
   describe("canonical topbar, status chips and menus (ADR-0425)", () => {
-    const canonical = () => stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0425:"), stylesheet.lastIndexOf("/* Forced-colors must remain"));
+    const canonical = () => stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0425:"), stylesheet.lastIndexOf("/* ADR-0490:"));
 
     it("renders status controls as M3 chips with tonal state containers", () => {
       const layer = canonical();
@@ -264,7 +318,7 @@ describe("Material 3 Expressive shell contract", () => {
   });
 
   describe("canonical access-control, evidence, and empty-state surfaces (ADR-0427)", () => {
-    const canonical = () => stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0427:"), stylesheet.lastIndexOf("/* Forced-colors must remain"));
+    const canonical = () => stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0427:"), stylesheet.lastIndexOf("/* ADR-0490:"));
     const withoutForcedColors = () => stylesheet.replace(/@media \(forced-colors: active\) \{[\s\S]*?\n\}\n/g, "");
 
     it("renders inner cards as borderless tonal containers with a medium corner", () => {
@@ -440,6 +494,106 @@ describe("Material 3 Expressive shell contract", () => {
     expect(css).toMatch(/\.product-shell :is\(\.full-field, \.rule-workbench, \.workbench-component\) \{[^}]*grid-template-columns: minmax\(0, 1fr\);/);
     expect(css).toMatch(/\.product-shell :is\(\.full-field, \.rule-workbench, \.workbench-component\) > \* \{[^}]*min-width: 0;/);
     expect(css).toMatch(/\.product-shell select \{[^}]*max-width: 100%;/);
+  });
+
+  it("sizes workflow density from the calculator panel and keeps empty results compact (ADR-0462)", () => {
+    const layer = stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0462:"), stylesheet.lastIndexOf("/* Forced-colors must remain"));
+    expect(layer).toContain(".product-shell .calculator-panel { container: calculator / inline-size; }");
+    expect(layer).toMatch(/@container calculator \(max-width: 27\.99rem\)/);
+    expect(layer).toContain(".product-shell .calculator-panel .workflow-fieldset { grid-template-columns: minmax(0, 1fr); }");
+    expect(layer).toContain(".product-shell .workspace-grid { align-items: start; }");
+    expect(layer).not.toMatch(/#[0-9a-f]{3,8}|rgba?\(|gradient\(|backdrop-filter/i);
+  });
+
+  it("reflows the wallet step from checkout-panel width (ADR-0464)", () => {
+    const layer = stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0464:"), stylesheet.lastIndexOf("/* Forced-colors must remain"));
+    expect(layer).toContain(".product-shell .checkout-control-panel { container: checkout-panel / inline-size; }");
+    expect(layer).toContain(".product-shell .checkout-step-wallet { min-width: 0; }");
+    expect(layer).toMatch(/@container checkout-panel \(max-width: 36rem\)/);
+    expect(layer).toContain(".product-shell .checkout-step { grid-template-columns: auto minmax(0, 1fr); align-items: start; }");
+    expect(layer).toContain(".product-shell .checkout-step-wallet { grid-column: 2; }");
+    expect(layer).not.toMatch(/#[0-9a-f]{3,8}|rgba?\(|gradient\(|backdrop-filter/i);
+  });
+
+  it("top-aligns multi-panel workspaces so empty siblings do not stretch (ADR-0466)", () => {
+    const layer = stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0466:"), stylesheet.lastIndexOf("/* Forced-colors must remain"));
+    expect(layer).toContain(".product-shell .checkout-layout,");
+    expect(layer).toContain(".product-shell .governance-layout,");
+    expect(layer).toContain(".product-shell .replay-layout,");
+    expect(layer).toContain(".product-shell .vault-layout,");
+    expect(layer).toContain(".product-shell .adjustment-layout,");
+    expect(layer).toContain(".product-shell .access-control-layout {");
+    expect(layer).toContain("align-items: start;");
+    expect(layer).not.toMatch(/#[0-9a-f]{3,8}|rgba?\(|gradient\(|backdrop-filter/i);
+  });
+
+  it("stacks long evidence summaries at narrow workspace widths (ADR-0467)", () => {
+    const layer = stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0467:"), stylesheet.lastIndexOf("/* Forced-colors must remain"));
+    expect(layer).toContain(".product-shell .summary-list div { min-width: 0; align-items: start; }");
+    expect(layer).toContain(".product-shell .summary-list dd { min-width: 0; overflow-wrap: anywhere; }");
+    expect(layer).toMatch(/@container workspace \(max-width: 34rem\)/);
+    expect(layer).toContain(".product-shell .summary-list div { display: grid; grid-template-columns: minmax(0, 1fr);");
+    expect(layer).toContain(".product-shell .summary-list dd { max-width: none; text-align: start; }");
+    expect(layer).not.toMatch(/#[0-9a-f]{3,8}|rgba?\(|gradient\(|backdrop-filter/i);
+  });
+
+  it("gives multi-authority signing controls an explicit wrap-safe action row (ADR-0468)", () => {
+    const layer = stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0468:"), stylesheet.lastIndexOf("/* Forced-colors must remain"));
+    expect(layer).toContain(".product-shell .button-row { display: flex; flex-wrap: wrap;");
+    expect(layer).toContain(".product-shell .button-row button { grid-column: auto; flex: 1 1 12rem;");
+    expect(layer).toContain("min-width: 0;");
+    expect(layer).not.toMatch(/#[0-9a-f]{3,8}|rgba?\(|gradient\(|backdrop-filter/i);
+  });
+
+  it("anchors mobile shell popovers to the visible top bar (ADR-0469)", () => {
+    const layer = stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0469:"), stylesheet.lastIndexOf("/* Forced-colors must remain"));
+    expect(layer).toMatch(/@media \(max-width: 760px\)/);
+    expect(layer).toContain(".product-shell .product-topbar {");
+    expect(layer).toContain("position: relative;");
+    expect(layer).toContain("z-index: 4;");
+    expect(layer).not.toMatch(/#[0-9a-f]{3,8}|rgba?\(|gradient\(|backdrop-filter/i);
+  });
+
+  it("uses a calm cross-platform type stack and compact empty panel rhythm (ADR-0470)", () => {
+    const layer = stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0470:"), stylesheet.lastIndexOf("/* Forced-colors must remain"));
+    expect(layer).toContain("font-family: \"Inter\", \"SF Pro Text\", \"SF Pro Display\", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;");
+    expect(layer).toContain("font-optical-sizing: auto;");
+    expect(layer).toContain("font-variant-numeric: tabular-nums;");
+    expect(layer).toContain("text-wrap: balance;");
+    expect(layer).toContain("flex-wrap: wrap;");
+    expect(layer).toContain("border-radius: var(--md-sys-shape-corner-large);");
+    expect(layer).toContain("min-height: 12rem;");
+    expect(layer).not.toMatch(/#[0-9a-f]{3,8}|rgba?\(|gradient\(|backdrop-filter/i);
+  });
+
+  it("keeps authentication errors inside their anchored form surface (ADR-0471)", () => {
+    const layer = stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0471:"), stylesheet.lastIndexOf("/* Forced-colors must remain"));
+    expect(layer).toContain(".product-shell .session-control-email-otp-fields .inline-error,");
+    expect(layer).toContain(".product-shell .session-control-local-fields .inline-error {");
+    expect(layer).toContain("position: static;");
+    expect(layer).toContain("max-width: none;");
+    expect(layer).not.toMatch(/#[0-9a-f]{3,8}|rgba?\(|gradient\(|backdrop-filter/i);
+  });
+
+  it("gives the quote workflow a readable two-column desktop rhythm (ADR-0472)", () => {
+    const layer = stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0472:"), stylesheet.lastIndexOf("/* Forced-colors must remain"));
+    expect(layer).toContain("@container calculator (min-width: 28rem)");
+    expect(layer).toContain(".product-shell .calculator-panel .workflow-fieldset {");
+    expect(layer).toContain("grid-template-columns: repeat(2, minmax(0, 1fr));");
+    expect(layer).toContain(".product-shell .calculator-panel .workflow-fieldset > .full-field");
+    expect(layer).toContain("grid-column: 1 / -1;");
+    expect(layer).not.toMatch(/#[0-9a-f]{3,8}|rgba?\(|gradient\(|backdrop-filter/i);
+  });
+
+  it("gives the rule builder paired fields without compressing long evidence rows (ADR-0474)", () => {
+    const layer = stylesheet.slice(stylesheet.lastIndexOf("/* ADR-0474:"), stylesheet.lastIndexOf("/* Forced-colors must remain"));
+    expect(layer).toContain(".product-shell .workbench-component-fields > .form-grid {");
+    expect(layer).toContain("grid-template-columns: repeat(2, minmax(0, 1fr));");
+    expect(layer).toContain(".product-shell .workbench-component-fields > .form-grid > .full-field");
+    expect(layer).toContain("grid-column: 1 / -1;");
+    expect(layer).toContain("container: governance-panel / inline-size;");
+    expect(layer).toContain("@container governance-panel (min-width: 28rem)");
+    expect(layer).not.toMatch(/#[0-9a-f]{3,8}|rgba?\(|gradient\(|backdrop-filter/i);
   });
 
   describe("hover only where hover exists (ADR-0437)", () => {

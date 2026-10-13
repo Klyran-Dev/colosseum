@@ -98,6 +98,12 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0094: Governed Split Plan checkout review](0094-governed-split-plan-checkout-review.md)
 - [ADR-0095: Bounded browser API deadlines and cancellation](0095-bounded-browser-api-deadlines.md)
 - [ADR-0096: Authenticated, idempotent rule-draft authoring](0096-authenticated-rule-draft-authoring.md)
+- [ADR-0446: Progressive disclosure for long tax workflows](0446-progressive-disclosure-for-long-tax-workflows.md)
+- [ADR-0447: Quiet navigation group metadata](0447-quiet-navigation-group-metadata.md)
+- [ADR-0448: Collapsible tax-rule components](0448-collapsible-tax-rule-components.md)
+- [ADR-0449: Collapsible document-line authoring](0449-collapsible-document-lines.md)
+- [ADR-0450: One signed-out authentication affordance](0450-single-signed-out-auth-affordance.md)
+- [ADR-0451: Mode-specific tax result language](0451-mode-specific-tax-result-language.md)
 - [ADR-0097: Executable public-repository release contract](0097-executable-public-repository-release-contract.md)
 - [ADR-0098: Fail-closed browser recovery for durable settlement intents](0098-browser-durable-intent-recovery.md)
 - [ADR-0099: Runtime validation of browser settlement artifacts](0099-runtime-validation-of-settlement-artifacts.md)
@@ -441,3 +447,74 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0438](0438-interaction-sweep-and-element-aware-forced-states.md) — Interaction sweep and element-aware forced states
 - [ADR-0439](0439-cross-engine-browser-suite.md) — Cross-engine browser suite
 - [ADR-0440](0440-dependency-audit-gate-and-exceptions.md) — Dependency audit gate and time-bounded exceptions
+- [ADR-0441](0441-separate-email-otp-authentication-service.md) — Separate email-OTP authentication service and OIDC-compatible tokens
+- [ADR-0442](0442-signed-out-workspace-gate-and-compact-auth.md) — Signed-out workspace gate and compact authentication control
+- [ADR-0443](0443-authenticated-workflow-data-gating.md) — Authenticated workflow data gating
+- [ADR-0444](0444-public-simulator-access-boundary.md) — Public simulator access boundary
+- [ADR-0445](0445-auth-state-hierarchy-and-protected-preview.md) — Authentication state hierarchy and protected workspace preview
+- [ADR-0452](0452-readable-wallet-availability-guidance.md) — Preserve readable wallet availability guidance
+- [ADR-0453](0453-responsive-short-field-layout.md) — Use responsive short-field grouping in operational forms
+- [ADR-0454](0454-single-wallet-identity-display.md) — Keep wallet identity in one owned control
+- [ADR-0455](0455-submit-before-chain-evidence.md) — Show chain evidence only after submission
+- [ADR-0456](0456-action-oriented-payment-ready-copy.md) — Make the ready state action-oriented
+- [ADR-0457](0457-explicit-atomic-payment-units.md) — Label settlement amounts as atomic units
+- [ADR-0458](0458-server-owned-payment-display-metadata.md) — Bind server-owned payment display metadata to the settlement artifact
+- [ADR-0459](0459-single-global-sign-in-entry-point.md) — Use one global signed-out sign-in entry point
+- [ADR-0460](0460-explicit-auth-cors-origin-allow-list.md) — Use an explicit auth-service CORS origin allow-list
+- [ADR-0461](0461-hide-stable-access-card.md) — Hide the stable access card after authorization is verified
+- [ADR-0462](0462-panel-width-responsive-workflow-density.md) — Make workflow density responsive to panel width
+- [ADR-0463](0463-single-authenticated-session-control.md) — Keep one authenticated session control in the shell
+- [ADR-0464](0464-wallet-step-panel-width-reflow.md) — Reflow the wallet step from panel width
+- [ADR-0465](0465-account-menu-owns-authenticated-identity.md) — Let the account menu own authenticated identity presentation
+- [ADR-0466](0466-top-align-independent-operational-panels.md) — Top-align independent operational panels
+- [ADR-0467](0467-narrow-evidence-summary-reflow.md) — Reflow narrow evidence summaries into readable rows
+- [ADR-0468](0468-wrap-safe-multi-authority-action-row.md) — Use a wrap-safe multi-authority action row
+- [ADR-0469](0469-mobile-shell-popover-anchoring.md) — Anchor mobile shell popovers to the top bar
+- [ADR-0470](0470-typography-and-empty-panel-rhythm.md) — Establish a readable type stack and compact empty-panel rhythm
+- [ADR-0471](0471-authentication-error-surface.md) — Keep authentication errors inside the form surface
+- [ADR-0472](0472-responsive-calculator-field-rhythm.md) — Use a responsive two-column rhythm for calculator fields
+- [ADR-0473](0473-self-healing-stale-spa-chunks.md) — Self-heal stale SPA chunk failures after deployment
+- [ADR-0474](0474-rule-builder-field-rhythm.md) — Use paired fields in the governed-rule builder
+- [ADR-0475](0475-document-quote-inline-retry.md) — Keep invoice quote retry in the failure surface
+- [ADR-0476](0476-payment-route-inline-retry.md) — Keep payment-route recovery in the checkout surface
+- [ADR-0477](0477-document-checkout-route-inline-retry.md) — Keep document-checkout route recovery in the payment surface
+- [ADR-0478](0478-treasury-sign-in-status-surface.md) — Render treasury sign-in readiness as status
+- [ADR-0479](0479-treasury-route-inline-retry.md) — Keep treasury route recovery in the release surface
+- [ADR-0480](0480-timezone-aware-release-window-inputs.md) — Use timezone-aware date-time inputs for release windows
+- [ADR-0481](0481-localized-protocol-status-labels.md) — Render protocol statuses as localized operator labels
+- [ADR-0482](0482-shared-localized-protocol-status-presenter.md) — Share localized protocol status presentation across payment flows
+- [ADR-0483](0483-direct-protected-workspace-sign-in-action.md) — Superseded: add a direct sign-in action to protected workspace gates
+- [ADR-0484](0484-editorial-operational-visual-direction.md) — Adopt an editorial operational visual direction
+- [ADR-0485](0485-single-action-auth-cognitive-load.md) — Keep one actionable sign-in entry point on signed-out protected pages
+- [ADR-0486](0486-premium-dark-workspace-composition.md) — Compose the dark workspace as a premium operational stage
+- [ADR-0487](0487-verified-context-dashboard-density.md) — Use verified context for dashboard density
+- [ADR-0488](0488-single-context-header-and-neutral-rail.md) — Use one context summary and a neutral navigation rail
+- [ADR-0489](0489-expanded-first-run-control-plane.md) — Open the first-run control plane with labeled navigation
+- [ADR-0490](0490-metronic-demo3-authenticated-application-shell.md) — Adapt the licensed Metronic Demo 3 shell and add dedicated authentication routes
+- [ADR-0491](0491-auth-service-role-administration.md) — Keep administrator/moderator role administration in the auth service
+- [ADR-0492](0492-tenant-invitation-and-join-flow.md) — Bind invited signup to the administrator's tenant
+- [ADR-0493](0493-role-aware-auth-scope-profiles.md) — Derive bounded token scopes from durable auth roles
+- [ADR-0494](0494-docker-backed-auth-browser-flow.md) — Prove the real auth and role flow in an isolated Docker browser gate
+- [ADR-0495](0495-auth-return-path-completion.md) — Return completed authentication to the validated workspace
+- [ADR-0496](0496-production-transactional-email-adapter.md) — Add a bounded production transactional email adapter
+- [ADR-0497](0497-metronic-demo3-shell-fidelity.md) — Align the shell composition with licensed Metronic Demo 3
+- [ADR-0498](0498-metronic-branded-authentication-surface.md) — Apply the branded Metronic authentication composition
+- [ADR-0499](0499-tenant-invitation-lifecycle-console.md) — Add the tenant invitation lifecycle console
+- [ADR-0500](0500-server-sourced-responsibility-summary.md) — Show server-sourced responsibilities in the account menu
+- [ADR-0501](0501-server-sourced-verified-email-identity.md) — Show verified email identity in the workspace snapshot
+- [ADR-0502](0502-single-actionable-workspace-context.md) — Keep workspace context actionable and diagnostics global
+- [ADR-0503](0503-otp-resend-recovery.md) — Add server-timed OTP resend recovery
+- [ADR-0504](0504-operator-facing-responsibility-labels.md) — Render operator-facing responsibility and invitation labels
+- [ADR-0505](0505-invitation-bound-signup.md) — Bind invited sign-up to the invitation reference
+- [ADR-0506](0506-metronic-tenant-control-plane-summary.md) — Add a server-derived tenant control-plane summary
+- [ADR-0507](0507-server-sourced-access-responsibility-summary.md) — Show server-sourced access responsibilities in the Access & approvals workspace
+- [ADR-0508](0508-metronic-v950-source-boundary.md) — Keep the Metronic v9.5.0 composition source-bound and auditable
+- [ADR-0509](0509-server-owned-domain-role-catalog.md) — Server-owned domain role catalog and explicit provisioning
+- [ADR-0510](0510-explicit-production-email-otp-browser-method.md) — Select production email OTP explicitly at release time
+- [ADR-0511](0511-one-time-initial-administrator-enrollment.md) — Provision the first administrator through one-time email enrollment
+- [ADR-0512](0512-metronic-typography-hierarchy.md) — Tune the Metronic typography hierarchy for readable operational density
+- [ADR-0513](0513-metronic-demo3-workspace-density.md) — Restore Metronic Demo 3 workspace density
+- [ADR-0514](0514-metronic-demo3-operational-callout.md) — Use a compact Metronic Demo 3 operational callout
+- [ADR-0516](0516-full-react-admin-application-rewrite.md) — Rewrite the admin application with React, Tailwind, TanStack, and ECharts
+- [ADR-0517](0517-admin-typography-and-auth-density.md) — Bundle Plus Jakarta Sans and restrain auth typography density
+- [ADR-0518](0518-otp-expiry-and-resend-recovery.md) — Make OTP expiry recoverable in the admin sign-in flow

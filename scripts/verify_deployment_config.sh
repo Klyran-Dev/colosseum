@@ -68,10 +68,87 @@ validate_https_endpoint_list() {
   done
 }
 
+validate_https_url() {
+  name=$1
+  require_env "$name"
+  value=$(read_env "$name")
+  case "$value" in
+    https://*) ;;
+    *) fail "$name must use https://" ;;
+  esac
+  case "$value" in
+    *localhost*|*127.0.0.1*|*\[::1\]*|*auth-service*|*local-development*)
+      fail "$name points to a local or development endpoint"
+      ;;
+  esac
+}
+
 deployment_env=$(read_env DEPLOYMENT_ENV)
 case "$deployment_env" in
   staging|production) ;;
   *) fail "DEPLOYMENT_ENV must be staging or production" ;;
+esac
+
+require_exact AUTH_ENV "$deployment_env"
+require_exact AUTH_SELF_SIGNUP false
+[ -z "$(read_env AUTH_LOCAL_BOOTSTRAP_ADMIN_EMAIL)" ] || fail "AUTH_LOCAL_BOOTSTRAP_ADMIN_EMAIL must be empty outside local development"
+validate_database_url AUTH_DATABASE_URL
+validate_https_url AUTH_ISSUER
+require_env AUTH_AUDIENCE
+require_env AUTH_SIGNING_KEY_ID
+auth_signing_key_id=$(read_env AUTH_SIGNING_KEY_ID)
+
+auth_signing_key_file=$(read_env AUTH_SIGNING_KEY_FILE)
+auth_signing_key_hex=$(read_env AUTH_SIGNING_KEY_HEX)
+if [ -n "$auth_signing_key_file" ] && [ -n "$auth_signing_key_hex" ]; then
+  fail "AUTH_SIGNING_KEY_FILE and AUTH_SIGNING_KEY_HEX are mutually exclusive"
+fi
+if [ -z "$auth_signing_key_file" ] && [ -z "$auth_signing_key_hex" ]; then
+  fail "AUTH_SIGNING_KEY_FILE or AUTH_SIGNING_KEY_HEX is required"
+fi
+if [ -n "$auth_signing_key_file" ]; then
+  case "$auth_signing_key_file" in
+    /*) ;;
+    *) fail "AUTH_SIGNING_KEY_FILE must be an absolute deployment path" ;;
+  esac
+fi
+case "$auth_signing_key_id:$auth_signing_key_hex" in
+  *local-development*) fail "auth signing configuration uses local development material" ;;
+esac
+
+require_exact AUTH_EMAIL_MODE provider
+validate_https_url AUTH_EMAIL_PROVIDER_ENDPOINT
+require_env AUTH_EMAIL_PROVIDER_API_KEY
+require_env AUTH_EMAIL_FROM
+validate_https_url AUTH_APP_BASE_URL
+initial_admin_email=$(read_env AUTH_INITIAL_ADMIN_EMAIL)
+if [ -n "$initial_admin_email" ]; then
+  case "$initial_admin_email" in
+    *@*.*) ;;
+    *) fail "AUTH_INITIAL_ADMIN_EMAIL must be a valid email address" ;;
+  esac
+  case "$initial_admin_email" in
+    *[!A-Za-z0-9.@_%+-]*) fail "AUTH_INITIAL_ADMIN_EMAIL contains unsupported characters" ;;
+  esac
+fi
+
+require_exact VITE_DEPLOYMENT_ENVIRONMENT "$deployment_env"
+browser_auth_method=$(read_env VITE_AUTH_METHOD)
+case "$browser_auth_method" in
+  email-otp)
+    validate_https_url VITE_AUTH_SERVICE_BASE_URL
+    ;;
+  oidc)
+    validate_https_url VITE_OIDC_ISSUER
+    require_env VITE_OIDC_CLIENT_ID
+    validate_https_url VITE_OIDC_REDIRECT_URI
+    require_env VITE_OIDC_SCOPE
+    case " $(read_env VITE_OIDC_SCOPE) " in
+      *" openid "*) ;;
+      *) fail "VITE_OIDC_SCOPE must include openid" ;;
+    esac
+    ;;
+  *) fail "VITE_AUTH_METHOD must be email-otp or oidc" ;;
 esac
 
 require_exact API_ENV "$deployment_env"

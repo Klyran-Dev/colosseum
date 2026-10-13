@@ -24,6 +24,7 @@ export interface VaultReleaseMessages {
     amountHelp: string;
     earliest: string;
     earliestHelp: string;
+    windowTimeZone: (timeZone: string) => string;
     expiry: string;
     expiryHelp: string;
     evidenceReference: string;
@@ -31,6 +32,7 @@ export interface VaultReleaseMessages {
     saving: string;
     create: string;
     routeErrorSuffix: string;
+    retryRoutes: string;
     routeDetails: string;
     routeEvidence: string;
     taxHoldingAccount: string;
@@ -53,6 +55,7 @@ export interface VaultReleaseMessages {
     createdBy: string;
     approvedBy: string;
     notApproved: string;
+    proposed: string;
     nextStep: string;
     approved: string;
     ledgerCreated: string;
@@ -96,6 +99,7 @@ export interface VaultReleaseErrors {
   claimMismatch: string;
   transitionSaved: string;
   transitionSavedButRefreshFailed: string;
+  invalidWindow: string;
 }
 
 function displayHttpStatus(status: number): string {
@@ -122,6 +126,7 @@ const ENGLISH_ERRORS: VaultReleaseErrors = {
   claimMismatch: "The service returned a transition for a different release request. No local state was accepted.",
   transitionSaved: "The release request was transitioned and the page was refreshed from the service.",
   transitionSavedButRefreshFailed: "The release request transition was accepted, but the refreshed request could not be loaded. Reconcile before taking another action.",
+  invalidWindow: "Choose a valid release window where the expiry is after the earliest release time.",
 };
 
 const GERMAN_ERRORS: VaultReleaseErrors = {
@@ -144,6 +149,7 @@ const GERMAN_ERRORS: VaultReleaseErrors = {
   claimMismatch: "Der Dienst hat einen Übergang für einen anderen Freigabeantrag zurückgegeben. Der lokale Status wurde nicht übernommen.",
   transitionSaved: "Der Status des Freigabeantrags wurde geändert und die Seite aus dem Dienst aktualisiert.",
   transitionSavedButRefreshFailed: "Der Übergang wurde angenommen, aber der aktualisierte Antrag konnte nicht geladen werden. Stimmen Sie ihn ab, bevor Sie erneut handeln.",
+  invalidWindow: "Wählen Sie ein gültiges Freigabezeitfenster, dessen Ablauf nach dem frühesten Freigabezeitpunkt liegt.",
 };
 
 const ARABIC_ERRORS: VaultReleaseErrors = {
@@ -166,6 +172,7 @@ const ARABIC_ERRORS: VaultReleaseErrors = {
   claimMismatch: "أعادت الخدمة انتقالاً لطلب إصدار مختلف. لم تُقبل الحالة المحلية.",
   transitionSaved: "تم تغيير حالة طلب الإصدار وتحديث الصفحة من الخدمة.",
   transitionSavedButRefreshFailed: "تم قبول الانتقال، لكن تعذر تحميل الطلب المحدّث. طابق الحالة قبل اتخاذ إجراء آخر.",
+  invalidWindow: "اختر نافذة إصدار صالحة يكون انتهاؤها بعد أقرب وقت للإصدار.",
 };
 
 const JAPANESE_ERRORS: VaultReleaseErrors = {
@@ -188,6 +195,7 @@ const JAPANESE_ERRORS: VaultReleaseErrors = {
   claimMismatch: "サービスが別のリリース申請の状態変更を返しました。ローカル状態は受け入れていません。",
   transitionSaved: "リリース申請の状態を変更し、サービスからページを更新しました。",
   transitionSavedButRefreshFailed: "状態変更は受理されましたが、更新後の申請を読み込めませんでした。別の操作の前に照合してください。",
+  invalidWindow: "有効なリリース期間を選択してください。終了時刻は開始時刻より後である必要があります。",
 };
 
 const ENGLISH: VaultReleaseMessages = {
@@ -213,7 +221,8 @@ const ENGLISH: VaultReleaseMessages = {
     amount: "Amount",
     amountHelp: "Enter the exact amount in the asset’s smallest unit. The service checks precision before saving.",
     earliest: "Earliest release time",
-    earliestHelp: "Use the UTC timestamp required by the release policy.",
+    earliestHelp: "Choose the earliest release time.",
+    windowTimeZone: (timeZone) => `Release times use ${timeZone}.`,
     expiry: "Release expiry",
     expiryHelp: "The request cannot be executed after this time.",
     evidenceReference: "Evidence reference",
@@ -221,6 +230,7 @@ const ENGLISH: VaultReleaseMessages = {
     saving: "Saving…",
     create: "Create release request",
     routeErrorSuffix: "No release request can be created until a verified route is available.",
+    retryRoutes: "Retry payment routes",
     routeDetails: "Verified route details",
     routeEvidence: "Route evidence",
     taxHoldingAccount: "Tax holding account:",
@@ -243,6 +253,7 @@ const ENGLISH: VaultReleaseMessages = {
     createdBy: "Created by",
     approvedBy: "Approved by",
     notApproved: "Not approved",
+    proposed: "Proposed",
     nextStep: "Next step",
     approved: "Approved",
     ledgerCreated: "Ledger record created",
@@ -289,7 +300,8 @@ const GERMAN: VaultReleaseMessages = {
     amount: "Betrag",
     amountHelp: "Geben Sie den exakten Betrag in der kleinsten Einheit des Assets ein. Der Dienst prüft die Genauigkeit vor dem Speichern.",
     earliest: "Früheste Freigabezeit",
-    earliestHelp: "Verwenden Sie den von der Freigaberichtlinie geforderten UTC-Zeitstempel.",
+    earliestHelp: "Wählen Sie den frühesten Freigabezeitpunkt.",
+    windowTimeZone: (timeZone) => `Freigabezeiten verwenden ${timeZone}.`,
     expiry: "Ablauf der Freigabe",
     expiryHelp: "Nach diesem Zeitpunkt kann der Antrag nicht mehr ausgeführt werden.",
     evidenceReference: "Nachweisreferenz",
@@ -297,6 +309,7 @@ const GERMAN: VaultReleaseMessages = {
     saving: "Wird gespeichert…",
     create: "Freigabeantrag erstellen",
     routeErrorSuffix: "Ein Freigabeantrag kann erst erstellt werden, wenn eine verifizierte Route verfügbar ist.",
+    retryRoutes: "Zahlungsrouten wiederholen",
     routeDetails: "Details der verifizierten Route",
     routeEvidence: "Routennachweis",
     taxHoldingAccount: "Steuerverwahrungskonto:",
@@ -319,6 +332,7 @@ const GERMAN: VaultReleaseMessages = {
     createdBy: "Erstellt von",
     approvedBy: "Genehmigt von",
     notApproved: "Nicht genehmigt",
+    proposed: "Vorgeschlagen",
     nextStep: "Nächster Schritt",
     approved: "Genehmigt",
     ledgerCreated: "Ledger-Eintrag erstellt",
@@ -365,7 +379,8 @@ const ARABIC: VaultReleaseMessages = {
     amount: "المبلغ",
     amountHelp: "أدخل المبلغ الدقيق بأصغر وحدة من الأصل. تتحقق الخدمة من الدقة قبل الحفظ.",
     earliest: "أبكر وقت للإصدار",
-    earliestHelp: "استخدم الطابع الزمني UTC المطلوب في سياسة الإصدار.",
+    earliestHelp: "اختر أقرب وقت للإصدار.",
+    windowTimeZone: (timeZone) => `تستخدم أوقات الإصدار ${timeZone}.`,
     expiry: "انتهاء الإصدار",
     expiryHelp: "لا يمكن تنفيذ الطلب بعد هذا الوقت.",
     evidenceReference: "مرجع الدليل",
@@ -373,6 +388,7 @@ const ARABIC: VaultReleaseMessages = {
     saving: "جارٍ الحفظ…",
     create: "إنشاء طلب إصدار",
     routeErrorSuffix: "لا يمكن إنشاء طلب إصدار حتى يتوفر مسار موثّق.",
+    retryRoutes: "إعادة محاولة مسارات الدفع",
     routeDetails: "تفاصيل المسار الموثّق",
     routeEvidence: "دليل المسار",
     taxHoldingAccount: "حساب حيازة الضريبة:",
@@ -395,6 +411,7 @@ const ARABIC: VaultReleaseMessages = {
     createdBy: "أنشأه",
     approvedBy: "وافق عليه",
     notApproved: "غير معتمد",
+    proposed: "مقترح",
     nextStep: "الخطوة التالية",
     approved: "معتمد",
     ledgerCreated: "تم إنشاء سجل دفتر الأستاذ",
@@ -441,7 +458,8 @@ const JAPANESE: VaultReleaseMessages = {
     amount: "金額",
     amountHelp: "アセットの最小単位で正確な金額を入力します。保存前にサービスが精度を確認します。",
     earliest: "最短リリース時刻",
-    earliestHelp: "リリースポリシーで指定されたUTCタイムスタンプを使用します。",
+    earliestHelp: "最も早いリリース時刻を選択します。",
+    windowTimeZone: (timeZone) => `リリース時刻は${timeZone}を使用します。`,
     expiry: "リリース期限",
     expiryHelp: "この時刻を過ぎると申請は実行できません。",
     evidenceReference: "証拠参照",
@@ -449,6 +467,7 @@ const JAPANESE: VaultReleaseMessages = {
     saving: "保存中…",
     create: "リリース申請を作成",
     routeErrorSuffix: "検証済みルートが利用可能になるまでリリース申請は作成できません。",
+    retryRoutes: "支払いルートを再試行",
     routeDetails: "検証済みルートの詳細",
     routeEvidence: "ルート証拠",
     taxHoldingAccount: "税金保管口座:",
@@ -471,6 +490,7 @@ const JAPANESE: VaultReleaseMessages = {
     createdBy: "作成者",
     approvedBy: "承認者",
     notApproved: "未承認",
+    proposed: "提案済み",
     nextStep: "次のステップ",
     approved: "承認済み",
     ledgerCreated: "台帳レコード作成済み",

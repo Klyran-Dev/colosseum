@@ -8,6 +8,7 @@ import {
   evaluateUiAccess,
   parseAuthorizationCapabilities,
   policiesForGroup,
+  workspaceRequiresAuthentication,
 } from "./authorization";
 
 function completeCapabilities(overrides: Record<string, unknown> = {}) {
@@ -18,6 +19,11 @@ function completeCapabilities(overrides: Record<string, unknown> = {}) {
 }
 
 describe("browser authorization affordance contract", () => {
+  it("keeps the public simulator distinct from protected workspaces", () => {
+    expect(workspaceRequiresAuthentication("preview")).toBe(false);
+    expect(workspaceRequiresAuthentication("document-checkout")).toBe(true);
+  });
+
   it("denies anonymous access without pretending the browser can authorize a principal", () => {
     const snapshot = authorizationSnapshotForToken("");
     const policy = WORKSPACE_POLICIES.find((item) => item.id === "settlement.wallet");
@@ -188,11 +194,11 @@ describe("browser authorization affordance contract", () => {
   });
 
   it("keeps the navigation catalog grouped for a SaaS operator workflow", () => {
-    expect(policiesForGroup("Rules & access").map((policy) => policy.id)).toEqual(["tax.rule.govern", "tax.applicability.govern", "access.control"]);
+    expect(policiesForGroup("Rules & access").map((policy) => policy.id)).toEqual(["tax.rule.govern", "tax.applicability.govern", "access.control", "identity.role.manage"]);
   });
 
   it("describes every production workspace and its bounded action capabilities", () => {
-    expect(WORKSPACE_POLICIES).toHaveLength(21);
+    expect(WORKSPACE_POLICIES).toHaveLength(22);
     expect(new Set(WORKSPACE_POLICIES.map((policy) => policy.workspace)).size).toBe(16);
     expect(WORKSPACE_POLICIES.map((policy) => policy.id)).toEqual(expect.arrayContaining([
       "tax.document.quote.create",
@@ -224,8 +230,10 @@ describe("browser authorization affordance contract", () => {
       schema: "authorization-capabilities/v1",
       snapshot_id: "01900000-0000-7000-8000-000000000001",
       subject: "operator-1",
+      email: "operator@example.com",
       tenant_id: "01900000-0000-4000-8000-000000000001",
       expires_at_unix: 1_000_000_030,
+      roles: ["merchant_operator", "moderator"],
       capabilities: completeCapabilities({
         "tax.quote.create": { decision: "allow", reason_code: "scope_and_role_satisfied" },
         "tax.rule.govern": { decision: "indeterminate", reason_code: "resource_context_required" },
@@ -233,6 +241,8 @@ describe("browser authorization affordance contract", () => {
     }, 1_000_000_000);
     expect(snapshot.state).toBe("server-allowed");
     expect(snapshot.tenantId).toBe("01900000-0000-4000-8000-000000000001");
+    expect(snapshot.roles).toEqual(["merchant_operator", "moderator"]);
+    expect(snapshot.email).toBe("operator@example.com");
     expect(evaluateUiAccess(snapshot, WORKSPACE_POLICIES[0], 1_000_000_000)).toEqual({
       kind: "allow",
       reasonCode: "scope_and_role_satisfied",

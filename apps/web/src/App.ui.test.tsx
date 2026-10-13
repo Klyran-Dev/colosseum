@@ -11,6 +11,20 @@ afterEach(() => {
 });
 
 describe("aggregate tax result workspace", () => {
+  it("locks the simulator inputs while the service is unavailable", async () => {
+    window.history.replaceState({}, "", "/operations/tax-simulator");
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/healthz")) return new Response(null, { status: 503 });
+      return new Response(null, { status: 404 });
+    }));
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("unavailable"));
+    expect(screen.getByLabelText("Total before tax").closest("fieldset")).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Calculate scenario" })).toHaveProperty("disabled", true);
+  });
+
   it("renders the component trace once inside the progressive explanation", async () => {
     window.history.replaceState({}, "", "/operations/tax-simulator");
     const calculation = {
@@ -53,6 +67,7 @@ describe("aggregate tax result workspace", () => {
 
     render(<App />);
     await waitFor(() => expect((screen.getByRole("button", { name: "Calculate scenario" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.getByText("Explore a scenario to review the tax amount and its explanation.")).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("Total before tax"), { target: { value: "10000" } });
     fireEvent.change(screen.getByLabelText("Amount subject to tax"), { target: { value: "10000" } });
@@ -65,6 +80,8 @@ describe("aggregate tax result workspace", () => {
 
     await waitFor(() => expect(document.querySelectorAll(".trace-row").length).toBeGreaterThan(0));
     expect(document.querySelectorAll(".trace-row")).toHaveLength(1);
-    expect(screen.getByText("Why this tax?")).toBeTruthy();
+    expect(screen.getByText("How this scenario was calculated")).toBeTruthy();
+    expect(screen.getByText("Scenario rule")).toBeTruthy();
+    expect(screen.queryByText("The service applied the approved tax rule to the location and amounts you entered.")).toBeNull();
   });
 });

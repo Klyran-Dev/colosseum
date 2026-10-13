@@ -41,9 +41,12 @@ test.describe("interaction sweep", () => {
     }
 
     expect(result.mismatches, "forced states must equal real interaction").toEqual([]);
-    // Signed-out workspaces expose few enabled controls; the fixture sweep (style-fixtures.spec.ts)
-    // covers the enabled primary buttons, fields, and links of every captured state.
-    expect(result.verified, "number of distinct interactive kinds verified").toBeGreaterThanOrEqual(10);
+    // Signed-out workspaces expose few enabled controls; the account menu and
+    // workspace-gate sign-in action are intentionally absent until a session
+    // exists (ADR-0450, ADR-0459). The fixture sweep (style-fixtures.spec.ts)
+    // covers the enabled primary buttons, fields, and links of every captured
+    // state.
+    expect(result.verified, "number of distinct interactive kinds verified").toBeGreaterThanOrEqual(8);
     expect(result.skipped.length / Math.max(1, result.verified + result.skipped.length), `skipped (unreachable) kinds: ${result.skipped.join("; ")}`).toBeLessThanOrEqual(0.25);
     console.log(`INTERACTION_SWEEP verified=${result.verified} skipped=${result.skipped.length} kinds=${seen.size}\n${result.skipped.join("\n")}`);
   });

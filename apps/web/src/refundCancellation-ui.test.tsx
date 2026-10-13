@@ -7,6 +7,13 @@ import RefundCancellationPanel from "./RefundCancellationPanel";
 afterEach(cleanup);
 
 describe("refund cancellation operator language", () => {
+  it("makes cancellation preparation unavailable before sign-in", () => {
+    render(<RefundCancellationPanel apiBase="/api" serviceOnline accessToken="" locale="en-US" />);
+
+    expect(screen.getByRole("note").textContent).toContain("Sign in to continue");
+    expect(screen.getByRole("textbox", { name: /Finalized refund request reference/ }).closest("fieldset")).toHaveProperty("disabled", true);
+  });
+
   it("leads with the cancellation decision and keeps recovery data advanced", () => {
     render(<RefundCancellationPanel apiBase="/api" serviceOnline accessToken="operator-token" locale="de-DE" />);
 

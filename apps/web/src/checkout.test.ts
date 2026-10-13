@@ -293,8 +293,26 @@ describe("checkout settlement boundary", () => {
       request_digest: new Array(32).fill(1),
       instruction_digest: new Array(32).fill(2),
       route_id: routeId,
+      display: {
+        schema: "solana-tax-protocol/document-payment-display/v1",
+        currency: "USD",
+        atomic_decimals: 2,
+        rule_set_id: "operator-document-flat-rate",
+        rule_version: 1,
+        quote_expires_at_unix: 1_800_000_000,
+        route_key: "local-usdc",
+        route_version: 1,
+        mint: vectorInstruction.accounts[4].pubkey,
+        mint_decimals: 2,
+        token_program: vectorInstruction.accounts[11].pubkey,
+      },
     });
     expect("document_attestation_digest" in documentArtifact).toBe(true);
+    expect("display" in documentArtifact).toBe(true);
+    if ("display" in documentArtifact) {
+      expect(documentArtifact.display.currency).toBe("USD");
+      expect(documentArtifact.display.atomic_decimals).toBe(2);
+    }
 
     expect(() => parseSettlementRoutes([{
       id: routeId,

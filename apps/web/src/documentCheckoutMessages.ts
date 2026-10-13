@@ -14,6 +14,7 @@ export interface DocumentCheckoutMessages {
     paymentRoute: string;
     loadingRoutes: string;
     routesUnavailable: string;
+    retryRoutes: string;
     selectRoute: string;
     noRoutes: string;
     verifiedRoute: string;
@@ -55,6 +56,14 @@ export interface DocumentCheckoutMessages {
     amountBeforeTax: string;
     taxWithheld: string;
     amountSent: string;
+    technicalDetails: string;
+    quoteContext: string;
+    ruleVersion: string;
+    route: string;
+    networkFee: string;
+    networkFeeUnavailable: string;
+    priorityFeePolicy: string;
+    exactAtomicValue: string;
     paymentAsset: string;
     selectedByRoute: string;
     paymentDetails: string;
@@ -75,6 +84,10 @@ export interface DocumentCheckoutMessages {
     legalBoundary: string;
     transactionReference: (signature: string) => string;
     expiresChecked: (expired: boolean) => string;
+  };
+  access: {
+    title: string;
+    copy: string;
   };
   errors: DocumentCheckoutErrors;
 }
@@ -236,6 +249,7 @@ const ENGLISH: DocumentCheckoutMessages = {
     paymentRoute: "Payment route",
     loadingRoutes: "Loading checked routes…",
     routesUnavailable: "Routes unavailable",
+    retryRoutes: "Retry payment route",
     selectRoute: "Select a payment route",
     noRoutes: "No active routes",
     verifiedRoute: "Verified payment route selected",
@@ -277,13 +291,21 @@ const ENGLISH: DocumentCheckoutMessages = {
     amountBeforeTax: "Amount before tax",
     taxWithheld: "Tax withheld",
     amountSent: "Amount sent to recipient",
+    technicalDetails: "Payment context",
+    quoteContext: "Quote",
+    ruleVersion: "Rule",
+    route: "Route",
+    networkFee: "Network fee",
+    networkFeeUnavailable: "Not estimated before wallet/RPC fee lookup",
+    priorityFeePolicy: "Priority-fee policy",
+    exactAtomicValue: "Exact atomic value",
     paymentAsset: "Payment asset",
     selectedByRoute: "Selected by payment route",
     paymentDetails: "Payment details",
     verifiedInvoiceEvidence: "Verified invoice evidence",
     paymentReference: "Payment reference",
     readyTitle: "Payment ready for your approval",
-    readyCopy: "Payment safeguards confirmed from the verified invoice.",
+    readyCopy: "Review the exact scope and amounts below before approving in your wallet.",
     approve: "Approve and send payment",
     waitingWallet: "Waiting for wallet…",
     sendingPayment: "Sending payment…",
@@ -297,6 +319,10 @@ const ENGLISH: DocumentCheckoutMessages = {
     legalBoundary: "This is withholding authorization—not tax filing, reporting, legal compliance, or tax advice.",
     transactionReference: (signature) => `Transaction reference ${signature}`,
     expiresChecked: (expired) => expired ? "expired; verify a new record" : "checked by the service",
+  },
+  access: {
+    title: "Sign in required to load payment data",
+    copy: "Sign in to load verified invoice evidence and active payment routes. No payment request can be sent until your account and wallet are checked.",
   },
   errors: ENGLISH_ERRORS,
 };
@@ -315,6 +341,7 @@ const GERMAN: DocumentCheckoutMessages = {
     paymentRoute: "Zahlungsroute",
     loadingRoutes: "Geprüfte Routen werden geladen…",
     routesUnavailable: "Routen nicht verfügbar",
+    retryRoutes: "Zahlungsroute wiederholen",
     selectRoute: "Zahlungsroute auswählen",
     noRoutes: "Keine aktiven Routen",
     verifiedRoute: "Verifizierte Zahlungsroute ausgewählt",
@@ -356,13 +383,21 @@ const GERMAN: DocumentCheckoutMessages = {
     amountBeforeTax: "Betrag vor Steuer",
     taxWithheld: "Einbehaltene Steuer",
     amountSent: "An Empfänger gesendeter Betrag",
+    technicalDetails: "Zahlungskontext",
+    quoteContext: "Angebot",
+    ruleVersion: "Regel",
+    route: "Route",
+    networkFee: "Netzwerkgebühr",
+    networkFeeUnavailable: "Vor der Gebührenabfrage durch Wallet/RPC nicht geschätzt",
+    priorityFeePolicy: "Prioritätsgebührenrichtlinie",
+    exactAtomicValue: "Exakter atomarer Wert",
     paymentAsset: "Zahlungsasset",
     selectedByRoute: "Durch Zahlungsroute ausgewählt",
     paymentDetails: "Zahlungsdetails",
     verifiedInvoiceEvidence: "Geprüfter Rechnungsnachweis",
     paymentReference: "Zahlungsreferenz",
     readyTitle: "Zahlung zur Genehmigung bereit",
-    readyCopy: "Zahlungsschutz aus der geprüften Rechnung bestätigt.",
+    readyCopy: "Prüfen Sie unten den genauen Umfang und die Beträge, bevor Sie die Zahlung in Ihrem Wallet genehmigen.",
     approve: "Zahlung genehmigen und senden",
     waitingWallet: "Warten auf Wallet…",
     sendingPayment: "Zahlung wird gesendet…",
@@ -376,6 +411,10 @@ const GERMAN: DocumentCheckoutMessages = {
     legalBoundary: "Dies ist eine Genehmigung zum Einbehalt – keine Steuererklärung, Meldung, rechtliche Compliance oder Steuerberatung.",
     transactionReference: (signature) => `Transaktionsreferenz ${signature}`,
     expiresChecked: (expired) => expired ? "abgelaufen; neuen Datensatz prüfen" : "vom Dienst geprüft",
+  },
+  access: {
+    title: "Anmeldung erforderlich, um Zahlungsdaten zu laden",
+    copy: "Melden Sie sich an, um geprüfte Rechnungsnachweise und aktive Zahlungsrouten zu laden. Eine Zahlungsanfrage kann erst nach Prüfung von Konto und Wallet gesendet werden.",
   },
   errors: GERMAN_ERRORS,
 };
@@ -394,6 +433,7 @@ const ARABIC: DocumentCheckoutMessages = {
     paymentRoute: "مسار الدفع",
     loadingRoutes: "جارٍ تحميل المسارات المتحققة…",
     routesUnavailable: "المسارات غير متاحة",
+    retryRoutes: "إعادة محاولة مسار الدفع",
     selectRoute: "اختر مسار دفع",
     noRoutes: "لا توجد مسارات نشطة",
     verifiedRoute: "تم اختيار مسار دفع متحقق",
@@ -435,13 +475,21 @@ const ARABIC: DocumentCheckoutMessages = {
     amountBeforeTax: "المبلغ قبل الضريبة",
     taxWithheld: "الضريبة المحجوزة",
     amountSent: "المبلغ المرسل إلى المستلم",
+    technicalDetails: "سياق الدفع",
+    quoteContext: "عرض السعر",
+    ruleVersion: "القاعدة",
+    route: "المسار",
+    networkFee: "رسوم الشبكة",
+    networkFeeUnavailable: "لم تُقدّر قبل استعلام المحفظة أو RPC عن الرسوم",
+    priorityFeePolicy: "سياسة رسوم الأولوية",
+    exactAtomicValue: "القيمة الذرية الدقيقة",
     paymentAsset: "أصل الدفع",
     selectedByRoute: "يحدده مسار الدفع",
     paymentDetails: "تفاصيل الدفع",
     verifiedInvoiceEvidence: "دليل الفاتورة المتحقق",
     paymentReference: "مرجع الدفع",
     readyTitle: "الدفعة جاهزة لموافقتك",
-    readyCopy: "تم تأكيد ضمانات الدفع من الفاتورة المتحققة.",
+    readyCopy: "راجع النطاق والمبالغ الدقيقة أدناه قبل الموافقة على الدفع في محفظتك.",
     approve: "الموافقة على الدفعة وإرسالها",
     waitingWallet: "في انتظار المحفظة…",
     sendingPayment: "جارٍ إرسال الدفعة…",
@@ -455,6 +503,10 @@ const ARABIC: DocumentCheckoutMessages = {
     legalBoundary: "هذا تفويض لحجز الضريبة، وليس إقراراً ضريبياً أو تقريراً أو امتثالاً قانونياً أو استشارة ضريبية.",
     transactionReference: (signature) => `مرجع المعاملة ${signature}`,
     expiresChecked: (expired) => expired ? "منتهي؛ تحقق من سجل جديد" : "تم فحصه بواسطة الخدمة",
+  },
+  access: {
+    title: "يلزم تسجيل الدخول لتحميل بيانات الدفع",
+    copy: "سجّل الدخول لتحميل دليل الفاتورة ومسارات الدفع النشطة. لا يمكن إرسال طلب دفع حتى يتم التحقق من حسابك ومحفظتك.",
   },
   errors: ARABIC_ERRORS,
 };
@@ -473,6 +525,7 @@ const JAPANESE: DocumentCheckoutMessages = {
     paymentRoute: "支払いルート",
     loadingRoutes: "検証済みルートを読み込み中…",
     routesUnavailable: "ルートを利用できません",
+    retryRoutes: "支払いルートを再試行",
     selectRoute: "支払いルートを選択",
     noRoutes: "有効なルートがありません",
     verifiedRoute: "検証済み支払いルートを選択済み",
@@ -514,13 +567,21 @@ const JAPANESE: DocumentCheckoutMessages = {
     amountBeforeTax: "税引前金額",
     taxWithheld: "源泉徴収税額",
     amountSent: "受取人に送る金額",
+    technicalDetails: "支払いコンテキスト",
+    quoteContext: "見積もり",
+    ruleVersion: "ルール",
+    route: "ルート",
+    networkFee: "ネットワーク手数料",
+    networkFeeUnavailable: "ウォレット/RPCの手数料照会前のため未見積もり",
+    priorityFeePolicy: "優先手数料ポリシー",
+    exactAtomicValue: "正確なアトミック値",
     paymentAsset: "支払いアセット",
     selectedByRoute: "支払いルートで選択",
     paymentDetails: "支払いの詳細",
     verifiedInvoiceEvidence: "検証済み請求書証拠",
     paymentReference: "支払い参照",
     readyTitle: "支払いは承認の準備完了",
-    readyCopy: "検証済み請求書から支払い保護策を確認しました。",
+    readyCopy: "ウォレットで承認する前に、以下の正確な範囲と金額を確認してください。",
     approve: "支払いを承認して送信",
     waitingWallet: "ウォレットを待機中…",
     sendingPayment: "支払いを送信中…",
@@ -534,6 +595,10 @@ const JAPANESE: DocumentCheckoutMessages = {
     legalBoundary: "これは源泉徴収の承認であり、税務申告、報告、法的コンプライアンス、税務助言ではありません。",
     transactionReference: (signature) => `取引参照 ${signature}`,
     expiresChecked: (expired) => expired ? "期限切れ。新しい記録を確認してください" : "サービスが確認済み",
+  },
+  access: {
+    title: "支払いデータを読み込むにはサインインが必要です",
+    copy: "サインインして、確認済みの請求書証拠と有効な支払いルートを読み込みます。アカウントとウォレットの確認が完了するまで支払い要求は送信できません。",
   },
   errors: JAPANESE_ERRORS,
 };

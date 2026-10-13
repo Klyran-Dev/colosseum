@@ -17,6 +17,7 @@ import {
 import { parseTaxSimulation, TaxSimulation } from "./taxSimulation";
 import TaxDocumentSimulationPanel from "./TaxDocumentSimulationPanel";
 import { governanceMessagesFor } from "./governanceMessages";
+import { shellMessagesFor } from "./shellMessages";
 import { assetScaleMessagesFor, parseAssetScale } from "./assetScaleMessages";
 import { operatorErrorMessage } from "./operatorError";
 import TaxTreatmentOutcome from "./TaxTreatmentOutcome";
@@ -41,6 +42,10 @@ const DEFAULT_RULE_DOCUMENT = `{
   ]
 }`;
 
+function governanceStatusLabel(status: GovernanceState["status"] | "none", messages: ReturnType<typeof governanceMessagesFor>): string {
+  return status === "none" ? messages.common.notAssigned : messages.statusLabels[status];
+}
+
 type GovernancePanelProps = {
   apiBase: string;
   serviceOnline: boolean;
@@ -51,7 +56,9 @@ type GovernancePanelProps = {
 
 export default function GovernancePanel({ apiBase, serviceOnline, accessToken, locale = DEFAULT_LOCALE, timeZone = DEFAULT_TIME_ZONE }: GovernancePanelProps) {
   const messages = governanceMessagesFor(locale);
+  const shellMessages = shellMessagesFor(locale);
   const assetScaleMessages = assetScaleMessagesFor(locale);
+  const workflowLocked = !serviceOnline || !accessToken.trim();
   const [ruleSetId, setRuleSetId] = useState("");
   const [state, setState] = useState<GovernanceState | null>(null);
   const [targetStatus, setTargetStatus] = useState<GovernanceState["status"] | "">("");
@@ -318,10 +325,13 @@ export default function GovernancePanel({ apiBase, serviceOnline, accessToken, l
           <span className="status-pill">{messages.section.badge}</span>
         </div>
         <p className="panel-copy">{messages.section.description}</p>
-        <details className="authoring-section" open>
+        {!accessToken.trim() && <div className="workflow-lock" role="note"><strong>{shellMessages.session.signInToContinue}</strong><p>{shellMessages.session.signInToContinueCopy}</p></div>}
+        <details className="authoring-section">
           <summary>{messages.draft.summary}</summary>
           <p className="evidence-note">{messages.draft.copy}</p>
-          <form onSubmit={createRuleDraft} className="form-grid">
+          <fieldset className="workflow-fieldset" disabled={workflowLocked || isCreating}>
+          <legend className="sr-only">{messages.draft.summary}</legend>
+          <form onSubmit={createRuleDraft} className="form-grid governance-authoring-form">
             <label><span>{messages.draft.ruleName}</span><input value={draftExternalId} onChange={(event) => { const value = event.target.value; setDraftExternalId(value); setStructuredRuleDraft((current) => ({ ...current, id: value })); }} autoComplete="off" required /></label>
             <label><span>{messages.draft.version}</span><input inputMode="numeric" min="1" value={draftVersion} onChange={(event) => { const value = event.target.value; setDraftVersion(value); setStructuredRuleDraft((current) => ({ ...current, version: value })); }} required /></label>
             <label><span>{messages.draft.jurisdiction}</span><input value={draftJurisdiction} onChange={(event) => setDraftJurisdiction(event.target.value.toUpperCase())} required /></label>
@@ -353,29 +363,35 @@ export default function GovernancePanel({ apiBase, serviceOnline, accessToken, l
             </fieldset>
             <button type="submit" disabled={!serviceOnline || isCreating || !accessToken.trim()}>{isCreating ? messages.draft.creating : messages.draft.create}</button>
           </form>
+          </fieldset>
         </details>
+        <fieldset className="workflow-fieldset" disabled={workflowLocked || isLoading}>
+        <legend className="sr-only">{messages.lookup.savedReference}</legend>
         <form onSubmit={loadGovernance} className="form-grid">
           <label className="full-field"><span>{messages.lookup.savedReference}</span><input value={ruleSetId} onChange={(event) => setRuleSetId(event.target.value)} placeholder={messages.lookup.placeholder} autoComplete="off" spellCheck={false} required /></label>
           <button type="submit" disabled={!serviceOnline || isLoading || !ruleSetId.trim() || !accessToken.trim()}>{isLoading ? messages.lookup.loading : messages.lookup.load}</button>
         </form>
+        </fieldset>
         {!serviceOnline && <p className="inline-warning" role="alert">{messages.common.unavailable}</p>}
         {error && <p className="inline-error" role="alert">{error}</p>}
         {notice && <p className="inline-success" role="status">{notice}</p>}
         {state && <form onSubmit={submitTransition} className="governance-action-form">
-          <div className="governance-current-state"><span>{messages.transition.currentStatus}</span><strong>{messages.statusLabels[state.status] ?? state.status}</strong><small>{messages.roleLabels[state.status] ?? state.status} · {messages.transition.change} {state.governance_revision}</small></div>
+          <div className="governance-current-state"><span>{messages.transition.currentStatus}</span><strong>{governanceStatusLabel(state.status, messages)}</strong><small>{messages.roleLabels[state.status]} · {messages.transition.change} {state.governance_revision}</small></div>
           {nextStatuses.length > 0 ? <>
-            <label><span>{messages.transition.nextAction}</span><select value={targetStatus} onChange={(event) => setTargetStatus(event.target.value as GovernanceState["status"])}>{nextStatuses.map((status) => <option key={status} value={status}>{messages.transitionLabel(messages.statusLabels[state.status] ?? state.status, messages.statusLabels[status] ?? status)}</option>)}</select></label>
+            <label><span>{messages.transition.nextAction}</span><select value={targetStatus} onChange={(event) => setTargetStatus(event.target.value as GovernanceState["status"])}>{nextStatuses.map((status) => <option key={status} value={status}>{messages.transitionLabel(governanceStatusLabel(state.status, messages), governanceStatusLabel(status, messages))}</option>)}</select></label>
             <label><span>{messages.transition.reason}</span><textarea value={evidence} onChange={(event) => setEvidence(event.target.value)} aria-describedby="decision-evidence-help" rows={6} spellCheck={false} /><small id="decision-evidence-help" className="field-help">{messages.transition.reasonHelp}</small></label>
-            <button type="submit" disabled={isSubmitting || !targetStatus || !accessToken.trim() || !serviceOnline}>{isSubmitting ? messages.transition.submitting : targetStatus ? messages.transitionLabel(messages.statusLabels[state.status] ?? state.status, messages.statusLabels[targetStatus] ?? targetStatus) : messages.transition.advance}</button>
+            <button type="submit" disabled={isSubmitting || !targetStatus || !accessToken.trim() || !serviceOnline}>{isSubmitting ? messages.transition.submitting : targetStatus ? messages.transitionLabel(governanceStatusLabel(state.status, messages), governanceStatusLabel(targetStatus, messages)) : messages.transition.advance}</button>
           </> : <p className="inline-warning">{messages.transition.retired}</p>}
         </form>}
       </article>
 
       <article className="panel governance-evidence-panel" aria-live="polite">
-        <div className="panel-heading"><div><p className="eyebrow">{messages.history.eyebrow}</p><h2>{messages.history.title}</h2></div>{state && <span className="status-pill status-pill-warning">{messages.statusLabels[state.status] ?? state.status}</span>}</div>
+        <div className="panel-heading"><div><p className="eyebrow">{messages.history.eyebrow}</p><h2>{messages.history.title}</h2></div>{state && <span className="status-pill status-pill-warning">{governanceStatusLabel(state.status, messages)}</span>}</div>
         <details className="authoring-section simulation-section">
           <summary>{messages.simulation.summary}</summary>
           <p className="evidence-note">{messages.history.simulationCopy}</p>
+          <fieldset className="workflow-fieldset" disabled={workflowLocked || isSimulating || !state}>
+          <legend className="sr-only">{messages.simulation.run}</legend>
           <form onSubmit={simulatePersistedRule} className="form-grid">
             <label><span>{messages.simulation.gross}</span><input inputMode="numeric" min="0" value={simulationGross} onChange={(event) => setSimulationGross(event.target.value)} required /></label>
             <label><span>{messages.simulation.net}</span><input inputMode="numeric" min="0" value={simulationNet} onChange={(event) => setSimulationNet(event.target.value)} required /></label>
@@ -384,6 +400,7 @@ export default function GovernancePanel({ apiBase, serviceOnline, accessToken, l
             <p className="field-help full-field">{messages.simulation.jurisdictionBound(state?.jurisdiction ?? messages.common.loadRuleFirst)}</p>
             <button type="submit" disabled={!state || !serviceOnline || isSimulating || !accessToken.trim()}>{isSimulating ? messages.simulation.running : messages.simulation.run}</button>
           </form>
+          </fieldset>
         {simulation && <div className="simulation-result" role="status">
             <div className="governance-current-state"><span>{messages.simulation.controlledResult}</span><strong>{formatAtomicValue(simulation.result.total_tax_atomic, simulation.result.currency, locale, simulation.result.atomic_decimals)} {messages.common.tax}</strong><small>{messages.history.calculationReference} {simulation.calculation_id} · {messages.history.rule} {simulation.result.rule_set_id} v{simulation.result.rule_version}</small></div>
             <TaxTreatmentOutcome outcome={simulation.result.treatment_outcome} currency={simulation.result.currency} atomicDecimals={simulation.result.atomic_decimals} locale={locale} formatAtomic={(value, currency, atomicDecimals) => formatAtomicValue(value, currency, locale, atomicDecimals)} />
@@ -393,7 +410,7 @@ export default function GovernancePanel({ apiBase, serviceOnline, accessToken, l
         </details>
         {!state ? <div className="empty-state"><span className="empty-icon">◎</span><strong>{messages.history.noRule}</strong><p>{messages.history.noRuleCopy}</p></div> : <div className="governance-evidence-content">
           <dl className="summary-list"><div><dt>{messages.history.identity}</dt><dd>{state.external_id} v{state.version}</dd></div><div><dt>{messages.history.jurisdictionRegime}</dt><dd>{state.jurisdiction} / {state.regime}</dd></div><div><dt>{messages.history.ruleDigest}</dt><dd><code>{state.rule_digest_hex.slice(0, 16)}…</code></dd></div><div><dt>{messages.history.effectiveFrom}</dt><dd>{formatTimestampValue(state.effective_from, locale, timeZone)}</dd></div><div><dt>{messages.history.author}</dt><dd>{state.author_subject ?? messages.common.notAssigned}</dd></div><div><dt>{messages.history.reviewer}</dt><dd>{state.reviewer_subject ?? messages.common.notAssigned}</dd></div><div><dt>{messages.history.approver}</dt><dd>{state.approver_subject ?? messages.common.notAssigned}</dd></div></dl>
-          <div><h3 className="subheading">{messages.history.decisionTrail} <span>{state.events.length}</span></h3>{state.events.length === 0 ? <p className="evidence-note">{messages.history.noEvents}</p> : <ol className="governance-timeline">{state.events.map((event) => <li key={event.id}><div className="timeline-marker" /><div><strong>{event.from_status in messages.statusLabels ? messages.statusLabels[event.from_status as keyof typeof messages.statusLabels] : event.from_status} → {event.to_status in messages.statusLabels ? messages.statusLabels[event.to_status as keyof typeof messages.statusLabels] : event.to_status}</strong><small>{messages.history.actor(event.action, event.actor_subject)} · {formatTimestampValue(event.occurred_at, locale, timeZone)}</small><details><summary>{messages.history.evidence}</summary><pre>{JSON.stringify(event.evidence, null, 2)}</pre></details></div></li>)}</ol>}</div>
+          <div><h3 className="subheading">{messages.history.decisionTrail} <span>{state.events.length}</span></h3>{state.events.length === 0 ? <p className="evidence-note">{messages.history.noEvents}</p> : <ol className="governance-timeline">{state.events.map((event) => <li key={event.id}><div className="timeline-marker" /><div><strong>{governanceStatusLabel(event.from_status, messages)} → {governanceStatusLabel(event.to_status, messages)}</strong><small>{messages.history.actor(event.action, event.actor_subject)} · {formatTimestampValue(event.occurred_at, locale, timeZone)}</small><details><summary>{messages.history.evidence}</summary><pre>{JSON.stringify(event.evidence, null, 2)}</pre></details></div></li>)}</ol>}</div>
           </div>}
         <TaxDocumentSimulationPanel
           apiBase={apiBase}

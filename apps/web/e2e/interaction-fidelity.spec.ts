@@ -12,7 +12,6 @@ const CONTROLS: Array<{ name: string; locator: (page: Page) => Locator }> = [
   { name: "navigation item", locator: (page) => page.getByRole("button", { name: "Tax simulator", exact: true }) },
   { name: "display settings chip", locator: (page) => page.locator(".display-settings > summary") },
   { name: "system status chip", locator: (page) => page.locator(".system-status > summary") },
-  { name: "account trigger", locator: (page) => page.locator(".account-menu-trigger") },
 ];
 
 test.describe("forced pseudo-states match real interaction", () => {

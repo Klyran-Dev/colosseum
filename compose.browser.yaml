@@ -3,5 +3,14 @@ services:
     ports: !reset []
   api:
     ports: !reset []
+  auth-service:
+    # The browser suite uses the local-only credential harness for synthetic
+    # bearer values and must not claim the developer's host auth port.
+    ports: !reset []
   edge:
     ports: !reset []
+    build:
+      args:
+        # Route-interception journeys intentionally use synthetic credentials;
+        # the normal local profile remains email-OTP based.
+        VITE_LOCAL_UI_MODE: credential

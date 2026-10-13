@@ -18,10 +18,12 @@ import {
 import WalletPicker from "./WalletPicker";
 import { createClientNonce } from "./clientIdentity";
 import { checkoutMessagesFor } from "./checkoutMessages";
+import { formatProtocolStatus } from "./protocolStatus";
 import { assetScaleMessagesFor } from "./assetScaleMessages";
 import { operatorErrorMessage } from "./operatorError";
 import TaxTreatmentOutcome from "./TaxTreatmentOutcome";
 import type { TreatmentOutcome } from "./taxResponses";
+import { shellMessagesFor } from "./shellMessages";
 
 type Calculation = {
   calculation_id: string;
@@ -62,6 +64,7 @@ export default function CheckoutPanel({
   timeZone = DEFAULT_TIME_ZONE,
 }: CheckoutPanelProps) {
   const messages = checkoutMessagesFor(locale);
+  const sessionMessages = shellMessagesFor(locale).session;
   const assetScaleMessages = assetScaleMessagesFor(locale);
   const [walletAddress, setWalletAddress] = useState<PublicKey | null>(null);
   const [routes, setRoutes] = useState<SettlementRoute[]>([]);
@@ -78,6 +81,7 @@ export default function CheckoutPanel({
   const [splitPlanId, setSplitPlanId] = useState("");
   const [splitPlanState, setSplitPlanState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [splitPlanError, setSplitPlanError] = useState<string | null>(null);
+  const [routeReload, setRouteReload] = useState(0);
   const [splitPlanReload, setSplitPlanReload] = useState(0);
   const [nowUnix, setNowUnix] = useState(() => Math.floor(Date.now() / 1000));
 
@@ -138,7 +142,7 @@ export default function CheckoutPanel({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [accessToken, apiBase, serviceOnline, locale]);
+  }, [accessToken, apiBase, serviceOnline, locale, routeReload]);
 
   useEffect(() => {
     if (!serviceOnline || !accessToken.trim()) {
@@ -265,7 +269,7 @@ export default function CheckoutPanel({
           const recovered = await loadIntentStatus(artifact.intent_id);
           setSettlement(recovered);
           setFlow(settlementIntentAllowsRetry(recovered.status) ? "ready" : "complete");
-          setError(messages.errors.intentRecovery(recovered.status));
+          setError(messages.errors.intentRecovery(formatProtocolStatus(recovered.status, locale)));
           return;
         } catch {
           try {
@@ -336,35 +340,39 @@ export default function CheckoutPanel({
     && selectedPlan.mint === selectedRoute.mint);
   const splitPlanDigest = selectedPlan?.plan_digest.map((byte) => byte.toString(16).padStart(2, "0")).join("") ?? "";
   const quoteExpired = settlementQuoteExpired(calculation?.expires_at_unix, nowUnix);
+  const interactionDisabled = isBusy || !serviceOnline || !accessToken.trim();
   return (
     <section className="checkout-layout" aria-labelledby="checkout-title">
-      <article className="panel">
+      <article className="panel checkout-control-panel">
         <div className="panel-heading"><div><p className="eyebrow">{messages.review.eyebrow}</p><h2 id="checkout-title">{messages.review.title}</h2></div><span className="status-pill">{messages.review.status}</span></div>
         <p className="panel-copy">{messages.review.description}</p>
-        <div className="checkout-step"><span className="step-number">1</span><div><strong>{walletAddress ? messages.review.walletConnected : messages.review.walletStep}</strong><p>{walletAddress ? walletAddress.toBase58() : messages.review.walletMissing}</p></div><WalletPicker locale={locale} disabled={isBusy} connectedAddress={walletAddress?.toBase58()} onConnected={setWalletAddress} /></div>
+        <div className="checkout-step"><span className="step-number">1</span><div><strong>{walletAddress ? messages.review.walletConnected : messages.review.walletStep}</strong>{!walletAddress && <p>{messages.review.walletMissing}</p>}</div><div className="checkout-step-wallet"><WalletPicker locale={locale} disabled={isBusy || !accessToken.trim()} connectedAddress={walletAddress?.toBase58()} onConnected={setWalletAddress} /></div></div>
+        {!accessToken.trim() && <div className="workflow-lock" role="note"><strong>{sessionMessages.signInToContinue}</strong><p>{sessionMessages.signInToContinueCopy}</p></div>}
         <form className="form-grid checkout-form" onSubmit={compile}>
-          <label className="full-field"><span>{messages.route.paymentRoute}</span><select value={routeId} onChange={(event) => setRouteId(event.target.value)} disabled={routeState !== "ready" || isBusy} required><option value="">{routeState === "loading" ? messages.route.loading : routeState === "error" ? messages.route.unavailable : routes.length ? messages.route.select : messages.route.none}</option>{routes.map((route) => <option value={route.id} key={route.id}>{route.route_key} · {messages.route.version(route.version)}</option>)}</select></label>
-          {routeError && <p className="inline-error full-field" role="alert">{routeError}</p>}
-          {selectedRoute && <div className="route-evidence full-field" aria-live="polite"><strong>{messages.route.checkedTitle}</strong><small>{messages.route.checkedCopy}</small><details className="technical-details" aria-label={messages.route.technicalLabel}><summary>{messages.route.technicalDetails}</summary><small>Merchant account {selectedRoute.merchant_account} · asset mint {selectedRoute.mint} · {assetScaleMessages.decimalPlaces(selectedRoute.mint_decimals)} · tax account {selectedRoute.tax_vault} · destination account {selectedRoute.net_destination} · token program {selectedRoute.token_program}</small><small>{messages.route.payerSource}</small></details></div>}
-          <label className="full-field"><span>{messages.split.sharing}</span><select value={settlementMode} onChange={(event) => setSettlementMode(event.target.value as "single" | "split")} disabled={isBusy}>
-            <option value="single">{messages.split.oneDestination}</option>
-            <option value="split">{messages.split.recipientPlan}</option>
-          </select></label>
-          {settlementMode === "split" && <>
-            <label className="full-field"><span>{messages.split.approvedPlan}</span><select value={splitPlanId} onChange={(event) => setSplitPlanId(event.target.value)} disabled={splitPlanState !== "ready" || isBusy} required>
-              <option value="">{splitPlanState === "loading" ? messages.split.loading : splitPlanState === "error" ? messages.split.unavailable : splitPlans.length ? messages.split.select : messages.split.none}</option>
-              {splitPlans.map((plan) => <option value={plan.id} key={plan.id}>{plan.plan_key} · {messages.split.version(plan.version)} · {messages.split.recipients(plan.recipients.length)}</option>)}
+          <fieldset className="workflow-fieldset" disabled={interactionDisabled}>
+            <label className="full-field"><span>{messages.route.paymentRoute}</span><select value={routeId} onChange={(event) => setRouteId(event.target.value)} disabled={routeState !== "ready" || interactionDisabled} required><option value="">{routeState === "loading" ? messages.route.loading : routeState === "error" ? messages.route.unavailable : routes.length ? messages.route.select : messages.route.none}</option>{routes.map((route) => <option value={route.id} key={route.id}>{route.route_key} · {messages.route.version(route.version)}</option>)}</select></label>
+            {routeError && <p className="inline-error full-field" role="alert">{routeError} <button type="button" className="inline-retry" onClick={() => setRouteReload((value) => value + 1)} disabled={isBusy}>{messages.route.retry}</button></p>}
+            {selectedRoute && <div className="route-evidence full-field" aria-live="polite"><strong>{messages.route.checkedTitle}</strong><small>{messages.route.checkedCopy}</small><details className="technical-details" aria-label={messages.route.technicalLabel}><summary>{messages.route.technicalDetails}</summary><small>Merchant account {selectedRoute.merchant_account} · asset mint {selectedRoute.mint} · {assetScaleMessages.decimalPlaces(selectedRoute.mint_decimals)} · tax account {selectedRoute.tax_vault} · destination account {selectedRoute.net_destination} · token program {selectedRoute.token_program}</small><small>{messages.route.payerSource}</small></details></div>}
+            <label className="full-field"><span>{messages.split.sharing}</span><select value={settlementMode} onChange={(event) => setSettlementMode(event.target.value as "single" | "split")} disabled={interactionDisabled}>
+              <option value="single">{messages.split.oneDestination}</option>
+              <option value="split">{messages.split.recipientPlan}</option>
             </select></label>
-            {splitPlanError && <div className="inline-error full-field" role="alert">{splitPlanError} <button type="button" className="inline-retry" onClick={() => setSplitPlanReload((value) => value + 1)} disabled={isBusy}>{messages.split.retry}</button></div>}
-            {selectedPlan && <div className={`route-evidence full-field${splitPlanCompatible ? "" : " route-evidence-warning"}`} aria-live="polite">
-              <strong>{splitPlanCompatible ? messages.split.matches : messages.split.mismatch}</strong>
-              <small>{messages.split.version(selectedPlan.version)} · {messages.split.recipients(selectedPlan.recipients.length)}</small>
-              <details className="technical-details" aria-label={messages.split.details}><summary>{messages.split.details}</summary>{selectedPlan.recipients.map((recipient, index) => <small key={recipient.token_account}><span aria-hidden="true">{index + 1}.</span> {recipient.token_account} · {recipient.basis_points} {messages.split.basisPoints}</small>)}</details>
-              {!splitPlanCompatible && <small>{messages.split.chooseRoute}</small>}
-            </div>}
-          </>}
-          <div className="route-evidence full-field"><strong>{messages.safeguards.title}</strong><small>{messages.safeguards.copy}</small></div>
-          <button type="submit" disabled={isBusy || quoteExpired || !serviceOnline || !calculation || !selectedRoute || (settlementMode === "split" && !splitPlanCompatible)}>{flow === "compiling" ? messages.review.preparing : messages.review.prepare}</button>
+            {settlementMode === "split" && <>
+              <label className="full-field"><span>{messages.split.approvedPlan}</span><select value={splitPlanId} onChange={(event) => setSplitPlanId(event.target.value)} disabled={splitPlanState !== "ready" || interactionDisabled} required>
+                <option value="">{splitPlanState === "loading" ? messages.split.loading : splitPlanState === "error" ? messages.split.unavailable : splitPlans.length ? messages.split.select : messages.split.none}</option>
+                {splitPlans.map((plan) => <option value={plan.id} key={plan.id}>{plan.plan_key} · {messages.split.version(plan.version)} · {messages.split.recipients(plan.recipients.length)}</option>)}
+              </select></label>
+              {splitPlanError && <div className="inline-error full-field" role="alert">{splitPlanError} <button type="button" className="inline-retry" onClick={() => setSplitPlanReload((value) => value + 1)} disabled={isBusy}>{messages.split.retry}</button></div>}
+              {selectedPlan && <div className={`route-evidence full-field${splitPlanCompatible ? "" : " route-evidence-warning"}`} aria-live="polite">
+                <strong>{splitPlanCompatible ? messages.split.matches : messages.split.mismatch}</strong>
+                <small>{messages.split.version(selectedPlan.version)} · {messages.split.recipients(selectedPlan.recipients.length)}</small>
+                <details className="technical-details" aria-label={messages.split.details}><summary>{messages.split.details}</summary>{selectedPlan.recipients.map((recipient, index) => <small key={recipient.token_account}><span aria-hidden="true">{index + 1}.</span> {recipient.token_account} · {recipient.basis_points} {messages.split.basisPoints}</small>)}</details>
+                {!splitPlanCompatible && <small>{messages.split.chooseRoute}</small>}
+              </div>}
+            </>}
+            <div className="route-evidence full-field"><strong>{messages.safeguards.title}</strong><small>{messages.safeguards.copy}</small></div>
+            <button type="submit" disabled={isBusy || quoteExpired || !serviceOnline || !calculation || !selectedRoute || (settlementMode === "split" && !splitPlanCompatible)}>{flow === "compiling" ? messages.review.preparing : messages.review.prepare}</button>
+          </fieldset>
         </form>
         {error && <p className="inline-error" role="alert">{error}</p>}
       </article>
@@ -382,7 +390,7 @@ export default function CheckoutPanel({
           {"split_plan" in artifact && selectedPlan && <div className="split-review" aria-label={messages.split.distributionReview}><strong>{messages.split.sharesBound}</strong><small>{selectedPlan.recipients.length} {messages.split.sharesCopy}</small><details className="technical-details"><summary>{messages.split.recipientDetails}</summary>{selectedPlan.recipients.map((recipient) => <div className="split-review-row" key={recipient.token_account}><span>{recipient.token_account}</span><strong>{recipient.basis_points} {messages.split.basisPoints}</strong></div>)}<small>{messages.split.planReference} {splitPlanDigest}.</small></details></div>}
           {calculation.expires_at_unix && <p className="inline-warning" role={quoteExpired ? "alert" : undefined}>{messages.review.quoteExpires} {formatEpoch(calculation.expires_at_unix, locale, timeZone)} ({quoteExpired ? messages.review.expired : messages.review.serverEnforced}).</p>}
           <p className="inline-warning">{messages.review.walletBoundary}</p>
-          <button type="button" onClick={signAndSubmit} disabled={isBusy || quoteExpired || flow !== "ready"}>{flow === "signing" ? messages.review.signing : flow === "submitting" ? messages.review.submitting : messages.review.approve}</button>
+          <button type="button" onClick={signAndSubmit} disabled={isBusy || !accessToken.trim() || quoteExpired || flow !== "ready"}>{flow === "signing" ? messages.review.signing : flow === "submitting" ? messages.review.submitting : messages.review.approve}</button>
           {settlement && <div className="settlement-status"><strong>{messages.review.paymentStatus(settlement.status)}</strong><small>{settlement.signature ? messages.review.networkReference(settlement.signature) : messages.review.noNetworkReference}</small>{settlement.status === "submitting" && <small role="status">{messages.review.submittingNotice}</small>}{settlement.status === "unknown" && <small role="status">{messages.review.unknownNotice}</small>}<div className="status-actions"><button type="button" onClick={refreshStatus} disabled={isBusy}>{messages.review.refreshStatus}</button><button type="button" onClick={reconcile} disabled={isBusy || !settlement.signature}>{messages.review.reconcile}</button></div></div>}
         </>}
       </article>
