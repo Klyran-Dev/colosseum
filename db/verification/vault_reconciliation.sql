@@ -41,6 +41,25 @@ VALUES (
 )
 ON CONFLICT (merchant_id, idempotency_key) DO NOTHING;
 
+-- Reconciliation targets are intentionally bound to an existing route. Keep
+-- the fixture faithful to that production invariant instead of bypassing the
+-- composite foreign key with an incomplete target row.
+INSERT INTO settlement_routes (
+    id, merchant_id, route_key, version, status,
+    merchant_account, mint, tax_vault, net_destination, token_program
+)
+VALUES (
+    '01992f1b-4a70-7e30-8ea2-b6e37a9d9d12',
+    '01992f1b-4a70-7e30-8ea2-b6e37a9d9d11',
+    'verification-vault-reconciliation', 1, 'pending_verification',
+    '11111111111111111111111111111111',
+    'SysvarC1ock11111111111111111111111111111111',
+    'Sysvar1nstructions1111111111111111111111111',
+    'SysvarRecentB1ockHashes11111111111111111111',
+    'TokenkegQfeZyiNwAjbNbGKPFXCWuBvf9Ss623VQ5DA'
+)
+ON CONFLICT (id) DO NOTHING;
+
 CREATE TEMP TABLE verification_vault_target (
     id uuid NOT NULL
 ) ON COMMIT DROP;

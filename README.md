@@ -1,6 +1,6 @@
 # Solana Tax Protocol
 
-Production-grade architecture for a low-latency Solana payment-routing and Tier-1 tax platform. The system calculates complex tax rules off-chain, produces replayable signed attestations, atomically withholds approved tax amounts into governed stablecoin vaults, and distributes net revenue according to versioned split plans.
+Production-oriented reference architecture for Solana payment routing and deterministic Tax Engine tax calculation. The repository implements bounded off-chain rule evaluation, replayable signed-attestation flows, wallet-bound settlement preparation, and versioned revenue-split paths without claiming production deployment, universal tax coverage, audit completion, or mainnet readiness.
 
 ## Project status
 
@@ -30,15 +30,15 @@ React + Vite SPA -> NGINX -> Rust API / Tax Engine / Indexer
                          tax vault  splits  receipts/events
 ```
 
-The Solana core uses Rust/Anchor-compatible interfaces. The Tier-1 Tax Engine is a deterministic Rust bounded context supporting progressive, cascading, tax-on-tax, threshold, exemption, min/max, truncation, and rounding rules. Jurisdiction resolution is a separate deterministic Rust bounded context that binds versioned precedence policies to external evidence and fails closed on ambiguity. Solidity is isolated to an optional EVM adapter. Next.js is intentionally not used.
+The Solana core uses Rust/Anchor-compatible interfaces. The Tax Engine is a deterministic Rust bounded context implementing bounded progressive, cascading, tax-on-tax, threshold, exemption, min/max, truncation, and rounding semantics. Tax Engine is this repository's internal engineering and evidence standard, not a tax certification or claim of universal jurisdiction coverage. Jurisdiction resolution is a separate deterministic Rust bounded context that binds versioned precedence policies to external evidence and fails closed on ambiguity. Solidity is isolated to an optional EVM adapter. Next.js is intentionally not used.
 
 ## Documentation
 
 - [Documentation index](docs/README.md)
-- [Tier-1 product standard](docs/plans/tier-1-product-standard.md)
+- [Tax Engine product standard](docs/plans/tax-engine-product-standard.md)
 - [Implementation plan](docs/plans/implementation-plan.md)
 - [Production-readiness gates](docs/plans/production-readiness.md)
-- [Tier-1 release decision packet](docs/operations/release-decision-packet.md)
+- [Release Decision Packet](docs/operations/release-decision-packet.md)
 - [Tax coverage matrix](docs/product/tax-coverage-matrix.md)
 - [Architecture and alternatives](docs/architecture/alternative-analysis.md)
 - [Principal architecture review and evidence boundary](docs/review/2026-10-06-principal-architecture-review.md)
@@ -54,12 +54,12 @@ The Solana core uses Rust/Anchor-compatible interfaces. The Tier-1 Tax Engine is
 - [License](LICENSE)
 - [Third-party and attribution notices](NOTICE)
 - [Operations runbooks](docs/runbooks/README.md)
-- [Tier-1 decision register](docs/operations/decision-register.md)
+- [Tax Engine decision register](docs/operations/decision-register.md)
 - [Requirements traceability and evidence matrix](docs/operations/requirements-traceability.md)
 
 ## Engineering contract
 
-All implementation work follows [AGENTS.md](AGENTS.md): design before code, alternatives before decisions, TDD, production-quality vertical slices, bounded concurrency, measurable latency, Docker-based development, explicit security controls, and no demo-only paths. `make check` includes the semantic Material color contract and the static 4.5:1 light/dark palette contrast gate; `make tier1-local-check` runs the full ordered local evidence gate (`check`, authenticated Docker integration, real-browser UI, and validator conformance); `make security-scan` runs the pinned Trivy vulnerability, secret, and Docker misconfiguration gate used by CI; critical/high findings fail the check.
+All implementation work follows [AGENTS.md](AGENTS.md): design before code, alternatives before decisions, TDD, production-quality vertical slices, bounded concurrency, measurable latency, Docker-based development, explicit security controls, and no demo-only paths. `make check` includes the semantic Material color contract and the static 4.5:1 light/dark palette contrast gate; `make tax-engine-local-check` runs the full ordered local evidence gate (`check`, authenticated Docker integration, real-browser UI, and validator conformance); `make security-scan` runs the pinned Trivy vulnerability, secret, and Docker misconfiguration gate used by CI; critical/high findings fail the check.
 
 ## Public repository status
 
@@ -106,6 +106,10 @@ For staging and production, set `AUTH_EMAIL_MODE=provider` and inject the
 Resend API key, verified sender, HTTPS application origin, and provider
 endpoint through the deployment secret/configuration systems. See the
 [transactional email provider runbook](docs/runbooks/transactional-email-provider.md).
+The auth service also supports an explicit `AUTH_EMAIL_MODE=google-smtp` path
+for Google Workspace SMTP relay or app-password delivery. Use
+`.env.example` only as a local template, keep the app password untracked, and
+follow the same runbook for TLS, relay allowlisting, and mailbox verification.
 To expose that same repository-owned email-OTP flow in the static SPA, set
 `VITE_AUTH_METHOD=email-otp` and an HTTPS `VITE_AUTH_SERVICE_BASE_URL` at
 image-build time. Releases may instead select `VITE_AUTH_METHOD=oidc` with

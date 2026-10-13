@@ -9,7 +9,7 @@ line-facts contract and are not inferred from one aggregate `TaxFacts` amount.
 
 ## Context
 
-The Tier-1 tax engine already supports exact rational intermediates, explicit
+The tax engine already supports exact rational intermediates, explicit
 rounding modes, truncation through `Floor`, tax-on-tax dependencies, and
 replay-bound rule digests. Its rule document does not yet state whether a
 rounding mode applies per component or after the complete settlement total.

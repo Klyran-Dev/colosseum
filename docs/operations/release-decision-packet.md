@@ -1,6 +1,6 @@
-# Tier-1 release decision packet
+# Tax Engine release decision packet
 
-This packet turns the open rows in the [Tier-1 decision register](decision-register.md)
+This packet turns the open rows in the [Tax Engine decision register](decision-register.md)
 into an executable handoff for the people who must provide external decisions
 and evidence. It does not choose a vendor, jurisdiction, license, custodian,
 or production region on behalf of the repository owner.

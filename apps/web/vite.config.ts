@@ -20,6 +20,13 @@ export default defineConfig({
   },
   test: {
     exclude: ["e2e/**", "node_modules/**", "dist/**"],
+    // Keep DOM/a11y tests deterministic on developer laptops and CI runners;
+    // spawning one worker per file starves the event loop and causes false
+    // five-second timeout failures (the production app remains unaffected).
+    pool: "forks",
+    minWorkers: 1,
+    maxWorkers: 4,
+    testTimeout: 15_000,
     // Opt-in DOM capture for style verification (ADR-0429); inert unless the
     // variable is set by scripts/web_style_fixtures.sh.
     setupFiles: process.env.STYLE_FIXTURE_DIR ? ["./src/styleFixtureCapture.setup.ts"] : [],

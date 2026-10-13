@@ -140,17 +140,23 @@ export function parseBrowserAuthConfig(raw: Readonly<Record<string, unknown>>): 
   };
 }
 
-export const BROWSER_AUTH_CONFIG = parseBrowserAuthConfig({
-  VITE_DEPLOYMENT_ENVIRONMENT: import.meta.env.VITE_DEPLOYMENT_ENVIRONMENT ?? (import.meta.env.MODE === "test" ? "local" : undefined),
-  VITE_OIDC_ISSUER: import.meta.env.VITE_OIDC_ISSUER,
-  VITE_OIDC_CLIENT_ID: import.meta.env.VITE_OIDC_CLIENT_ID,
-  VITE_OIDC_REDIRECT_URI: import.meta.env.VITE_OIDC_REDIRECT_URI,
-  VITE_OIDC_SCOPE: import.meta.env.VITE_OIDC_SCOPE,
-  VITE_OIDC_AUDIENCE: import.meta.env.VITE_OIDC_AUDIENCE,
-  VITE_LOCAL_UI_MODE: import.meta.env.VITE_LOCAL_UI_MODE ?? (import.meta.env.MODE === "test" ? "credential" : "disabled"),
-  VITE_LOCAL_CREDENTIAL_ENTRY: import.meta.env.VITE_LOCAL_CREDENTIAL_ENTRY,
-  VITE_AUTH_SERVICE_BASE_URL: import.meta.env.VITE_AUTH_SERVICE_BASE_URL,
-});
+export function browserAuthConfigFromEnv(raw: Readonly<Record<string, unknown>>): BrowserAuthConfig {
+  const mode = value(raw, "MODE");
+  return parseBrowserAuthConfig({
+    VITE_DEPLOYMENT_ENVIRONMENT: value(raw, "VITE_DEPLOYMENT_ENVIRONMENT") || (mode === "test" ? "local" : undefined),
+    VITE_AUTH_METHOD: raw.VITE_AUTH_METHOD,
+    VITE_OIDC_ISSUER: raw.VITE_OIDC_ISSUER,
+    VITE_OIDC_CLIENT_ID: raw.VITE_OIDC_CLIENT_ID,
+    VITE_OIDC_REDIRECT_URI: raw.VITE_OIDC_REDIRECT_URI,
+    VITE_OIDC_SCOPE: raw.VITE_OIDC_SCOPE,
+    VITE_OIDC_AUDIENCE: raw.VITE_OIDC_AUDIENCE,
+    VITE_LOCAL_UI_MODE: value(raw, "VITE_LOCAL_UI_MODE") || (mode === "test" ? "credential" : "disabled"),
+    VITE_LOCAL_CREDENTIAL_ENTRY: raw.VITE_LOCAL_CREDENTIAL_ENTRY,
+    VITE_AUTH_SERVICE_BASE_URL: raw.VITE_AUTH_SERVICE_BASE_URL,
+  });
+}
+
+export const BROWSER_AUTH_CONFIG = browserAuthConfigFromEnv(import.meta.env);
 
 export const BROWSER_AUTH_SERVICE_BASE_URL = parseAuthServiceBaseUrl({
   VITE_DEPLOYMENT_ENVIRONMENT: import.meta.env.VITE_DEPLOYMENT_ENVIRONMENT ?? (import.meta.env.MODE === "test" ? "local" : undefined),

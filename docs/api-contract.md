@@ -513,6 +513,15 @@ invited role, records audit events, and issues the tenant-bound token. An
 uninvited local signup continues to create a new tenant. Expired or reused
 invitations fail closed; the local administrator surface does not claim
 delivery until a provider-backed email adapter is configured.
+
+When `AUTH_SELF_SIGNUP=true`, the first verified user in each new self-signup
+tenant is provisioned as that tenant's administrator and merchant operator.
+This is tenant ownership, not platform-wide authority. When
+`AUTH_INITIAL_ADMIN_EMAIL` is configured, its one-time verified enrollment is
+also provisioned as an administrator of the tenant created by that enrollment.
+Invited users never receive administrator responsibility through the invitation
+role selector; an existing tenant administrator must promote them through the
+dedicated promotion contract below.
 `GET /v1/admin/invitations` returns at most 100 tenant-scoped invitations,
 newest first, including pending and terminal history. It requires the same
 administrator capability and derives the tenant from the verified bearer
@@ -523,6 +532,29 @@ select a tenant or infer delivery from a pending record.
 it uses the same UUIDv7 idempotency contract and tenant-derived administrator
 authorization. Accepted, expired, already revoked, cross-tenant, and unknown
 invitations fail closed.
+
+## Tenant context and lifecycle
+
+`GET /v1/tenant/context` returns the authenticated tenant's server-owned
+workspace identity and bounded first-run readiness contract. The response
+schema is `auth-tenant-context/v1`; it contains the tenant ID, display name,
+active/suspended status, and exactly three setup steps: workspace profile,
+finalized settlement route, and effective published tax policy. Readiness is a
+projection for user guidance only and never authorizes settlement or tax work.
+The tenant is derived from the verified bearer token.
+
+`POST /v1/tenant/profile` updates the tenant display name. It requires the
+administrator scope/role and a UUIDv7 `Idempotency-Key`; the profile mutation,
+tenant update, and audit event commit in one transaction. The browser cannot
+select a tenant or change authority through this endpoint.
+
+`POST /v1/admin/users/{user_id}/administrator` promotes an active same-tenant
+user to the non-assignable `administrator` responsibility. It requires the
+same administrator capability and a UUIDv7 `Idempotency-Key`. Promotion is a
+separate audited contract rather than a role-selector option; cross-tenant,
+disabled, stale, and unknown targets fail closed. Administrator demotion is
+intentionally not part of this slice so the last administrator cannot be
+removed accidentally.
 
 ## Evidence-access audit explorer
 
@@ -623,7 +655,7 @@ document, and a provenance JSON object:
 }
 ```
 
-The server requires a valid non-empty Tier-1 rule graph. `rule_set.id` and `rule_set.version`
+The server requires a valid non-empty Tax Engine rule graph. `rule_set.id` and `rule_set.version`
 must match the top-level identity. The API derives the authenticated merchant
 scope, validates and compiles the graph through the Rust tax engine, computes
 the canonical digest, and commits the draft row, `create` governance event,

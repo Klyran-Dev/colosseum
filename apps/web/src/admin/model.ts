@@ -46,6 +46,101 @@ export interface AdminSnapshot {
   recentActions: AdminAction[];
 }
 
+export type PortalMode = "tenant-administrator" | "merchant-operations" | "tenant-member";
+
+export interface PortalIdentity {
+  mode: PortalMode;
+  label: string;
+  eyebrow: string;
+  title: string;
+  description: string;
+  sidebarDescription: string;
+}
+
+export interface AccessPostureItem {
+  id: "responsibilities" | "workspace" | "policy";
+  label: string;
+  description: string;
+}
+
+export const ACCESS_POSTURE_ITEMS: readonly AccessPostureItem[] = [
+  { id: "responsibilities", label: "Your responsibilities", description: "What you are allowed to do in this workspace." },
+  { id: "workspace", label: "Workspace boundaries", description: "Which tenant and records this session can reach." },
+  { id: "policy", label: "Safety checks", description: "Which approvals and evidence are required before sensitive actions." },
+];
+
+/**
+ * This is a presentation mapping only. The server capability snapshot remains
+ * the authority; an unknown role must never acquire administrator semantics in
+ * the browser.
+ */
+export function portalModeForRoles(roles: readonly string[]): PortalMode {
+  if (roles.includes("administrator")) return "tenant-administrator";
+  if (roles.includes("merchant_operator")) return "merchant-operations";
+  return "tenant-member";
+}
+
+export function portalIdentityForRoles(roles: readonly string[]): PortalIdentity {
+  switch (portalModeForRoles(roles)) {
+    case "tenant-administrator":
+      return {
+        mode: "tenant-administrator",
+        label: "Tenant administrator",
+        eyebrow: "Tenant administration",
+        title: "Administrator console",
+        description: "Manage people, policy, and controlled operations for your tenant.",
+        sidebarDescription: "Tenant access and approvals stay server-owned.",
+      };
+    case "merchant-operations":
+      return {
+        mode: "merchant-operations",
+        label: "Merchant operations",
+        eyebrow: "Merchant workspace",
+        title: "Merchant workspace",
+        description: "Prepare quotes, payments, and evidence for your tenant.",
+        sidebarDescription: "Your administrator controls additional responsibilities.",
+      };
+    default:
+      return {
+        mode: "tenant-member",
+        label: "Tenant member",
+        eyebrow: "Tenant workspace",
+        title: "Tenant workspace",
+        description: "Use the capabilities confirmed for your tenant account.",
+        sidebarDescription: "Access is assigned by a tenant administrator.",
+      };
+  }
+}
+
+const NAVIGATION_CAPABILITIES: Readonly<Partial<Record<AdminSection, string>>> = Object.freeze({
+  quotes: "tax.quote.create",
+  rules: "tax.rule.govern",
+  settlements: "settlement.wallet",
+  treasury: "vault.release",
+  access: "access.control",
+  evidence: "evidence.audit.read",
+});
+
+type NavigationSnapshot = { capabilities: readonly Pick<AdminCapability, "id" | "decision">[]; expiresAtUnix?: number };
+
+/**
+ * Navigation is filtered from the server snapshot for clarity, never for
+ * security. Overview and settings remain available as safe recovery surfaces;
+ * the current route remains visible so a direct link gets a truthful denial
+ * state instead of disappearing during refresh.
+ */
+export function visibleNavigationForSnapshot(snapshot: NavigationSnapshot | null, currentSection?: AdminSection, nowUnix = Math.floor(Date.now() / 1000)) {
+  const expiresAtUnix = snapshot?.expiresAtUnix;
+  const snapshotFresh = Boolean(snapshot && typeof expiresAtUnix === "number" && Number.isSafeInteger(expiresAtUnix) && expiresAtUnix > nowUnix);
+  return NAV_ITEMS.filter((item) => {
+    if (item.section === "overview" || item.section === "settings" || item.section === currentSection) return true;
+    if (!snapshot || !snapshotFresh) return false;
+    const capabilityId = NAVIGATION_CAPABILITIES[item.section];
+    if (!capabilityId) return false;
+    return snapshot.capabilities.find((capability) => capability.id === capabilityId)?.decision !== "deny";
+  });
+}
+
 export interface AdminSession {
   accessToken: string;
   email: string;

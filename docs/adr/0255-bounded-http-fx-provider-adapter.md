@@ -46,7 +46,7 @@ The adapter will:
 The adapter does not enable a provider, persist a quote, sign evidence, call a
 tax service, or activate a settlement route. Provider selection, regional
 routing, legal acceptance, HSM/KMS custody, privacy retention, and production
-SLO evidence remain open release decisions in the Tier-1 decision register.
+SLO evidence remain open release decisions in the Tax Engine decision register.
 
 ## Bounds and invariants
 

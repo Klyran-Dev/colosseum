@@ -8,6 +8,9 @@ skip-lint = false
 [programs.localnet]
 settlement = "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi"
 
+[programs.devnet]
+settlement = "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi"
+
 [provider]
 cluster = "Localnet"
 wallet = "~/.config/solana/id.json"

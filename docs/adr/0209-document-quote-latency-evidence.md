@@ -7,7 +7,7 @@
 
 ## Context
 
-The aggregate quote benchmark does not represent the Tier-1 document path.
+The aggregate quote benchmark does not represent the Tax Engine document path.
 Document quotes carry a versioned multi-line facts envelope, line-scope tax
 calculation, jurisdiction evidence, a separate PostgreSQL calculation table,
 and a document-specific outbox event. Treating aggregate quote measurements as

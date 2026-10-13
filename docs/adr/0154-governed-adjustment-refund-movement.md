@@ -156,4 +156,4 @@ lifecycle, and operational key/funder setup. The validator evidence contract
 now treats cancellation as a release-critical state transition alongside
 execution and duplicate protection. Other adjustment kinds remain explicitly
 unavailable until their legal and authority semantics are modeled, which keeps
-the Tier-1 product honest and extensible.
+the Tax Engine product honest and extensible.

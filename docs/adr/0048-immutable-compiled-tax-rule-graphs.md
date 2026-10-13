@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-09-26
 - Owners: Tax Platform / Performance
-- Scope: Tier-1 tax-engine rule evaluation
+- Scope: tax-engine rule evaluation
 
 ## Context
 

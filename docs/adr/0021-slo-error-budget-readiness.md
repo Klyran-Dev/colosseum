@@ -1,4 +1,4 @@
-# ADR-0021: Use SLOs and error budgets as Tier-1 release controls
+# ADR-0021: Use SLOs and error budgets as Tax Engine release controls
 
 - Status: Accepted
 - Date: 2026-09-25

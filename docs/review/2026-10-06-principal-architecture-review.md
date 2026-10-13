@@ -24,7 +24,7 @@ changes and use the current commit/worktree as the evidence subject.
    `programs/settlement` → `crates/settlement-client` →
    `crates/settlement-coordinator` → `crates/storage` → `crates/api` →
    `apps/web/src`.
-4. Review the Tier-1 tax semantics and replay boundary in
+4. Review the Tax Engine tax semantics and replay boundary in
    [`tax-engine.md`](../architecture/tax-engine.md), the tax coverage matrix,
    and the versioned golden vectors.
 5. Review the delivery and failure evidence in
@@ -85,7 +85,7 @@ These results prove repository and Docker-local behavior only. They do not
 promote synthetic RPC, local credentials, Docker Desktop arm64 execution, or
 test fixtures into production evidence.
 
-The complete `make tier1-local-check` was then run on this worktree. Every
+The complete `make tax-engine-local-check` was then run on this worktree. Every
 local layer passed, including the authenticated Docker integration and all 49
 real-browser journeys. The gate correctly stopped at the validator boundary:
 `make solana-conformance` failed closed with `host_os_must_be_linux` because
@@ -167,7 +167,7 @@ make integration-check
 make web-browser-check
 make public-docs-check
 make solana-conformance
-make tier1-local-check
+make tax-engine-local-check
 ```
 
 `make solana-conformance` is only Linux/amd64 validator evidence when the

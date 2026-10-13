@@ -4,7 +4,7 @@
 - Date: 2026-10-01
 - Deciders: Principal Low-Latency Architecture, API, SRE
 - Scope: Tax Engine HTTP request boundary
-- Bounded contexts: Tier-1 Tax Engine, Service Runtime, API Contract
+- Bounded contexts: Tax Engine, Service Runtime, API Contract
 
 ## Context
 

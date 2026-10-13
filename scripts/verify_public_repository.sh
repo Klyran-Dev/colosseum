@@ -105,7 +105,7 @@ for file in \
   docs/adr/0302-versioned-local-display-preferences.md \
   docs/adr/0303-release-candidate-browser-evidence.md \
   docs/adr/0304-material-role-contrast-contract.md \
-  docs/adr/0305-tier-1-local-gate-orchestration.md \
+  docs/adr/0305-tax-engine-local-gate-orchestration.md \
   docs/adr/0306-collapsed-advanced-evidence-disclosures.md \
   docs/adr/0307-project-scoped-local-reset.md \
   docs/adr/0308-release-candidate-authenticated-integration-evidence.md \
@@ -137,7 +137,7 @@ for file in \
   docs/adr/0235-jurisdiction-provider-key-atomic-reload.md \
   ops/docker/Dockerfile.tax-engine \
   docs/adr/0142-spa-workspace-focus-management.md \
-  docs/adr/0143-structured-tier-1-rule-workbench.md \
+  docs/adr/0143-structured-tax-engine-rule-workbench.md \
   docs/adr/0144-server-owned-persisted-rule-simulation.md \
   docs/adr/0145-reproducible-rule-simulation-latency-evidence.md \
   docs/adr/0146-centralized-locale-timezone-and-rtl-display-contract.md \
@@ -214,7 +214,7 @@ for file in \
   scripts/verify_refund_claim_cancellation_reconciliation_contract.sh \
   scripts/refund_cancellation_reconciliation_drill.sh \
   apps/web/scripts/refund_cancellation_fixture.mjs \
-  docs/plans/tier-1-product-standard.md \
+  docs/plans/tax-engine-product-standard.md \
   db/migrations/0058_catalog_driven_uuidv7_invariant_closure.sql \
   db/migrations/0059_refund_claim_cancellation_lease_trigger.sql \
   db/migrations/0065_rule_release_provenance_readiness.sql \
@@ -234,7 +234,7 @@ done
 
 for link in \
   'docs/README.md' \
-  'docs/plans/tier-1-product-standard.md' \
+  'docs/plans/tax-engine-product-standard.md' \
   'docs/plans/implementation-plan.md' \
   'docs/plans/production-readiness.md' \
   'docs/product/tax-coverage-matrix.md' \
@@ -358,7 +358,7 @@ require_text Makefile 'rule-release-provenance-contract'
 require_text scripts/verify_rule_release_provenance_contract.sh 'rule release provenance contract passed'
 require_text Makefile 'web-color-contract'
 require_text Makefile 'material-palette-contract'
-require_text Makefile 'tier1-local-check-contract'
+require_text Makefile 'tax-engine-local-check-contract'
 require_text Makefile 'evm-adapter-check'
 require_text scripts/verify_evm_adapter_contract.sh 'EVM adapter contract passed'
 require_text ops/docker/Dockerfile.evm-adapter 'ghcr.io/foundry-rs/foundry:v1.8.1@sha256:'
@@ -402,7 +402,7 @@ require_text docs/adr/README.md '0303-release-candidate-browser-evidence.md'
 require_text docs/adr/0303-release-candidate-browser-evidence.md 'source-revision.txt'
 require_text docs/adr/README.md '0304-material-role-contrast-contract.md'
 require_text docs/adr/0304-material-role-contrast-contract.md '4.5:1'
-require_text docs/adr/README.md '0305-tier-1-local-gate-orchestration.md'
+require_text docs/adr/README.md '0305-tax-engine-local-gate-orchestration.md'
 require_text docs/adr/README.md '0306-collapsed-advanced-evidence-disclosures.md'
 require_text docs/adr/0306-collapsed-advanced-evidence-disclosures.md 'collapsed by default'
 require_text docs/adr/README.md '0307-project-scoped-local-reset.md'
@@ -413,8 +413,8 @@ require_text docs/adr/0308-release-candidate-authenticated-integration-evidence.
 require_text docs/adr/README.md '0309-contextual-status-disclosure.md'
 require_text docs/adr/0309-contextual-status-disclosure.md 'System status'
 require_text docs/adr/0309-contextual-status-disclosure.md 'Sign-in unavailable'
-require_text Makefile 'tier1-local-check'
-require_file scripts/verify_tier1_local_check_contract.sh
+require_text Makefile 'tax-engine-local-check'
+require_file scripts/verify_tax-engine_local_check_contract.sh
 require_text docs/plans/implementation-plan.md 'ADR-0298'
 require_text docs/plans/implementation-plan.md 'ADR-0309'
 require_text docs/plans/implementation-plan.md 'ADR-0317'
@@ -548,7 +548,7 @@ require_text CHANGELOG.md 'atomic digest-keyed FX provider policy snapshot'
 require_text CHANGELOG.md 'registry-bound FX evidence issuance'
 require_text CHANGELOG.md 'policy-scoped FX provider identity authorization'
 require_text CHANGELOG.md 'deterministic FX provider agreement'
-require_text CHANGELOG.md 'accelerated Tier-1 delivery model'
+require_text CHANGELOG.md 'accelerated Tax Engine delivery model'
 require_text CHANGELOG.md 'bounded concurrent FX provider acquisition'
 require_text CHANGELOG.md 'bounded async FX signing boundary'
 require_text CHANGELOG.md 'deterministic FX acquisition outcome order'
@@ -558,8 +558,8 @@ require_text CHANGELOG.md 'server-owned FX issuance coordinator'
 require_text CHANGELOG.md 'historical FX-envelope integrity verification'
 require_text CHANGELOG.md 'authenticated server-owned FX quote composition boundary'
 require_text CHANGELOG.md 'vendor-neutral FX issuer process bootstrap'
-require_text CHANGELOG.md 'public Tier-1 decision register'
-require_text docs/adr/README.md 'ADR-0251: Accelerated Tier-1 delivery and decision freeze'
+require_text CHANGELOG.md 'public Tax Engine decision register'
+require_text docs/adr/README.md 'ADR-0251: Accelerated Tax Engine delivery and decision freeze'
 require_text docs/adr/README.md 'ADR-0252: Bounded concurrent FX provider acquisition'
 require_text docs/adr/README.md 'ADR-0253: Bounded async FX signing boundary'
 require_text docs/adr/README.md 'ADR-0254: Deterministic FX acquisition outcome order'
@@ -569,15 +569,15 @@ require_text docs/adr/README.md 'ADR-0257: Server-owned FX issuance coordinator'
 require_text docs/adr/README.md 'ADR-0258: FX evidence replay integrity and shared signer ownership'
 require_text docs/adr/README.md 'ADR-0259: Durable FX envelope quote binding'
 require_text docs/adr/README.md 'ADR-0260: Authenticated server-owned FX quote composition'
-require_text docs/README.md 'Accelerated Tier-1 delivery and decision freeze'
+require_text docs/README.md 'Accelerated Tax Engine delivery and decision freeze'
 require_text docs/README.md 'Bounded concurrent FX provider acquisition'
 require_text docs/README.md 'Bounded async FX signing boundary'
 require_text docs/README.md 'Deterministic FX acquisition outcome order'
 require_text docs/README.md 'FX evidence replay integrity and shared signer ownership'
 require_text docs/README.md 'Durable FX envelope quote binding'
 require_text docs/README.md 'Authenticated server-owned FX quote composition'
-require_text docs/README.md 'Tier-1 decision register'
-require_text README.md 'Tier-1 decision register'
+require_text docs/README.md 'Tax Engine decision register'
+require_text README.md 'Tax Engine decision register'
 require_text docs/operations/decision-register.md 'DEC-0251-01'
 require_text docs/operations/decision-register.md 'state: FROZEN'
 require_text apps/web/package.json '"packageManager": "pnpm@12.3.4"'

@@ -7,7 +7,7 @@
 
 ## Context
 
-The Tier-1 tax engine must not treat a caller-provided jurisdiction string as
+The tax engine must not treat a caller-provided jurisdiction string as
 an authority boundary. Global commerce can provide multiple jurisdiction
 signals—merchant registration, customer address, shipping destination, and
 other verified evidence—with different legal precedence by product,

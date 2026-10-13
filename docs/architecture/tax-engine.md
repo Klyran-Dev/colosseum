@@ -1,8 +1,8 @@
-# Tier-1 global tax engine
+# Tax Engine deterministic tax engine
 
 ## Purpose
 
-The Tier-1 Tax Engine is a deterministic, versioned calculation system for global digital-asset commerce. It converts normalized transaction facts and approved jurisdiction rules into a tax result, a complete calculation trace, and a signed attestation that the Solana settlement program can verify.
+The Tax Engine is a deterministic, versioned calculation system for explicitly configured digital-asset commerce scenarios. It converts normalized transaction facts and approved, evidence-bound jurisdiction rules into a tax result, a complete calculation trace, and a signed attestation that the Solana settlement program can verify where the settlement integration is enabled. “Tax Engine” is an internal engineering and evidence standard; it does not claim global jurisdiction coverage, legal/tax approval, or compliance certification.
 
 The engine automates rule execution and evidence. It does not make a legal determination by itself, replace tax counsel, or guarantee registration, filing, reporting, or compliance.
 

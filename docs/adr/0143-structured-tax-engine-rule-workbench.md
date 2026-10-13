@@ -1,4 +1,4 @@
-# ADR-0143: Structured Tier-1 rule workbench with canonical DSL escape hatch
+# ADR-0143: Structured Tax Engine rule workbench with canonical DSL escape hatch
 
 - Status: Accepted
 - Date: 2026-09-27
@@ -7,7 +7,7 @@
 
 ## Context
 
-The Tier-1 tax engine already defines a versioned canonical rule DSL for flat,
+The tax engine already defines a versioned canonical rule DSL for flat,
 progressive, dependency-based, threshold, exemption, inclusive/exclusive,
 credit, floor/cap, truncation, and explicit rounding semantics. The governance
 workspace currently asks an operator to author that entire document in a raw

@@ -7,7 +7,7 @@ regression contracts; legal/jurisdiction ownership remains separate.
 
 ## Context
 
-The Tier-1 Tax Engine already has versioned JSON vectors for the major global
+The Tax Engine already has versioned JSON vectors for the major global
 tax semantics and a separate v2 envelope for bounded linear tax-base
 operations. The loader currently checks the v2 vector count, but a vector can
 be replaced or removed while preserving that count. A count is therefore not

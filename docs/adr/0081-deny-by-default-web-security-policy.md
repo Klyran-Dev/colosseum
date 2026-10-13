@@ -10,7 +10,7 @@ The browser application is a static same-origin React SPA. It does not need
 cross-origin API access, inline styles, inline scripts, plugin content, or
 cross-origin form submission. The edge already limits request rate and
 connections, but those controls are not evidence that browser policy and
-authentication boundaries are working. A Tier-1 product needs executable
+authentication boundaries are working. A Tax Engine product needs executable
 checks for the headers that constrain browser execution and for unauthenticated
 API access.
 

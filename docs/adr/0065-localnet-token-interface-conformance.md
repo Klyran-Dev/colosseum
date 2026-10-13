@@ -12,7 +12,7 @@ extensions. Host unit tests prove the pure layout predicates; they do not prove
 that the deployed program, CPI path, token program owners, account authorities,
 receipt initialization, or final token balances agree on a live Solana runtime.
 
-A Tier-1 settlement boundary needs executable evidence for both supported token
+A Tax Engine settlement boundary needs executable evidence for both supported token
 programs and for a real unsupported Token-2022 mint. The evidence must also
 prove that duplicate receipt initialization cannot move funds a second time.
 

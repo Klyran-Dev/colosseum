@@ -42,7 +42,7 @@ The adapter will:
 The adapter does not generate, export, persist, rotate, revoke, or recover
 private keys. HSM/KMS vendor selection, non-exportability, mTLS or equivalent
 service identity, ceremony, dual control, audit delivery, regional latency,
-and recovery remain release decisions in the Tier-1 decision register.
+and recovery remain release decisions in the Tax Engine decision register.
 
 ## Bounds and invariants
 

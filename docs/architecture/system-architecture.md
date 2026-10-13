@@ -69,7 +69,7 @@ This service is an adapter and projection layer. It cannot mint, transfer, or re
 
 The policy issuer is an independently governed service or signer set. Its output is a canonical policy attestation. The on-chain registry stores the issuer set, policy digest, effective window, and revocation/sequence metadata. The settlement program rejects expired, future, revoked, wrong-asset, wrong-merchant, or wrong-product attestations.
 
-### 4. Tier-1 Tax Engine
+### 4. Tax Engine
 
 The Tax Engine is a separate bounded context and pure Rust domain library. It normalizes transaction facts, resolves jurisdiction inputs, compiles approved rule graphs, evaluates tax components, produces a complete calculation trace, and signs a `CalculationAttestation`. It is the authoritative calculator for the quote; the Solana program is the authoritative settlement executor.
 

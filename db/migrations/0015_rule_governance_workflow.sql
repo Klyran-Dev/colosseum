@@ -1,4 +1,4 @@
--- Tier-1 rule governance workflow. Existing published rows are retained as
+-- Tax Engine rule governance workflow. Existing published rows are retained as
 -- legacy evidence; new control-plane transitions must populate distinct
 -- author, reviewer, and approver subjects before publication.
 

@@ -12,7 +12,7 @@ but display formatting is still implemented independently in the root quote
 workspace and lazy operational panels. That creates inconsistent number and
 timestamp output, makes large atomic amounts vulnerable to accidental
 JavaScript `Number` conversion, and leaves language direction and time-zone
-selection implicit in the browser environment. A Tier-1 financial UI must make
+selection implicit in the browser environment. A Tax Engine financial UI must make
 display context explicit without changing server-owned money, tax, or evidence
 semantics.
 

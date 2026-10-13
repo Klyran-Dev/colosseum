@@ -1263,9 +1263,9 @@ advance a movement to a successful state.
   the full production tenant surface; the static and automated gates do not
   constitute that external evidence.
 
-### ADR-0305 — one-command Tier-1 local gate orchestration
+### ADR-0305 — one-command Tax Engine local gate orchestration
 
-- [x] Add `make tier1-local-check` with ordered Rust/frontend/contracts,
+- [x] Add `make tax-engine-local-check` with ordered Rust/frontend/contracts,
   authenticated Docker integration, real-browser, and validator-backed gates.
 - [x] Add a failing-first Makefile contract that prevents command omission or
   reordering and preserves fail-fast behavior.
@@ -1634,9 +1634,9 @@ See [ADR-0379](../adr/0379-bounded-tax-base-clamps.md).
 - [ ] Exercise bounded concurrent provider acquisition, regional failover,
   provider SLOs, legal ownership, and production agreement evidence.
 
-## ADR-0251 — accelerated Tier-1 delivery and decision freeze
+## ADR-0251 — accelerated Tax Engine delivery and decision freeze
 
-Acceleration changes sequencing and ownership, not the Tier-1 definition of
+Acceleration changes sequencing and ownership, not the Tax Engine definition of
 done. The planning estimate is a 3–4 week production candidate and a 5–7 week
 controlled production launch, conditional on external approvals and evidence.
 
@@ -1679,7 +1679,7 @@ controlled production launch, conditional on external approvals and evidence.
   green. No schedule target can waive a gate.
 
 The authoritative decision record is
-[ADR-0251](../adr/0251-accelerated-tier1-delivery-and-decision-freeze.md).
+[ADR-0251](../adr/0251-accelerated-tax-engine-delivery-and-decision-freeze.md).
 The decision register must be updated whenever a frozen choice changes.
 
 ## ADR-0252 — bounded concurrent FX provider acquisition
@@ -2339,7 +2339,7 @@ Deliverables:
 
 Exit criteria: signed scope document, threat model accepted, and no unresolved contradiction between tax business rules and the on-chain invariant model.
 
-## Phase 0A - Tier-1 product foundation
+## Phase 0A - Tax Engine product foundation
 
 Deliverables:
 
@@ -2351,7 +2351,7 @@ Deliverables:
 - public-repository documentation, security disclosure process, contribution workflow, changelog, and licensing decision;
 - dependency register, vendor/RPC exit plan, backup/restore design, and key-recovery plan.
 
-Exit criteria: the Tier-1 product standard has an owner and evidence plan for every pillar; unsupported product/jurisdiction cases have explicit behavior.
+Exit criteria: the Tax Engine product standard has an owner and evidence plan for every pillar; unsupported product/jurisdiction cases have explicit behavior.
 
 ## Phase 1 - workspace and contracts
 
@@ -2548,7 +2548,7 @@ Deliverables:
 
 Exit criteria: API holds no user private keys; an invalid or stale policy cannot compile a valid settlement; retries do not duplicate a settlement.
 
-## Phase 3A - Tier-1 tax engine
+## Phase 3A - tax engine
 
 Deliverables:
 
@@ -3161,7 +3161,7 @@ after user navigation. The initial render does not steal focus. This closes a
 keyboard-context defect while full browser, RTL, localization, and assistive-
 technology evidence remain separate WCAG readiness gates.
 
-### Structured Tier-1 rule workbench (ADR-0143)
+### Structured Tax Engine rule workbench (ADR-0143)
 
 The governance workspace uses bounded schema-driven controls for the complete
 supported rule DSL: component dependencies, flat/progressive rates, threshold
@@ -3258,7 +3258,7 @@ Deliverables:
 - public coverage matrix, support policy, security disclosure workflow, and release notes;
 - post-launch review against latency, correctness, tax coverage, UX, and operational evidence.
 
-Exit criteria: controlled production meets the Tier-1 product standard for the published scope; general availability is a separate approval, not an automatic consequence of deployment.
+Exit criteria: controlled production meets the Tax Engine product standard for the published scope; general availability is a separate approval, not an automatic consequence of deployment.
 
 ## ADR-0262 UI and authorization delivery status
 

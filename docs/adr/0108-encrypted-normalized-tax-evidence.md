@@ -7,7 +7,7 @@
 
 ## Context
 
-The Tier-1 engine must replay a quote from normalized facts, but facts can
+The Tax Engine engine must replay a quote from normalized facts, but facts can
 contain customer, address, exemption, and jurisdiction-sensitive information.
 The provider-signed jurisdiction envelope is an input to resolution, not a
 durable tax record: retaining the raw envelope would duplicate potentially

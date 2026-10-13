@@ -4,7 +4,7 @@
 - Date: 2026-10-01
 - Deciders: Principal Low-Latency Architecture, Security, SRE
 - Scope: Tax Engine service-to-service authorization
-- Bounded contexts: Tier-1 Tax Engine, Service Runtime, Workload Identity
+- Bounded contexts: Tax Engine, Service Runtime, Workload Identity
 
 ## Context
 

@@ -1,4 +1,4 @@
-# ADR-0066: Versioned Tier-1 tax-engine golden vectors
+# ADR-0066: Versioned tax-engine golden vectors
 
 - Status: Accepted
 - Date: 2026-09-26

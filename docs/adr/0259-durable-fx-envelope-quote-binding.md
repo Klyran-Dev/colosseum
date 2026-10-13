@@ -9,7 +9,7 @@
 
 The FX provider bounded context produces a signed `FxEvidenceEnvelope`, while
 the tax engine consumes a smaller exact `FxConversionEvidence` projection. A
-conversion rate and digest alone are not enough for a Tier-1 audit: the
+conversion rate and digest alone are not enough for a Tax Engine audit: the
 complete signed envelope, its policy/authority metadata, and its binding to the
 original facts must remain available for replay. The quote transaction already
 persists immutable `evidence_refs`, encrypted normalized facts, and its first

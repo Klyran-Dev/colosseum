@@ -11,4 +11,13 @@ describe("admin authentication recovery contract", () => {
     expect(source).toContain("Resend code");
     expect(source).toContain("Use a different email");
   });
+
+  it("keeps the visible sign-in experience user-facing", () => {
+    expect(source).toContain("Sign in to your workspace");
+    expect(source).toContain("Enter your work email and we’ll send you a one-time code.");
+    expect(source).toContain("A simple, secure sign-in.");
+    expect(source).not.toContain("Identity boundary");
+    expect(source).not.toContain("OIDC PKCE");
+    expect(source).not.toContain("RBAC, ABAC, and PBAC");
+  });
 });

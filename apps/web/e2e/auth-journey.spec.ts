@@ -9,6 +9,11 @@ interface LocalOtpMessage {
   expires_at_unix: number;
 }
 
+interface ChallengeResponse {
+  challenge_id: string;
+  expires_at_unix: number;
+}
+
 const INBOX_DIR = process.env.AUTH_INBOX_DIR ?? "/workspace/auth-inbox";
 const SYNTHETIC_DOMAIN = "auth-browser.example.test";
 
@@ -16,7 +21,7 @@ function syntheticEmail(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@${SYNTHETIC_DOMAIN}`;
 }
 
-async function readOtpFor(recipient: string): Promise<LocalOtpMessage> {
+async function readOtpFor(recipient: string, challengeId: string): Promise<LocalOtpMessage> {
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
     const names = await readdir(INBOX_DIR).catch(() => []);
@@ -27,6 +32,7 @@ async function readOtpFor(recipient: string): Promise<LocalOtpMessage> {
         const candidate = JSON.parse(raw) as Partial<LocalOtpMessage>;
         if (candidate.schema === "solana-tax-protocol/local-email-inbox/v1"
           && candidate.recipient === recipient
+          && candidate.challenge_id === challengeId
           && typeof candidate.challenge_id === "string"
           && typeof candidate.code === "string"
           && /^[0-9]{6}$/u.test(candidate.code)
@@ -47,17 +53,20 @@ async function readOtpFor(recipient: string): Promise<LocalOtpMessage> {
 async function completeOtp(page: Page, intent: "signin" | "signup", email: string, nextPath: string): Promise<void> {
   await page.goto(`/auth/${intent}?next=${encodeURIComponent(nextPath)}`);
   await expect(page.getByRole("heading", {
-    name: intent === "signup" ? "Create your operator account" : "Sign in to Tax operations",
+    name: intent === "signup" ? "Create your workspace account" : "Sign in to your workspace",
     exact: true,
   })).toBeVisible();
   await expect(page.getByLabel("Work email")).toBeVisible();
   await page.getByLabel("Work email").fill(email);
   const requestResponse = page.waitForResponse((response) => response.url().endsWith("/v1/auth/email/request"));
   await page.getByRole("button", { name: intent === "signup" ? "Create account" : "Continue with email" }).click();
-  expect((await requestResponse).status()).toBe(202);
+  const requested = await requestResponse;
+  expect(requested.status()).toBe(202);
+  const challenge = await requested.json() as ChallengeResponse;
+  expect(challenge.challenge_id).toMatch(/^[0-9a-f-]{36}$/u);
   await expect(page.getByRole("status")).toContainText("Use the newest code sent to this email address.");
 
-  const message = await readOtpFor(email);
+  const message = await readOtpFor(email, challenge.challenge_id);
   expect(message.expires_at_unix).toBeGreaterThan(Math.floor(Date.now() / 1000));
   await page.getByLabel("One-time code").fill(message.code);
   const verifyResponse = page.waitForResponse((response) => response.url().endsWith("/v1/auth/email/verify"));
@@ -69,14 +78,15 @@ async function completeOtp(page: Page, intent: "signin" | "signup", email: strin
 async function signOut(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/auth\/signin\?next=%2Fadmin$/u);
-  await expect(page.getByRole("heading", { name: "Sign in to Tax operations", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign in to your workspace", exact: true })).toBeVisible();
 }
 
 test.describe("Docker-backed email OTP authentication", () => {
-  test("signs up an operator, signs out, then signs in again", async ({ page }) => {
-    const email = syntheticEmail("operator");
+  test("signs up a tenant owner, signs out, then signs in again", async ({ page }) => {
+    const email = syntheticEmail("tenant-owner");
     await completeOtp(page, "signup", email, "/admin");
-    await expect(page.getByRole("heading", { name: "Tax operations", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Administrator console", exact: true })).toBeVisible();
+    await expect(page.getByText("Tenant administrator", { exact: true }).first()).toBeVisible();
     await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
     await signOut(page);
     await completeOtp(page, "signin", email, "/admin/tax/quotes");
@@ -87,16 +97,22 @@ test.describe("Docker-backed email OTP authentication", () => {
     const email = syntheticEmail("resend");
     await page.goto("/auth/signup?next=%2Fadmin");
     await page.getByLabel("Work email").fill(email);
+    const firstChallenge = page.waitForResponse((response) => response.url().endsWith("/v1/auth/email/request"));
     await page.getByRole("button", { name: "Create account" }).click();
+    const firstResponse = await firstChallenge;
+    expect(firstResponse.status()).toBe(202);
+    const firstPayload = await firstResponse.json() as ChallengeResponse;
     await expect(page.getByRole("status")).toContainText("Use the newest code sent to this email address.");
 
-    const firstMessage = await readOtpFor(email);
+    const firstMessage = await readOtpFor(email, firstPayload.challenge_id);
     await expect(page.getByRole("button", { name: "Resend code" })).toBeEnabled();
     const resendResponse = page.waitForResponse((response) => response.url().endsWith("/v1/auth/email/request"));
     await page.getByRole("button", { name: "Resend code" }).click();
-    expect((await resendResponse).status()).toBe(202);
+    const resent = await resendResponse;
+    expect(resent.status()).toBe(202);
+    const resentPayload = await resent.json() as ChallengeResponse;
 
-    const resentMessage = await readOtpFor(email);
+    const resentMessage = await readOtpFor(email, resentPayload.challenge_id);
     expect(resentMessage.challenge_id).not.toBe(firstMessage.challenge_id);
     await page.getByLabel("One-time code").fill(resentMessage.code);
     await page.getByRole("button", { name: "Verify code" }).click();
@@ -107,7 +123,7 @@ test.describe("Docker-backed email OTP authentication", () => {
   test("keeps protected admin routes behind the authenticated session boundary", async ({ page }) => {
     await page.goto("/admin/access");
     await expect(page).toHaveURL(/\/auth\/signin\?next=%2Fadmin%2Faccess$/u);
-    await expect(page.getByRole("heading", { name: "Sign in to Tax operations", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Sign in to your workspace", exact: true })).toBeVisible();
     await expect(page.getByText("The admin dashboard is protected.", { exact: false })).toHaveCount(0);
   });
 });

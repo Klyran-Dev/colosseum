@@ -6,7 +6,7 @@
 
 ## Context
 
-The Tier-1 tax engine can verify a complete result in memory, but a durable
+The tax engine can verify a complete result in memory, but a durable
 quote currently stores only the facts digest. A digest proves that a value was
 bound to some facts; it does not provide the normalized facts required to
 recalculate the result during an audit, reconciliation run, or support

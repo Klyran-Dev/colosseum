@@ -10,7 +10,7 @@
 The product surface is a real operational UI for quotes, tax explanations,
 governance, replay operations, vault release, and wallet authorization. Source
 inspection can confirm that labels and landmark attributes exist, but it cannot
-detect regressions in the rendered accessibility tree. A Tier-1 product needs
+detect regressions in the rendered accessibility tree. A Tax Engine product needs
 an executable baseline that fails CI when the browser-visible DOM introduces a
 WCAG violation.
 

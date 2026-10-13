@@ -12,6 +12,12 @@ use tokio_postgres::NoTls;
 
 type RunnerError = Box<dyn Error + Send + Sync>;
 
+fn configured_seed_dir(value: Option<&str>) -> Option<&str> {
+    value
+        .map(str::trim)
+        .filter(|directory| !directory.is_empty())
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     match run().await {
@@ -40,9 +46,9 @@ async fn run() -> Result<migration_runner::RunSummary, RunnerError> {
         .transpose()?
         .unwrap_or(DEFAULT_STATEMENT_TIMEOUT_MS);
     let migrations = discover_migrations(std::path::Path::new(&migrations_dir))?;
-    let seeds = env::var("SEED_DIR")
-        .ok()
-        .map(|directory| discover_migrations(std::path::Path::new(&directory)))
+    let seed_directory = env::var("SEED_DIR").ok();
+    let seeds = configured_seed_dir(seed_directory.as_deref())
+        .map(|directory| discover_migrations(std::path::Path::new(directory)))
         .transpose()?
         .unwrap_or_default();
     let (client, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
@@ -82,10 +88,18 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::run_with_connection;
+    use super::{configured_seed_dir, run_with_connection};
     use std::{error::Error, time::Duration};
 
     type BoxError = Box<dyn Error + Send + Sync>;
+
+    #[test]
+    fn blank_seed_directory_is_disabled() {
+        assert_eq!(configured_seed_dir(None), None);
+        assert_eq!(configured_seed_dir(Some("")), None);
+        assert_eq!(configured_seed_dir(Some("   ")), None);
+        assert_eq!(configured_seed_dir(Some("/seeds")), Some("/seeds"));
+    }
 
     #[tokio::test]
     async fn connection_failure_wins_and_fails_the_runner_closed() {

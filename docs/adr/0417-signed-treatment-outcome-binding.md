@@ -13,7 +13,7 @@ attestation payloads, however, sign gross, settlement tax, and net only. The
 applicability attestation signs the classification and evidence but not the
 numeric treatment outcome.
 
-That distinction is unsafe for a Tier-1 evidence product: an external issuer
+That distinction is unsafe for a Tax Engine evidence product: an external issuer
 could sign a payload whose settlement amounts are conserved while the
 self-assessed or withheld amount shown in the explanation is not part of the
 signed authority. A replay can detect the discrepancy off-chain, but the

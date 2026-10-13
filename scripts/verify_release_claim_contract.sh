@@ -35,7 +35,7 @@ require_text docs/public-repository-release.md 'must not be represented as licen
 require_text docs/public-repository-release.md 'must not be described as production-ready'
 require_text docs/plans/production-readiness.md 'License choice is explicit before public source release.'
 require_text docs/plans/production-readiness.md 'Program audit complete with no unresolved critical/high findings.'
-require_text docs/operations/decision-register.md '| `DEC-0251-10` | Public-source license | `OPEN` |'
+require_text docs/operations/decision-register.md '| `DEC-0251-10` | Public-source license | `FROZEN` |'
 
 # Reject an accidental positive release claim in the root public entry point.
 if grep -Eiq '(^|[^[:alnum:]])production-ready([^[:alnum:]]|$)|(^|[^[:alnum:]])mainnet-ready([^[:alnum:]]|$)|licensed for general reuse' "$repo_root/README.md"; then
@@ -46,7 +46,7 @@ fi
 # register is moved to an approved state and the public release contract is
 # updated by the repository owner.
 if [ -e "$repo_root/LICENSE" ] || [ -e "$repo_root/LICENSE.md" ]; then
-  if ! grep -Eq '| `DEC-0251-10` \| Public-source license \| `(FROZEN|APPROVED)` \|' "$repo_root/docs/operations/decision-register.md"; then
+  if ! grep -Eq '\| `DEC-0251-10` \| Public-source license \| `(FROZEN|APPROVED)` \|' "$repo_root/docs/operations/decision-register.md"; then
     fail 'LICENSE exists while the public-source license decision is not approved'
   fi
 fi

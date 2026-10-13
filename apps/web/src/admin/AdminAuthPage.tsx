@@ -21,7 +21,7 @@ function AppLogo() {
       <span className="grid size-10 place-items-center rounded-xl bg-admin-primary text-lg font-black text-white shadow-soft">S</span>
       <span className="leading-tight">
         <strong className="block text-sm font-extrabold tracking-tight text-admin-ink">Tax operations</strong>
-        <small className="block text-xs text-admin-muted">Control plane</small>
+        <small className="block text-xs text-admin-muted">Workspace access</small>
       </span>
     </div>
   );
@@ -149,9 +149,9 @@ export default function AdminAuthPage({ intent }: { intent: AuthIntent }) {
           <div>
             <Link to="/admin" aria-label="Back to admin overview"><AppLogo /></Link>
             <div className="mt-9 max-w-lg sm:mt-12 lg:mt-16">
-              <p className="text-xs font-black uppercase tracking-[0.16em] text-admin-primary">{intent === "signin" ? "Secure operator access" : "Create identity"}</p>
-              <h1 className="admin-auth-title mt-4 font-extrabold text-admin-ink">{intent === "signin" ? "Sign in to Tax operations" : "Create your operator account"}</h1>
-              <p className="mt-4 text-[0.9375rem] leading-6 text-admin-muted">{intent === "signin" ? "Your identity and tenant access are verified before protected actions appear." : "Create a secure operator account with your work email. Elevated responsibilities are assigned by an administrator."}</p>
+              <p className="text-xs font-black uppercase tracking-[0.16em] text-admin-primary">{intent === "signin" ? "Welcome back" : "Get started"}</p>
+              <h1 className="admin-auth-title mt-4 font-extrabold text-admin-ink">{intent === "signin" ? "Sign in to your workspace" : "Create your workspace account"}</h1>
+              <p className="mt-4 text-[0.9375rem] leading-6 text-admin-muted">{intent === "signin" ? "Enter your work email and we’ll send you a one-time code." : "Create your account with your work email. An administrator can invite teammates and grant additional access later."}</p>
             </div>
             <form className="mt-6 max-w-md space-y-3.5" onSubmit={submit}>
               {!configured && <div className="rounded-xl border border-admin-amber/30 bg-admin-amber-soft p-3 text-[0.8125rem] leading-5 text-admin-amber-ink" role="alert"><strong className="block">Sign-in is not configured</strong><span>{BROWSER_AUTH_CONFIG.warnings.join(" ") || "A supported identity provider must be configured for this deployment."}</span></div>}
@@ -167,17 +167,17 @@ export default function AdminAuthPage({ intent }: { intent: AuthIntent }) {
                   <button type="button" onClick={resetChallenge} disabled={busy} className="text-xs font-bold text-admin-primary disabled:cursor-not-allowed disabled:opacity-50">Use a different email</button>
                 </div>
               </div>}
-              <button type="submit" disabled={busy || !configured} className="w-full rounded-xl bg-admin-primary px-5 py-2.5 text-[0.8125rem] font-bold text-white shadow-soft transition hover:bg-admin-primary-strong disabled:cursor-not-allowed disabled:opacity-60">{busy ? "Contacting secure service…" : oidcEnabled ? "Continue with identity provider" : challengeId ? "Verify code" : intent === "signin" ? "Continue with email" : "Create account"}</button>
-              <p className="text-xs leading-5 text-admin-muted">Access is provisioned, never self-selected. Roles, attributes, and policy decisions remain server-owned.</p>
+              <button type="submit" disabled={busy || !configured} className="w-full rounded-xl bg-admin-primary px-5 py-2.5 text-[0.8125rem] font-bold text-white shadow-soft transition hover:bg-admin-primary-strong disabled:cursor-not-allowed disabled:opacity-60">{busy ? "Preparing your sign-in…" : oidcEnabled ? "Continue with identity provider" : challengeId ? "Verify code" : intent === "signin" ? "Continue with email" : "Create account"}</button>
+              <p className="text-xs leading-5 text-admin-muted">An administrator controls which workspace areas are available after you sign in.</p>
             </form>
           </div>
-          <div className="mt-8 text-sm text-admin-muted">{intent === "signin" ? <span>New to the protocol? <Link to="/auth/signup" className="font-bold text-admin-primary">Create an account</Link></span> : <span>Already have an account? <Link to="/auth/signin" className="font-bold text-admin-primary">Back to sign in</Link></span>}</div>
+          <div className="mt-8 text-sm text-admin-muted">{intent === "signin" ? <span>Don’t have an account yet? <Link to="/auth/signup" className="font-bold text-admin-primary">Create an account</Link></span> : <span>Already have an account? <Link to="/auth/signin" className="font-bold text-admin-primary">Back to sign in</Link></span>}</div>
         </section>
         <aside className="hidden bg-admin-primary-soft p-8 lg:flex lg:flex-col lg:justify-center">
-          <p className="text-xs font-black uppercase tracking-[0.16em] text-admin-primary">Identity boundary</p>
-          <h2 className="mt-4 max-w-sm text-3xl font-extrabold tracking-[-0.04em] text-admin-ink">Evidence at every step.</h2>
-          <p className="mt-4 max-w-md text-[0.9375rem] leading-6 text-admin-muted">Sign-in proves who you are. The service then evaluates tenant, role, attributes, and policy before protected actions appear.</p>
-          <div className="mt-10 space-y-5">{[["01", "Verify identity", "Work email and one-time code or OIDC PKCE are handled by the configured provider."], ["02", "Evaluate responsibility", "RBAC, ABAC, and PBAC decisions stay server-owned and short-lived."], ["03", "Keep an audit trail", "Important actions remain linked to a traceable decision record."]].map(([number, title, detail]) => <div key={number} className="flex gap-4 border-t border-admin-primary/20 pt-5"><span className="font-mono text-sm font-bold text-admin-primary">{number}</span><span><strong className="block text-sm text-admin-ink">{title}</strong><small className="mt-1 block text-sm leading-5 text-admin-muted">{detail}</small></span></div>)}</div>
+          <p className="text-xs font-black uppercase tracking-[0.16em] text-admin-primary">Your secure workspace</p>
+          <h2 className="mt-4 max-w-sm text-3xl font-extrabold tracking-[-0.04em] text-admin-ink">A simple, secure sign-in.</h2>
+          <p className="mt-4 max-w-md text-[0.9375rem] leading-6 text-admin-muted">We’ll confirm your email before opening your workspace.</p>
+          <div className="mt-10 space-y-5">{[["01", "Check your email", "We’ll send a one-time code to your inbox."], ["02", "Enter your code", "Use the newest code to continue."], ["03", "You’re in", "Your workspace opens with the access your administrator provides."]].map(([number, title, detail]) => <div key={number} className="flex gap-4 border-t border-admin-primary/20 pt-5"><span className="font-mono text-sm font-bold text-admin-primary">{number}</span><span><strong className="block text-sm text-admin-ink">{title}</strong><small className="mt-1 block text-sm leading-5 text-admin-muted">{detail}</small></span></div>)}</div>
         </aside>
       </div>
     </main>

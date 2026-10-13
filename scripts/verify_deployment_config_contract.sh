@@ -26,6 +26,8 @@ run_checker() {
   auth_email_mode=${15-provider}
   browser_auth_method=${16-email-otp}
   browser_auth_service_url=${17-https://auth.example.invalid}
+  solana_network=${18-devnet}
+  browser_rpc_url=${19-https://rpc.example.invalid}
   set -- env -i \
     PATH="$PATH" \
     DEPLOYMENT_ENV=staging \
@@ -44,6 +46,8 @@ run_checker() {
     AUTH_APP_BASE_URL=https://app.example.invalid \
     AUTH_INITIAL_ADMIN_EMAIL= \
     VITE_DEPLOYMENT_ENVIRONMENT=staging \
+    VITE_SOLANA_NETWORK="$solana_network" \
+    VITE_SOLANA_RPC_URL="$browser_rpc_url" \
     VITE_AUTH_METHOD="$browser_auth_method" \
     VITE_AUTH_SERVICE_BASE_URL="$browser_auth_service_url" \
     API_ENV=staging \
@@ -187,6 +191,26 @@ fi
 if run_checker false '' false pair pair staging synthetic-nonlocal-service-token '' \
   /run/secrets/tax-engine/tls.key /run/secrets/tax-engine/client-ca.pem >/dev/null 2>&1; then
   echo "partial tax engine TLS configuration did not fail" >&2
+  exit 1
+fi
+
+if run_checker false '' false pair pair staging synthetic-nonlocal-service-token \
+  /run/secrets/tax-engine/tls.crt /run/secrets/tax-engine/tls.key \
+  /run/secrets/tax-engine/client-ca.pem \
+  '["spiffe://solana-tax-protocol/api"]' '' staging false provider email-otp \
+  https://auth.example.invalid invalid-network https://rpc.example.invalid \
+  >/dev/null 2>&1; then
+  echo "invalid Solana network did not fail" >&2
+  exit 1
+fi
+
+if run_checker false '' false pair pair staging synthetic-nonlocal-service-token \
+  /run/secrets/tax-engine/tls.crt /run/secrets/tax-engine/tls.key \
+  /run/secrets/tax-engine/client-ca.pem \
+  '["spiffe://solana-tax-protocol/api"]' '' staging false provider email-otp \
+  https://auth.example.invalid devnet http://localhost:8899 \
+  >/dev/null 2>&1; then
+  echo "insecure browser Solana RPC did not fail" >&2
   exit 1
 fi
 

@@ -11,7 +11,7 @@ counsel or jurisdiction-owner sign-off.
 
 The rule lifecycle already provides immutable published versions, effective
 windows, four-eyes governance, and generic provenance JSON. Generic JSON is
-not enough for a Tier-1 release gate: a rule could otherwise be published
+not enough for a Tax Engine release gate: a rule could otherwise be published
 without a source reference, source digest, legal/tax owner, review record, or
 an explicit jurisdiction scope. The browser must not be the authority for
 this decision, and direct database writes must not bypass it.
@@ -81,6 +81,6 @@ row mutation guard, so changing it requires a new rule version.
 ## References
 
 - [ADR-0016: Legal and product readiness](0016-legal-and-product-readiness.md)
-- [ADR-0143: Structured Tier-1 rule workbench](0143-structured-tier-1-rule-workbench.md)
+- [ADR-0143: Structured Tax Engine rule workbench](0143-structured-tax-engine-rule-workbench.md)
 - [ADR-0144: Server-owned persisted rule simulation](0144-server-owned-persisted-rule-simulation.md)
 - [ADR-0315: Executable tax-responsibility language boundary](0315-executable-tax-responsibility-language.md)

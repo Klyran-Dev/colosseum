@@ -122,7 +122,10 @@ auth_public_key=$(create_auth_key "$auth_key" "$auth_public_der")
 
 docker compose -p "$project_name" build api migrator >/dev/null
 docker compose -p "$project_name" up -d postgres >/dev/null
-docker compose -p "$project_name" run --rm migrator >/dev/null
+# This contract intentionally exercises the synthetic published rule. Keep the
+# fixture opt-in local to this isolated test; deployment preflight rejects
+# SEED_DIR outside local development.
+SEED_DIR=/seeds docker compose -p "$project_name" run --rm migrator >/dev/null
 
 docker compose -p "$project_name" run -T --detach --no-deps \
   --name "${project_name}-api" \
@@ -180,7 +183,10 @@ first_status=$(printf '%s' "$first_request" | curl --silent --show-error \
   "$base_url/v1/tax/quote" || true)
 case "$first_status" in
   200|201) ;;
-  *) fail "valid evidence signed by the initial key was rejected (HTTP $first_status)" ;;
+  *)
+    first_body=$(sed -n '1,4p' "$first_response" | tr '\n' ' ')
+    fail "valid evidence signed by the initial key was rejected (HTTP $first_status, body: $first_body)"
+    ;;
 esac
 jq -e '.calculation_id and .status' "$first_response" >/dev/null \
   || fail "initial quote response was not a persisted calculation"

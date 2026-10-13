@@ -133,6 +133,13 @@ if [ -n "$initial_admin_email" ]; then
 fi
 
 require_exact VITE_DEPLOYMENT_ENVIRONMENT "$deployment_env"
+require_env VITE_SOLANA_NETWORK
+solana_network=$(read_env VITE_SOLANA_NETWORK)
+case "$deployment_env:$solana_network" in
+  staging:devnet|production:mainnet-beta) ;;
+  *) fail "VITE_SOLANA_NETWORK must be devnet for staging or mainnet-beta for production" ;;
+esac
+validate_https_url VITE_SOLANA_RPC_URL
 browser_auth_method=$(read_env VITE_AUTH_METHOD)
 case "$browser_auth_method" in
   email-otp)

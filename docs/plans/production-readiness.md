@@ -7,6 +7,27 @@ server-owned quote-bound calculation-attestation ingestion, and a cached
 on-chain policy attestation binding. These are foundation gates, not completed
 production readiness. Unchecked items remain release blockers.
 
+On 2026-10-13, ADR-0527 added an explicit durable tenant lifecycle. Every
+authenticated account now resolves to an `auth_tenants` row, readiness is
+derived from the workspace profile, finalized settlement-route evidence, and
+published tax-policy records, and tenant administrators can promote another
+active same-tenant user through an idempotent audited operation. Open
+self-signup creates a new tenant-owner administrator; invitations remain
+non-administrator by default. The Docker migration and rebuilt auth/API/NGINX
+images passed the local health and browser-edge checks. This does not create a
+platform-global administrator: that authority remains a separate design and
+security boundary, and no platform-admin claim is exposed by the current UI.
+
+On 2026-10-13, the hosted GCP/Cloudflare review added ADR-0524 and explicit
+staging/Devnet browser-RPC binding, deployment preflight, and finalized
+program-account verification contracts. The current canonical program
+`4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi` is not executable on public
+Devnet, so the hosted release remains blocked and no settlement submission is
+authorized. The review also fixed Compose's configurable PostgreSQL healthcheck
+and normalized blank optional Tax Engine TLS environment values; the targeted
+configuration, image-build, unit, and Tax Engine runtime gates pass. This does
+not establish Devnet deployment, RPC-provider approval, or mainnet readiness.
+
 On 2026-10-11, the repository-owned authentication slice was extended with an
 explicit `VITE_AUTH_METHOD=email-otp` production browser path. The static SPA
 now accepts provider-backed email OTP only with an HTTPS auth-service origin;
@@ -41,7 +62,7 @@ proof, and duplicate-submission rejection. This is Docker-local synthetic
 evidence; it does not close Linux/amd64 validator, live-provider, custody,
 legal, regional SLO, or production identity gates.
 
-On 2026-10-06, the canonical `make tier1-local-check` completed every local
+On 2026-10-06, the canonical `make tax-engine-local-check` completed every local
 layer before the validator boundary: workspace checks, 79 frontend test files
 with 344 passing tests and 10 intentional skips, production build and UI
 contracts, zero high/critical Trivy findings, authenticated Docker integration,
@@ -130,7 +151,7 @@ legal, or production SLO evidence.
 Later on 2026-10-05, the exact current worktree passed `make check` again after
 the complete authorization benchmark catalog and current Material 3 Expressive shell were
 rebuilt. The run passed 76 frontend test files (329 passing tests and 10
-intentional skips), the full Rust workspace and Tier-1 tax vectors, typecheck,
+intentional skips), the full Rust workspace and Tax Engine tax vectors, typecheck,
 production build, zero Cargo/pnpm vulnerabilities, zero Dockerfile
 high/critical findings, and all public, authorization, palette,
 forced-colors, localization, runtime, migration, deployment, and observability
@@ -153,7 +174,7 @@ automated local evidence and does not replace manual assistive-technology or
 production identity review.
 
 The subsequent exact-current `make check` also passed with 77 frontend test
-files (330 passing tests and 10 intentional skips), all Rust/Tier-1 vectors,
+files (330 passing tests and 10 intentional skips), all Rust/Tax Engine vectors,
 clean scans, production build, and repository contracts. This is local
 evidence only; Linux/amd64 validator, live provider, staging identity,
 custody, legal, manual accessibility, regional SLO, and license gates remain
@@ -1386,7 +1407,7 @@ and live-wallet review remain required.
 - [x] SPA workspace navigation now has a skip link, active-state semantics,
   stable controlled landmark, and tested post-navigation focus management under
   ADR-0142; full WCAG 2.2 AA/browser/assistive-technology evidence remains open.
-- [x] Governance rule authoring now has a bounded structured Tier-1 workbench
+- [x] Governance rule authoring now has a bounded structured Tax Engine workbench
   with canonical JSON preview and an explicit advanced JSON mode under
   ADR-0143; server validation, legal/tax review, and full browser accessibility
   evidence remain release gates.
@@ -1599,7 +1620,7 @@ and live-wallet review remain required.
 
 - [x] README accurately states status, scope, limitations, architecture, and reproducible setup status; `make public-docs-check` verifies the public entry-point contract.
 - [x] `AGENTS.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, and `CHANGELOG.md` are present, linked, and current for the implementation foundation; `make public-docs-check` verifies the public-file and status contract. This does not close the separate license or production-readiness gates.
-- [ ] License choice is explicit before public source release.
+- [x] License choice is explicit before public source release. The repository owner froze DEC-0251-10 with Apache-2.0 and committed the public license and notice files.
 - [x] ADR index, coverage matrix, API/IDL documentation, release notes, and the public-release contract are linked from the README.
 - [ ] CI status, security scanning, dependency updates, and artifact provenance are visible without overstating readiness. ADR-0129 adds grouped Dependabot maintenance and a tag/manual release-candidate evidence workflow with checksums, SBOM, exact toolchain metadata, and validator/security evidence; ADR-0369 makes Rust 1.98.1 installation and selection explicit, and ADR-0370 records Node.js 24.21.0 and pnpm 12.3.4 evidence in host-side CI. A successful retained run, independent release review, and license decision remain open.
 

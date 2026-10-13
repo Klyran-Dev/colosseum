@@ -19,6 +19,7 @@ import { BROWSER_RUNTIME_CONTEXT } from "./runtimeContext";
 import { BROWSER_AUTH_CONFIG, BROWSER_AUTH_SERVICE_BASE_URL } from "./authConfig";
 import { AuthSessionStatus } from "./AuthSessionControl";
 import { beginOidcAuthorization, completeOidcCallback, PKCE_TRANSACTION_STORAGE_KEY } from "./oidcSession";
+import { BrowserSessionCoordinator, createBrowserSessionCoordinator } from "./browserSession";
 import { loadDisplayPreferences, saveDisplayPreferences, syncBrowserThemeColor } from "./displayPreferences";
 import { quoteMessagesFor } from "./quoteMessages";
 import { assetScaleMessagesFor, parseAssetScale } from "./assetScaleMessages";
@@ -26,6 +27,7 @@ import { revenueStreamingMessagesFor } from "./revenueStreamingMessages";
 import { shellMessagesFor } from "./shellMessages";
 import { shellOperationalMessagesFor } from "./shellOperationalMessages";
 import { operatorErrorMessage, operatorFacingError } from "./operatorError";
+import { authErrorMessage, authResponseError, AuthResponseError, AuthRecoveryAction } from "./authErrors";
 import {
   Calculation,
   parseCalculationResponse,
@@ -82,6 +84,7 @@ export default function App() {
   const [authNextPath, setAuthNextPath] = useState(() => safeAuthNextPath(new URLSearchParams(window.location.search).get("next")));
   const [authInvitationId, setAuthInvitationId] = useState<string | null>(() => invitationIdFromSearch(window.location.search));
   const [authInvitationRole, setAuthInvitationRole] = useState<string | null>(null);
+  const [authRecoveryAction, setAuthRecoveryAction] = useState<AuthRecoveryAction>(null);
   const workspaceContentRef = useRef<HTMLDivElement>(null);
   const initialWorkspaceRender = useRef(true);
   const [gross, setGross] = useState("");
@@ -102,7 +105,12 @@ export default function App() {
   const [authOtpCode, setAuthOtpCode] = useState("");
   const [authOtpChallengeId, setAuthOtpChallengeId] = useState<string | null>(null);
   const [authOtpResendAtUnix, setAuthOtpResendAtUnix] = useState<number | null>(null);
+  const [displayPreferences, setDisplayPreferences] = useState(loadDisplayPreferences);
+  const { locale, timeZone, theme: themePreference } = displayPreferences;
   const authRequestInFlight = useRef(false);
+  const browserSessionCoordinatorRef = useRef<BrowserSessionCoordinator | null>(null);
+  const browserSessionIdRef = useRef<string | null>(null);
+  const localeRef = useRef(locale);
   const [authorizationSnapshot, setAuthorizationSnapshot] = useState<AuthorizationSnapshot>(() => authorizationSnapshotForToken(""));
   const [authorizationRefreshNonce, setAuthorizationRefreshNonce] = useState(0);
   const [authorizationErrorKey, setAuthorizationErrorKey] = useState<"unavailable" | "expired" | "missingExpiry" | null>(null);
@@ -113,8 +121,6 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isReplaying, setIsReplaying] = useState(false);
-  const [displayPreferences, setDisplayPreferences] = useState(loadDisplayPreferences);
-  const { locale, timeZone, theme: themePreference } = displayPreferences;
   const revenueMessages = revenueStreamingMessagesFor(locale);
   const shellMessages = shellMessagesFor(locale);
   const operationalMessages = shellOperationalMessagesFor(locale);
@@ -147,11 +153,50 @@ export default function App() {
   }, []);
 
   function setBrowserCredential(value: string) {
+    if (value.trim()) browserSessionIdRef.current = browserSessionCoordinatorRef.current?.claim() ?? null;
+    else {
+      browserSessionCoordinatorRef.current?.release();
+      browserSessionIdRef.current = null;
+    }
     setAccessToken(value);
     setAuthSessionExpiresAt(null);
     setAuthSessionError(null);
     setAuthSessionStatus(value.trim() ? "signed-in" : "signed-out");
   }
+
+  function clearBrowserSession(errorMessage: string | null = null) {
+    setAccessToken("");
+    setAuthSessionExpiresAt(null);
+    setAuthSessionError(errorMessage);
+    setAuthSessionStatus(errorMessage ? "error" : "signed-out");
+    setAuthOtpChallengeId(null);
+    setAuthOtpCode("");
+    setAuthOtpResendAtUnix(null);
+    setAuthorizationSnapshot(authorizationSnapshotForToken(""));
+  }
+
+  function claimBrowserSession() {
+    browserSessionIdRef.current = browserSessionCoordinatorRef.current?.claim() ?? null;
+  }
+
+  useEffect(() => {
+    localeRef.current = locale;
+  }, [locale]);
+
+  useEffect(() => {
+    const coordinator = createBrowserSessionCoordinator((signal) => {
+      if (signal.kind !== "claimed" || !browserSessionIdRef.current || signal.sessionId === browserSessionIdRef.current) return;
+      browserSessionIdRef.current = null;
+      coordinator.release();
+      clearBrowserSession(shellMessagesFor(localeRef.current).session.replacedByAnotherTab);
+    }, { channel: import.meta.env.MODE === "test" ? null : undefined });
+    browserSessionCoordinatorRef.current = coordinator;
+    return () => {
+      coordinator.dispose();
+      browserSessionCoordinatorRef.current = null;
+      browserSessionIdRef.current = null;
+    };
+  }, []);
 
   async function requestEmailOtp() {
     const baseUrl = BROWSER_AUTH_CONFIG.emailOtp?.baseUrl;
@@ -164,6 +209,7 @@ export default function App() {
     authRequestInFlight.current = true;
     setAuthSessionStatus("signing-in");
     setAuthSessionError(null);
+    setAuthRecoveryAction(null);
     try {
       const response = await fetchWithTimeout(`${baseUrl}/v1/auth/email/request`, {
         method: "POST",
@@ -175,7 +221,7 @@ export default function App() {
         }),
       });
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw operatorResponseError(response, payload, "The sign-in code could not be sent.");
+      if (!response.ok) throw authResponseError(response, payload, "The sign-in code could not be sent.");
       const challengeId = stringField(payload, "challenge_id");
       if (!challengeId) throw new Error("The authentication service returned an invalid challenge.");
       setAuthInvitationRole(authIntent === "signup" ? stringField(payload, "invitation_role") : null);
@@ -186,7 +232,9 @@ export default function App() {
       setAuthSessionStatus("signed-out");
     } catch (cause) {
       setAuthSessionStatus("error");
-      setAuthSessionError(operatorErrorMessage(cause, "The sign-in code could not be sent."));
+      const authError = cause instanceof AuthResponseError ? cause : null;
+      setAuthRecoveryAction(authError?.recoveryAction ?? null);
+      setAuthSessionError(authErrorMessage(cause, "The sign-in code could not be sent."));
     } finally {
       authRequestInFlight.current = false;
     }
@@ -203,6 +251,7 @@ export default function App() {
     authRequestInFlight.current = true;
     setAuthSessionStatus("signing-in");
     setAuthSessionError(null);
+    setAuthRecoveryAction(null);
     try {
       const response = await fetchWithTimeout(`${baseUrl}/v1/auth/email/verify`, {
         method: "POST",
@@ -210,20 +259,29 @@ export default function App() {
         body: JSON.stringify({ challenge_id: authOtpChallengeId, email: authEmail, code: authOtpCode }),
       });
       const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw operatorResponseError(response, payload, "The sign-in code could not be verified.");
+      if (!response.ok) throw authResponseError(response, payload, "The sign-in code could not be verified.");
       const accessToken = stringField(payload, "access_token");
       const expiresIn = integerField(payload, "expires_in");
       if (!accessToken || !expiresIn) throw new Error("The authentication service returned an invalid token response.");
       setAccessToken(accessToken);
+      claimBrowserSession();
       setAuthSessionExpiresAt(Math.floor(Date.now() / 1000) + expiresIn);
       setAuthSessionStatus("signed-in");
+      setAuthRecoveryAction(null);
       setAuthOtpChallengeId(null);
       setAuthOtpCode("");
       setAuthOtpResendAtUnix(null);
       returnToApplication();
     } catch (cause) {
       setAuthSessionStatus("error");
-      setAuthSessionError(operatorErrorMessage(cause, "The sign-in code could not be verified."));
+      const authError = cause instanceof AuthResponseError ? cause : null;
+      setAuthRecoveryAction(authError?.recoveryAction ?? null);
+      if (authError?.recoveryAction) {
+        setAuthOtpChallengeId(null);
+        setAuthOtpCode("");
+        setAuthOtpResendAtUnix(null);
+      }
+      setAuthSessionError(authErrorMessage(cause, "The sign-in code could not be verified."));
     } finally {
       authRequestInFlight.current = false;
     }
@@ -235,6 +293,7 @@ export default function App() {
     setAuthOtpResendAtUnix(null);
     setAuthSessionStatus("signed-out");
     setAuthSessionError(null);
+    setAuthRecoveryAction(null);
     setAuthInvitationRole(null);
   }
 
@@ -258,6 +317,7 @@ export default function App() {
     setAuthOtpCode("");
     setAuthOtpResendAtUnix(null);
     setAuthSessionError(null);
+    setAuthRecoveryAction(null);
     setAuthSessionStatus("signed-out");
   }
 
@@ -280,14 +340,9 @@ export default function App() {
   }
 
   function signOut() {
-    setAccessToken("");
-    setAuthSessionExpiresAt(null);
-    setAuthSessionError(null);
-    setAuthSessionStatus("signed-out");
-    setAuthOtpChallengeId(null);
-    setAuthOtpCode("");
-    setAuthOtpResendAtUnix(null);
-    setAuthorizationSnapshot(authorizationSnapshotForToken(""));
+    browserSessionCoordinatorRef.current?.release();
+    browserSessionIdRef.current = null;
+    clearBrowserSession();
     try {
       window.sessionStorage.removeItem(PKCE_TRANSACTION_STORAGE_KEY);
       window.sessionStorage.removeItem(AUTH_RETURN_PATH_STORAGE_KEY);
@@ -332,6 +387,7 @@ export default function App() {
         .then((token) => {
           if (!active) return;
           setAccessToken(token.accessToken);
+          claimBrowserSession();
           setAuthSessionExpiresAt(token.expiresAtUnix);
           setAuthSessionStatus("signed-in");
           returnToApplication(consumeAuthReturnPath(window.sessionStorage));
@@ -584,6 +640,7 @@ export default function App() {
       config={BROWSER_AUTH_CONFIG}
       status={authSessionStatus}
       error={authSessionError}
+      recoveryAction={authRecoveryAction}
       email={authEmail}
       otpCode={authOtpCode}
       otpChallengeId={authOtpChallengeId}
@@ -594,6 +651,7 @@ export default function App() {
       onRequestOtp={requestEmailOtp}
       onVerifyOtp={verifyEmailOtp}
       onResetOtp={resetEmailOtp}
+      onRecoveryAction={() => { if (authRecoveryAction) openAuthPage(authRecoveryAction); }}
       invitationId={authInvitationId}
       invitationRole={authInvitationRole}
       onSignIn={signIn}

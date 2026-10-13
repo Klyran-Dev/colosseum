@@ -8,7 +8,7 @@
 
 The settlement coordinator and finalized indexer use bounded adaptive provider
 health, deadlines, and failover. Unit tests prove ordering and retry
-invariants, but a Tier-1 release needs process-level evidence that the
+invariants, but a Tax Engine release needs process-level evidence that the
 configured endpoint list is actually wired into a deployed service. The drill
 must demonstrate a degraded provider attempt and a successful bounded fallback
 without claiming that a synthetic fixture represents a real RPC vendor or

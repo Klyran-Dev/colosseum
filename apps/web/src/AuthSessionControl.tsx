@@ -92,6 +92,7 @@ export default function AuthSessionControl({
     if (onOpenAuthPage) {
       return <div className="session-control session-control-email-otp" aria-label={session.emailOtpSignIn}>
         <button type="button" className="session-action" onClick={() => onOpenAuthPage("signin")}>{session.emailOtpSignIn}</button>
+        {error && <p className="inline-error" role="alert">{error}</p>}
       </div>;
     }
     return <details className="session-control session-control-email-otp" aria-label={session.emailOtpSignIn} open={expanded} onToggle={(event) => onExpandedChange(event.currentTarget.open)}>

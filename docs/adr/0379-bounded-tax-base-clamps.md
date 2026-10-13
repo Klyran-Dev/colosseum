@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-05
 - Deciders: Principal Low-latency Tax Engine Architecture
-- Scope: Tier-1 Tax Engine v2 rule DSL
+- Scope: Tax Engine v2 rule DSL
 
 ## Context
 
@@ -55,7 +55,7 @@ remain invalid unless an explicit non-negative floor is declared.
 
 ## Consequences
 
-The Tier-1 engine can represent more explicit global tax bases without an
+The Tax Engine engine can represent more explicit global tax bases without an
 arbitrary formula interpreter. Jurisdiction support is still not implied:
 provenance, legal ownership, effective windows, facts, and published rule
 governance remain required.

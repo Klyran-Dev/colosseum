@@ -8,7 +8,7 @@
 ## Context
 
 Normalized receipts are useful for queries and reconciliation, but they are not
-enough for a Tier-1 audit trail. A provider can re-encode a transaction, return
+enough for a Tax Engine audit trail. A provider can re-encode a transaction, return
 an event from a different program, or produce an ambiguous projection. The
 indexer must therefore retain the exact event bytes used to derive a receipt and
 must fail closed when the event does not match the deployed settlement ABI.

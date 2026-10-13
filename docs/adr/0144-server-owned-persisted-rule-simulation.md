@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-09-27
 - Owners: Principal Low-Latency Architecture, Tax Domain, Governance, API
-- Bounded contexts: Tax Rules, Tier-1 Tax Engine, Governance, Operator UI
+- Bounded contexts: Tax Rules, Tax Engine, Governance, Operator UI
 
 ## Context
 

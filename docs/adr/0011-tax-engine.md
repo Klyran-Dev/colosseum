@@ -1,4 +1,4 @@
-# ADR-0011: Add a Tier-1 Tax Engine bounded context
+# ADR-0011: Add a Tax Engine bounded context
 
 - Status: Accepted
 - Date: 2026-09-25

@@ -30,8 +30,8 @@ describe("Metronic authentication page", () => {
       onNavigate={() => undefined}
     />);
 
-    expect(screen.getByRole("main", { name: "Sign in to Solana Tax Protocol" }).getAttribute("data-layout")).toBe("auth-branded");
-    expect(screen.getByRole("complementary", { name: "Solana Tax Protocol security context" }).getAttribute("data-panel")).toBe("brand");
+    expect(screen.getByRole("main", { name: "Sign in to your workspace" }).getAttribute("data-layout")).toBe("auth-branded");
+    expect(screen.getByRole("complementary", { name: "Solana Tax Protocol sign-in help" }).getAttribute("data-panel")).toBe("brand");
     expect(screen.getByText("Tax operations", { selector: ".auth-context-brand small" })).toBeTruthy();
   });
 
@@ -52,11 +52,11 @@ describe("Metronic authentication page", () => {
       onNavigate={() => undefined}
     />);
 
-    expect(screen.getByRole("heading", { name: "Sign in to Solana Tax Protocol" })).toBeTruthy();
-    expect(screen.getByRole("complementary", { name: "Solana Tax Protocol security context" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Evidence at every step" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Sign in to your workspace" })).toBeTruthy();
+    expect(screen.getByRole("complementary", { name: "Solana Tax Protocol sign-in help" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Simple, secure access" })).toBeTruthy();
     expect(screen.getByLabelText("Work email")).toBeTruthy();
-    expect(screen.getByText("Your account and workspace access are verified before protected actions are available.")).toBeTruthy();
+    expect(screen.getByText("Enter your work email and we’ll send you a one-time code.")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Work email"), { target: { value: "operator@example.com" } });
     fireEvent.click(screen.getByRole("button", { name: "Continue with email" }));
     expect(onRequestOtp).toHaveBeenCalledTimes(1);
@@ -80,7 +80,7 @@ describe("Metronic authentication page", () => {
     />);
 
     expect(screen.getByRole("heading", { name: "Create your workspace account" })).toBeTruthy();
-    expect(screen.getByText("New accounts start with standard operator access. Elevated responsibilities are assigned by an administrator.")).toBeTruthy();
+    expect(screen.getByText("Your organization controls access.")).toBeTruthy();
     expect(screen.queryByLabelText(/role/i)).toBeNull();
     expect(screen.getByRole("link", { name: "Back to sign in" })).toBeTruthy();
   });
@@ -125,7 +125,7 @@ describe("Metronic authentication page", () => {
       onNavigate={() => undefined}
     />);
 
-    expect(screen.getByRole("heading", { name: "Check your email" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Enter your code" })).toBeTruthy();
     expect(screen.getByLabelText("One-time code")).toBeTruthy();
     expect(screen.queryByText(/access token|bearer/i)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Resend code" }));
@@ -150,5 +150,29 @@ describe("Metronic authentication page", () => {
     />);
 
     expect(screen.getByRole("button", { name: /Resend code in about 30 seconds/ })).toHaveProperty("disabled", true);
+  });
+
+  it("renders an explicit recovery action for a verified account-flow outcome", () => {
+    const onRecoveryAction = vi.fn();
+    render(<AuthPage
+      intent="signin"
+      config={config}
+      status="error"
+      error="Your email was verified. Finish account setup to continue."
+      recoveryAction="signup"
+      onRecoveryAction={onRecoveryAction}
+      email="initial-admin@local.test"
+      otpCode=""
+      otpChallengeId={null}
+      onEmailChange={() => undefined}
+      onOtpChange={() => undefined}
+      onRequestOtp={() => undefined}
+      onVerifyOtp={() => undefined}
+      onResetOtp={() => undefined}
+      onNavigate={() => undefined}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Finish account setup" }));
+    expect(onRecoveryAction).toHaveBeenCalledTimes(1);
   });
 });

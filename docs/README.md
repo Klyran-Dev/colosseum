@@ -1,6 +1,6 @@
 # Solana Tax Protocol
 
-This directory is the architecture and delivery baseline for a production-grade, low-latency Solana payment-routing protocol. The protocol settles a payment, withholds an attested tax amount into a program-controlled vault, and distributes the net amount to a pre-authorized split plan in one atomic transaction.
+This directory is the architecture and delivery baseline for a production-oriented Solana payment-routing reference implementation. It specifies wallet-bound settlement, attested withholding, and pre-authorized revenue splitting as bounded transaction paths; it does not by itself establish production deployment, universal tax coverage, legal compliance, audit completion, or mainnet readiness.
 
 ## Documents
 
@@ -8,7 +8,7 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [System architecture](architecture/system-architecture.md)
 - [Domain model and bounded contexts](architecture/domain-model.md)
 - [Refund Movement bounded context](adr/0175-durable-refund-claim-execute-intents.md)
-- [Tier-1 tax engine](architecture/tax-engine.md)
+- [tax engine](architecture/tax-engine.md)
 - [Revenue Streaming bounded context](architecture/revenue-streaming.md)
 - [Server-owned FX evidence bounded context](architecture/fx-evidence.md)
 - [FX provider policy and issuance boundary](adr/0246-fx-provider-policy-and-issuance.md)
@@ -16,7 +16,7 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [Registry-bound FX evidence issuance](adr/0248-registry-bound-fx-issuance.md)
 - [FX provider identity allowlist](adr/0249-fx-provider-identity-allowlist.md)
 - [Deterministic FX provider agreement](adr/0250-deterministic-fx-provider-agreement.md)
-- [Accelerated Tier-1 delivery and decision freeze](adr/0251-accelerated-tier1-delivery-and-decision-freeze.md)
+- [Accelerated Tax Engine delivery and decision freeze](adr/0251-accelerated-tax-engine-delivery-and-decision-freeze.md)
 - [Bounded concurrent FX provider acquisition](adr/0252-bounded-concurrent-fx-provider-acquisition.md)
 - [Bounded async FX signing boundary](adr/0253-bounded-async-fx-signing-boundary.md)
 - [Deterministic FX acquisition outcome order](adr/0254-deterministic-fx-acquisition-outcome-order.md)
@@ -33,8 +33,8 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [Architecture review guide](review/architecture-review-guide.md)
 - [Local architecture-review evidence — 2026-10-05](review/2026-10-05-local-evidence.md)
 - [Principal architecture review — 2026-10-06](review/2026-10-06-principal-architecture-review.md)
-- [Tier-1 decision register](operations/decision-register.md)
-- [Tier-1 release decision packet](operations/release-decision-packet.md)
+- [Tax Engine decision register](operations/decision-register.md)
+- [Tax Engine release decision packet](operations/release-decision-packet.md)
 - [Requirements traceability and evidence matrix](operations/requirements-traceability.md)
 - [Architecture alternative analysis](architecture/alternative-analysis.md)
 - [Docker full-topology bootstrap](adr/0210-docker-full-topology-bootstrap.md)
@@ -75,7 +75,7 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [Validator-backed Split Plan conformance](adr/0140-validator-backed-split-settlement-conformance.md)
 - [Validator-backed policy revocation conformance](adr/0141-validator-backed-policy-revocation-conformance.md)
 - [SPA workspace focus-management contract](adr/0142-spa-workspace-focus-management.md)
-- [Structured Tier-1 rule workbench](adr/0143-structured-tier-1-rule-workbench.md)
+- [Structured Tax Engine rule workbench](adr/0143-structured-tax-engine-rule-workbench.md)
 - [Server-owned persisted rule simulation](adr/0144-server-owned-persisted-rule-simulation.md)
 - [Persisted-rule simulation latency evidence](adr/0145-reproducible-rule-simulation-latency-evidence.md)
 - [Locale, time-zone, and RTL display contract](adr/0146-centralized-locale-timezone-and-rtl-display-contract.md)
@@ -102,9 +102,11 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [Dependency register and exit plan](operations/dependency-register.md)
 - [API contract baseline](api-contract.md)
 - [Implementation plan](plans/implementation-plan.md)
-- [Tier-1 product standard](plans/tier-1-product-standard.md)
+- [Tax Engine product standard](plans/tax-engine-product-standard.md)
 - [Tax coverage matrix](product/tax-coverage-matrix.md)
 - [Production-readiness plan](plans/production-readiness.md)
+- [ADR-0526: Role-aware tenant portals](adr/0526-role-aware-tenant-portals.md)
+- [ADR-0527: Explicit tenant lifecycle and readiness](adr/0527-explicit-tenant-lifecycle-and-readiness.md)
 - [Public repository release contract](public-repository-release.md)
 - [Architecture decision records](adr/README.md)
 - [ADR-0150: Immutable settlement adjustments](adr/0150-immutable-settlement-adjustments.md)
@@ -162,6 +164,7 @@ This directory is the architecture and delivery baseline for a production-grade,
 - [ADR-0209: Bounded document-quote latency evidence](adr/0209-document-quote-latency-evidence.md)
 - [ADR-0210: Docker full-topology bootstrap](adr/0210-docker-full-topology-bootstrap.md)
 - [ADR-0515: Production control-plane UI rewrite with server-owned authorization](adr/0515-production-control-plane-ui-rewrite.md)
+- [ADR-0526: Role-aware tenant portals without client-selected authority](adr/0526-role-aware-tenant-portals.md)
 - [Operations runbooks](runbooks/README.md)
 
 ## Status and scope

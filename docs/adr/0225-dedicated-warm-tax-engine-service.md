@@ -3,11 +3,11 @@
 - Status: Accepted
 - Date: 2026-10-01
 - Deciders: Principal Low-Latency Architecture, Tax Engine, Platform, SRE
-- Bounded contexts: Tier-1 Tax Engine, Service Runtime, Local Platform
+- Bounded contexts: Tax Engine, Service Runtime, Local Platform
 
 ## Context
 
-The Tier-1 Tax Engine is correctly implemented as a pure Rust domain library,
+The Tax Engine is correctly implemented as a pure Rust domain library,
 but the Compose topology did not provide the separately deployable Tax Engine
 service required by the repository architecture contract. The API and worker
 currently link the library in-process, which is the right low-latency shape for

@@ -6,16 +6,16 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 makefile="$repo_root/Makefile"
 
 fail() {
-    echo "Tier-1 local gate contract failed: $1" >&2
+    echo "Tax Engine local gate contract failed: $1" >&2
     exit 1
 }
 
 block=$(awk '
-    $0 == "tier1-local-check:" { in_target = 1; next }
+    $0 == "tax-engine-local-check:" { in_target = 1; next }
     in_target && $0 !~ /^[[:space:]]/ { exit }
     in_target { print }
 ' "$makefile")
-[ -n "$block" ] || fail "missing tier1-local-check target"
+[ -n "$block" ] || fail "missing tax-engine-local-check target"
 
 for command in \
     '$(MAKE) check' \
@@ -37,4 +37,4 @@ for command in \
     previous_line=$line
 done
 
-echo "Tier-1 local gate contract passed"
+echo "Tax Engine local gate contract passed"

@@ -12,7 +12,7 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0008: Governance, upgrades, and emergency controls](0008-governance-upgrades-emergency-controls.md)
 - [ADR-0009: Immutable evidence and reconciliation](0009-immutable-evidence-reconciliation.md)
 - [ADR-0010: Versioned toolchain and dependency policy](0010-versioned-toolchain-policy.md)
-- [ADR-0011: Tier-1 tax engine bounded context](0011-tier-1-tax-engine.md)
+- [ADR-0011: tax engine bounded context](0011-tax-engine.md)
 - [ADR-0012: Canonical tax-rule DSL and compiled rule graphs](0012-tax-rule-dsl.md)
 - [ADR-0013: Deterministic tax arithmetic and evaluation order](0013-tax-arithmetic-semantics.md)
 - [ADR-0014: Off-chain calculation with on-chain attestation](0014-tax-calculation-attestation.md)
@@ -67,13 +67,13 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0063: Cross-language settlement golden vectors](0063-cross-language-settlement-golden-vectors.md)
 - [ADR-0064: Browser settlement-envelope validation](0064-browser-settlement-envelope-validation.md)
 - [ADR-0065: Validator-backed token-interface conformance](0065-localnet-token-interface-conformance.md)
-- [ADR-0066: Versioned Tier-1 tax-engine golden vectors](0066-versioned-tax-engine-golden-vectors.md)
+- [ADR-0066: Versioned tax-engine golden vectors](0066-versioned-tax-engine-golden-vectors.md)
 - [ADR-0067: Isolate the SBF compiler compatibility boundary](0067-sbf-compiler-compatibility-boundary.md)
 - [ADR-0068: Property-test on-chain amount validation across the `u64` domain](0068-on-chain-amount-validation-property-tests.md)
 - [ADR-0069: Make calculation replay version-bound and fail closed](0069-version-bound-calculation-replay.md)
 - [ADR-0070: Persist normalized facts for authoritative quote replay](0070-persisted-normalized-facts-for-replay.md)
 - [ADR-0071: Repeatable logical PostgreSQL backup/restore drill](0071-postgresql-logical-backup-restore-drill.md)
-- [ADR-0072: Prove Tier-1 tax arithmetic at financial boundaries](0072-full-domain-tax-arithmetic-boundary-evidence.md)
+- [ADR-0072: Prove Tax Engine tax arithmetic at financial boundaries](0072-full-domain-tax-arithmetic-boundary-evidence.md)
 - [ADR-0073: Export bounded compiled-rule cache metrics](0073-export-bounded-rule-cache-metrics.md)
 - [ADR-0074: Bounded NGINX edge admission control](0074-bounded-nginx-edge-admission.md)
 - [ADR-0075: Criterion benchmarks for the tax-engine hot path](0075-criterion-tax-engine-benchmarks.md)
@@ -149,7 +149,7 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0140: Validator-backed Split Plan settlement conformance](0140-validator-backed-split-settlement-conformance.md)
 - [ADR-0141: Validator-backed policy revocation conformance](0141-validator-backed-policy-revocation-conformance.md)
 - [ADR-0142: SPA workspace focus-management contract](0142-spa-workspace-focus-management.md)
-- [ADR-0143: Structured Tier-1 rule workbench](0143-structured-tier-1-rule-workbench.md)
+- [ADR-0143: Structured Tax Engine rule workbench](0143-structured-tax-engine-rule-workbench.md)
 - [ADR-0144: Server-owned persisted rule simulation](0144-server-owned-persisted-rule-simulation.md)
 - [ADR-0145: Reproducible persisted-rule simulation latency evidence](0145-reproducible-rule-simulation-latency-evidence.md)
 - [ADR-0146: Centralized locale, time-zone, and RTL display contract](0146-centralized-locale-timezone-and-rtl-display-contract.md)
@@ -257,7 +257,7 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0248: Registry-bound FX evidence issuance](0248-registry-bound-fx-issuance.md)
 - [ADR-0249: FX provider identity allowlist](0249-fx-provider-identity-allowlist.md)
 - [ADR-0250: Deterministic FX provider agreement](0250-deterministic-fx-provider-agreement.md)
-- [ADR-0251: Accelerated Tier-1 delivery and decision freeze](0251-accelerated-tier1-delivery-and-decision-freeze.md)
+- [ADR-0251: Accelerated Tax Engine delivery and decision freeze](0251-accelerated-tax-engine-delivery-and-decision-freeze.md)
 - [ADR-0252: Bounded concurrent FX provider acquisition](0252-bounded-concurrent-fx-provider-acquisition.md)
 - [ADR-0253: Bounded async FX signing boundary](0253-bounded-async-fx-signing-boundary.md)
 - [ADR-0254: Deterministic FX acquisition outcome order](0254-deterministic-fx-acquisition-outcome-order.md)
@@ -311,7 +311,7 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0302](0302-versioned-local-display-preferences.md) — Versioned local display preferences
 - [ADR-0303](0303-release-candidate-browser-evidence.md) — Exact-commit browser evidence in the release candidate
 - [ADR-0304](0304-material-role-contrast-contract.md) — Static contrast contract for Material color roles
-- [ADR-0305](0305-tier-1-local-gate-orchestration.md) — One-command Tier-1 local gate orchestration
+- [ADR-0305](0305-tax-engine-local-gate-orchestration.md) — One-command Tax Engine local gate orchestration
 - [ADR-0306](0306-collapsed-advanced-evidence-disclosures.md) — Collapsed advanced evidence disclosures
 - [ADR-0307](0307-project-scoped-local-reset.md) — Project-scoped local reset for persistent Docker state
 - [ADR-0308](0308-release-candidate-authenticated-integration-evidence.md) — Exact-commit authenticated integration evidence in the release candidate
@@ -367,7 +367,7 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0358](0358-versioned-lazy-workspace-recovery-localization.md) — Versioned lazy-workspace and recovery-state localization
 - [ADR-0359](0359-explicit-fee-payer-binding.md) — Explicit fee-payer binding at the signed-message boundary
 - [ADR-0360](0360-versioned-document-simulation-localization.md) — Versioned document-simulation localization
-- [ADR-0361](0361-distinct-tax-base-sources.md) — Distinct tax-base sources in the Tier-1 Tax Engine
+- [ADR-0361](0361-distinct-tax-base-sources.md) — Distinct tax-base sources in the Tax Engine
 - [ADR-0362](0362-inclusive-threshold-equation.md) — Explicit inclusive gross-excess threshold equation
 - [ADR-0363](0363-responsive-shell-popover-boundary.md) — Responsive shell popover boundary
 - [ADR-0364](0364-collapsed-secondary-rule-simulation.md) — Collapsed secondary rule simulation disclosure
@@ -519,3 +519,14 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0516](0516-full-react-admin-application-rewrite.md) — Rewrite the admin application with React, Tailwind, TanStack, and ECharts
 - [ADR-0517](0517-admin-typography-and-auth-density.md) — Bundle Plus Jakarta Sans and restrain auth typography density
 - [ADR-0518](0518-otp-expiry-and-resend-recovery.md) — Make OTP expiry recoverable in the admin sign-in flow
+- [ADR-0519](0519-google-workspace-smtp-email-adapter.md) — Add an explicit Google Workspace SMTP email adapter
+- [ADR-0520](0520-gce-single-vm-cloudflare-tunnel-deployment.md) — GCE single-VM deployment with Cloudflare Tunnel
+- [ADR-0521](0521-bounded-otp-rate-limit-window.md) — Keep OTP abuse windows configurable with a production floor
+- [ADR-0522](0522-initial-admin-account-setup.md) — Make initial administrator account setup explicit
+- [ADR-0523](0523-bounded-open-self-signup.md) — Bound open self-signup with a daily quota
+- [ADR-0524](0524-devnet-browser-rpc-release-contract.md) — Bind hosted browser wallets to a verified Solana network
+- [ADR-0525](0525-public-customer-checkout-session.md) — Add a bounded public customer checkout session
+- [ADR-0526](0526-role-aware-tenant-portals.md) — Render tenant administrator and merchant operations portals from server roles
+- [ADR-0527](0527-explicit-tenant-lifecycle-and-readiness.md) — Make tenant lifecycle, readiness, and administrator promotion explicit
+- [ADR-0528](0528-single-browser-session-coordination.md) — Coordinate one active browser session without persisting bearer tokens
+- [ADR-0529](0529-otp-verification-outcome-and-recovery.md) — Make OTP verification outcomes terminal and actionable

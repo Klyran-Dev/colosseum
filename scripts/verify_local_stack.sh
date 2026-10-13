@@ -7,8 +7,11 @@ export POSTGRES_PORT="25432"
 export API_PORT="28080"
 export API_REPLICA_PORT="28081"
 export EDGE_PORT="28088"
+export AUTH_PORT="28085"
 export NATS_PORT="25433"
 export RPC_FIXTURE_PORT="28899"
+export SEED_DIR="/seeds"
+export VITE_AUTH_SERVICE_BASE_URL="http://localhost:${AUTH_PORT}"
 export API_SIMULATION_MODE="false"
 export API_ENV="local"
 export API_ALLOW_INSECURE_LOCAL_RPC="true"
@@ -1429,7 +1432,7 @@ if grep -Fqi 'x-request-id: caller-controlled-value' "$edge_headers"; then
     echo "NGINX edge forwarded a caller-controlled request ID" >&2
     exit 1
 fi
-expected_csp="content-security-policy: default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; object-src 'none'; form-action 'self'; frame-ancestors 'none'"
+expected_csp="content-security-policy: default-src 'self'; connect-src 'self' http://localhost:${AUTH_PORT}; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; object-src 'none'; form-action 'self'; frame-ancestors 'none'"
 for required_header in \
     'x-content-type-options: nosniff' \
     'x-frame-options: DENY' \

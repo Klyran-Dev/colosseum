@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-05
 - Deciders: Principal Low-Latency Blockchain Architecture
-- Scope: Tier-1 Tax Engine rule validation
+- Scope: Tax Engine rule validation
 
 ## Context
 

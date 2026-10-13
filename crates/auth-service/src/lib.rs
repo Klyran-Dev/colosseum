@@ -58,6 +58,7 @@ pub fn parse_auth_intent(value: Option<&str>) -> Result<AuthIntent, AuthDomainEr
 pub struct OtpPolicy {
     pub ttl_seconds: i64,
     pub resend_cooldown_seconds: i64,
+    pub rate_limit_window_seconds: i64,
     pub max_attempts: i32,
     pub max_email_requests: i32,
     pub max_source_requests: i32,
@@ -68,6 +69,7 @@ impl Default for OtpPolicy {
         Self {
             ttl_seconds: 300,
             resend_cooldown_seconds: 60,
+            rate_limit_window_seconds: 900,
             max_attempts: 5,
             max_email_requests: 3,
             max_source_requests: 20,
@@ -556,6 +558,7 @@ mod tests {
         let policy = OtpPolicy::default();
         assert_eq!(policy.ttl_seconds, 300);
         assert_eq!(policy.resend_cooldown_seconds, 60);
+        assert_eq!(policy.rate_limit_window_seconds, 900);
         assert_eq!(policy.max_attempts, 5);
         assert_eq!(policy.max_email_requests, 3);
         assert_eq!(policy.max_source_requests, 20);

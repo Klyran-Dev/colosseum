@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-09-26
 - Owners: Tax Platform / Legal-Tax Governance
-- Scope: Tier-1 tax-engine rule DSL and calculation facts
+- Scope: tax-engine rule DSL and calculation facts
 
 ## Context
 

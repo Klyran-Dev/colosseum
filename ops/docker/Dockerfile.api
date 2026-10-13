@@ -17,6 +17,7 @@ RUN groupadd --system --gid 10001 app \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /workspace/target/release/api /usr/local/bin/api
+COPY scripts/verify_deployment_config.sh /usr/local/bin/verify_deployment_config
 
 USER app
 EXPOSE 8080

@@ -1,4 +1,4 @@
-# ADR-0305: One-command Tier-1 local gate orchestration
+# ADR-0305: One-command Tax Engine local gate orchestration
 
 ## Status
 
@@ -19,7 +19,7 @@ evidence rather than silently skipping conformance.
 
 ## Decision
 
-Provide `make tier1-local-check` as the canonical ordered orchestration:
+Provide `make tax-engine-local-check` as the canonical ordered orchestration:
 
 1. `make check` — Rust, frontend, static contracts, security, Compose,
    migrations, and runtime contracts.
@@ -54,7 +54,7 @@ legal, custody, or independent-audit readiness.
 ## Verification
 
 - A Makefile contract asserts all four commands and their order.
-- `make -n tier1-local-check` provides a no-side-effect review of the exact
+- `make -n tax-engine-local-check` provides a no-side-effect review of the exact
   sequence.
 - The individual commands remain the authoritative evidence producers.
 - The validator step must be executed on the retained Linux/amd64 release

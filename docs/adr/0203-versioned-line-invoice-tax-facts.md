@@ -13,7 +13,7 @@ durable evidence, and settlement binding remain open gates.
 The aggregate `TaxFacts` contract is intentionally bounded to one taxable
 amount. Treating it as an invoice or silently summing caller-provided line
 amounts would lose line identity, make rounding scope ambiguous, and weaken
-replay evidence. A Tier-1 product needs deterministic line and invoice
+replay evidence. A Tax Engine product needs deterministic line and invoice
 semantics for carts, invoices, credits, and multi-component tax calculations
 without allowing unbounded user-controlled work.
 

@@ -65,6 +65,7 @@ export interface ShellSessionMessages {
   signInToContinue: string;
   signInToContinueCopy: string;
   signInInHeader: string;
+  replacedByAnotherTab: string;
 }
 
 export interface ShellMessages {
@@ -247,6 +248,7 @@ const ENGLISH_SESSION: ShellSessionMessages = {
   signInToContinue: "Sign in to continue",
   signInToContinueCopy: "Your account and tenant access are checked before protected actions become available.",
   signInInHeader: "Use the sign-in control in the header to continue.",
+  replacedByAnotherTab: "This tab was signed out because another tab signed in. Only one browser session can be active at a time.",
 };
 
 const ENGLISH: ShellMessages = {
@@ -356,6 +358,7 @@ const GERMAN: ShellMessages = {
     signInToContinue: "Zum Fortfahren anmelden",
     signInToContinueCopy: "Ihr Konto und Ihr Mandantenzugriff werden geprüft, bevor geschützte Aktionen verfügbar werden.",
     signInInHeader: "Verwenden Sie zum Fortfahren die Anmeldesteuerung in der Kopfzeile.",
+    replacedByAnotherTab: "Diese Registerkarte wurde abgemeldet, weil eine andere Registerkarte eine Anmeldung durchgeführt hat. Es kann immer nur eine Browsersitzung aktiv sein.",
   },
   workspaceStatus: (label) => `Arbeitsbereich: ${label}`,
 };
@@ -456,6 +459,7 @@ const ARABIC: ShellMessages = {
     signInToContinue: "سجّل الدخول للمتابعة",
     signInToContinueCopy: "يتم التحقق من حسابك ووصولك إلى المستأجر قبل إتاحة الإجراءات المحمية.",
     signInInHeader: "استخدم أداة تسجيل الدخول في الرأس للمتابعة.",
+    replacedByAnotherTab: "تم تسجيل الخروج من علامة التبويب هذه لأن علامة تبويب أخرى سجّلت الدخول. يمكن أن تكون جلسة متصفح واحدة فقط نشطة في كل مرة.",
   },
   workspaceStatus: (label) => `مساحة العمل: ${label}`,
 };
@@ -556,6 +560,7 @@ const JAPANESE: ShellMessages = {
     signInToContinue: "続行するにはサインインしてください",
     signInToContinueCopy: "保護された操作を利用できるようにする前に、アカウントとテナントへのアクセスを確認します。",
     signInInHeader: "続行するにはヘッダーのサインイン操作を使用してください。",
+    replacedByAnotherTab: "別のタブでサインインしたため、このタブはサインアウトされました。同時にアクティブにできるブラウザーセッションは1つだけです。",
   },
   workspaceStatus: (label) => `${label}ワークスペース`,
 };

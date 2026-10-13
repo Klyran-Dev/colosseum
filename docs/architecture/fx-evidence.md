@@ -1,7 +1,7 @@
 # Server-owned FX evidence bounded context
 
 The FX evidence context is the trust boundary between an external rate
-provider and the deterministic Tier-1 Tax Engine. It authenticates provider
+provider and the deterministic Tax Engine. It authenticates provider
 output and applies bounded freshness checks; it does not choose a legal rate,
 call a provider from the tax engine, or perform settlement.
 
@@ -120,4 +120,4 @@ mutable provider quote metadata.
 ADR-0261 composes the bounded HTTP provider and signer adapters once during
 local API startup. The bootstrap uses strict policy/source/signer configuration
 and secret indirection; it does not select a vendor or activate
-staging/production while the Tier-1 decision register remains open.
+staging/production while the Tax Engine decision register remains open.

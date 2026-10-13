@@ -41,9 +41,9 @@ These are the governing requirements from the request:
 - Low latency must not weaken correctness: finality, replay protection, account ownership checks, policy expiry, amount conservation, and idempotency are mandatory.
 - A web API is not the source of truth for settlement. The Solana ledger and verified program events are authoritative; the off-chain system is a projection and integration layer.
 
-## Tier-1 expansion
+## Tax Engine expansion
 
-The requested Tier-1 tax engine is now part of the target architecture. It is an off-chain, deterministic, versioned calculation engine whose signed result is verified and atomically settled on Solana. The engine is not a claim that the protocol itself is a tax authority or that one software release can guarantee compliance in every jurisdiction.
+The requested tax engine is now part of the target architecture. It is an off-chain, deterministic, versioned calculation engine whose signed result is verified and atomically settled on Solana. The engine is not a claim that the protocol itself is a tax authority or that one software release can guarantee compliance in every jurisdiction.
 
 ## Non-goals for the Solana settlement hot path
 

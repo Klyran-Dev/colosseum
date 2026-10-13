@@ -161,10 +161,14 @@ impl Config {
     }
 
     fn from_env() -> Result<Self, String> {
-        let tls_certificate = env::var("TAX_ENGINE_TLS_CERT_FILE").ok();
-        let tls_private_key = env::var("TAX_ENGINE_TLS_KEY_FILE").ok();
-        let tls_client_ca = env::var("TAX_ENGINE_MTLS_CA_FILE").ok();
-        let allowed_client_uris = env::var("TAX_ENGINE_MTLS_ALLOWED_CLIENT_URIS").ok();
+        let tls_certificate_raw = env::var("TAX_ENGINE_TLS_CERT_FILE").ok();
+        let tls_private_key_raw = env::var("TAX_ENGINE_TLS_KEY_FILE").ok();
+        let tls_client_ca_raw = env::var("TAX_ENGINE_MTLS_CA_FILE").ok();
+        let allowed_client_uris_raw = env::var("TAX_ENGINE_MTLS_ALLOWED_CLIENT_URIS").ok();
+        let tls_certificate = optional_env_value(tls_certificate_raw.as_deref());
+        let tls_private_key = optional_env_value(tls_private_key_raw.as_deref());
+        let tls_client_ca = optional_env_value(tls_client_ca_raw.as_deref());
+        let allowed_client_uris = optional_env_value(allowed_client_uris_raw.as_deref());
         let inline_token = env::var("TAX_ENGINE_AUTH_TOKEN")
             .ok()
             .filter(|value| !value.trim().is_empty());
@@ -186,12 +190,8 @@ impl Config {
                 .unwrap_or_else(|_| DEFAULT_CACHE_CAPACITY.to_string()),
             &env::var("TAX_ENGINE_MAX_CONCURRENCY")
                 .unwrap_or_else(|_| DEFAULT_MAX_CONCURRENCY.to_string()),
-            (
-                tls_certificate.as_deref(),
-                tls_private_key.as_deref(),
-                tls_client_ca.as_deref(),
-            ),
-            allowed_client_uris.as_deref(),
+            (tls_certificate, tls_private_key, tls_client_ca),
+            allowed_client_uris,
         )?;
         config.auth_token_file = auth_token_file;
         Ok(config)
@@ -347,6 +347,10 @@ fn required_env(name: &str) -> Result<String, String> {
             format!("{name} is required; refusing to start without explicit configuration")
         })
         .and_then(|value| validate_required(name, &value))
+}
+
+fn optional_env_value(value: Option<&str>) -> Option<&str> {
+    value.filter(|value| !value.trim().is_empty())
 }
 
 fn validate_required(name: &str, value: &str) -> Result<String, String> {
@@ -716,8 +720,8 @@ mod tests {
 
     use super::{
         Config, Environment, MAX_AUTH_TOKEN_FILE_BYTES, TEST_CLIENT_URI, TlsFiles,
-        build_mtls_config, build_mtls_server_config, read_auth_token_file, reload_mtls_config,
-        resolve_auth_token, validate_required,
+        build_mtls_config, build_mtls_server_config, optional_env_value, read_auth_token_file,
+        reload_mtls_config, resolve_auth_token, validate_required,
     };
 
     struct MemoryPipe {
@@ -1018,6 +1022,17 @@ mod tests {
             validate_required("TAX_ENGINE_ENV", "local"),
             Ok("local".to_string())
         );
+    }
+
+    #[test]
+    fn optional_environment_treats_blank_values_as_unset() {
+        assert_eq!(optional_env_value(Some("")), None);
+        assert_eq!(optional_env_value(Some("   ")), None);
+        assert_eq!(
+            optional_env_value(Some("/run/secrets/tls.crt")),
+            Some("/run/secrets/tls.crt")
+        );
+        assert_eq!(optional_env_value(None), None);
     }
 
     #[test]

@@ -20,7 +20,7 @@ describe("full React admin application", () => {
   it("does not expose the protected dashboard before authentication", async () => {
     render(<AdminApp initialPath="/admin" />);
 
-    expect(await screen.findByRole("heading", { name: "Sign in to Tax operations" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Sign in to your workspace" })).toBeTruthy();
     expect(screen.queryByRole("complementary", { name: "Admin navigation" })).toBeNull();
     expect(screen.queryByText("RBAC · ABAC · PBAC")).toBeNull();
     expect(document.querySelector(".legacy-shell")).toBeNull();
@@ -30,13 +30,13 @@ describe("full React admin application", () => {
 
   it("renders sign-in and sign-up as typed admin routes without a client role selector", async () => {
     const { unmount } = render(<AdminApp initialPath="/auth/signin" />);
-    expect(await screen.findByRole("heading", { name: "Sign in to Tax operations" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Sign in to your workspace" })).toBeTruthy();
     expect(await screen.findByRole("link", { name: "Create an account" })).toBeTruthy();
     expect(screen.queryByLabelText("Role")).toBeNull();
 
     unmount();
     render(<AdminApp initialPath="/auth/signup" />);
-    expect(await screen.findByRole("heading", { name: "Create your operator account" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Create your workspace account" })).toBeTruthy();
     expect(await screen.findByRole("link", { name: "Back to sign in" })).toBeTruthy();
     expect(screen.queryByLabelText("Role")).toBeNull();
   });

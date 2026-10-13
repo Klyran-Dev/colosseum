@@ -1,8 +1,8 @@
-# Tier-1 decision register
+# Tax Engine decision register
 
 Status: `OPEN` decisions are not approvals and must not be used to enable
 production traffic. This register is the operational companion to
-[ADR-0251](../adr/0251-accelerated-tier1-delivery-and-decision-freeze.md).
+[ADR-0251](../adr/0251-accelerated-tax-engine-delivery-and-decision-freeze.md).
 Every frozen choice must have an accountable role, written acceptance
 criteria, retained evidence, and an explicit revisit trigger.
 
@@ -33,7 +33,7 @@ rollback path in the relevant ADR and production-readiness gate.
 | `DEC-0251-07` | Evidence retention, privacy, deletion, and export policy | `OPEN` | Security/Privacy owner | Data classification, retention schedule, encryption/key lifecycle, access audit, deletion/restore evidence, legal review | Law, contract, incident, or data-classification change |
 | `DEC-0251-08` | Rollback authority, pause authority, and incident commander | `OPEN` | Governance/SRE owner | Named role coverage, approval matrix, emergency-pause and rollback rehearsal, escalation/on-call rota | Authority or staffing change; incident review |
 | `DEC-0251-09` | HSM/KMS vendor, key ceremony, rotation, revocation, and recovery | `OPEN` | Security/Governance owner | Vendor/security review, non-exportability proof, ceremony record, dual control, overlap/revocation test, backup/recovery and latency evidence | Key event, vendor change, custody finding, or recovery failure |
-| `DEC-0251-10` | Public-source license | `OPEN` | Repository owner | Explicit approved license decision and committed `LICENSE`/`LICENSE.md`; public-repository review | Business, legal, or contribution-policy change |
+| `DEC-0251-10` | Public-source license | `FROZEN` | Repository owner | Explicit approved license decision and committed `LICENSE`/`LICENSE.md`; public-repository review | Business, legal, or contribution-policy change |
 
 ## Freeze record template
 

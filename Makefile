@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 
-.PHONY: fmt lint test auth-service-check bench-tax-engine benchmark-tax-engine-service benchmark-quote-service benchmark-document-quote-service benchmark-rule-simulation benchmark-authorization-capabilities authorization-benchmark-contract postgres-pool-drill postgres-index-plan-drill postgres-pitr-drill vault-reconciliation-drill migration-integrity-drill migration-rollback-rehearsal adjustment-authority-drill refund-funding-verifier-drill refund-proof-lease-drill refund-execute-api-contention-drill refund-proof-integration-drill refund-cancellation-reconciliation-drill indexer-replay-drill indexer-replay-dead-letter-drill alert-delivery-drill otel-trace-drill web-install web-check web-browser-check auth-browser-check initial-admin-browser-check web-csp-contract web-color-contract material-palette-contract forced-colors-contract ui-language-contract non-custodial-wallet-contract rule-release-provenance-contract security-scan observability-config grafana-dashboard-contract api-metric-registry-contract public-docs-check release-claim-contract environment-contract deployment-config-contract migration-bootstrap-contract refund-claim-cancellation-reconciliation-contract rust-panic-safety-contract container-pinning-contract solana-conformance-workflow-contract program-pause-coverage-contract bootstrap-contract reset-local-contract release-bundle-integrity-contract service-lifecycle-contract tax-engine-service-contract tax-engine-runtime-contract tax-engine-mtls-runtime-contract api-auth-jwks-reload-contract api-jurisdiction-provider-reload-contract route-verifier-backfill-contract ci-toolchain-contract evm-adapter-contract evm-adapter-check tier1-local-check tier1-local-check-contract check compose-config migrate backup-restore-drill encrypted-backup-restore-drill projection-rebuild-drill postgres-contention-drill integration-check solana-build solana-conformance solana-up solana-down indexer-up indexer-down route-verifier-up route-verifier-down observability-up observability-down bootstrap reset-local up down logs
+.PHONY: fmt lint test auth-service-check bench-tax-engine benchmark-tax-engine-service benchmark-quote-service benchmark-document-quote-service benchmark-rule-simulation benchmark-authorization-capabilities authorization-benchmark-contract postgres-pool-drill postgres-index-plan-drill postgres-pitr-drill vault-reconciliation-drill migration-integrity-drill migration-rollback-rehearsal adjustment-authority-drill refund-funding-verifier-drill refund-proof-lease-drill refund-execute-api-contention-drill refund-proof-integration-drill refund-cancellation-reconciliation-drill indexer-replay-drill indexer-replay-dead-letter-drill alert-delivery-drill otel-trace-drill web-install web-check web-browser-check auth-browser-check initial-admin-browser-check web-csp-contract web-color-contract material-palette-contract forced-colors-contract ui-language-contract non-custodial-wallet-contract rule-release-provenance-contract security-scan observability-config grafana-dashboard-contract api-metric-registry-contract public-docs-check release-claim-contract environment-contract deployment-config-contract hosted-solana-config-contract migration-bootstrap-contract refund-claim-cancellation-reconciliation-contract rust-panic-safety-contract container-pinning-contract solana-conformance-workflow-contract program-pause-coverage-contract bootstrap-contract reset-local-contract release-bundle-integrity-contract service-lifecycle-contract tax-engine-service-contract tax-engine-runtime-contract tax-engine-mtls-runtime-contract api-auth-jwks-reload-contract api-jurisdiction-provider-reload-contract route-verifier-backfill-contract ci-toolchain-contract evm-adapter-contract evm-adapter-check tax-engine-local-check tax-engine-local-check-contract check compose-config migrate backup-restore-drill encrypted-backup-restore-drill projection-rebuild-drill postgres-contention-drill integration-check solana-build solana-conformance solana-devnet-program-check solana-up solana-down indexer-up indexer-down route-verifier-up route-verifier-down observability-up observability-down bootstrap reset-local up down logs
 
 fmt:
 	cargo fmt --all
@@ -93,10 +93,10 @@ material-palette-contract:
 forced-colors-contract:
 	./scripts/verify_forced_colors_contract.sh
 
-tier1-local-check-contract:
-	./scripts/verify_tier1_local_check_contract.sh
+tax-engine-local-check-contract:
+	./scripts/verify_tax-engine_local_check_contract.sh
 
-tier1-local-check:
+tax-engine-local-check:
 	$(MAKE) check
 	$(MAKE) integration-check
 	$(MAKE) web-browser-check
@@ -132,6 +132,9 @@ environment-contract:
 
 deployment-config-contract:
 	./scripts/verify_deployment_config_contract.sh
+
+hosted-solana-config-contract:
+	./scripts/verify_hosted_solana_config_contract.sh
 
 migration-bootstrap-contract:
 	./scripts/verify_migration_bootstrap.sh
@@ -221,6 +224,9 @@ solana-build:
 solana-conformance:
 	./scripts/run_solana_conformance.sh
 
+solana-devnet-program-check:
+	./scripts/verify_devnet_program.sh
+
 solana-down:
 	docker compose --profile solana stop validator
 
@@ -283,7 +289,7 @@ observability-up:
 observability-down:
 	docker compose --profile observability stop grafana prometheus alertmanager alert-receiver otel-collector redis
 
-check: lint test auth-service-check web-check web-csp-contract web-color-contract material-palette-contract forced-colors-contract release-claim-contract release-bundle-integrity-contract tier1-local-check-contract ui-language-contract non-custodial-wallet-contract rule-release-provenance-contract authorization-benchmark-contract security-scan compose-config observability-config grafana-dashboard-contract api-metric-registry-contract public-docs-check environment-contract deployment-config-contract migration-bootstrap-contract refund-claim-cancellation-reconciliation-contract rust-panic-safety-contract container-pinning-contract solana-conformance-workflow-contract program-pause-coverage-contract bootstrap-contract reset-local-contract service-lifecycle-contract tax-engine-service-contract tax-engine-runtime-contract tax-engine-mtls-runtime-contract api-auth-jwks-reload-contract api-jurisdiction-provider-reload-contract route-verifier-backfill-contract ci-toolchain-contract evm-adapter-check
+check: lint test auth-service-check web-check web-csp-contract web-color-contract material-palette-contract forced-colors-contract release-claim-contract release-bundle-integrity-contract tax-engine-local-check-contract ui-language-contract non-custodial-wallet-contract rule-release-provenance-contract authorization-benchmark-contract security-scan compose-config observability-config grafana-dashboard-contract api-metric-registry-contract public-docs-check environment-contract deployment-config-contract hosted-solana-config-contract migration-bootstrap-contract refund-claim-cancellation-reconciliation-contract rust-panic-safety-contract container-pinning-contract solana-conformance-workflow-contract program-pause-coverage-contract bootstrap-contract reset-local-contract service-lifecycle-contract tax-engine-service-contract tax-engine-runtime-contract tax-engine-mtls-runtime-contract api-auth-jwks-reload-contract api-jurisdiction-provider-reload-contract route-verifier-backfill-contract ci-toolchain-contract evm-adapter-check
 
 bootstrap:
 	./scripts/bootstrap_local.sh

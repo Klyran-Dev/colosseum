@@ -30,7 +30,7 @@ the final local cross-boundary check.
 
 | Boundary | Authoritative source | Required invariant | Local proof | Evidence still required |
 | --- | --- | --- | --- | --- |
-| Tax arithmetic | `crates/tax-engine` and [Tier-1 tax engine](../architecture/tax-engine.md) | Exact integer/rational semantics, bounded DAG, replayable trace | Unit, property, golden-vector, mutation, and benchmark tests | Legal ownership and jurisdiction approval |
+| Tax arithmetic | `crates/tax-engine` and [tax engine](../architecture/tax-engine.md) | Exact integer/rational semantics, bounded DAG, replayable trace | Unit, property, golden-vector, mutation, and benchmark tests | Legal ownership and jurisdiction approval |
 | Tenant authorization | `crates/api`, `crates/storage`, `apps/web/src/authorization.ts` | Authenticated tenant scope and server re-authorization on every protected action | API tests, capability contract, browser deny/expiry journeys | Staging IdP, multi-tenant, rotation, and incident evidence |
 | Route admission | `crates/route-verifier`, `crates/indexer`, PostgreSQL route projections | Only finalized v2 asset/account evidence can activate a route | Storage/direct-SQL contracts and Docker integration drill | Non-local backfill, Linux/amd64 validator evidence, independent review |
 | Route-verification operations | `crates/api`, `crates/storage`, `apps/web/src/ReplayOpsPanel.tsx` | System operators may read bounded verifier evidence, but a run row never activates a route or proves finality | UUIDv7/counter parser tests, exact-role API test, explicit-disclosure UI test, Docker browser journey | Non-local backfill, Linux/amd64 validator evidence, audit, and production operator review |

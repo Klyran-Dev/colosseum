@@ -4,7 +4,7 @@
 - Date: 2026-10-01
 - Deciders: Principal Low-Latency Architecture, Tax Engine, SRE
 - Scope: Warm Tax Engine HTTP adapter performance contract
-- Bounded contexts: Tier-1 Tax Engine, Service Runtime, Performance Evidence
+- Bounded contexts: Tax Engine, Service Runtime, Performance Evidence
 
 ## Context
 

@@ -26,6 +26,11 @@ if RELEASE_CLAIM_REPO_ROOT="$work_dir" "$repo_root/scripts/verify_release_claim_
 fi
 
 cp "$repo_root/README.md" "$work_dir/README.md"
+sed 's/| `DEC-0251-10` | Public-source license | `FROZEN` |/| `DEC-0251-10` | Public-source license | `OPEN` |/' \
+  "$work_dir/docs/operations/decision-register.md" \
+  > "$work_dir/docs/operations/decision-register.md.tmp"
+mv "$work_dir/docs/operations/decision-register.md.tmp" \
+  "$work_dir/docs/operations/decision-register.md"
 touch "$work_dir/LICENSE"
 if RELEASE_CLAIM_REPO_ROOT="$work_dir" "$repo_root/scripts/verify_release_claim_contract.sh" >/dev/null 2>&1; then
   echo "release claim contract accepted an unapproved license file" >&2

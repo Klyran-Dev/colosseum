@@ -1,4 +1,4 @@
-# ADR-0072: Prove Tier-1 tax arithmetic at financial boundaries
+# ADR-0072: Prove Tax Engine tax arithmetic at financial boundaries
 
 - Status: Accepted
 - Date: 2026-09-26

@@ -8,7 +8,7 @@
 ## Context
 
 ADR-0118 prevents a second submission after a provider outcome is ambiguous, but
-the existing local drill only proves the successful concurrent path. A Tier-1
+the existing local drill only proves the successful concurrent path. A Tax Engine
 release needs executable evidence for the more dangerous case: the provider
 accepts and records a transaction, the API receives an ambiguous error, and a
 later status query finds the exact native signature.

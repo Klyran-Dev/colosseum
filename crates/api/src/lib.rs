@@ -69,19 +69,20 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use storage::{
     ApplicabilityContextTransition, BindAdjustmentAuthority, CreateAdjustmentAuthorityChallenge,
-    CreateApplicabilityContextCommand, CreateDocumentPaymentIntentCommand,
-    CreateJurisdictionPolicyCommand, CreateRefundCancellationIntentCommand,
-    CreateRefundClaimIntentCommand, CreateRefundExecuteIntentCommand,
-    CreateRefundFundingConfigurationCommand, CreateRevenueStreamPlanCommand,
-    CreateSettlementAdjustmentChainIntent, CreateSettlementAdjustmentCommand,
-    CreateSettlementAdjustmentEvidenceIntent, CreateVaultReleaseClaimCommand, DatabasePoolStats,
-    DocumentQuoteCommand, DocumentQuoteOutcome, EvidenceAccessAuditCommand,
-    JurisdictionPolicyGovernanceTransition, PersistedFxEvidence, PgStore,
-    PrepareRevenueStreamClaimCommand, QuoteCommand, QuoteOutcome, RefundCancellationFinalization,
-    RefundCancellationIntentTransition, RefundClaimCancellationEvidenceExpectation,
-    RefundClaimIntentTransition, RefundExecuteIntentTransition,
-    RefundFundingConfigurationTransition, RevenueStreamPlanTransition, RuleCacheStats,
-    RuleGovernanceTransition, SettlementAdjustmentChainIntent, SettlementAdjustmentChainTransition,
+    CreateApplicabilityContextCommand, CreateCheckoutSessionCommand,
+    CreateDocumentPaymentIntentCommand, CreateJurisdictionPolicyCommand,
+    CreateRefundCancellationIntentCommand, CreateRefundClaimIntentCommand,
+    CreateRefundExecuteIntentCommand, CreateRefundFundingConfigurationCommand,
+    CreateRevenueStreamPlanCommand, CreateSettlementAdjustmentChainIntent,
+    CreateSettlementAdjustmentCommand, CreateSettlementAdjustmentEvidenceIntent,
+    CreateVaultReleaseClaimCommand, DatabasePoolStats, DocumentQuoteCommand, DocumentQuoteOutcome,
+    EvidenceAccessAuditCommand, JurisdictionPolicyGovernanceTransition, PersistedFxEvidence,
+    PgStore, PrepareRevenueStreamClaimCommand, QuoteCommand, QuoteOutcome,
+    RefundCancellationFinalization, RefundCancellationIntentTransition,
+    RefundClaimCancellationEvidenceExpectation, RefundClaimIntentTransition,
+    RefundExecuteIntentTransition, RefundFundingConfigurationTransition,
+    RevenueStreamPlanTransition, RuleCacheStats, RuleGovernanceTransition,
+    SettlementAdjustmentChainIntent, SettlementAdjustmentChainTransition,
     SettlementAdjustmentEvidenceIntent, SettlementAdjustmentRecord, SettlementAdjustmentTransition,
     SettlementTransition, StorageError, VaultReleaseClaimTransition,
 };
@@ -1287,6 +1288,55 @@ pub struct SubmitSettlementResponse {
     pub provider_index: Option<usize>,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateCheckoutSessionRequest {
+    pub calculation_id: Uuid,
+    pub route_id: Uuid,
+    pub expires_at_unix: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateCheckoutSessionResponse {
+    pub schema: &'static str,
+    pub session_id: Uuid,
+    pub public_token: String,
+    pub calculation_id: Uuid,
+    pub route_id: Uuid,
+    pub expires_at_unix: i64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublicCheckoutCompileRequest {
+    pub payer: String,
+    #[serde(with = "policy::serde_strict_u64_string")]
+    pub nonce: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CheckoutRouteDisplay {
+    pub id: Uuid,
+    pub route_key: String,
+    pub version: i32,
+    pub mint: String,
+    pub mint_decimals: u8,
+    pub token_program: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PublicCheckoutSessionResponse {
+    pub schema: &'static str,
+    pub session_id: Uuid,
+    pub status: String,
+    pub calculation_id: Uuid,
+    pub route_id: Uuid,
+    pub expires_at_unix: i64,
+    pub quote: storage::StoredQuote,
+    pub route: CheckoutRouteDisplay,
+    pub settlement_intent_id: Option<Uuid>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct CompiledSettlementResponse {
     #[serde(flatten)]
@@ -1557,6 +1607,31 @@ impl From<StorageError> for ApiError {
                 StatusCode::CONFLICT,
                 "QUOTE_NOT_SETTLEABLE",
                 "the quote is not in a settleable state".to_string(),
+            ),
+            StorageError::CheckoutSessionNotFound => (
+                StatusCode::NOT_FOUND,
+                "CHECKOUT_SESSION_NOT_FOUND",
+                "the checkout session was not found".to_string(),
+            ),
+            StorageError::CheckoutSessionExpired => (
+                StatusCode::GONE,
+                "CHECKOUT_SESSION_EXPIRED",
+                "the checkout session has expired".to_string(),
+            ),
+            StorageError::CheckoutSessionTokenInvalid => (
+                StatusCode::NOT_FOUND,
+                "CHECKOUT_SESSION_NOT_FOUND",
+                "the checkout session was not found".to_string(),
+            ),
+            StorageError::CheckoutSessionIntentConflict => (
+                StatusCode::CONFLICT,
+                "CHECKOUT_SESSION_INTENT_CONFLICT",
+                "the checkout session is already bound to another settlement intent".to_string(),
+            ),
+            StorageError::CheckoutSessionIntegrity(message) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "CHECKOUT_SESSION_INTEGRITY_FAILURE",
+                message,
             ),
             StorageError::AttestationNotFound => (
                 StatusCode::NOT_FOUND,
@@ -2596,6 +2671,23 @@ pub fn router() -> Router<AppState> {
         .route(
             "/v1/settlement/compile-from-quote",
             post(compile_settlement_from_quote),
+        )
+        .route("/v1/checkout/sessions", post(create_checkout_session))
+        .route(
+            "/v1/public/checkout/sessions/{session_id}",
+            get(get_public_checkout_session),
+        )
+        .route(
+            "/v1/public/checkout/sessions/{session_id}/compile",
+            post(compile_public_checkout),
+        )
+        .route(
+            "/v1/public/checkout/sessions/{session_id}/submit",
+            post(submit_public_checkout),
+        )
+        .route(
+            "/v1/public/checkout/sessions/{session_id}/intent/{intent_id}",
+            get(get_public_checkout_intent),
         )
         .route(
             "/v1/settlement/document/compile-from-quote",
@@ -6246,7 +6338,7 @@ async fn compile_settlement_inner(
         code: "INVALID_JSON",
         message: "request body is invalid".to_string(),
     })?;
-    compile_settlement_request(state, principal.merchant_id, request, None, None).await
+    compile_settlement_request(state, principal.merchant_id, request, None, None, None).await
 }
 
 async fn list_settlement_routes(
@@ -8509,6 +8601,232 @@ async fn list_settlement_split_plans(
     ))
 }
 
+const CHECKOUT_TOKEN_HEADER: &str = "x-checkout-token";
+const CHECKOUT_SESSION_SCHEMA: &str = "public-checkout-session/v1";
+const DEFAULT_CHECKOUT_SESSION_TTL_SECONDS: i64 = 15 * 60;
+const MAX_CHECKOUT_SESSION_TTL_SECONDS: i64 = 60 * 60;
+
+fn checkout_token_digest(headers: &HeaderMap) -> Result<Digest32, ApiError> {
+    let value = headers
+        .get(CHECKOUT_TOKEN_HEADER)
+        .ok_or_else(|| ApiError {
+            status: StatusCode::NOT_FOUND,
+            code: "CHECKOUT_SESSION_NOT_FOUND",
+            message: "the checkout session was not found".into(),
+        })?
+        .to_str()
+        .map_err(|_| ApiError {
+            status: StatusCode::NOT_FOUND,
+            code: "CHECKOUT_SESSION_NOT_FOUND",
+            message: "the checkout session was not found".into(),
+        })?;
+    let valid = value.len() >= 32
+        && value.len() <= 256
+        && value.starts_with("ck_v1_")
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-');
+    if !valid {
+        return Err(ApiError {
+            status: StatusCode::NOT_FOUND,
+            code: "CHECKOUT_SESSION_NOT_FOUND",
+            message: "the checkout session was not found".into(),
+        });
+    }
+    Ok(sha256_digest(value.as_bytes()))
+}
+
+async fn load_public_checkout_session(
+    state: &AppState,
+    headers: &HeaderMap,
+    session_id: Uuid,
+) -> Result<(Arc<PgStore>, storage::CheckoutSession), ApiError> {
+    let store = state.storage.clone().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "CHECKOUT_STORAGE_UNAVAILABLE",
+        message: "public checkout storage is not configured".into(),
+    })?;
+    let token_digest = checkout_token_digest(headers)?;
+    let session = store
+        .load_checkout_session(session_id, token_digest)
+        .await
+        .map_err(ApiError::from)?;
+    Ok((store, session))
+}
+
+async fn create_checkout_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    payload: Result<Json<CreateCheckoutSessionRequest>, JsonRejection>,
+) -> Result<Json<CreateCheckoutSessionResponse>, ApiError> {
+    let principal = authenticate_scope(&state, &headers, "tax:settlement:compile")?;
+    let Json(request) = payload.map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "INVALID_JSON",
+        message: "request body is invalid".into(),
+    })?;
+    let store = state.storage.clone().ok_or_else(|| ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "CHECKOUT_STORAGE_UNAVAILABLE",
+        message: "public checkout storage is not configured".into(),
+    })?;
+    let now = server_unix_now()?;
+    let quote = store
+        .load_quote_for_settlement(principal.merchant_id, request.calculation_id)
+        .await
+        .map_err(ApiError::from)?;
+    require_quote_attestation(&store, principal.merchant_id, request.calculation_id).await?;
+    store
+        .load_active_settlement_route(principal.merchant_id, request.route_id)
+        .await
+        .map_err(ApiError::from)?;
+    let requested_expiry = request
+        .expires_at_unix
+        .unwrap_or(now.saturating_add(DEFAULT_CHECKOUT_SESSION_TTL_SECONDS));
+    let max_expiry = now.saturating_add(MAX_CHECKOUT_SESSION_TTL_SECONDS);
+    let expires_at_unix = requested_expiry.min(quote.expires_at_unix).min(max_expiry);
+    if expires_at_unix <= now {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "CHECKOUT_SESSION_EXPIRY_INVALID",
+            message: "checkout expiry must be in the future and within the bounded session window"
+                .into(),
+        });
+    }
+    let public_token = format!("ck_v1_{}_{}", Uuid::new_v4(), Uuid::new_v4());
+    let session = store
+        .create_checkout_session(CreateCheckoutSessionCommand {
+            merchant_id: principal.merchant_id,
+            calculation_id: request.calculation_id,
+            route_id: request.route_id,
+            token_digest: sha256_digest(public_token.as_bytes()),
+            expires_at_unix,
+        })
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(CreateCheckoutSessionResponse {
+        schema: CHECKOUT_SESSION_SCHEMA,
+        session_id: session.id,
+        public_token,
+        calculation_id: session.calculation_id,
+        route_id: session.route_id,
+        expires_at_unix: session.expires_at_unix,
+    }))
+}
+
+async fn get_public_checkout_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(session_id): Path<Uuid>,
+) -> Result<Json<PublicCheckoutSessionResponse>, ApiError> {
+    let (store, session) = load_public_checkout_session(&state, &headers, session_id).await?;
+    let quote = store
+        .load_quote_for_settlement(session.merchant_id, session.calculation_id)
+        .await
+        .map_err(ApiError::from)?;
+    require_quote_attestation(&store, session.merchant_id, session.calculation_id).await?;
+    let route = store
+        .load_active_settlement_route(session.merchant_id, session.route_id)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(PublicCheckoutSessionResponse {
+        schema: CHECKOUT_SESSION_SCHEMA,
+        session_id: session.id,
+        status: session.status,
+        calculation_id: session.calculation_id,
+        route_id: session.route_id,
+        expires_at_unix: session.expires_at_unix,
+        quote,
+        route: CheckoutRouteDisplay {
+            id: route.id,
+            route_key: route.route_key,
+            version: route.version,
+            mint: route.mint,
+            mint_decimals: route.mint_decimals,
+            token_program: route.token_program,
+        },
+        settlement_intent_id: session.settlement_intent_id,
+    }))
+}
+
+async fn compile_public_checkout(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(session_id): Path<Uuid>,
+    payload: Result<Json<PublicCheckoutCompileRequest>, JsonRejection>,
+) -> Result<Json<CompiledSettlementResponse>, ApiError> {
+    let (_store, session) = load_public_checkout_session(&state, &headers, session_id).await?;
+    let Json(request) = payload.map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "INVALID_JSON",
+        message: "request body is invalid".to_string(),
+    })?;
+    compile_settlement_from_quote_for_merchant(
+        state,
+        session.merchant_id,
+        SettlementCompileFromQuoteRequest {
+            calculation_id: session.calculation_id,
+            route_id: session.route_id,
+            payer: request.payer,
+            nonce: request.nonce,
+        },
+        Some(session.id),
+    )
+    .await
+}
+
+async fn submit_public_checkout(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(session_id): Path<Uuid>,
+    payload: Result<Json<SubmitSettlementRequest>, JsonRejection>,
+) -> Result<Json<SubmitSettlementResponse>, ApiError> {
+    let (_store, session) = load_public_checkout_session(&state, &headers, session_id).await?;
+    let Json(request) = payload.map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "INVALID_JSON",
+        message: "request body is invalid".to_string(),
+    })?;
+    if session.settlement_intent_id != Some(request.intent_id) {
+        return Err(ApiError {
+            status: StatusCode::NOT_FOUND,
+            code: "CHECKOUT_SESSION_NOT_FOUND",
+            message: "the checkout session was not found".into(),
+        });
+    }
+    submit_settlement_for_merchant(state, session.merchant_id, request).await
+}
+
+async fn get_public_checkout_intent(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((session_id, intent_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<SubmitSettlementResponse>, ApiError> {
+    let (store, session) = load_public_checkout_session(&state, &headers, session_id).await?;
+    if session.settlement_intent_id != Some(intent_id) {
+        return Err(ApiError {
+            status: StatusCode::NOT_FOUND,
+            code: "CHECKOUT_SESSION_NOT_FOUND",
+            message: "the checkout session was not found".into(),
+        });
+    }
+    let intent = store
+        .load_settlement_intent(intent_id, session.merchant_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError {
+            status: StatusCode::NOT_FOUND,
+            code: "CHECKOUT_SESSION_NOT_FOUND",
+            message: "the checkout session was not found".into(),
+        })?;
+    Ok(Json(SubmitSettlementResponse {
+        intent_id: intent.id,
+        status: intent.status,
+        signature: intent.signature,
+        provider_index: None,
+    }))
+}
+
 async fn compile_settlement_from_quote(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -8532,20 +8850,29 @@ async fn compile_settlement_from_quote_inner(
         code: "INVALID_JSON",
         message: "request body is invalid".to_string(),
     })?;
+    compile_settlement_from_quote_for_merchant(state, principal.merchant_id, request, None).await
+}
+
+async fn compile_settlement_from_quote_for_merchant(
+    state: AppState,
+    merchant_id: Uuid,
+    request: SettlementCompileFromQuoteRequest,
+    checkout_session_id: Option<Uuid>,
+) -> Result<Json<CompiledSettlementResponse>, ApiError> {
     let store = state.storage.clone().ok_or_else(|| ApiError {
         status: StatusCode::SERVICE_UNAVAILABLE,
         code: "QUOTE_STORAGE_UNAVAILABLE",
         message: "quote storage is not configured".to_string(),
     })?;
     let quote = store
-        .load_quote_for_settlement(principal.merchant_id, request.calculation_id)
+        .load_quote_for_settlement(merchant_id, request.calculation_id)
         .await
         .map_err(ApiError::from)?;
     let applicability_binding = quote_applicability_binding(&quote)?;
     let policy_binding =
-        require_quote_attestation(&store, principal.merchant_id, request.calculation_id).await?;
+        require_quote_attestation(&store, merchant_id, request.calculation_id).await?;
     let route = store
-        .load_active_settlement_route(principal.merchant_id, request.route_id)
+        .load_active_settlement_route(merchant_id, request.route_id)
         .await
         .map_err(ApiError::from)?;
     ensure_quote_scale_matches_route(quote.result.atomic_decimals, &route)?;
@@ -8553,7 +8880,7 @@ async fn compile_settlement_from_quote_inner(
         .map_err(ApiError::from)?;
     compile_settlement_request(
         state,
-        principal.merchant_id,
+        merchant_id,
         SettlementCompileRequest {
             program_id: SETTLEMENT_PROGRAM_ID.to_string(),
             payer: request.payer,
@@ -8572,6 +8899,7 @@ async fn compile_settlement_from_quote_inner(
         },
         Some(request.route_id),
         applicability_binding,
+        checkout_session_id,
     )
     .await
 }
@@ -8850,6 +9178,7 @@ async fn compile_settlement_request(
     request: SettlementCompileRequest,
     route_id: Option<Uuid>,
     applicability_binding: Option<ApplicabilityBinding>,
+    checkout_session_id: Option<Uuid>,
 ) -> Result<Json<CompiledSettlementResponse>, ApiError> {
     let serialized_request = serde_json::to_vec(&request).map_err(|error| ApiError {
         status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -8886,15 +9215,31 @@ async fn compile_settlement_request(
             message: error.to_string(),
         })?;
     let intent_id = if let Some(store) = state.storage {
-        let outcome = store
-            .create_settlement_intent(
-                merchant_id,
-                &request.nonce.to_string(),
-                request_digest,
-                instruction_digest,
-            )
-            .await
-            .map_err(ApiError::from)?;
+        let idempotency_key = request.nonce.to_string();
+        let outcome = match checkout_session_id {
+            Some(session_id) => {
+                store
+                    .create_checkout_settlement_intent(
+                        session_id,
+                        merchant_id,
+                        &idempotency_key,
+                        request_digest,
+                        instruction_digest,
+                    )
+                    .await
+            }
+            None => {
+                store
+                    .create_settlement_intent(
+                        merchant_id,
+                        &idempotency_key,
+                        request_digest,
+                        instruction_digest,
+                    )
+                    .await
+            }
+        }
+        .map_err(ApiError::from)?;
         Some(match outcome {
             storage::SettlementIntentOutcome::Created(intent)
             | storage::SettlementIntentOutcome::Replay(intent) => intent.id,
@@ -9099,13 +9444,21 @@ async fn submit_settlement_inner(
         code: "INVALID_JSON",
         message: "request body is invalid".to_string(),
     })?;
+    submit_settlement_for_merchant(state, principal.merchant_id, request).await
+}
+
+async fn submit_settlement_for_merchant(
+    state: AppState,
+    merchant_id: Uuid,
+    request: SubmitSettlementRequest,
+) -> Result<Json<SubmitSettlementResponse>, ApiError> {
     let store = state.storage.ok_or_else(|| ApiError {
         status: StatusCode::SERVICE_UNAVAILABLE,
         code: "SETTLEMENT_STORAGE_UNAVAILABLE",
         message: "durable settlement intent storage is not configured".into(),
     })?;
     let intent = store
-        .load_settlement_intent(request.intent_id, principal.merchant_id)
+        .load_settlement_intent(request.intent_id, merchant_id)
         .await
         .map_err(ApiError::from)?
         .ok_or_else(|| ApiError {
@@ -9217,7 +9570,7 @@ async fn submit_settlement_inner(
         let advanced = store
             .transition_settlement_intent(SettlementTransition {
                 intent_id: intent.id,
-                merchant_id: principal.merchant_id,
+                merchant_id,
                 expected_status: SettlementStatus::PreparedUnsubmitted.as_str().into(),
                 next_status: SettlementStatus::Signed.as_str().into(),
                 signed_transaction_digest: Some(signed_digest),
@@ -9240,7 +9593,7 @@ async fn submit_settlement_inner(
     let claimed = store
         .transition_settlement_intent(SettlementTransition {
             intent_id: intent.id,
-            merchant_id: principal.merchant_id,
+            merchant_id,
             expected_status: SettlementStatus::Signed.as_str().into(),
             next_status: SettlementStatus::Submitting.as_str().into(),
             signed_transaction_digest: Some(signed_digest),
@@ -9266,7 +9619,7 @@ async fn submit_settlement_inner(
             let _ = store
                 .transition_settlement_intent(SettlementTransition {
                     intent_id: intent.id,
-                    merchant_id: principal.merchant_id,
+                    merchant_id,
                     expected_status: SettlementStatus::Submitting.as_str().into(),
                     next_status: SettlementStatus::Unknown.as_str().into(),
                     signed_transaction_digest: Some(signed_digest),
@@ -9286,7 +9639,7 @@ async fn submit_settlement_inner(
     let advanced = store
         .transition_settlement_intent(SettlementTransition {
             intent_id: intent.id,
-            merchant_id: principal.merchant_id,
+            merchant_id,
             expected_status: SettlementStatus::Submitting.as_str().into(),
             next_status: submitted.status.as_str().into(),
             signed_transaction_digest: None,

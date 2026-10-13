@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-09-26
-- Scope: Tier-1 tax-engine calculation results and evidence replay
+- Scope: tax-engine calculation results and evidence replay
 
 ## Context
 

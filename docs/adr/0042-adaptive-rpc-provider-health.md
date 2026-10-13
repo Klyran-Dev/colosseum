@@ -8,7 +8,7 @@
 ## Context
 
 ADR-0040 established a bounded failover wrapper, but a static provider order
-causes every request to pay the latency of an unhealthy first endpoint. A Tier-1
+causes every request to pay the latency of an unhealthy first endpoint. A Tax Engine
 indexer must react to transport failures, RPC errors, malformed pages, and
 timeouts without creating an unbounded retry storm or weakening commitment
 semantics.

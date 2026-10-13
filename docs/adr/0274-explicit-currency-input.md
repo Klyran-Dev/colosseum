@@ -6,7 +6,7 @@
 
 ## Context
 
-The Tier-1 Tax Engine and API support a currency-bound calculation and an
+The Tax Engine and API support a currency-bound calculation and an
 optional cross-currency evidence path. The aggregate quote and scenario UI,
 however, sent `USD` without asking the operator. That creates a hidden
 financial assumption and makes a global tax product appear broader than its

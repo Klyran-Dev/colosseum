@@ -17,8 +17,7 @@ and are not restrictions on the rights granted by the software license.
 The [NOTICE](../NOTICE) file records project attribution. Third-party
 dependencies retain their own licenses and notices; redistributors must review
 the dependency metadata and include any notices required by those licenses.
-Before this decision, the source must not be represented as licensed for
-general reuse.
+Before this decision, the source must not be represented as licensed for general reuse.
 
 ## Required before public source release
 

@@ -1,13 +1,13 @@
-# ADR-0251: Accelerated Tier-1 delivery and decision freeze
+# ADR-0251: Accelerated Tax Engine delivery and decision freeze
 
 - Status: Accepted for planning
 - Date: 2026-10-02
 - Owners: Principal low-latency architecture, engineering, security, tax/legal
-- Scope: Delivery sequencing and release governance for the Tier-1 product
+- Scope: Delivery sequencing and release governance for the Tax Engine product
 
 ## Context
 
-The product has a broad Tier-1 scope: Solana settlement, deterministic global
+The product has a broad Tax Engine scope: Solana settlement, deterministic global
 tax calculation, exact FX evidence, provider policy, a production React/NGINX
 surface, durable evidence, and operational controls. The schedule can be
 shortened by running independent evidence-producing work in parallel, but
@@ -24,7 +24,7 @@ sign-off are outside the team's direct control.
 
 Adopt a three-workstream plan with a Day 2 decision freeze. The workstreams
 may execute concurrently after their interfaces, owners, and evidence
-contracts are recorded. The Tier-1 definition of done, security gates, legal
+contracts are recorded. The Tax Engine definition of done, security gates, legal
 approval, conformance requirements, and production-readiness evidence are not
 reduced or waived by this schedule.
 

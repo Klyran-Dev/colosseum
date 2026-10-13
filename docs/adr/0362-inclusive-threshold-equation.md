@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-05
 - Deciders: Principal Low-Latency Blockchain Architecture
-- Scope: Tier-1 Tax Engine inclusive pricing and thresholds
+- Scope: Tax Engine inclusive pricing and thresholds
 
 ## Context
 
@@ -13,7 +13,7 @@ registration threshold, or another jurisdiction-specific concept. Treating
 those meanings as interchangeable would produce plausible but legally
 incorrect amounts.
 
-The engine previously rejected every inclusive threshold. The Tier-1 contract
+The engine previously rejected every inclusive threshold. The Tax Engine contract
 needs an executable equation while continuing to reject undeclared semantics.
 
 ## Decision
@@ -49,7 +49,7 @@ plausible default would silently encode a legal decision.
 
 ### Reject all inclusive thresholds
 
-Rejected as the permanent Tier-1 boundary. It prevents valid explicitly
+Rejected as the permanent Tax Engine boundary. It prevents valid explicitly
 specified product rules from being represented even when the equation is
 bounded and deterministic.
 

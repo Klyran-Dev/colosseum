@@ -7,7 +7,7 @@ import {
   RuleWorkbenchDraft,
 } from "./ruleWorkbench";
 
-describe("structured Tier-1 rule workbench contract", () => {
+describe("structured Tax Engine rule workbench contract", () => {
   it("builds a canonical flat rule with explicit monetary strings", () => {
     const draft = defaultRuleWorkbenchDraft();
     draft.id = "sales-tax";

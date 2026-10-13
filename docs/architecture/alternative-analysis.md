@@ -255,6 +255,35 @@ production use a server-owned, bounded HTTPS provider adapter. Provider account
 ownership, DNS authentication, retention, bounce handling, and on-call remain
 deployment decisions.
 
+### Optional Google Workspace SMTP delivery (ADR-0519)
+
+| Option | Strengths | Risks / trade-offs | Decision |
+| --- | --- | --- | --- |
+| Google Workspace Gmail SMTP with an app password | Works with a Workspace mailbox; easy to bootstrap for a controlled staging deployment | App-password secret, mailbox/account policy dependency, lower sending limits, no direct provider message-id contract, and credential rotation burden | Supported as an explicit adapter, not the default |
+| Google Workspace SMTP relay with source-IP authentication | Avoids storing a mailbox password; designed for application/device relay | Requires stable egress IP and Workspace administrator allowlisting; Docker/local NAT is not a production identity boundary | Supported as an explicit no-credential relay mode |
+| **Resend HTTPS adapter** | Bounded HTTP contract, provider idempotency key, clean secret-manager integration, and existing production evidence | Requires separate provider account and domain verification | **Default production adapter; retained** |
+
+Google SMTP support is intentionally opt-in through `AUTH_EMAIL_MODE=google-smtp`.
+TLS, bounded timeouts, explicit authentication mode, and runtime-only secrets are
+required. A Google Workspace mailbox does not by itself authorize application
+SMTP, and local Docker is not allowed to pretend its dynamic egress address is
+an approved relay identity.
+
+### Hackathon public deployment topology (ADR-0520)
+
+| Option | Cost/latency | Operational boundary | Failure isolation | Decision |
+| --- | --- | --- | --- | --- |
+| GCE VM with PostgreSQL in the pinned Compose stack, fronted by Cloudflare Tunnel | Low setup cost and one local network hop; bounded by one VM | One operator-managed VM and database volume | Weak: VM and database share a failure domain | **Selected for the controlled hackathon deployment** |
+| GCE application VM plus private Cloud SQL PostgreSQL | Higher monthly cost and a managed database hop | Google-managed backups, patching, monitoring, and optional HA | Stronger database isolation | Reserved for production hardening |
+| Public GCE IP with direct NGINX exposure | Simple, but exposes origin and application ports | GCE firewall and NGINX become the primary perimeter | Weak against origin discovery/misconfiguration | Rejected |
+| Cloud Run/Pages split | Managed edge and autoscaling | Requires a different service topology and release pipeline | Stronger service isolation | Deferred until the application is adapted and measured |
+
+The selected topology wins for the hackathon because it preserves the tested
+Docker Compose boundaries, keeps PostgreSQL and service ports loopback-only, and
+uses an outbound-only Cloudflare Tunnel as the public ingress. It is explicitly
+not a high-availability or mainnet-production decision; Cloud SQL migration,
+private connectivity, backups/PITR, and failure evidence remain follow-up gates.
+
 ### OIDC edge connectivity and CSP
 
 | Alternative | Strengths | Risks/trade-offs | Decision |
@@ -449,7 +478,7 @@ deployment decisions.
 
 | Alternative | Strengths | Risks/trade-offs | Decision |
 | --- | --- | --- | --- |
-| Full rule graph on-chain | Maximum on-chain determinism | Compute/account/upgrade limits, expensive rule evolution, poor global-tax fit | Rejected for Tier-1 engine |
+| Full rule graph on-chain | Maximum on-chain determinism | Compute/account/upgrade limits, expensive rule evolution, poor global-tax fit | Rejected for Tax Engine engine |
 | External tax SaaS only | Broad possible coverage | Vendor lock-in, opaque calculation, network dependency, weak replay | Rejected as authority; may be an evidence adapter |
 | JavaScript-only engine | Fast UI integration | Numeric/runtime drift, harder shared authoritative service semantics | Rejected as authority |
 | **Pure Rust engine + signed attestation** | Deterministic, typed, replayable, low latency, shared native/WASM core | Requires rule governance and signer security | **Selected** |
@@ -880,7 +909,7 @@ quote path were rejected for memory, integrity, and tail-latency reasons.
 | Alternative | Strengths | Risks/trade-offs | Decision |
 | --- | --- | --- | --- |
 | **Shared `tracing` + bounded OTLP gRPC exporter** | Uses existing spans, preserves JSON logs, one redaction/configuration boundary, collector portability | Adds pinned OpenTelemetry dependencies and a lifecycle boundary | **Selected; see ADR-0201** |
-| Prometheus-only metrics and JSON logs | Lowest dependency cost | No distributed span context or collector trace evidence | Rejected for Tier-1 operations |
+| Prometheus-only metrics and JSON logs | Lowest dependency cost | No distributed span context or collector trace evidence | Rejected for Tax Engine operations |
 | Synchronous exporter in request paths | Immediate delivery | Couples business latency and availability to telemetry | Rejected |
 | Per-service custom exporters | Local control | Configuration and privacy drift across services | Rejected |
 
@@ -1510,7 +1539,7 @@ being mistaken for proof of multi-recipient Token-2022 compatibility.
 | --- | --- | --- | --- |
 | Keyboard/screen-reader context after workspace changes | Skip link plus stable focus boundary (ADR-0142) | Leave focus on navigation control, focus first form control, add a full router | Deterministic across lazy/error/empty states with minimal client lifecycle cost and no impact on financial authority |
 
-### Structured Tier-1 rule workbench
+### Structured Tax Engine rule workbench
 
 | Decision | Selected | Alternatives considered | Selection reason |
 | --- | --- | --- | --- |
@@ -2205,7 +2234,7 @@ tax-engine hot path.
 | Silently discard invalid/disagreeing candidates | Higher availability | Masks provider faults and weakens evidence | Rejected |
 | **Exact economic agreement with policy-priority selection** | Deterministic, auditable, bounded, and conservative | Lower availability on disagreement | **Selected in ADR-0250** |
 
-### Tier-1 delivery sequencing
+### Tax Engine delivery sequencing
 
 **Criteria:** preserve all correctness, security, legal, conformance, and
 operational gates while reducing calendar time through independent work.
@@ -2215,7 +2244,7 @@ operational gates while reducing calendar time through independent work.
 | Sequential workstreams | Simple coordination | Delays independent evidence and extends external-dependency exposure | Rejected |
 | Implement before scope and authority are frozen | Fast apparent start | Creates rework and unsafe legal/provider assumptions | Rejected |
 | Parallel work without named owners or exit artifacts | Maximum concurrency | Ambiguous accountability and weak release evidence | Rejected |
-| **Three owned workstreams behind a Day 2 decision freeze** | Shortens schedule while preserving explicit exit evidence and unchanged Tier-1 gates | Requires integration governance and merge coordination | **Selected in ADR-0251** |
+| **Three owned workstreams behind a Day 2 decision freeze** | Shortens schedule while preserving explicit exit evidence and unchanged Tax Engine gates | Requires integration governance and merge coordination | **Selected in ADR-0251** |
 
 ### FX provider acquisition
 
@@ -2852,7 +2881,7 @@ The selected boundary is recorded in ADR-0293.
 | Expressive palette ownership | Pass | Pass | Weak | **Pass** |
 | Selected | No | No | No | **Yes; see ADR-0304** |
 
-### One-command Tier-1 local gate (ADR-0305)
+### One-command Tax Engine local gate (ADR-0305)
 
 | Criterion | Separate commands only | Opaque shell script | Parallel all gates | Ordered Make orchestration |
 | --- | --- | --- | --- | --- |
@@ -4600,3 +4629,129 @@ is active, and reserve full-height composition for desktop.
 
 Chosen: render the server expiry and cooldown, request a new server challenge
 after the cooldown, clear the old code, and provide a different-email reset.
+
+### Bounded OTP rate-limit window (ADR-0521)
+
+| Alternative | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| Hard-coded 15-minute window everywhere | Conservative abuse control | Slows controlled staging recovery and hides policy in SQL | Rejected |
+| Hard-coded five-minute window everywhere | Faster recovery | Weakens production protection without an environment guard | Rejected |
+| Provider-only throttling | Less application code | Gives up application-owned abuse and cost controls | Rejected |
+| **Bounded environment setting with a 5-minute staging value and 15-minute production default** | Testable staging with a production floor | Requires explicit deployment configuration and tests | **Selected** |
+
+Chosen: keep the server-owned request count, source limit, and resend cooldown;
+make only the rolling window configurable with a non-local five-minute minimum.
+
+### Initial administrator account setup (ADR-0522)
+
+| Option | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| Keep generic authentication failure | Minimizes account-state disclosure | Makes valid bootstrap OTPs look expired and causes retry loops | Rejected |
+| Provision on sign-in | Lowest user friction | Blurs signup/sign-in authority and creates state from the wrong intent | Rejected |
+| **Explicit setup response after verified OTP** | Actionable recovery while preserving server-owned provisioning | Requires one additional typed error contract | **Selected** |
+
+The selected path is restricted to the configured initial-admin bootstrap email;
+unknown-account sign-in attempts retain the generic failure response.
+
+### Single-browser session coordination (ADR-0528)
+
+| Alternative | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| Persist an access or refresh token in browser storage | Reload and cross-tab continuity | Browser-storage credential exposure and a larger XSS blast radius | Rejected |
+| Broadcast bearer tokens between tabs | Immediate cross-tab reuse | Exposes credentials to every same-origin tab and does not provide server revocation | Rejected |
+| **Broadcast a non-secret session claim and clear conflicting tabs** | Removes identity confusion without persisting credentials | Reload still requires authentication; the second tab must sign in | **Selected in ADR-0528** |
+| HttpOnly Secure cookie with server-side session records | Standard persistence and central revocation | Requires a dedicated BFF/session migration, CSRF contract, and rollout | Deferred |
+
+Chosen: keep access tokens memory-only, coordinate one active browser identity
+with `BroadcastChannel` plus a storage-event fallback, and treat the signal as
+UI coordination only. API signature, expiry, tenant, scope, and role checks
+remain authoritative.
+
+### Bounded open self-signup (ADR-0523)
+
+| Alternative | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| Closed signup with manual bootstrap only | Smallest abuse surface | Blocks a public staging evaluation flow | Rejected as the only mode; remains the default |
+| Frontend or edge counter | Easy to add | Bypassable and not authoritative across instances | Rejected |
+| Per-email counter | Limits one mailbox | Does not bound aggregate tenant creation | Rejected |
+| **PostgreSQL-serialized global daily quota** | Authoritative, auditable, and race-safe | Couples the quota decision to the auth database | **Selected** |
+
+Chosen: explicitly opt in with `AUTH_SELF_SIGNUP=true`, count only committed
+regular self-signup provisions, and cap the UTC-day total at 25 by default.
+Invitations and the configured initial administrator bootstrap remain separate
+server-owned provisioning paths.
+
+### Hosted Solana network and browser RPC binding (ADR-0524)
+
+| Alternative | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| Infer RPC from the browser network label | Minimal configuration | A label is not a provider endpoint and can leave signing unavailable or misdirected | Rejected |
+| Proxy wallet RPC through the API | Centralized endpoint control | Adds a settlement-path dependency and expands the API authority boundary | Rejected |
+| Hard-code a public Devnet RPC in the SPA | Simple deployment | Provider coupling and accidental cross-network reuse | Rejected |
+| **Explicit public build-time RPC, non-local preflight, and finalized program verification** | Auditable network binding, usable wallet signing, and fail-closed release evidence | Requires release configuration and an independent chain check | **Selected** |
+
+Chosen: bind the hosted SPA to an explicit HTTPS RPC URL, keep server-side RPC
+provider lists separate, declare the canonical program for Devnet, and require
+finalized executable-program evidence before calling a release Solana-ready.
+
+### Public customer checkout handoff (ADR-0525)
+
+| Alternative | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| **Short-lived opaque checkout session bound to an authenticated quote and route** | Lets a guest customer pay with their own wallet without receiving merchant authority; easy to expire and audit | Requires a narrowly scoped public token contract and customer-facing page | **Selected** |
+| Customer JWT/OIDC account | Reusable identity and profile support | Adds PII, account lifecycle, recovery, and authorization surface that is not needed to settle one quote | Rejected for this slice |
+| Merchant access token in the customer browser | Small implementation | Leaks tenant capabilities and lets a customer call merchant APIs | Rejected |
+| Client-supplied quote, route, and amount | Simple link payload | Client data is not settlement authority and can be tampered with | Rejected |
+
+Chosen: a merchant creates a bounded public session from an already persisted,
+attested quote and a finalized active route. The API returns the raw opaque
+token once, stores only its SHA-256 digest, and accepts it only on dedicated
+public checkout endpoints. The customer page supplies only their wallet public
+key and nonce; all merchant accounts, mint, tax vault, amounts, policy digest,
+program ID, and transaction instruction bytes remain server-owned. A durable
+settlement intent is bound to the session so a session cannot compile multiple
+independent payments.
+
+### Role-aware tenant portals (ADR-0526)
+
+| Alternative | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| Client-selected `/admin` and `/merchant` login modes | Immediately visible distinction | Lets an untrusted browser request an authority boundary and duplicates authentication state | Rejected |
+| Keep one identical shell and rely only on capability counters | Smallest change | Users cannot understand whether they are administrators or operators; denied navigation remains noisy | Rejected |
+| Create a new platform-admin hierarchy now | Clear long-term separation | Expands scope into a new authority, tenant lifecycle, and control-plane product without a defined contract | Rejected |
+| **Derive role-aware tenant/admin presentation from the server snapshot while keeping one authentication boundary** | Clear UX, no client-granted authority, backward-compatible contract, and separate guest checkout remains explicit | Requires bounded snapshot-aware navigation and degraded-state handling | **Selected** |
+
+Chosen: use server-confirmed roles and capability decisions to label the
+tenant administrator and merchant operations portals, filter denied navigation,
+and show a fail-closed loading/unavailable state. This is a presentation
+boundary only; every protected API remains independently authorized. A future
+platform administrator requires a separate role and ADR rather than being
+implicitly mapped to tenant administration.
+
+### OTP verification outcome and recovery (ADR-0529)
+
+| Alternative | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| Check account existence during OTP request | Immediate feedback | Enables account enumeration and changes request timing | Rejected |
+| Return raw server error messages to the SPA | Minimal client work | Leaks diagnostics and bypasses reviewed product copy | Rejected |
+| Leave valid challenges reusable after account-policy rejection | Lets a user retry without a new email | Violates single-use proof semantics and weakens auditability | Rejected |
+| **Consume valid proofs and expose allow-listed auth codes with bounded recovery actions** | Privacy-preserving request behavior, terminal replay semantics, and actionable UX | Requires an auth-specific browser error contract | **Selected** |
+
+Chosen: keep account resolution after OTP proof, consume every valid challenge
+once, and let the SPA render only reviewed recovery actions for known auth
+codes. Unknown or disabled-account sign-in attempts remain generic.
+
+### Explicit tenant lifecycle and readiness (ADR-0527)
+
+| Alternative | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- |
+| Keep `merchant_id` as an implicit workspace | No migration | Cannot express profile, readiness, or safe tenant administration | Rejected |
+| Let the browser select a tenant or administrator role | Fast UI flow | Untrusted client becomes an authority input | Rejected |
+| Make every self-signup an administrator | Simple onboarding | Collapses governance and invitation boundaries | Rejected |
+| Create a platform-admin hierarchy now | Long-term separation | Expands into a new authority model before its threat model exists | Rejected |
+| **Explicit tenant entity with derived readiness and dedicated audited admin promotion** | Truthful onboarding, recoverable tenant lifecycle, and clear authority boundary | Additive schema and bounded auth-service contracts | **Selected** |
+
+Chosen: backfill and provision `auth_tenants`, expose a server-owned tenant
+context, derive setup steps from durable route/policy evidence, and keep
+administrator promotion separate from the assignable role catalog. Readiness
+does not authorize money movement, and no platform-admin semantics are implied.

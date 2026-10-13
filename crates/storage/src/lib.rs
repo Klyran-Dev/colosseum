@@ -230,6 +230,16 @@ pub enum StorageError {
     QuoteExpired,
     #[error("settlement quote is not in a settleable state")]
     QuoteNotSettleable,
+    #[error("public checkout session was not found")]
+    CheckoutSessionNotFound,
+    #[error("public checkout session has expired")]
+    CheckoutSessionExpired,
+    #[error("public checkout session token is invalid")]
+    CheckoutSessionTokenInvalid,
+    #[error("public checkout session is already bound to another settlement intent")]
+    CheckoutSessionIntentConflict,
+    #[error("public checkout session failed integrity validation: {0}")]
+    CheckoutSessionIntegrity(String),
     #[error("calculation attestation evidence was not found")]
     AttestationNotFound,
     #[error("calculation attestation evidence conflicts with the stored record")]
@@ -1566,6 +1576,26 @@ pub struct SettlementRoute {
     pub tax_vault: String,
     pub net_destination: String,
     pub token_program: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CheckoutSession {
+    pub id: Uuid,
+    pub merchant_id: Uuid,
+    pub calculation_id: Uuid,
+    pub route_id: Uuid,
+    pub status: String,
+    pub expires_at_unix: i64,
+    pub settlement_intent_id: Option<Uuid>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CreateCheckoutSessionCommand {
+    pub merchant_id: Uuid,
+    pub calculation_id: Uuid,
+    pub route_id: Uuid,
+    pub token_digest: [u8; 32],
+    pub expires_at_unix: i64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -10517,6 +10547,259 @@ impl PgStore {
         })
     }
 
+    /// Creates a public guest-checkout handoff only from a live quote and an
+    /// active, tenant-owned route. The token digest is the only secret
+    /// material persisted by this method.
+    pub async fn create_checkout_session(
+        &self,
+        command: CreateCheckoutSessionCommand,
+    ) -> Result<CheckoutSession, StorageError> {
+        if command.token_digest == [0; 32] {
+            return Err(StorageError::CheckoutSessionIntegrity(
+                "checkout token digest must not be zero".into(),
+            ));
+        }
+        if command.expires_at_unix <= 0 {
+            return Err(StorageError::CheckoutSessionIntegrity(
+                "checkout expiry must be a positive Unix timestamp".into(),
+            ));
+        }
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let quote_exists = transaction
+            .query_opt(
+                "SELECT 1
+                 FROM tax_calculations
+                 WHERE id = $1 AND merchant_id = $2
+                   AND status IN ('calculated_unattested', 'attested')
+                   AND expires_at > now()",
+                &[&command.calculation_id, &command.merchant_id],
+            )
+            .await?
+            .is_some();
+        if !quote_exists {
+            return Err(StorageError::QuoteNotFound);
+        }
+        let route_exists = transaction
+            .query_opt(
+                "SELECT 1
+                 FROM settlement_routes
+                 WHERE id = $1 AND merchant_id = $2 AND status = 'active'
+                   AND effective_from <= now()
+                   AND (effective_until IS NULL OR effective_until > now())",
+                &[&command.route_id, &command.merchant_id],
+            )
+            .await?
+            .is_some();
+        if !route_exists {
+            return Err(StorageError::SettlementRouteUnavailable);
+        }
+        let row = transaction
+            .query_one(
+                "INSERT INTO checkout_sessions
+                    (merchant_id, calculation_id, route_id, token_digest, expires_at)
+                 VALUES ($1, $2, $3, $4, to_timestamp($5::double precision))
+                 RETURNING id, merchant_id, calculation_id, route_id, status,
+                           floor(extract(epoch FROM expires_at))::bigint,
+                           settlement_intent_id",
+                &[
+                    &command.merchant_id,
+                    &command.calculation_id,
+                    &command.route_id,
+                    &&command.token_digest[..],
+                    &command.expires_at_unix,
+                ],
+            )
+            .await?;
+        let session = parse_checkout_session_row(row)?;
+        transaction.commit().await?;
+        Ok(session)
+    }
+
+    /// Loads a guest-checkout session with its opaque token proof. Unknown
+    /// session IDs and expired sessions are intentionally not enumerable.
+    pub async fn load_checkout_session(
+        &self,
+        session_id: Uuid,
+        token_digest: [u8; 32],
+    ) -> Result<CheckoutSession, StorageError> {
+        if token_digest == [0; 32] {
+            return Err(StorageError::CheckoutSessionTokenInvalid);
+        }
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let row = client
+            .query_opt(
+                "SELECT id, merchant_id, calculation_id, route_id, token_digest,
+                        status, floor(extract(epoch FROM expires_at))::bigint,
+                        expires_at <= now(), settlement_intent_id
+                 FROM checkout_sessions
+                 WHERE id = $1",
+                &[&session_id],
+            )
+            .await?;
+        let Some(row) = row else {
+            return Err(StorageError::CheckoutSessionNotFound);
+        };
+        let stored_digest: Vec<u8> = row.get(4);
+        if stored_digest.as_slice() != token_digest.as_slice() {
+            return Err(StorageError::CheckoutSessionTokenInvalid);
+        }
+        if row.get::<_, bool>(7) {
+            return Err(StorageError::CheckoutSessionExpired);
+        }
+        if row.get::<_, String>(5) != "active" {
+            return Err(StorageError::CheckoutSessionIntentConflict);
+        }
+        parse_checkout_session_row_from_public(row)
+    }
+
+    /// Creates or replays the one settlement intent allowed for a public
+    /// checkout session. The session row is locked before intent creation so
+    /// concurrent customer clicks cannot produce independent intents.
+    pub async fn create_checkout_settlement_intent(
+        &self,
+        session_id: Uuid,
+        merchant_id: Uuid,
+        idempotency_key: &str,
+        request_digest: [u8; 32],
+        instruction_digest: [u8; 32],
+    ) -> Result<SettlementIntentOutcome, StorageError> {
+        if idempotency_key.trim().is_empty() || idempotency_key.len() > 200 {
+            return Err(StorageError::InvalidConfiguration(
+                "settlement idempotency key must contain 1 to 200 bytes".into(),
+            ));
+        }
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .map_err(|error| StorageError::Pool(error.to_string()))?;
+        let transaction = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await?;
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{}ms'; SET LOCAL statement_timeout = '{}ms';",
+                DEFAULT_LOCK_TIMEOUT.as_millis(),
+                DEFAULT_STATEMENT_TIMEOUT.as_millis()
+            ))
+            .await?;
+        let session = transaction
+            .query_opt(
+                "SELECT merchant_id, expires_at <= now(), settlement_intent_id
+                 FROM checkout_sessions
+                 WHERE id = $1
+                 FOR UPDATE",
+                &[&session_id],
+            )
+            .await?
+            .ok_or(StorageError::CheckoutSessionNotFound)?;
+        let session_merchant: Uuid = session.get(0);
+        if session_merchant != merchant_id {
+            return Err(StorageError::CheckoutSessionTokenInvalid);
+        }
+        if session.get::<_, bool>(1) {
+            return Err(StorageError::CheckoutSessionExpired);
+        }
+        if let Some(intent_id) = session.get::<_, Option<Uuid>>(2) {
+            let row = transaction
+                .query_one(
+                    "SELECT id, merchant_id, idempotency_key, request_digest,
+                            instruction_digest, status, signed_transaction_digest,
+                            signature, slot::text, commitment, last_error_code
+                     FROM settlement_intents
+                     WHERE id = $1 AND merchant_id = $2",
+                    &[&intent_id, &merchant_id],
+                )
+                .await
+                .map_err(|_| {
+                    StorageError::CheckoutSessionIntegrity(
+                        "session references a missing settlement intent".into(),
+                    )
+                })?;
+            let intent = parse_settlement_intent_row(row)?;
+            if intent.request_digest != request_digest
+                || intent.instruction_digest != instruction_digest
+            {
+                return Err(StorageError::CheckoutSessionIntentConflict);
+            }
+            transaction.commit().await?;
+            return Ok(SettlementIntentOutcome::Replay(intent));
+        }
+        let inserted = transaction
+            .query_opt(
+                "INSERT INTO settlement_intents
+                    (merchant_id, checkout_session_id, idempotency_key,
+                     request_digest, instruction_digest)
+                 VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (merchant_id, idempotency_key) DO NOTHING
+                 RETURNING id, merchant_id, idempotency_key, request_digest,
+                           instruction_digest, status, signed_transaction_digest,
+                           signature, slot::text, commitment, last_error_code",
+                &[
+                    &merchant_id,
+                    &session_id,
+                    &idempotency_key,
+                    &&request_digest[..],
+                    &&instruction_digest[..],
+                ],
+            )
+            .await?;
+        let Some(row) = inserted else {
+            let row = transaction
+                .query_one(
+                    "SELECT id, merchant_id, idempotency_key, request_digest,
+                            instruction_digest, status, signed_transaction_digest,
+                            signature, slot::text, commitment, last_error_code
+                     FROM settlement_intents
+                     WHERE merchant_id = $1 AND idempotency_key = $2
+                     FOR UPDATE",
+                    &[&merchant_id, &idempotency_key],
+                )
+                .await?;
+            let intent = parse_settlement_intent_row(row)?;
+            if intent.request_digest != request_digest
+                || intent.instruction_digest != instruction_digest
+            {
+                return Err(StorageError::IdempotencyConflict);
+            }
+            transaction.commit().await?;
+            return Ok(SettlementIntentOutcome::Replay(intent));
+        };
+        let intent = parse_settlement_intent_row(row)?;
+        transaction
+            .execute(
+                "UPDATE checkout_sessions
+                 SET settlement_intent_id = $2, updated_at = now()
+                 WHERE id = $1 AND merchant_id = $3 AND settlement_intent_id IS NULL",
+                &[&session_id, &intent.id, &merchant_id],
+            )
+            .await?;
+        transaction.commit().await?;
+        Ok(SettlementIntentOutcome::Created(intent))
+    }
+
     /// Loads only a tenant-scoped document quote for document-attestation
     /// binding. This type is deliberately not accepted by settlement loaders.
     pub async fn load_document_quote_for_attestation(
@@ -16887,6 +17170,34 @@ fn parse_settlement_intent_row(
             .transpose()?,
         commitment: row.get(9),
         last_error_code: row.get(10),
+    })
+}
+
+fn parse_checkout_session_row(
+    row: deadpool_postgres::tokio_postgres::Row,
+) -> Result<CheckoutSession, StorageError> {
+    Ok(CheckoutSession {
+        id: row.get(0),
+        merchant_id: row.get(1),
+        calculation_id: row.get(2),
+        route_id: row.get(3),
+        status: row.get(4),
+        expires_at_unix: row.get(5),
+        settlement_intent_id: row.get(6),
+    })
+}
+
+fn parse_checkout_session_row_from_public(
+    row: deadpool_postgres::tokio_postgres::Row,
+) -> Result<CheckoutSession, StorageError> {
+    Ok(CheckoutSession {
+        id: row.get(0),
+        merchant_id: row.get(1),
+        calculation_id: row.get(2),
+        route_id: row.get(3),
+        status: row.get(5),
+        expires_at_unix: row.get(6),
+        settlement_intent_id: row.get(8),
     })
 }
 

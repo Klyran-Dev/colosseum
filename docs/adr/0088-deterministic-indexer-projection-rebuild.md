@@ -9,7 +9,7 @@
 
 The indexer retains bounded, digest-verified Anchor `SettlementExecuted` event
 bytes beside the normalized receipt projection. Replay repairs currently merge
-known pages, but a Tier-1 product also needs a controlled rebuild path for
+known pages, but a Tax Engine product also needs a controlled rebuild path for
 operator recovery, schema migrations, and disaster-recovery verification. A
 rebuild must not trust a normalized row, a provider re-encoding, a checkpoint,
 or client-supplied amounts.

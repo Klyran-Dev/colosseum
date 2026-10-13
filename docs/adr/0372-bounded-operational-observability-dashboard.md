@@ -9,7 +9,7 @@
 
 The repository already provisions Prometheus, Alertmanager, OpenTelemetry, and
 Grafana, but a minimal service overview did not expose the safety signals an
-operator needs to triage a Tier-1 system: protocol pause state, replay backlog,
+operator needs to triage a Tax Engine system: protocol pause state, replay backlog,
 database pool pressure, tax-rule cache behavior, and settlement-provider health.
 Dashboard queries must remain non-authoritative and must not create high-
 cardinality series or disclose tenant, merchant, wallet, transaction, or

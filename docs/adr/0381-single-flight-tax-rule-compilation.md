@@ -4,7 +4,7 @@
 - Date: 2026-10-05
 - Deciders: Principal Low-Latency Architecture, Tax Engine, SRE
 - Scope: Warm Tax Engine compiled-rule cache miss behavior
-- Bounded contexts: Tier-1 Tax Engine, Service Runtime, Performance Evidence
+- Bounded contexts: Tax Engine, Service Runtime, Performance Evidence
 
 ## Context
 

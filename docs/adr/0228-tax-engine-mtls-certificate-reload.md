@@ -4,7 +4,7 @@
 - Date: 2026-10-01
 - Deciders: Principal Low-Latency Architecture, Security, SRE
 - Scope: Tax Engine service certificate lifecycle
-- Bounded contexts: Tier-1 Tax Engine, Service Runtime, Platform Security
+- Bounded contexts: Tax Engine, Service Runtime, Platform Security
 
 ## Context
 

@@ -174,7 +174,7 @@
   retained tail-variance investigation are recorded in ADR-0232; Linux/amd64,
   regional, and production SLO evidence remain separate gates.
 
-- Preserved the Tier-1 tax engine's integer fast path for legacy additive tax
+- Preserved the tax engine's integer fast path for legacy additive tax
   bases while routing weighted and bounded v2 bases through exact rational
   evaluation. The focused classifier test and 66-test tax-engine suite pass;
   the matched native arm64 Criterion rerun improved all four retained local
@@ -186,13 +186,13 @@
   and replacement requirements are now documented without treating protocol
   admission as redemption, legal, or tax-compliance approval.
 
-- Added ADR-0379 and bounded taxable-base floor/cap operations to the Tier-1
+- Added ADR-0379 and bounded taxable-base floor/cap operations to the Tax Engine
   tax DSL. Exact linear bases may now be clamped before thresholds and rates,
   with v1 canonical compatibility preserved, v2 golden-vector coverage,
   property tests, an explicit capped-base vector, and localized rule-workbench
   controls; jurisdiction publication and tax-owner review remain open.
 
-- Added ADR-0375 and the bounded linear tax-base v2 envelope. The Tier-1 tax
+- Added ADR-0375 and the bounded linear tax-base v2 envelope. The Tax Engine tax
   engine now supports explicit exact weighted and subtractive base terms with
   dependency ordering, integral-atomic admission, v2 golden vectors, replay
   coverage, and structured localized authoring controls while preserving v1
@@ -539,7 +539,7 @@
 - Added ADR-0304's dependency-free Material role contrast contract to the
   standard web and repository checks; both light and dark semantic palettes
   must maintain a 4.5:1 text contrast ratio.
-- Added ADR-0305 and `make tier1-local-check` as the canonical ordered local
+- Added ADR-0305 and `make tax-engine-local-check` as the canonical ordered local
   evidence gate across repository checks, authenticated Docker integration,
   real-browser UI journeys, and validator-backed Solana conformance.
 - Added ADR-0302 and a versioned presentation-only preference store for locale,
@@ -607,7 +607,7 @@
 - Added ADR-0283 to make the product boundary explicit: the first settlement
   scope is an atomic per-transaction split, while continuous partner streaming
   is a separate future bounded context and is not implied by “real-time” copy.
-- Added ADR-0284 and optimized the Tier-1 tax hot path to borrow validated facts
+- Added ADR-0284 and optimized the Tax Engine tax hot path to borrow validated facts
   when no FX conversion is present. The full tax-engine suite passes, and the
   current local benchmark shows improved compiled and document calculation
   timings; production SLO claims remain gated on Linux/amd64 evidence.
@@ -685,7 +685,7 @@
 - Added stable FX quote request identity: pre-resolution facts and normalized
   source currency are idempotent inputs, while provider quote metadata remains
   immutable evidence rather than a caller request digest.
-- Added the public Tier-1 decision register required by ADR-0251. Provider,
+- Added the public Tax Engine decision register required by ADR-0251. Provider,
   jurisdiction, legal ownership, staging, SLO, retention, rollback, custody,
   and license choices remain explicitly open until accountable owners attach
   evidence; no external decision is inferred from a missing value.
@@ -716,7 +716,7 @@
 - Added ADR-0250 for deterministic FX provider agreement. Multi-provider
   policies require exact economic agreement and select by policy priority;
   disagreement and insufficient provider evidence fail closed.
-- Added ADR-0251 for an accelerated Tier-1 delivery model. Three named
+- Added ADR-0251 for an accelerated Tax Engine delivery model. Three named
   workstreams may run in parallel after a Day 2 decision freeze; the 3–4 week
   production-candidate and 5–7 week controlled-production estimates remain
   conditional, and no release gate, audit, legal approval, or evidence
@@ -1231,7 +1231,7 @@ All notable changes to this project will be documented here. The project follows
 - CI now runs the bounded quote-service workload and uses the verified
   Dockerized SBF builder for validator conformance.
 
-- Tier-1 product-readiness standard and launch gates.
+- Tax Engine product-readiness standard and launch gates.
 - Public repository documentation, security policy, contribution guide, and code of conduct.
 - Pinned Rust workspace with deterministic tax-engine arithmetic, API request limits, and UUIDv7 calculation identifiers.
 - React/Vite SPA, NGINX edge, PostgreSQL 18 migration baseline, Docker Compose topology, and pinned CI workflow.
@@ -1270,7 +1270,7 @@ All notable changes to this project will be documented here. The project follows
 - Immutable raw chain evidence migration with serializable duplicate/conflict handling beside normalized receipts.
 - Explicit JWT scope/role parsing and `tax:quote` authorization at the persisted quote boundary.
 - Mandatory on-chain `ProtocolConfig` PDA with governance-controlled settlement pause/unpause and explicit pause events.
-- Evidence-bound threshold modes, exemption codes, cumulative-period snapshots, and bounded validation in the Tier-1 tax engine.
+- Evidence-bound threshold modes, exemption codes, cumulative-period snapshots, and bounded validation in the tax engine.
 - Tenant-scoped settlement route registry with immutable route versions,
   authenticated active-route lookup, deterministic payer ATA derivation, and
   quote-bound compilation that rejects free-form merchant-side account fields.
@@ -1288,7 +1288,7 @@ All notable changes to this project will be documented here. The project follows
 - An opt-in `make solana-conformance` command and Dockerized
   `cargo-build-sbf` fallback; ordinary unit/UI checks do not silently treat an
   unavailable validator as a passing release gate.
-- ADR-0066 and `test-vectors/tax-engine-v1.json` add a versioned Tier-1 tax
+- ADR-0066 and `test-vectors/tax-engine-v1.json` add a versioned Tax Engine tax
   golden-vector contract covering global-tax arithmetic families and an exact
   cumulative evidence-digest regression.
 - ADR-0067 isolates the Agave platform-tools v1.57 SBF compiler compatibility
@@ -1372,7 +1372,7 @@ All notable changes to this project will be documented here. The project follows
   chunks and render failures preserve global navigation and expose an explicit
   accessible reload state without implying financial or chain success.
 
-- ADR-0143 adds the structured Tier-1 rule workbench contract: bounded
+- ADR-0143 adds the structured Tax Engine rule workbench contract: bounded
   component/dependency controls, progressive brackets, thresholds, exemptions,
   clamps, rounding, canonical JSON preview, and an explicit advanced JSON mode.
 
@@ -1419,7 +1419,7 @@ All notable changes to this project will be documented here. The project follows
   bounded pause, replay, database-pool, tax-cache, and provider-health panels,
   guarded by a fixed-cardinality dashboard contract.
 
-- Added ADR-0361 and a fail-closed Tier-1 Tax Engine rule compiler check that
+- Added ADR-0361 and a fail-closed Tax Engine rule compiler check that
   rejects repeated tax-base sources while retaining explicit additive and
   tax-on-tax bases.
 

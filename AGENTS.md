@@ -6,7 +6,7 @@ This document is the repository-wide engineering contract. It governs every agen
 
 Build and operate a production-grade Solana payment, tax-calculation, withholding, escrow, and revenue-split platform. The system must be low-latency, highly concurrent, deterministic, auditable, secure, accessible, and ready for real users and real money. It is not a hackathon demo, prototype, toy implementation, or “MVP UI.”
 
-The source of truth for money movement is Solana. The Tier-1 Tax Engine is an off-chain deterministic calculation bounded context. The React application is a real product surface, not a mockup. The API, indexer, tax engine, and UI must be designed for production operation from their first implementation.
+The source of truth for money movement is Solana. The Tax Engine is an off-chain deterministic calculation bounded context. The React application is a real product surface, not a mockup. The API, indexer, tax engine, and UI must be designed for production operation from their first implementation.
 
 ## Non-negotiable principles
 
@@ -36,7 +36,7 @@ The source of truth for money movement is Solana. The Tier-1 Tax Engine is an of
 - Separate merchant configuration, policy issuer, vault release, and program upgrade authorities. Govern privileged actions with multisig/timelock where compatible with incident response.
 - Vault releases must use a merchant/mint-scoped registry with separate governance, proposal, and approval authorities. Immutable release-claim PDAs must bind nonce, amount, destination, reference digest, and a bounded execution window; only the vault-authority PDA may sign the checked outbound CPI. API services and browsers never custody or sign vault-release keys. Claim creation, execution, cancellation, and finalized balance evidence are separate auditable lifecycle events.
 
-### Tier-1 Tax Engine
+### Tax Engine
 
 - Implement the tax engine as a pure Rust domain library with a warm service adapter. Domain code must not depend on HTTP, database, system clock, RPC, filesystem, or wallet state.
 - Use a canonical versioned tax-rule DSL compiled into an immutable directed acyclic rule graph.
@@ -257,7 +257,7 @@ The implementation must provide a Compose profile for:
 - All services have health checks, startup ordering based on health, bounded restart policy, logs, and documented ports.
 - A one-command bootstrap creates schemas, seeds safe fixtures, starts localnet, runs migrations, and exposes the real UI.
 - A one-command test flow runs Rust, frontend, contract, localnet integration, accessibility, and API tests.
-- `make tier1-local-check` is the canonical ordered end-to-end evidence gate:
+- `make tax-engine-local-check` is the canonical ordered end-to-end evidence gate:
   repository checks, authenticated Docker integration, real-browser UI, then
   validator-backed Solana conformance. It must fail closed on missing Linux
   validator capabilities and may not silently skip a layer.

@@ -20,6 +20,7 @@ base64.workspace = true
 deadpool-postgres.workspace = true
 ed25519-dalek.workspace = true
 getrandom.workspace = true
+lettre.workspace = true
 observability = { path = "../observability" }
 reqwest.workspace = true
 serde.workspace = true

@@ -11,6 +11,9 @@ services:
   auth-service:
     ports: !reset []
     environment:
+      # The browser suite reads synthetic messages from the mounted inbox.
+      # Do not inherit a developer's provider/SMTP mode from .env.
+      AUTH_EMAIL_MODE: local-file
       AUTH_CORS_ORIGIN: http://edge:8080
       AUTH_OTP_RESEND_COOLDOWN_SECONDS: "0"
       AUTH_SELF_SIGNUP: "false"

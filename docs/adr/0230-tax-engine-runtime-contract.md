@@ -4,7 +4,7 @@
 - Date: 2026-10-01
 - Deciders: Principal Low-Latency Architecture, Tax Engine, SRE
 - Scope: Tax Engine service delivery and local/CI verification
-- Bounded contexts: Tier-1 Tax Engine, Service Runtime, Docker Platform
+- Bounded contexts: Tax Engine, Service Runtime, Docker Platform
 
 ## Context
 

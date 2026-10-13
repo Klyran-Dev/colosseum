@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-09-26
 - Owners: Tax Platform / Performance
-- Scope: Pure Rust Tier-1 tax-engine calculation boundary
+- Scope: Pure Rust tax-engine calculation boundary
 
 ## Context
 

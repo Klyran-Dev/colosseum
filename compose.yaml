@@ -4,15 +4,15 @@ services:
   postgres:
     image: postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
     environment:
-      POSTGRES_DB: tax_protocol
-      POSTGRES_USER: tax_protocol
-      POSTGRES_PASSWORD: local-development-only
+      POSTGRES_DB: ${POSTGRES_DB:-tax_protocol}
+      POSTGRES_USER: ${POSTGRES_USER:-tax_protocol}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-development-only}
     ports:
-      - "${POSTGRES_PORT:-55432}:5432"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-55432}:5432"
     volumes:
       - postgres18-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tax_protocol -d tax_protocol"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -22,9 +22,9 @@ services:
       context: .
       dockerfile: ops/docker/Dockerfile.migration-runner
     environment:
-      DATABASE_URL: postgres://tax_protocol:local-development-only@postgres:5432/tax_protocol
+      DATABASE_URL: ${APP_DATABASE_URL:-postgres://tax_protocol:local-development-only@postgres:5432/tax_protocol}
       MIGRATIONS_DIR: /migrations
-      SEED_DIR: /seeds
+      SEED_DIR: ${SEED_DIR:-}
       MIGRATION_STATEMENT_TIMEOUT_MS: ${MIGRATION_STATEMENT_TIMEOUT_MS:-300000}
     volumes:
       - ./db/migrations:/migrations:ro
@@ -39,7 +39,7 @@ services:
       dockerfile: ops/docker/Dockerfile.api
     environment:
       API_BIND_ADDRESS: 0.0.0.0:8080
-      API_DATABASE_URL: postgres://tax_protocol:local-development-only@postgres:5432/tax_protocol
+      API_DATABASE_URL: ${APP_DATABASE_URL:-postgres://tax_protocol:local-development-only@postgres:5432/tax_protocol}
       API_DATABASE_POOL_SIZE: "${API_DATABASE_POOL_SIZE:-16}"
       API_SIMULATION_MODE: ${API_SIMULATION_MODE:-true}
       API_ENV: ${API_ENV:-local}
@@ -64,7 +64,7 @@ services:
       OTEL_TRACE_SAMPLE_RATIO: ${OTEL_TRACE_SAMPLE_RATIO:-1.0}
       RUST_LOG: ${RUST_LOG:-info}
     ports:
-      - "${API_PORT:-18080}:8080"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-18080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -82,7 +82,7 @@ services:
       dockerfile: ops/docker/Dockerfile.auth-service
     environment:
       AUTH_BIND_ADDRESS: 0.0.0.0:8085
-      AUTH_DATABASE_URL: postgres://tax_protocol:local-development-only@postgres:5432/tax_protocol
+      AUTH_DATABASE_URL: ${APP_DATABASE_URL:-postgres://tax_protocol:local-development-only@postgres:5432/tax_protocol}
       AUTH_DATABASE_POOL_SIZE: "${AUTH_DATABASE_POOL_SIZE:-8}"
       AUTH_ENV: ${AUTH_ENV:-local}
       AUTH_ISSUER: ${AUTH_ISSUER:-http://localhost:18085}
@@ -90,19 +90,31 @@ services:
       AUTH_SIGNING_KEY_ID: ${AUTH_SIGNING_KEY_ID:-auth-local-v1}
       AUTH_SIGNING_KEY_HEX: ${AUTH_SIGNING_KEY_HEX:-}
       AUTH_OTP_PEPPER: ${AUTH_OTP_PEPPER:-local-development-otp-pepper}
+      AUTH_OTP_RATE_LIMIT_WINDOW_SECONDS: ${AUTH_OTP_RATE_LIMIT_WINDOW_SECONDS:-900}
       AUTH_EMAIL_MODE: ${AUTH_EMAIL_MODE:-local-file}
       AUTH_EMAIL_PROVIDER_ENDPOINT: ${AUTH_EMAIL_PROVIDER_ENDPOINT:-https://api.resend.com/emails}
       AUTH_EMAIL_PROVIDER_API_KEY: ${AUTH_EMAIL_PROVIDER_API_KEY:-}
       AUTH_EMAIL_FROM: ${AUTH_EMAIL_FROM:-}
       AUTH_EMAIL_PROVIDER_TIMEOUT_MILLIS: ${AUTH_EMAIL_PROVIDER_TIMEOUT_MILLIS:-3000}
+      AUTH_EMAIL_SMTP_HOST: ${AUTH_EMAIL_SMTP_HOST:-smtp-relay.gmail.com}
+      AUTH_EMAIL_SMTP_PORT: ${AUTH_EMAIL_SMTP_PORT:-587}
+      AUTH_EMAIL_SMTP_SECURITY: ${AUTH_EMAIL_SMTP_SECURITY:-starttls}
+      AUTH_EMAIL_SMTP_AUTH: ${AUTH_EMAIL_SMTP_AUTH:-app-password}
+      AUTH_EMAIL_SMTP_TIMEOUT_MILLIS: ${AUTH_EMAIL_SMTP_TIMEOUT_MILLIS:-10000}
+      AUTH_EMAIL_SMTP_USERNAME: ${AUTH_EMAIL_SMTP_USERNAME:-}
+      AUTH_EMAIL_SMTP_PASSWORD: ${AUTH_EMAIL_SMTP_PASSWORD:-}
       AUTH_APP_BASE_URL: ${AUTH_APP_BASE_URL:-http://localhost:8088}
       AUTH_LOCAL_INBOX_DIR: /var/lib/auth/inbox
-      AUTH_SELF_SIGNUP: ${AUTH_SELF_SIGNUP:-true}
+      # Keep provisioning closed unless the deployment explicitly opts in.
+      AUTH_SELF_SIGNUP: ${AUTH_SELF_SIGNUP:-false}
+      AUTH_SELF_SIGNUP_DAILY_LIMIT: ${AUTH_SELF_SIGNUP_DAILY_LIMIT:-25}
       AUTH_DEFAULT_SCOPES: ${AUTH_DEFAULT_SCOPES:-tax:quote}
       AUTH_ADMINISTRATOR_SCOPES: ${AUTH_ADMINISTRATOR_SCOPES:-audit:read identity:role:manage}
       AUTH_MODERATOR_SCOPES: ${AUTH_MODERATOR_SCOPES:-audit:read}
       AUTH_DEFAULT_ROLES: ${AUTH_DEFAULT_ROLES:-merchant_operator}
-      AUTH_LOCAL_BOOTSTRAP_ADMIN_EMAIL: ${AUTH_LOCAL_BOOTSTRAP_ADMIN_EMAIL:-admin@local.test}
+      # An explicitly empty value disables the local-only bootstrap account in
+      # staging/production. Use the default only when the variable is absent.
+      AUTH_LOCAL_BOOTSTRAP_ADMIN_EMAIL: ${AUTH_LOCAL_BOOTSTRAP_ADMIN_EMAIL-admin@local.test}
       AUTH_INITIAL_ADMIN_EMAIL: ${AUTH_INITIAL_ADMIN_EMAIL:-}
       AUTH_CORS_ORIGIN: ${AUTH_CORS_ORIGIN:-http://localhost:8088,http://127.0.0.1:8088}
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
@@ -111,7 +123,7 @@ services:
       OTEL_TRACE_SAMPLE_RATIO: ${OTEL_TRACE_SAMPLE_RATIO:-1.0}
       RUST_LOG: ${RUST_LOG:-info}
     ports:
-      - "${AUTH_PORT:-18085}:8085"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${AUTH_PORT:-18085}:8085"
     volumes:
       - auth-inbox:/var/lib/auth/inbox
     depends_on:
@@ -157,6 +169,9 @@ services:
       TAX_ENGINE_AUTH_TOKEN_FILE: ${TAX_ENGINE_AUTH_TOKEN_FILE-}
       TAX_ENGINE_CACHE_CAPACITY: ${TAX_ENGINE_CACHE_CAPACITY:-64}
       TAX_ENGINE_MAX_CONCURRENCY: ${TAX_ENGINE_MAX_CONCURRENCY:-32}
+      TAX_ENGINE_TLS_CERT_FILE: ${TAX_ENGINE_TLS_CERT_FILE-}
+      TAX_ENGINE_TLS_KEY_FILE: ${TAX_ENGINE_TLS_KEY_FILE-}
+      TAX_ENGINE_MTLS_CA_FILE: ${TAX_ENGINE_MTLS_CA_FILE-}
       TAX_ENGINE_MTLS_ALLOWED_CLIENT_URIS: ${TAX_ENGINE_MTLS_ALLOWED_CLIENT_URIS:-}
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
       OTEL_ENVIRONMENT: ${OTEL_ENVIRONMENT:-local}
@@ -164,6 +179,8 @@ services:
       OTEL_TRACE_SAMPLE_RATIO: ${OTEL_TRACE_SAMPLE_RATIO:-1.0}
       RUST_LOG: ${RUST_LOG:-info}
     restart: unless-stopped
+    volumes:
+      - ${TAX_ENGINE_TLS_DIR:-./runtime/tax-engine-tls}:/run/tax-engine:ro
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
@@ -182,7 +199,7 @@ services:
     image: nats:2.12.3-alpine@sha256:88fe8e0e09d6084a06b3d4dbbffbca70fa632b1ad981af8473da23c446630957
     command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
-      - "${NATS_PORT:-44222}:4222"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${NATS_PORT:-44222}:4222"
     volumes:
       - nats-data:/data
     healthcheck:
@@ -354,7 +371,7 @@ services:
       context: .
       dockerfile: ops/docker/Dockerfile.worker
     environment:
-      WORKER_DATABASE_URL: postgres://tax_protocol:local-development-only@postgres:5432/tax_protocol
+      WORKER_DATABASE_URL: ${APP_DATABASE_URL:-postgres://tax_protocol:local-development-only@postgres:5432/tax_protocol}
       WORKER_NATS_URL: nats://nats:4222
       WORKER_NATS_STREAM: TAX_EVENTS
       WORKER_OUTBOX_BATCH_SIZE: "32"
@@ -385,7 +402,7 @@ services:
       dockerfile: ops/docker/Dockerfile.indexer
     environment:
       INDEXER_ENV: ${INDEXER_ENV:-local}
-      INDEXER_DATABASE_URL: postgres://tax_protocol:local-development-only@postgres:5432/tax_protocol
+      INDEXER_DATABASE_URL: ${APP_DATABASE_URL:-postgres://tax_protocol:local-development-only@postgres:5432/tax_protocol}
       INDEXER_RPC_ENDPOINTS: ${INDEXER_RPC_ENDPOINTS:-http://validator:8899}
       INDEXER_ALLOW_INSECURE_LOCAL_RPC: ${INDEXER_ALLOW_INSECURE_LOCAL_RPC:-true}
       INDEXER_STREAM_KEY: ${INDEXER_STREAM_KEY:-localnet/settlement/v1}
@@ -422,7 +439,7 @@ services:
       dockerfile: ops/docker/Dockerfile.route-verifier
     environment:
       ROUTE_VERIFIER_ENV: ${ROUTE_VERIFIER_ENV:-local}
-      ROUTE_VERIFIER_DATABASE_URL: postgres://tax_protocol:local-development-only@postgres:5432/tax_protocol
+      ROUTE_VERIFIER_DATABASE_URL: ${APP_DATABASE_URL:-postgres://tax_protocol:local-development-only@postgres:5432/tax_protocol}
       ROUTE_VERIFIER_RPC_ENDPOINTS: ${ROUTE_VERIFIER_RPC_ENDPOINTS:-http://validator:8899}
       ROUTE_VERIFIER_ALLOW_INSECURE_LOCAL_RPC: ${ROUTE_VERIFIER_ALLOW_INSECURE_LOCAL_RPC:-true}
       ROUTE_VERIFIER_BATCH_SIZE: ${ROUTE_VERIFIER_BATCH_SIZE:-8}
@@ -455,6 +472,7 @@ services:
       args:
         VITE_DEPLOYMENT_ENVIRONMENT: ${VITE_DEPLOYMENT_ENVIRONMENT:-local}
         VITE_SOLANA_NETWORK: ${VITE_SOLANA_NETWORK:-localnet}
+        VITE_SOLANA_RPC_URL: ${VITE_SOLANA_RPC_URL:-http://localhost:8899}
         VITE_AUTH_METHOD: ${VITE_AUTH_METHOD:-}
         VITE_LOCAL_UI_MODE: ${VITE_LOCAL_UI_MODE:-email-otp}
         VITE_AUTH_SERVICE_BASE_URL: ${VITE_AUTH_SERVICE_BASE_URL:-http://localhost:18085}
@@ -465,7 +483,7 @@ services:
         VITE_OIDC_AUDIENCE: ${VITE_OIDC_AUDIENCE:-}
         VITE_INDEXER_STREAM_KEY: ${VITE_INDEXER_STREAM_KEY:-localnet/settlement/v1}
     ports:
-      - "${EDGE_PORT:-8088}:8080"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${EDGE_PORT:-8088}:8080"
     depends_on:
       api:
         condition: service_healthy

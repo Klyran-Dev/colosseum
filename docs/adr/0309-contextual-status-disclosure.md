@@ -14,7 +14,7 @@ surfaces before the operator reached the task: two configuration badges, a
 service warning, and a sign-in error. The information was correct, but the
 hierarchy was poor and the primary action became visually subordinate.
 
-This is a product-quality problem, not a reason to hide state. A Tier-1
+This is a product-quality problem, not a reason to hide state. A Tax Engine
 operator surface must preserve fail-closed behavior, expose the exact reason
 and next step, remain keyboard and screen-reader accessible, and keep status
 outside the settlement hot path.

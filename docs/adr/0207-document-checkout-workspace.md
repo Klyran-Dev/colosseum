@@ -63,7 +63,7 @@ labels withholding as filing, reporting, legal compliance, or tax advice.
 
 ## Consequences
 
-Document payment becomes discoverable and supportable as a Tier-1 workflow,
+Document payment becomes discoverable and supportable as a Tax Engine workflow,
 while the attestation issuer and Solana finality boundaries remain explicit.
 The workspace does not broaden document semantics: quantity payment, partial
 line re-rating, multi-document cart aggregation, and legal filing workflows

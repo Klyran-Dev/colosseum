@@ -1,14 +1,14 @@
-# Tier-1 product standard
+# Tax Engine product standard
 
 ## Definition
 
-Tier-1 means the product is trusted financial infrastructure, not merely functioning software. It must be safe to operate under normal load, degraded dependencies, adversarial input, rule changes, operator error, and incident response. It must be explainable to users, reviewers, auditors, and public contributors.
+Tax Engine is this repository's internal product-quality and evidence standard for trusted financial infrastructure, not an external certification and not a statement that the current implementation has met every requirement. A Tax Engine release must be safe to operate under normal load, degraded dependencies, adversarial input, rule changes, operator error, and incident response. It must be explainable to users, reviewers, auditors, and public contributors.
 
-Tier-1 does not mean universal legal coverage by default. Coverage is jurisdiction-, tax-regime-, product-, and effective-date-specific, with provenance and an explicit review status.
+Tax Engine does not mean universal legal coverage by default. Coverage is jurisdiction-, tax-regime-, product-, and effective-date-specific, with provenance and an explicit review status.
 
 ## Product pillars and evidence
 
-| Pillar | Tier-1 requirement | Evidence required |
+| Pillar | Tax Engine requirement | Evidence required |
 | --- | --- | --- |
 | Financial integrity | Amount conservation, atomic settlement, deterministic tax, no unauthorized vault movement | On-chain invariants, property tests, audit, reconciliation reports |
 | Tax coverage | Explicit jurisdiction/rule coverage, provenance, effective dates, scenario vectors, legal/tax ownership | Published coverage matrix, rule bundles, review history, replayable calculations |

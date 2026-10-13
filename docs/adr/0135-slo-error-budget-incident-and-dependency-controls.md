@@ -9,7 +9,7 @@
 ADR-0021 establishes SLOs and error budgets as release controls, but the
 repository did not yet contain a single operational contract with explicit
 targets, error-budget policy, incident severity, recovery objectives, service
-ownership, and dependency exit paths. A Tier-1 financial system cannot leave
+ownership, and dependency exit paths. A Tax Engine financial system cannot leave
 those decisions implicit in dashboards or deployment-specific tribal
 knowledge.
 

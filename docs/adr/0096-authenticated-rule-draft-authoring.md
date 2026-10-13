@@ -33,7 +33,7 @@ Add `POST /v1/tax/rules` as the only product draft-creation boundary. It:
   rejects key reuse or tenant/external-id/version conflicts.
 
 The governance UI exposes a structured metadata form plus a canonical JSON
-editor for the full Tier-1 rule graph. It loads the resulting server-owned
+editor for the full Tax Engine rule graph. It loads the resulting server-owned
 UUIDv7 snapshot before enabling lifecycle actions. Client-side JSON parsing is
 only an input ergonomics check; server validation and persisted evidence remain
 authoritative.

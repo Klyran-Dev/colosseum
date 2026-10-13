@@ -50,7 +50,7 @@ describe("governance workbench submission boundary", () => {
     expect(simulation?.hasAttribute("open")).toBe(false);
     fireEvent.click(screen.getByText("Try the saved rule", { exact: true }));
     expect(simulation?.hasAttribute("open")).toBe(true);
-    expect(screen.queryByText("Structured Tier-1 authoring")).toBeNull();
+    expect(screen.queryByText("Structured Tax Engine authoring")).toBeNull();
     expect(screen.queryByText("Rule components and semantics")).toBeNull();
     expect(screen.queryByText(/canonical rule document from explicit controls/i)).toBeNull();
   });

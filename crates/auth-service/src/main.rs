@@ -19,6 +19,11 @@ use axum::{
 };
 use deadpool_postgres::{Config as PoolConfig, ManagerConfig, Pool, RecyclingMethod, Runtime};
 use ed25519_dalek::SigningKey;
+use lettre::{
+    AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
+    message::{Mailbox, MultiPart},
+    transport::smtp::authentication::Credentials,
+};
 use reqwest::{Url, header};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -47,6 +52,12 @@ const DEFAULT_AUDIENCE: &str = "tax-api";
 const DEFAULT_LOCAL_INBOX: &str = "/var/lib/auth/inbox";
 const DEFAULT_PROVIDER_ENDPOINT: &str = "https://api.resend.com/emails";
 const DEFAULT_LOCAL_APP_BASE_URL: &str = "http://localhost:8088";
+const DEFAULT_SMTP_HOST: &str = "smtp-relay.gmail.com";
+const DEFAULT_SMTP_PORT: &str = "587";
+const DEFAULT_SMTP_SECURITY: &str = "starttls";
+const DEFAULT_SMTP_AUTHENTICATION: &str = "app-password";
+const DEFAULT_SMTP_TIMEOUT_MILLIS: u64 = 10_000;
+const MAX_SMTP_TIMEOUT_MILLIS: u64 = 30_000;
 const MAX_BODY_BYTES: usize = 8 * 1024;
 const MAX_PROVIDER_ENDPOINT_BYTES: usize = 2 * 1024;
 const MAX_PROVIDER_API_KEY_BYTES: usize = 4 * 1024;
@@ -63,6 +74,7 @@ struct AppState {
     policy: OtpPolicy,
     otp_pepper: Arc<[u8]>,
     self_signup: bool,
+    self_signup_daily_limit: i64,
     default_scopes: Arc<[String]>,
     administrator_scopes: Arc<[String]>,
     moderator_scopes: Arc<[String]>,
@@ -83,8 +95,14 @@ enum ServiceError {
     BadRequest,
     #[error("authentication failed")]
     AuthenticationFailed,
+    #[error("account setup is required")]
+    AccountSetupRequired,
+    #[error("an account already exists for this email")]
+    AccountExists,
     #[error("request rate limited")]
     RateLimited,
+    #[error("daily self-signup limit reached")]
+    SelfSignupDailyLimitReached,
     #[error("authentication service unavailable")]
     Unavailable,
     #[error("database operation failed")]
@@ -109,6 +127,19 @@ enum ServiceError {
 
 impl IntoResponse for ServiceError {
     fn into_response(self) -> Response {
+        let next_action = match &self {
+            Self::AccountSetupRequired => Some("signup"),
+            Self::AccountExists => Some("signin"),
+            _ => None,
+        };
+        let retryable = matches!(
+            &self,
+            Self::AuthenticationFailed
+                | Self::RateLimited
+                | Self::SelfSignupDailyLimitReached
+                | Self::Unavailable
+                | Self::EmailDelivery
+        );
         let (status, code, message) = match self {
             Self::BadRequest => (
                 StatusCode::BAD_REQUEST,
@@ -119,6 +150,16 @@ impl IntoResponse for ServiceError {
                 StatusCode::UNAUTHORIZED,
                 "AUTHENTICATION_FAILED",
                 "Authentication failed.",
+            ),
+            Self::AccountSetupRequired => (
+                StatusCode::CONFLICT,
+                "ACCOUNT_SETUP_REQUIRED",
+                "This account has not been set up yet. Choose Create an account to finish setup first.",
+            ),
+            Self::AccountExists => (
+                StatusCode::CONFLICT,
+                "ACCOUNT_EXISTS",
+                "An account already exists for this email. Start sign-in instead.",
             ),
             Self::Forbidden => (
                 StatusCode::FORBIDDEN,
@@ -150,6 +191,11 @@ impl IntoResponse for ServiceError {
                 "RATE_LIMITED",
                 "Try again later.",
             ),
+            Self::SelfSignupDailyLimitReached => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "SELF_SIGNUP_DAILY_LIMIT_REACHED",
+                "New account creation is temporarily full for today. Please try again tomorrow.",
+            ),
             Self::Unavailable | Self::EmailDelivery => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "AUTHENTICATION_UNAVAILABLE",
@@ -161,10 +207,14 @@ impl IntoResponse for ServiceError {
                 "Authentication is temporarily unavailable.",
             ),
         };
+        let mut body = json!({ "error": code, "message": message, "retryable": retryable });
+        if let Some(next_action) = next_action {
+            body["next_action"] = json!(next_action);
+        }
         (
             status,
             [(CONTENT_TYPE, "application/json")],
-            axum::Json(json!({ "error": code, "message": message })),
+            axum::Json(body),
         )
             .into_response()
     }
@@ -188,6 +238,55 @@ struct EmailVerificationRequest {
 struct InvitationRequest {
     email: String,
     role: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TenantProfileRequest {
+    display_name: String,
+}
+
+#[derive(Debug, Serialize)]
+struct TenantSetupStep {
+    id: &'static str,
+    label: &'static str,
+    status: &'static str,
+    action_path: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct TenantReadiness {
+    state: &'static str,
+    completed_steps: i32,
+    total_steps: i32,
+    steps: Vec<TenantSetupStep>,
+}
+
+#[derive(Debug, Serialize)]
+struct TenantContextResponse {
+    schema: &'static str,
+    tenant_id: Uuid,
+    display_name: String,
+    status: String,
+    readiness: TenantReadiness,
+}
+
+#[derive(Debug, Serialize)]
+struct TenantProfileMutationResponse {
+    schema: &'static str,
+    mutation_id: Uuid,
+    idempotent_replay: bool,
+    tenant_id: Uuid,
+    display_name: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AdministratorPromotionResponse {
+    schema: &'static str,
+    mutation_id: Uuid,
+    idempotent_replay: bool,
+    user_id: Uuid,
+    role: &'static str,
+    status: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -395,6 +494,10 @@ enum EmailError {
     ProviderRejected,
     #[error("provider response was invalid")]
     ProviderResponse,
+    #[error("SMTP transport failed")]
+    SmtpTransport,
+    #[error("SMTP message was invalid")]
+    SmtpMessage,
 }
 
 #[async_trait]
@@ -481,6 +584,33 @@ struct ProviderEmailSender {
     endpoint: Url,
     api_key: Arc<str>,
     from: Arc<str>,
+    app_base_url: Arc<str>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SmtpSecurity {
+    StartTls,
+    Tls,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SmtpAuthentication {
+    AppPassword,
+    IpAllowlist,
+}
+
+struct GoogleSmtpConfig {
+    host: String,
+    port: u16,
+    security: SmtpSecurity,
+    authentication: SmtpAuthentication,
+    username: Option<Arc<str>>,
+    password: Option<Arc<str>>,
+}
+
+struct GoogleSmtpEmailSender {
+    transport: Arc<AsyncSmtpTransport<Tokio1Executor>>,
+    from: Mailbox,
     app_base_url: Arc<str>,
 }
 
@@ -608,6 +738,91 @@ impl EmailSender for ProviderEmailSender {
     }
 }
 
+#[async_trait]
+impl EmailSender for GoogleSmtpEmailSender {
+    async fn send(&self, message: EmailMessage) -> Result<(), EmailError> {
+        let rendered = render_otp_email(&message.code);
+        let email = build_smtp_message(
+            &self.from,
+            &message.recipient,
+            "Your Solana Tax Protocol verification code",
+            rendered,
+        )?;
+        send_google_smtp_message(&self.transport, email).await
+    }
+
+    async fn send_invitation(&self, message: InvitationEmail) -> Result<(), EmailError> {
+        let rendered = render_invitation_email(
+            self.app_base_url.as_ref(),
+            message.invitation_id,
+            &message.role,
+        );
+        let email = build_smtp_message(
+            &self.from,
+            &message.recipient,
+            "You have been invited to Solana Tax Protocol",
+            rendered,
+        )?;
+        send_google_smtp_message(&self.transport, email).await
+    }
+}
+
+async fn send_google_smtp_message(
+    transport: &AsyncSmtpTransport<Tokio1Executor>,
+    email: Message,
+) -> Result<(), EmailError> {
+    match transport.send(email).await {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            warn!(
+                smtp_error_class = classify_smtp_error(&error),
+                "Google SMTP delivery failed"
+            );
+            Err(EmailError::SmtpTransport)
+        }
+    }
+}
+
+fn classify_smtp_error(error: &lettre::transport::smtp::Error) -> &'static str {
+    if error.is_timeout() {
+        "timeout"
+    } else if error.is_tls() {
+        "tls"
+    } else if error.is_permanent() {
+        "permanent_response"
+    } else if error.is_transient() {
+        "transient_response"
+    } else if error.is_response() {
+        "response"
+    } else if error.is_client() {
+        "client"
+    } else if error.is_transport_shutdown() {
+        "transport_shutdown"
+    } else {
+        "connection_or_network"
+    }
+}
+
+fn build_smtp_message(
+    from: &Mailbox,
+    recipient: &str,
+    subject: &str,
+    rendered: RenderedEmail,
+) -> Result<Message, EmailError> {
+    let to = recipient
+        .parse::<Mailbox>()
+        .map_err(|_| EmailError::SmtpMessage)?;
+    Message::builder()
+        .from(from.clone())
+        .to(to)
+        .subject(subject)
+        .multipart(MultiPart::alternative_plain_html(
+            rendered.text,
+            rendered.html,
+        ))
+        .map_err(|_| EmailError::SmtpMessage)
+}
+
 async fn read_provider_response(mut response: reqwest::Response) -> Result<Vec<u8>, EmailError> {
     let mut body = Vec::with_capacity(
         response
@@ -718,6 +933,62 @@ fn configured_local_nonnegative_seconds_from(
     if value < 0 {
         return Err(ServiceError::Configuration(format!(
             "{key} must be a non-negative integer"
+        )));
+    }
+    Ok(value)
+}
+
+fn configured_otp_rate_limit_window_seconds(
+    environment: &str,
+    default: i64,
+) -> Result<i64, ServiceError> {
+    let raw = env::var("AUTH_OTP_RATE_LIMIT_WINDOW_SECONDS").ok();
+    configured_otp_rate_limit_window_seconds_from(raw.as_deref(), default, environment)
+}
+
+fn configured_otp_rate_limit_window_seconds_from(
+    raw: Option<&str>,
+    default: i64,
+    environment: &str,
+) -> Result<i64, ServiceError> {
+    let value = raw
+        .map(|value| {
+            value.parse::<i64>().map_err(|_| {
+                ServiceError::Configuration(
+                    "AUTH_OTP_RATE_LIMIT_WINDOW_SECONDS must be a bounded integer".to_string(),
+                )
+            })
+        })
+        .transpose()?
+        .unwrap_or(default);
+    let minimum = if environment == "local" { 60 } else { 300 };
+    if !(minimum..=3600).contains(&value) {
+        return Err(ServiceError::Configuration(format!(
+            "AUTH_OTP_RATE_LIMIT_WINDOW_SECONDS must be between {minimum} and 3600 seconds"
+        )));
+    }
+    Ok(value)
+}
+
+fn configured_self_signup_daily_limit_from(
+    raw: Option<&str>,
+    default: i64,
+    environment: &str,
+) -> Result<i64, ServiceError> {
+    let value = raw
+        .map(|value| {
+            value.parse::<i64>().map_err(|_| {
+                ServiceError::Configuration(
+                    "AUTH_SELF_SIGNUP_DAILY_LIMIT must be a bounded integer".to_string(),
+                )
+            })
+        })
+        .transpose()?
+        .unwrap_or(default);
+    let minimum = if environment == "local" { 0 } else { 1 };
+    if !(minimum..=10_000).contains(&value) {
+        return Err(ServiceError::Configuration(format!(
+            "AUTH_SELF_SIGNUP_DAILY_LIMIT must be between {minimum} and 10000"
         )));
     }
     Ok(value)
@@ -890,7 +1161,7 @@ async fn role_catalog(
     }))
 }
 
-async fn require_admin(
+fn authenticated_principal(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<VerifiedAccessToken, ServiceError> {
@@ -902,11 +1173,293 @@ async fn require_admin(
         .strip_prefix("Bearer ")
         .filter(|value| !value.is_empty() && !value.contains(char::is_whitespace))
         .ok_or(ServiceError::AuthorizationFailed)?;
-    let now = now_unix()?;
-    let principal = state
+    state
         .issuer
-        .verify_access_token(token, now)
-        .map_err(|_| ServiceError::AuthorizationFailed)?;
+        .verify_access_token(token, now_unix()?)
+        .map_err(|_| ServiceError::AuthorizationFailed)
+}
+
+fn validate_tenant_display_name(value: &str) -> Result<String, ServiceError> {
+    let name = value.trim();
+    if name.is_empty()
+        || name.len() > 120
+        || name.chars().any(char::is_control)
+        || name.contains('\n')
+        || name.contains('\r')
+    {
+        return Err(ServiceError::BadRequest);
+    }
+    Ok(name.to_string())
+}
+
+fn tenant_step_status(complete: bool, active: bool) -> &'static str {
+    if !active {
+        "blocked"
+    } else if complete {
+        "complete"
+    } else {
+        "pending"
+    }
+}
+
+async fn tenant_context(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ServiceError> {
+    let principal = authenticated_principal(&state, &headers)?;
+    let client = state
+        .pool
+        .get()
+        .await
+        .map_err(|_| ServiceError::Unavailable)?;
+    let row = client
+        .query_opt(
+            "SELECT t.display_name, t.status,\
+                    (t.display_name <> 'Untitled workspace'),\
+                    EXISTS (SELECT 1 FROM settlement_routes sr\
+                            WHERE sr.merchant_id = t.id\
+                              AND sr.status = 'active'\
+                              AND sr.verification_digest IS NOT NULL\
+                              AND sr.effective_from <= now()\
+                              AND (sr.effective_until IS NULL OR sr.effective_until > now())),\
+                    EXISTS (SELECT 1\
+                            FROM jurisdiction_policies jp\
+                            JOIN rule_sets rs ON rs.id = jp.rule_set_id AND rs.merchant_id = jp.merchant_id\
+                            WHERE jp.merchant_id = t.id\
+                              AND jp.status = 'published'\
+                              AND rs.status = 'published'\
+                              AND jp.effective_from <= now()\
+                              AND (jp.effective_until IS NULL OR jp.effective_until > now())\
+                              AND rs.effective_from <= now()\
+                              AND (rs.effective_until IS NULL OR rs.effective_until > now()))\
+             FROM auth_tenants t WHERE t.id = $1",
+            &[&principal.merchant_id],
+        )
+        .await
+        .map_err(|error| {
+            error!(error = ?error, "tenant context query failed");
+            ServiceError::Database(error)
+        })?
+        .ok_or(ServiceError::NotFound)?;
+    let display_name: String = row.get(0);
+    let status: String = row.get(1);
+    let active = status == "active";
+    let profile_complete: bool = row.get(2);
+    let route_complete: bool = row.get(3);
+    let policy_complete: bool = row.get(4);
+    let complete = [profile_complete, route_complete, policy_complete]
+        .into_iter()
+        .filter(|value| *value)
+        .count() as i32;
+    let steps = vec![
+        TenantSetupStep {
+            id: "workspace_profile",
+            label: "Name your workspace",
+            status: tenant_step_status(profile_complete, active),
+            action_path: "/admin/settings",
+        },
+        TenantSetupStep {
+            id: "settlement_route",
+            label: "Verify a settlement route",
+            status: tenant_step_status(route_complete, active),
+            action_path: "/admin/settlements",
+        },
+        TenantSetupStep {
+            id: "tax_policy",
+            label: "Publish a tax policy",
+            status: tenant_step_status(policy_complete, active),
+            action_path: "/admin/tax/rules",
+        },
+    ];
+    let state_name = if !active {
+        "blocked"
+    } else if complete == 0 {
+        "not_started"
+    } else if complete == 3 {
+        "ready"
+    } else {
+        "in_progress"
+    };
+    Ok(axum::Json(TenantContextResponse {
+        schema: "auth-tenant-context/v1",
+        tenant_id: principal.merchant_id,
+        display_name,
+        status,
+        readiness: TenantReadiness {
+            state: state_name,
+            completed_steps: complete,
+            total_steps: 3,
+            steps,
+        },
+    }))
+}
+
+async fn update_tenant_profile(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<TenantProfileRequest>,
+) -> Result<impl IntoResponse, ServiceError> {
+    let principal = require_admin(&state, &headers).await?;
+    let display_name = validate_tenant_display_name(&request.display_name)?;
+    let idempotency_key = parse_idempotency_key(&headers)?;
+    let mutation_id = Uuid::now_v7();
+    let mut client = state
+        .pool
+        .get()
+        .await
+        .map_err(|_| ServiceError::Unavailable)?;
+    let transaction = client.transaction().await.map_err(ServiceError::Database)?;
+    if let Some(existing) = transaction
+        .query_opt(
+            "SELECT id, merchant_id, display_name FROM auth_tenant_profile_mutations WHERE idempotency_key = $1 FOR UPDATE",
+            &[&idempotency_key],
+        )
+        .await
+        .map_err(ServiceError::Database)?
+    {
+        let existing_tenant: Uuid = existing.get(1);
+        let existing_name: String = existing.get(2);
+        if existing_tenant != principal.merchant_id || existing_name != display_name {
+            return Err(ServiceError::Conflict);
+        }
+        let existing_id: Uuid = existing.get(0);
+        transaction.commit().await.map_err(ServiceError::Database)?;
+        return Ok(axum::Json(TenantProfileMutationResponse {
+            schema: "auth-tenant-profile-mutation/v1",
+            mutation_id: existing_id,
+            idempotent_replay: true,
+            tenant_id: principal.merchant_id,
+            display_name,
+        }));
+    }
+    let actor = transaction
+        .query_opt(
+            "SELECT status FROM auth_users WHERE id = $1 AND merchant_id = $2 FOR UPDATE",
+            &[&principal.subject, &principal.merchant_id],
+        )
+        .await
+        .map_err(ServiceError::Database)?;
+    if actor.is_none_or(|row| row.get::<_, String>(0) != "active") {
+        return Err(ServiceError::Forbidden);
+    }
+    let updated = transaction
+        .execute(
+            "UPDATE auth_tenants SET display_name = $1, updated_at = now() WHERE id = $2 AND status = 'active'",
+            &[&display_name, &principal.merchant_id],
+        )
+        .await
+        .map_err(ServiceError::Database)?;
+    if updated != 1 {
+        return Err(ServiceError::Forbidden);
+    }
+    transaction
+        .execute(
+            "INSERT INTO auth_tenant_profile_mutations (id, idempotency_key, actor_id, merchant_id, display_name) VALUES ($1, $2, $3, $4, $5)",
+            &[&mutation_id, &idempotency_key, &principal.subject, &principal.merchant_id, &display_name],
+        )
+        .await
+        .map_err(ServiceError::Database)?;
+    transaction
+        .execute(
+            "INSERT INTO auth_audit_events (event_type, subject_id, outcome, metadata) VALUES ('tenant_profile_updated', $1, 'accepted', $2)",
+            &[&principal.subject, &json!({ "merchant_id": principal.merchant_id, "mutation_id": mutation_id })],
+        )
+        .await
+        .map_err(ServiceError::Database)?;
+    transaction.commit().await.map_err(ServiceError::Database)?;
+    Ok(axum::Json(TenantProfileMutationResponse {
+        schema: "auth-tenant-profile-mutation/v1",
+        mutation_id,
+        idempotent_replay: false,
+        tenant_id: principal.merchant_id,
+        display_name,
+    }))
+}
+
+async fn promote_administrator(
+    State(state): State<AppState>,
+    Path(user_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ServiceError> {
+    let principal = require_admin(&state, &headers).await?;
+    let idempotency_key = parse_idempotency_key(&headers)?;
+    let mutation_id = Uuid::now_v7();
+    let mut client = state
+        .pool
+        .get()
+        .await
+        .map_err(|_| ServiceError::Unavailable)?;
+    let transaction = client.transaction().await.map_err(ServiceError::Database)?;
+    if let Some(existing) = transaction
+        .query_opt(
+            "SELECT id, target_id FROM auth_administrator_mutations WHERE idempotency_key = $1 FOR UPDATE",
+            &[&idempotency_key],
+        )
+        .await
+        .map_err(ServiceError::Database)?
+    {
+        if existing.get::<_, Uuid>(1) != user_id {
+            return Err(ServiceError::Conflict);
+        }
+        let existing_id: Uuid = existing.get(0);
+        transaction.commit().await.map_err(ServiceError::Database)?;
+        return Ok(axum::Json(AdministratorPromotionResponse {
+            schema: "auth-administrator-promotion/v1",
+            mutation_id: existing_id,
+            idempotent_replay: true,
+            user_id,
+            role: "administrator",
+            status: "accepted",
+        }));
+    }
+    let target = transaction
+        .query_opt(
+            "SELECT status, merchant_id FROM auth_users WHERE id = $1 FOR UPDATE",
+            &[&user_id],
+        )
+        .await
+        .map_err(ServiceError::Database)?
+        .ok_or(ServiceError::NotFound)?;
+    if target.get::<_, String>(0) != "active" || target.get::<_, Uuid>(1) != principal.merchant_id {
+        return Err(ServiceError::NotFound);
+    }
+    transaction
+        .execute(
+            "INSERT INTO auth_user_roles (user_id, role, status, assigned_by) VALUES ($1, 'administrator', 'active', $2) ON CONFLICT (user_id, role) DO UPDATE SET status = 'active', assigned_at = now(), assigned_by = EXCLUDED.assigned_by",
+            &[&user_id, &principal.subject],
+        )
+        .await
+        .map_err(ServiceError::Database)?;
+    transaction
+        .execute(
+            "INSERT INTO auth_administrator_mutations (id, idempotency_key, actor_id, target_id, merchant_id, action) VALUES ($1, $2, $3, $4, $5, 'promote')",
+            &[&mutation_id, &idempotency_key, &principal.subject, &user_id, &principal.merchant_id],
+        )
+        .await
+        .map_err(ServiceError::Database)?;
+    transaction
+        .execute(
+            "INSERT INTO auth_audit_events (event_type, subject_id, outcome, metadata) VALUES ('administrator_promoted', $1, 'accepted', $2)",
+            &[&user_id, &json!({ "actor_id": principal.subject, "merchant_id": principal.merchant_id, "mutation_id": mutation_id })],
+        )
+        .await
+        .map_err(ServiceError::Database)?;
+    transaction.commit().await.map_err(ServiceError::Database)?;
+    Ok(axum::Json(AdministratorPromotionResponse {
+        schema: "auth-administrator-promotion/v1",
+        mutation_id,
+        idempotent_replay: false,
+        user_id,
+        role: "administrator",
+        status: "accepted",
+    }))
+}
+
+async fn require_admin(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<VerifiedAccessToken, ServiceError> {
+    let principal = authenticated_principal(state, headers)?;
     if !principal
         .scopes
         .iter()
@@ -925,6 +1478,7 @@ async fn require_admin(
     let durable_admin = client
         .query_opt(
             "SELECT u.status FROM auth_users u WHERE u.id = $1 AND u.merchant_id = $2 \
+             AND EXISTS (SELECT 1 FROM auth_tenants t WHERE t.id = u.merchant_id AND t.status = 'active') \
              AND EXISTS (SELECT 1 FROM auth_user_roles r WHERE r.user_id = u.id AND r.role = 'administrator' AND r.status = 'active')",
             &[&principal.subject, &principal.merchant_id],
         )
@@ -1518,24 +2072,24 @@ async fn request_email(
     };
     let email_count: i64 = transaction
         .query_one(
-            "SELECT count(*) FROM auth_otp_challenges WHERE email_normalized = $1 AND created_at >= now() - interval '15 minutes'",
-            &[&email],
+            "SELECT count(*) FROM auth_otp_challenges WHERE email_normalized = $1 AND created_at >= now() - ($2::bigint * interval '1 second')",
+            &[&email, &state.policy.rate_limit_window_seconds],
         )
         .await
         .map_err(ServiceError::Database)?
         .get(0);
     let source_count: i64 = transaction
         .query_one(
-            "SELECT count(*) FROM auth_otp_challenges WHERE source_digest = $1 AND created_at >= now() - interval '15 minutes'",
-            &[&source],
+            "SELECT count(*) FROM auth_otp_challenges WHERE source_digest = $1 AND created_at >= now() - ($2::bigint * interval '1 second')",
+            &[&source, &state.policy.rate_limit_window_seconds],
         )
         .await
         .map_err(ServiceError::Database)?
         .get(0);
     let latest_email: Option<SystemTime> = transaction
         .query_one(
-            "SELECT max(created_at) FROM auth_otp_challenges WHERE email_normalized = $1 AND created_at >= now() - interval '15 minutes'",
-            &[&email],
+            "SELECT max(created_at) FROM auth_otp_challenges WHERE email_normalized = $1 AND created_at >= now() - ($2::bigint * interval '1 second')",
+            &[&email, &state.policy.rate_limit_window_seconds],
         )
         .await
         .map_err(ServiceError::Database)?
@@ -1652,6 +2206,47 @@ fn signup_provisioning_allowed(
     self_signup || has_pending_invitation || initial_admin_candidate
 }
 
+fn tenant_owner_candidate(open_self_signup: bool, initial_admin_candidate: bool) -> bool {
+    open_self_signup || initial_admin_candidate
+}
+
+fn account_flow_error(
+    intent: AuthIntent,
+    has_existing_user: bool,
+    initial_admin_email_matches: bool,
+) -> Option<ServiceError> {
+    match (intent, has_existing_user, initial_admin_email_matches) {
+        (AuthIntent::SignIn, false, true) => Some(ServiceError::AccountSetupRequired),
+        (AuthIntent::SignIn, false, false) => Some(ServiceError::AuthenticationFailed),
+        (AuthIntent::SignUp, true, _) => Some(ServiceError::AccountExists),
+        _ => None,
+    }
+}
+
+async fn consume_verified_challenge(
+    transaction: &tokio_postgres::Transaction<'_>,
+    challenge_id: Uuid,
+    subject: Option<Uuid>,
+    terminal_outcome: &str,
+) -> Result<(), ServiceError> {
+    transaction
+        .execute(
+            "UPDATE auth_otp_challenges SET status = 'consumed', consumed_at = now() WHERE id = $1 AND status = 'sent'",
+            &[&challenge_id],
+        )
+        .await
+        .map_err(ServiceError::Database)?;
+    let metadata = json!({ "terminal_outcome": terminal_outcome });
+    transaction
+        .execute(
+            "INSERT INTO auth_audit_events (event_type, subject_id, challenge_id, outcome, metadata) VALUES ('otp_verified', $1, $2, 'accepted', $3)",
+            &[&subject, &challenge_id, &metadata],
+        )
+        .await
+        .map_err(ServiceError::Database)?;
+    Ok(())
+}
+
 async fn verify_email(
     State(state): State<AppState>,
     axum::Json(request): axum::Json<EmailVerificationRequest>,
@@ -1746,7 +2341,12 @@ async fn verify_email(
     let requested_intent = match stored_intent.as_str() {
         "signin" => AuthIntent::SignIn,
         "signup" => AuthIntent::SignUp,
-        _ => return Err(ServiceError::AuthenticationFailed),
+        _ => {
+            consume_verified_challenge(&transaction, request.challenge_id, None, "invalid_intent")
+                .await?;
+            transaction.commit().await.map_err(ServiceError::Database)?;
+            return Err(ServiceError::AuthenticationFailed);
+        }
     };
     let pending_invitation = if requested_intent == AuthIntent::SignUp {
         let invitation = if let Some(invitation_id) = bound_invitation_id {
@@ -1767,6 +2367,14 @@ async fn verify_email(
                 .map_err(ServiceError::Database)?
         };
         if bound_invitation_id.is_some() && invitation.is_none() {
+            consume_verified_challenge(
+                &transaction,
+                request.challenge_id,
+                None,
+                "invitation_unavailable",
+            )
+            .await?;
+            transaction.commit().await.map_err(ServiceError::Database)?;
             return Err(ServiceError::AuthenticationFailed);
         }
         if let Some(invitation) = invitation {
@@ -1811,12 +2419,39 @@ async fn verify_email(
     } else {
         false
     };
-    let (subject, merchant_id, provisioned, accepted_invitation) = if let Some(user) = existing {
-        if requested_intent == AuthIntent::SignUp {
-            return Err(ServiceError::AuthenticationFailed);
+    let (subject, merchant_id, provisioned, accepted_invitation, provisioning_mode) = if let Some(
+        user,
+    ) =
+        existing
+    {
+        if let Some(error) = account_flow_error(requested_intent, true, false) {
+            let terminal_outcome = if matches!(&error, ServiceError::AccountExists) {
+                "account_exists"
+            } else {
+                "account_setup_required"
+            };
+            let subject: Uuid = user.get(0);
+            consume_verified_challenge(
+                &transaction,
+                request.challenge_id,
+                Some(subject),
+                terminal_outcome,
+            )
+            .await?;
+            transaction.commit().await.map_err(ServiceError::Database)?;
+            return Err(error);
         }
         let status: String = user.get(2);
         if status != "active" {
+            let subject: Uuid = user.get(0);
+            consume_verified_challenge(
+                &transaction,
+                request.challenge_id,
+                Some(subject),
+                "account_inactive",
+            )
+            .await?;
+            transaction.commit().await.map_err(ServiceError::Database)?;
             return Err(ServiceError::AuthenticationFailed);
         }
         let subject: Uuid = user.get(0);
@@ -1828,20 +2463,77 @@ async fn verify_email(
             )
             .await
             .map_err(ServiceError::Database)?;
-        (subject, merchant_id, false, None)
+        (subject, merchant_id, false, None, "existing")
     } else {
-        if requested_intent != AuthIntent::SignUp {
-            return Err(ServiceError::AuthenticationFailed);
+        if let Some(error) = account_flow_error(
+            requested_intent,
+            false,
+            state.initial_admin_email.as_deref() == Some(email.as_str()),
+        ) {
+            let terminal_outcome = if matches!(&error, ServiceError::AccountSetupRequired) {
+                "account_setup_required"
+            } else {
+                "authentication_failed"
+            };
+            consume_verified_challenge(&transaction, request.challenge_id, None, terminal_outcome)
+                .await?;
+            transaction.commit().await.map_err(ServiceError::Database)?;
+            return Err(error);
         }
         if !signup_provisioning_allowed(
             state.self_signup,
             pending_invitation.is_some(),
             initial_admin_candidate,
         ) {
+            consume_verified_challenge(
+                &transaction,
+                request.challenge_id,
+                None,
+                "provisioning_not_allowed",
+            )
+            .await?;
             transaction.commit().await.map_err(ServiceError::Database)?;
             return Err(ServiceError::AuthenticationFailed);
         }
+        let open_self_signup =
+            state.self_signup && pending_invitation.is_none() && !initial_admin_candidate;
+        if open_self_signup {
+            transaction
+                .query_one(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 522))",
+                    &[&"auth:self-signup-daily"],
+                )
+                .await
+                .map_err(ServiceError::Database)?;
+            let daily_count: i64 = transaction
+                .query_one(
+                    "SELECT count(*) FROM auth_audit_events WHERE event_type = 'user_provisioned' AND occurred_at >= date_trunc('day', timezone('UTC', now())) AT TIME ZONE 'UTC' AND metadata->>'provisioning' = 'self_signup'",
+                    &[],
+                )
+                .await
+                .map_err(ServiceError::Database)?
+                .get(0);
+            if daily_count >= state.self_signup_daily_limit {
+                consume_verified_challenge(
+                    &transaction,
+                    request.challenge_id,
+                    None,
+                    "self_signup_daily_limit_reached",
+                )
+                .await?;
+                transaction.commit().await.map_err(ServiceError::Database)?;
+                return Err(ServiceError::SelfSignupDailyLimitReached);
+            }
+        }
         let subject = Uuid::now_v7();
+        let owner_candidate = tenant_owner_candidate(open_self_signup, initial_admin_candidate);
+        let provisioning_mode = if pending_invitation.is_some() {
+            "invitation"
+        } else if initial_admin_candidate {
+            "initial_admin"
+        } else {
+            "self_signup"
+        };
         let (merchant_id, invitation) = pending_invitation
             .map(|(invitation_id, merchant_id, role, invited_by)| {
                 (merchant_id, Some((invitation_id, role, invited_by)))
@@ -1849,15 +2541,22 @@ async fn verify_email(
             .unwrap_or((Uuid::now_v7(), None));
         transaction
             .execute(
+                "INSERT INTO auth_tenants (id) VALUES ($1) ON CONFLICT (id) DO NOTHING",
+                &[&merchant_id],
+            )
+            .await
+            .map_err(ServiceError::Database)?;
+        transaction
+            .execute(
                 "INSERT INTO auth_users (id, email_normalized, merchant_id) VALUES ($1, $2, $3)",
                 &[&subject, &email, &merchant_id],
             )
             .await
             .map_err(ServiceError::Database)?;
-        if initial_admin_candidate
-            || state.local_bootstrap_admin_email.as_deref() == Some(email.as_str())
-        {
-            let reason = if initial_admin_candidate {
+        if owner_candidate || state.local_bootstrap_admin_email.as_deref() == Some(email.as_str()) {
+            let reason = if open_self_signup {
+                "tenant_owner_self_signup"
+            } else if initial_admin_candidate {
                 "configured_initial_admin"
             } else {
                 "local_bootstrap"
@@ -1877,7 +2576,7 @@ async fn verify_email(
                 .await
                 .map_err(ServiceError::Database)?;
         }
-        (subject, merchant_id, true, invitation)
+        (subject, merchant_id, true, invitation, provisioning_mode)
     };
     if let Some((invitation_id, invited_role, invited_by)) = accepted_invitation {
         transaction
@@ -1925,20 +2624,23 @@ async fn verify_email(
             roles.push(role);
         }
     }
-    transaction
-        .execute(
-            "UPDATE auth_otp_challenges SET status = 'consumed', consumed_at = now() WHERE id = $1",
-            &[&request.challenge_id],
-        )
-        .await
-        .map_err(ServiceError::Database)?;
-    transaction
-        .execute("INSERT INTO auth_audit_events (event_type, subject_id, challenge_id, outcome) VALUES ('otp_verified', $1, $2, 'accepted')", &[&subject, &request.challenge_id])
-        .await
-        .map_err(ServiceError::Database)?;
+    consume_verified_challenge(
+        &transaction,
+        request.challenge_id,
+        Some(subject),
+        if provisioned {
+            "provisioned"
+        } else {
+            "session_issued"
+        },
+    )
+    .await?;
     if provisioned {
         transaction
-            .execute("INSERT INTO auth_audit_events (event_type, subject_id, outcome) VALUES ('user_provisioned', $1, 'accepted')", &[&subject])
+            .execute(
+                "INSERT INTO auth_audit_events (event_type, subject_id, outcome, metadata) VALUES ('user_provisioned', $1, 'accepted', $2)",
+                &[&subject, &json!({ "provisioning": provisioning_mode })],
+            )
             .await
             .map_err(ServiceError::Database)?;
     }
@@ -2116,6 +2818,187 @@ fn configured_provider_timeout(environment: &str) -> Result<Duration, ServiceErr
     }
 }
 
+fn configured_smtp_timeout(environment: &str) -> Result<Duration, ServiceError> {
+    let raw = env::var("AUTH_EMAIL_SMTP_TIMEOUT_MILLIS")
+        .unwrap_or_else(|_| DEFAULT_SMTP_TIMEOUT_MILLIS.to_string());
+    let millis = raw.parse::<u64>().map_err(|_| {
+        ServiceError::Configuration(
+            "AUTH_EMAIL_SMTP_TIMEOUT_MILLIS must be a bounded integer".to_string(),
+        )
+    })?;
+    if millis == 0 || millis > MAX_SMTP_TIMEOUT_MILLIS {
+        return Err(ServiceError::Configuration(
+            "AUTH_EMAIL_SMTP_TIMEOUT_MILLIS is outside its bounded range".to_string(),
+        ));
+    }
+    if matches!(environment, "local" | "staging" | "production") {
+        Ok(Duration::from_millis(millis))
+    } else {
+        Err(ServiceError::Configuration(
+            "AUTH_ENV must be local, staging, or production".to_string(),
+        ))
+    }
+}
+
+fn parse_google_smtp_config(
+    environment: &str,
+    host: Option<&str>,
+    port: Option<&str>,
+    security: Option<&str>,
+    authentication: Option<&str>,
+    username: Option<&str>,
+    password: Option<&str>,
+) -> Result<GoogleSmtpConfig, ServiceError> {
+    let authentication = match authentication.unwrap_or(DEFAULT_SMTP_AUTHENTICATION) {
+        "app-password" => SmtpAuthentication::AppPassword,
+        "ip-allowlist" => SmtpAuthentication::IpAllowlist,
+        _ => {
+            return Err(ServiceError::Configuration(
+                "AUTH_EMAIL_SMTP_AUTH must be app-password or ip-allowlist".to_string(),
+            ));
+        }
+    };
+    let default_host = match authentication {
+        SmtpAuthentication::AppPassword => "smtp.gmail.com",
+        SmtpAuthentication::IpAllowlist => DEFAULT_SMTP_HOST,
+    };
+    let host = host.unwrap_or(default_host);
+    validate_provider_value(host, "AUTH_EMAIL_SMTP_HOST", 253)?;
+    if host.chars().any(|character| {
+        character.is_whitespace() || matches!(character, '/' | '\\' | ':' | '@' | '?' | '#')
+    }) {
+        return Err(ServiceError::Configuration(
+            "AUTH_EMAIL_SMTP_HOST must be a DNS host name".to_string(),
+        ));
+    }
+    let port = port
+        .unwrap_or(DEFAULT_SMTP_PORT)
+        .parse::<u16>()
+        .map_err(|_| {
+            ServiceError::Configuration("AUTH_EMAIL_SMTP_PORT must be a valid port".to_string())
+        })?;
+    let security = match security.unwrap_or(DEFAULT_SMTP_SECURITY) {
+        "starttls" => SmtpSecurity::StartTls,
+        "tls" => SmtpSecurity::Tls,
+        _ => {
+            return Err(ServiceError::Configuration(
+                "AUTH_EMAIL_SMTP_SECURITY must be starttls or tls".to_string(),
+            ));
+        }
+    };
+    match security {
+        SmtpSecurity::StartTls if !matches!(port, 25 | 587) => {
+            return Err(ServiceError::Configuration(
+                "AUTH_EMAIL_SMTP_PORT must be 25 or 587 for starttls".to_string(),
+            ));
+        }
+        SmtpSecurity::Tls if port != 465 => {
+            return Err(ServiceError::Configuration(
+                "AUTH_EMAIL_SMTP_PORT must be 465 for implicit TLS".to_string(),
+            ));
+        }
+        _ => {}
+    }
+    if environment != "local" && matches!(security, SmtpSecurity::StartTls) && port == 25 {
+        return Err(ServiceError::Configuration(
+            "non-local Google SMTP must use authenticated submission port 587 or implicit TLS"
+                .to_string(),
+        ));
+    }
+    let username = username
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string);
+    let password = password
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string);
+    match authentication {
+        SmtpAuthentication::AppPassword => {
+            let username_value = username.as_deref().ok_or_else(|| {
+                ServiceError::Configuration(
+                    "AUTH_EMAIL_SMTP_USERNAME is required for app-password authentication"
+                        .to_string(),
+                )
+            })?;
+            validate_provider_value(username_value, "AUTH_EMAIL_SMTP_USERNAME", 320)?;
+            if username_value.parse::<Mailbox>().is_err() {
+                return Err(ServiceError::Configuration(
+                    "AUTH_EMAIL_SMTP_USERNAME must be a valid Workspace address".to_string(),
+                ));
+            }
+            let password_value = password.as_deref().ok_or_else(|| {
+                ServiceError::Configuration(
+                    "AUTH_EMAIL_SMTP_PASSWORD is required for app-password authentication"
+                        .to_string(),
+                )
+            })?;
+            validate_provider_value(password_value, "AUTH_EMAIL_SMTP_PASSWORD", 256)?;
+        }
+        SmtpAuthentication::IpAllowlist => {
+            if username.is_some() || password.is_some() {
+                return Err(ServiceError::Configuration(
+                    "SMTP IP-allowlist mode must not receive username or password".to_string(),
+                ));
+            }
+        }
+    }
+    Ok(GoogleSmtpConfig {
+        host: host.to_string(),
+        port,
+        security,
+        authentication,
+        username: username.map(Arc::from),
+        password: password.map(Arc::from),
+    })
+}
+
+fn build_google_smtp_sender(environment: &str) -> Result<Arc<dyn EmailSender>, ServiceError> {
+    let from = env::var("AUTH_EMAIL_FROM")
+        .map_err(|_| ServiceError::Configuration("AUTH_EMAIL_FROM is required".to_string()))?;
+    validate_provider_value(&from, "AUTH_EMAIL_FROM", MAX_PROVIDER_FROM_BYTES)?;
+    let from = from.parse::<Mailbox>().map_err(|_| {
+        ServiceError::Configuration("AUTH_EMAIL_FROM must be a valid mailbox address".to_string())
+    })?;
+    let app_base_url =
+        env::var("AUTH_APP_BASE_URL").unwrap_or_else(|_| DEFAULT_LOCAL_APP_BASE_URL.to_string());
+    let app_base_url = validate_app_base_url(&app_base_url, environment)?;
+    let config = parse_google_smtp_config(
+        environment,
+        env::var("AUTH_EMAIL_SMTP_HOST").ok().as_deref(),
+        env::var("AUTH_EMAIL_SMTP_PORT").ok().as_deref(),
+        env::var("AUTH_EMAIL_SMTP_SECURITY").ok().as_deref(),
+        env::var("AUTH_EMAIL_SMTP_AUTH").ok().as_deref(),
+        env::var("AUTH_EMAIL_SMTP_USERNAME").ok().as_deref(),
+        env::var("AUTH_EMAIL_SMTP_PASSWORD").ok().as_deref(),
+    )?;
+    let timeout = configured_smtp_timeout(environment)?;
+    let builder = match config.security {
+        SmtpSecurity::StartTls => {
+            AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.host).map_err(|_| {
+                ServiceError::Configuration("Google SMTP host is invalid".to_string())
+            })?
+        }
+        SmtpSecurity::Tls => AsyncSmtpTransport::<Tokio1Executor>::relay(&config.host)
+            .map_err(|_| ServiceError::Configuration("Google SMTP host is invalid".to_string()))?,
+    };
+    let builder = builder.port(config.port).timeout(Some(timeout));
+    let builder = match (config.authentication, config.username, config.password) {
+        (SmtpAuthentication::AppPassword, Some(username), Some(password)) => {
+            builder.credentials(Credentials::new(username.to_string(), password.to_string()))
+        }
+        (SmtpAuthentication::IpAllowlist, None, None) => builder,
+        _ => {
+            return Err(ServiceError::Configuration(
+                "Google SMTP credentials do not match the selected authentication mode".to_string(),
+            ));
+        }
+    };
+    Ok(Arc::new(GoogleSmtpEmailSender {
+        transport: Arc::new(builder.build::<Tokio1Executor>()),
+        from,
+        app_base_url: Arc::from(app_base_url),
+    }))
+}
+
 fn build_email_sender(
     environment: &str,
     email_mode: &str,
@@ -2131,9 +3014,12 @@ fn build_email_sender(
             directory: Arc::new(PathBuf::from(inbox_dir)),
         }));
     }
+    if email_mode == "google-smtp" {
+        return build_google_smtp_sender(environment);
+    }
     if email_mode != "provider" {
         return Err(ServiceError::Configuration(
-            "AUTH_EMAIL_MODE must be local-file or provider".to_string(),
+            "AUTH_EMAIL_MODE must be local-file, provider, or google-smtp".to_string(),
         ));
     }
     let endpoint = env::var("AUTH_EMAIL_PROVIDER_ENDPOINT")
@@ -2260,9 +3146,9 @@ fn build_state() -> Result<(AppState, SocketAddr), ServiceError> {
         ));
     }
     let email_mode = env::var("AUTH_EMAIL_MODE").unwrap_or_else(|_| "local-file".to_string());
-    if environment != "local" && email_mode != "provider" {
+    if environment != "local" && !matches!(email_mode.as_str(), "provider" | "google-smtp") {
         return Err(ServiceError::Configuration(
-            "AUTH_EMAIL_MODE=provider is required outside local".to_string(),
+            "AUTH_EMAIL_MODE must be provider or google-smtp outside local".to_string(),
         ));
     }
     let inbox_dir =
@@ -2272,11 +3158,11 @@ fn build_state() -> Result<(AppState, SocketAddr), ServiceError> {
         &env::var("AUTH_SELF_SIGNUP").unwrap_or_else(|_| (environment == "local").to_string()),
         "AUTH_SELF_SIGNUP",
     )?;
-    if environment != "local" && self_signup {
-        return Err(ServiceError::Configuration(
-            "AUTH_SELF_SIGNUP is local-only until provisioning is approved".to_string(),
-        ));
-    }
+    let self_signup_daily_limit = configured_self_signup_daily_limit_from(
+        env::var("AUTH_SELF_SIGNUP_DAILY_LIMIT").ok().as_deref(),
+        25,
+        &environment,
+    )?;
     let default_scopes = parse_list(
         &env::var("AUTH_DEFAULT_SCOPES").unwrap_or_else(|_| "tax:quote".to_string()),
         "AUTH_DEFAULT_SCOPES",
@@ -2320,6 +3206,10 @@ fn build_state() -> Result<(AppState, SocketAddr), ServiceError> {
         ));
     }
     let mut otp_policy = OtpPolicy::default();
+    otp_policy.rate_limit_window_seconds = configured_otp_rate_limit_window_seconds(
+        &environment,
+        otp_policy.rate_limit_window_seconds,
+    )?;
     otp_policy.resend_cooldown_seconds = configured_local_nonnegative_seconds(
         "AUTH_OTP_RESEND_COOLDOWN_SECONDS",
         otp_policy.resend_cooldown_seconds,
@@ -2334,6 +3224,7 @@ fn build_state() -> Result<(AppState, SocketAddr), ServiceError> {
             policy: otp_policy,
             otp_pepper: pepper.into(),
             self_signup,
+            self_signup_daily_limit,
             default_scopes,
             administrator_scopes,
             moderator_scopes,
@@ -2362,6 +3253,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/jwks.json", get(jwks))
+        .route("/v1/tenant/context", get(tenant_context))
+        .route("/v1/tenant/profile", post(update_tenant_profile))
         .route("/v1/admin/role-catalog", get(role_catalog))
         .route("/v1/auth/email/request", post(request_email))
         .route("/v1/auth/email/verify", post(verify_email))
@@ -2377,6 +3270,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .route(
             "/v1/admin/users/{user_id}/roles/{role}",
             post(assign_role).delete(revoke_role),
+        )
+        .route(
+            "/v1/admin/users/{user_id}/administrator",
+            post(promote_administrator),
         )
         .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES))
         .layer(
@@ -2464,6 +3361,42 @@ mod tests {
     }
 
     #[test]
+    fn accepts_five_minute_otp_rate_limit_window_for_staging() {
+        assert_eq!(
+            configured_otp_rate_limit_window_seconds_from(Some("300"), 900, "staging")
+                .expect("five-minute staging window is valid"),
+            300
+        );
+    }
+
+    #[test]
+    fn rejects_short_non_local_otp_rate_limit_windows() {
+        assert!(
+            configured_otp_rate_limit_window_seconds_from(Some("299"), 900, "production").is_err()
+        );
+        assert!(
+            configured_otp_rate_limit_window_seconds_from(Some("299"), 900, "staging").is_err()
+        );
+        assert!(configured_otp_rate_limit_window_seconds_from(Some("60"), 900, "local").is_ok());
+    }
+
+    #[test]
+    fn bounds_open_self_signup_daily_limit() {
+        assert_eq!(
+            configured_self_signup_daily_limit_from(Some("25"), 25, "staging")
+                .expect("staging signup quota is valid"),
+            25
+        );
+        assert!(configured_self_signup_daily_limit_from(Some("0"), 25, "staging").is_err());
+        assert!(configured_self_signup_daily_limit_from(Some("10001"), 25, "production").is_err());
+        assert_eq!(
+            configured_self_signup_daily_limit_from(Some("0"), 25, "local")
+                .expect("local may disable the quota"),
+            0
+        );
+    }
+
+    #[test]
     fn rejects_non_local_and_negative_otp_cooldown_overrides() {
         assert!(
             configured_local_nonnegative_seconds_from(
@@ -2483,6 +3416,24 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn distinguishes_initial_account_setup_and_existing_account_flows() {
+        assert!(matches!(
+            account_flow_error(AuthIntent::SignIn, false, true),
+            Some(ServiceError::AccountSetupRequired)
+        ));
+        assert!(matches!(
+            account_flow_error(AuthIntent::SignIn, false, false),
+            Some(ServiceError::AuthenticationFailed)
+        ));
+        assert!(matches!(
+            account_flow_error(AuthIntent::SignUp, true, false),
+            Some(ServiceError::AccountExists)
+        ));
+        assert!(account_flow_error(AuthIntent::SignIn, true, false).is_none());
+        assert!(account_flow_error(AuthIntent::SignUp, false, true).is_none());
     }
 
     #[test]
@@ -2536,6 +3487,130 @@ mod tests {
     }
 
     #[test]
+    fn google_smtp_app_password_configuration_requires_tls_and_credentials() {
+        let default_config = parse_google_smtp_config(
+            "local",
+            None,
+            None,
+            None,
+            None,
+            Some("noreply@klyran.com"),
+            Some("runtime-app-password"),
+        )
+        .expect("app-password defaults should be valid");
+        assert_eq!(default_config.host, "smtp.gmail.com");
+
+        let config = parse_google_smtp_config(
+            "production",
+            Some("smtp-relay.gmail.com"),
+            Some("587"),
+            Some("starttls"),
+            Some("app-password"),
+            Some("noreply@klyran.com"),
+            Some("runtime-app-password"),
+        )
+        .expect("valid Google Workspace app-password configuration");
+        assert_eq!(config.host, "smtp-relay.gmail.com");
+        assert_eq!(config.port, 587);
+        assert!(matches!(config.security, SmtpSecurity::StartTls));
+        assert!(matches!(
+            config.authentication,
+            SmtpAuthentication::AppPassword
+        ));
+        assert_eq!(config.username.as_deref(), Some("noreply@klyran.com"));
+
+        assert!(
+            parse_google_smtp_config(
+                "production",
+                Some("smtp-relay.gmail.com"),
+                Some("587"),
+                Some("plain"),
+                Some("app-password"),
+                Some("noreply@klyran.com"),
+                Some("runtime-app-password"),
+            )
+            .is_err()
+        );
+        assert!(
+            parse_google_smtp_config(
+                "production",
+                Some("smtp-relay.gmail.com"),
+                Some("587"),
+                Some("starttls"),
+                Some("app-password"),
+                Some("noreply@klyran.com"),
+                None,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn google_smtp_ip_relay_mode_rejects_passwords_and_plain_transport() {
+        let config = parse_google_smtp_config(
+            "production",
+            Some("smtp-relay.gmail.com"),
+            Some("587"),
+            Some("starttls"),
+            Some("ip-allowlist"),
+            None,
+            None,
+        )
+        .expect("valid Google Workspace IP relay configuration");
+        assert!(matches!(
+            config.authentication,
+            SmtpAuthentication::IpAllowlist
+        ));
+        assert!(config.username.is_none());
+        assert!(config.password.is_none());
+
+        assert!(
+            parse_google_smtp_config(
+                "production",
+                Some("smtp-relay.gmail.com"),
+                Some("587"),
+                Some("starttls"),
+                Some("ip-allowlist"),
+                Some("noreply@klyran.com"),
+                Some("must-not-be-present"),
+            )
+            .is_err()
+        );
+        assert!(
+            parse_google_smtp_config(
+                "production",
+                Some("smtp-relay.gmail.com"),
+                Some("25"),
+                Some("plain"),
+                Some("ip-allowlist"),
+                None,
+                None,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn google_smtp_message_preserves_plain_text_and_html_fallbacks() {
+        let from = "Solana Tax Protocol <noreply@klyran.com>"
+            .parse::<Mailbox>()
+            .expect("valid sender mailbox");
+        let message = build_smtp_message(
+            &from,
+            "operator@example.test",
+            "Verification code",
+            render_otp_email("123456"),
+        )
+        .expect("valid SMTP message");
+        let formatted = String::from_utf8(message.formatted()).expect("UTF-8 message fixture");
+        assert!(formatted.contains("noreply@klyran.com"));
+        assert!(formatted.contains("operator@example.test"));
+        assert!(formatted.contains("123456"));
+        assert!(formatted.contains("multipart/alternative"));
+        assert!(formatted.contains("text/html"));
+    }
+
+    #[test]
     fn invitation_is_the_only_signup_escape_when_open_signup_is_disabled() {
         assert!(signup_provisioning_allowed(true, false, false));
         assert!(signup_provisioning_allowed(false, true, false));
@@ -2565,6 +3640,24 @@ mod tests {
             "admin@example.com",
             false
         ));
+    }
+
+    #[test]
+    fn tenant_display_name_is_bounded_and_normalized_without_control_data() {
+        assert_eq!(
+            validate_tenant_display_name("  Klyran operations  ").expect("valid name"),
+            "Klyran operations"
+        );
+        assert!(validate_tenant_display_name(" ").is_err());
+        assert!(validate_tenant_display_name("bad\nname").is_err());
+        assert!(validate_tenant_display_name(&"x".repeat(121)).is_err());
+    }
+
+    #[test]
+    fn self_signup_is_a_tenant_owner_path_but_invitations_are_not() {
+        assert!(tenant_owner_candidate(true, false));
+        assert!(tenant_owner_candidate(false, true));
+        assert!(!tenant_owner_candidate(false, false));
     }
 
     #[tokio::test]

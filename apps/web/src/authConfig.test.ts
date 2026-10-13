@@ -1,7 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { parseBrowserAuthConfig } from "./authConfig";
+import { browserAuthConfigFromEnv, parseBrowserAuthConfig } from "./authConfig";
 
 describe("browser authentication configuration", () => {
+  it("wires the explicitly selected email OTP method from the release environment", () => {
+    expect(browserAuthConfigFromEnv({
+      VITE_DEPLOYMENT_ENVIRONMENT: "staging",
+      VITE_AUTH_METHOD: "email-otp",
+      VITE_AUTH_SERVICE_BASE_URL: "https://auth.klyran.com",
+    })).toEqual({
+      mode: "email-otp",
+      emailOtp: { baseUrl: "https://auth.klyran.com" },
+      warnings: [],
+    });
+  });
+
   it("accepts a complete HTTPS OIDC public-client configuration", () => {
     expect(parseBrowserAuthConfig({
       VITE_DEPLOYMENT_ENVIRONMENT: "production",

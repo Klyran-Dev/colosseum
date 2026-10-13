@@ -4,7 +4,7 @@
 - Date: 2026-10-01
 - Deciders: Principal Low-Latency Architecture, Observability, SRE
 - Scope: Tax Engine service telemetry identity
-- Bounded contexts: Tier-1 Tax Engine, Service Runtime, Observability
+- Bounded contexts: Tax Engine, Service Runtime, Observability
 
 ## Context
 
