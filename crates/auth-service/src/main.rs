@@ -1202,6 +1202,34 @@ fn tenant_step_status(complete: bool, active: bool) -> &'static str {
     }
 }
 
+fn tenant_context_query() -> &'static str {
+    r#"SELECT t.display_name, t.status,
+                    (t.display_name <> 'Untitled workspace'),
+                    EXISTS (
+                        SELECT 1
+                        FROM settlement_routes sr
+                        WHERE sr.merchant_id = t.id
+                          AND sr.status = 'active'
+                          AND sr.verification_digest IS NOT NULL
+                          AND sr.effective_from <= now()
+                          AND (sr.effective_until IS NULL OR sr.effective_until > now())
+                    ),
+                    EXISTS (
+                        SELECT 1
+                        FROM jurisdiction_policies jp
+                        JOIN rule_sets rs ON rs.id = jp.rule_set_id AND rs.merchant_id = jp.merchant_id
+                        WHERE jp.merchant_id = t.id
+                          AND jp.status = 'published'
+                          AND rs.status = 'published'
+                          AND jp.effective_from <= now()
+                          AND (jp.effective_until IS NULL OR jp.effective_until > now())
+                          AND rs.effective_from <= now()
+                          AND (rs.effective_until IS NULL OR rs.effective_until > now())
+                    )
+             FROM auth_tenants t
+             WHERE t.id = $1"#
+}
+
 async fn tenant_context(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1213,28 +1241,7 @@ async fn tenant_context(
         .await
         .map_err(|_| ServiceError::Unavailable)?;
     let row = client
-        .query_opt(
-            "SELECT t.display_name, t.status,\
-                    (t.display_name <> 'Untitled workspace'),\
-                    EXISTS (SELECT 1 FROM settlement_routes sr\
-                            WHERE sr.merchant_id = t.id\
-                              AND sr.status = 'active'\
-                              AND sr.verification_digest IS NOT NULL\
-                              AND sr.effective_from <= now()\
-                              AND (sr.effective_until IS NULL OR sr.effective_until > now())),\
-                    EXISTS (SELECT 1\
-                            FROM jurisdiction_policies jp\
-                            JOIN rule_sets rs ON rs.id = jp.rule_set_id AND rs.merchant_id = jp.merchant_id\
-                            WHERE jp.merchant_id = t.id\
-                              AND jp.status = 'published'\
-                              AND rs.status = 'published'\
-                              AND jp.effective_from <= now()\
-                              AND (jp.effective_until IS NULL OR jp.effective_until > now())\
-                              AND rs.effective_from <= now()\
-                              AND (rs.effective_until IS NULL OR rs.effective_until > now()))\
-             FROM auth_tenants t WHERE t.id = $1",
-            &[&principal.merchant_id],
-        )
+        .query_opt(tenant_context_query(), &[&principal.merchant_id])
         .await
         .map_err(|error| {
             error!(error = ?error, "tenant context query failed");
@@ -3658,6 +3665,15 @@ mod tests {
         assert!(tenant_owner_candidate(true, false));
         assert!(tenant_owner_candidate(false, true));
         assert!(!tenant_owner_candidate(false, false));
+    }
+
+    #[test]
+    fn tenant_context_query_keeps_alias_and_where_tokens_separate() {
+        let query = tenant_context_query();
+        assert!(query.contains("FROM settlement_routes sr"));
+        assert!(query.contains("FROM jurisdiction_policies jp"));
+        assert!(!query.contains("srWHERE"));
+        assert!(!query.contains("jpJOIN"));
     }
 
     #[tokio::test]
