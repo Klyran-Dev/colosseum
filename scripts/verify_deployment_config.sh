@@ -116,9 +116,49 @@ case "$auth_signing_key_id:$auth_signing_key_hex" in
   *local-development*) fail "auth signing configuration uses local development material" ;;
 esac
 
-require_exact AUTH_EMAIL_MODE provider
-validate_https_url AUTH_EMAIL_PROVIDER_ENDPOINT
-require_env AUTH_EMAIL_PROVIDER_API_KEY
+email_mode=$(read_env AUTH_EMAIL_MODE)
+case "$email_mode" in
+  provider)
+    validate_https_url AUTH_EMAIL_PROVIDER_ENDPOINT
+    require_env AUTH_EMAIL_PROVIDER_API_KEY
+    ;;
+  google-smtp)
+    require_env AUTH_EMAIL_SMTP_HOST
+    require_env AUTH_EMAIL_SMTP_PORT
+    require_env AUTH_EMAIL_SMTP_SECURITY
+    require_env AUTH_EMAIL_SMTP_AUTH
+    smtp_host=$(read_env AUTH_EMAIL_SMTP_HOST)
+    case "$smtp_host" in
+      *localhost*|*127.0.0.1*|*local-development*) fail "AUTH_EMAIL_SMTP_HOST points to a local or development endpoint" ;;
+    esac
+    smtp_port=$(read_env AUTH_EMAIL_SMTP_PORT)
+    case "$smtp_port" in
+      587|465) ;;
+      *) fail "AUTH_EMAIL_SMTP_PORT must be 587 or 465 outside local development" ;;
+    esac
+    smtp_security=$(read_env AUTH_EMAIL_SMTP_SECURITY)
+    case "$smtp_security:$smtp_port" in
+      starttls:587|tls:465) ;;
+      *) fail "AUTH_EMAIL_SMTP_SECURITY and AUTH_EMAIL_SMTP_PORT are incompatible" ;;
+    esac
+    smtp_auth=$(read_env AUTH_EMAIL_SMTP_AUTH)
+    case "$smtp_auth" in
+      app-password)
+        require_env AUTH_EMAIL_SMTP_USERNAME
+        require_env AUTH_EMAIL_SMTP_PASSWORD
+        case "$(read_env AUTH_EMAIL_SMTP_PASSWORD)" in
+          *local-development*) fail "AUTH_EMAIL_SMTP_PASSWORD uses a local development value" ;;
+        esac
+        ;;
+      ip-allowlist)
+        [ -z "$(read_env AUTH_EMAIL_SMTP_USERNAME)" ] || fail "SMTP IP-allowlist mode must not receive a username"
+        [ -z "$(read_env AUTH_EMAIL_SMTP_PASSWORD)" ] || fail "SMTP IP-allowlist mode must not receive a password"
+        ;;
+      *) fail "AUTH_EMAIL_SMTP_AUTH must be app-password or ip-allowlist" ;;
+    esac
+    ;;
+  *) fail "AUTH_EMAIL_MODE must be provider or google-smtp" ;;
+esac
 require_env AUTH_EMAIL_FROM
 validate_https_url AUTH_APP_BASE_URL
 initial_admin_email=$(read_env AUTH_INITIAL_ADMIN_EMAIL)

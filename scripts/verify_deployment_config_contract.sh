@@ -42,6 +42,13 @@ run_checker() {
     AUTH_EMAIL_MODE="$auth_email_mode" \
     AUTH_EMAIL_PROVIDER_ENDPOINT=https://api.resend.com/emails \
     AUTH_EMAIL_PROVIDER_API_KEY=synthetic-provider-key \
+    AUTH_EMAIL_SMTP_HOST=smtp.gmail.com \
+    AUTH_EMAIL_SMTP_PORT=587 \
+    AUTH_EMAIL_SMTP_SECURITY=starttls \
+    AUTH_EMAIL_SMTP_AUTH=app-password \
+    AUTH_EMAIL_SMTP_TIMEOUT_MILLIS=10000 \
+    AUTH_EMAIL_SMTP_USERNAME=noreply@example.invalid \
+    AUTH_EMAIL_SMTP_PASSWORD=synthetic-smtp-password \
     AUTH_EMAIL_FROM='Solana Tax Protocol <auth@example.invalid>' \
     AUTH_APP_BASE_URL=https://app.example.invalid \
     AUTH_INITIAL_ADMIN_EMAIL= \
@@ -101,6 +108,10 @@ run_checker() {
 }
 
 run_checker
+run_checker false '' false pair pair staging synthetic-nonlocal-service-token \
+  /run/secrets/tax-engine/tls.crt /run/secrets/tax-engine/tls.key \
+  /run/secrets/tax-engine/client-ca.pem \
+  '["spiffe://solana-tax-protocol/api"]' '' staging false google-smtp
 run_checker false '' false json
 run_checker false '' false file
 run_checker false '' false pair file
