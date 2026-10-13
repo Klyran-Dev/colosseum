@@ -261,6 +261,50 @@ fn capability_policies() -> Result<&'static [CapabilityPolicy], ApiError> {
     }
 }
 
+/// Evaluate only the context available at the capability-snapshot boundary.
+/// The deployment environment is process-owned and is guaranteed by the
+/// startup preflight. Resource attributes such as jurisdiction still require
+/// a server-selected resource and therefore remain indeterminate here.
+fn evaluate_capability(
+    policy: &CapabilityPolicy,
+    principal: &auth::AuthenticatedPrincipal,
+) -> AuthorizationCapability {
+    if policy
+        .required_scopes
+        .iter()
+        .any(|scope| !principal.has_scope(scope))
+    {
+        AuthorizationCapability {
+            decision: "deny",
+            reason_code: "scope_missing",
+        }
+    } else if !policy.required_roles.is_empty()
+        && !policy
+            .required_roles
+            .iter()
+            .any(|role| principal.has_role(role))
+    {
+        AuthorizationCapability {
+            decision: "deny",
+            reason_code: "role_missing",
+        }
+    } else if policy
+        .required_attributes
+        .iter()
+        .any(|attribute| attribute.as_str() != "environment")
+    {
+        AuthorizationCapability {
+            decision: "indeterminate",
+            reason_code: "resource_context_required",
+        }
+    } else {
+        AuthorizationCapability {
+            decision: "allow",
+            reason_code: "scope_and_role_satisfied",
+        }
+    }
+}
+
 fn parse_capability_catalog() -> Result<Vec<CapabilityPolicy>, &'static str> {
     let catalog: CapabilityCatalog = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -2765,37 +2809,10 @@ fn authorization_capabilities_inner(
     let capabilities = capability_policies()?
         .iter()
         .map(|policy| {
-            let decision = if policy
-                .required_scopes
-                .iter()
-                .any(|scope| !principal.has_scope(scope))
-            {
-                AuthorizationCapability {
-                    decision: "deny",
-                    reason_code: "scope_missing",
-                }
-            } else if !policy.required_roles.is_empty()
-                && !policy
-                    .required_roles
-                    .iter()
-                    .any(|role| principal.has_role(role))
-            {
-                AuthorizationCapability {
-                    decision: "deny",
-                    reason_code: "role_missing",
-                }
-            } else if !policy.required_attributes.is_empty() {
-                AuthorizationCapability {
-                    decision: "indeterminate",
-                    reason_code: "resource_context_required",
-                }
-            } else {
-                AuthorizationCapability {
-                    decision: "allow",
-                    reason_code: "scope_and_role_satisfied",
-                }
-            };
-            (policy.id.to_string(), decision)
+            (
+                policy.id.to_string(),
+                evaluate_capability(policy, &principal),
+            )
         })
         .collect();
     Ok(Json(AuthorizationCapabilitiesResponse {
@@ -11142,7 +11159,7 @@ mod tests {
         );
         assert_eq!(
             parsed["capabilities"]["tax.document.quote.create"]["reason_code"],
-            "resource_context_required"
+            "scope_and_role_satisfied"
         );
         assert_eq!(
             parsed["capabilities"]["refund.claim.create"]["reason_code"],
@@ -11150,7 +11167,7 @@ mod tests {
         );
         assert_eq!(
             parsed["capabilities"]["tax.quote.create"]["reason_code"],
-            "resource_context_required"
+            "scope_and_role_satisfied"
         );
         assert_eq!(
             parsed["capabilities"]["vault.release"]["reason_code"],

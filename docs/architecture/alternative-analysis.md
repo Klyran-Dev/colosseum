@@ -4681,6 +4681,25 @@ regular self-signup provisions, and cap the UTC-day total at 25 by default.
 Invitations and the configured initial administrator bootstrap remain separate
 server-owned provisioning paths.
 
+### Capability environment context and unnamed workspace presentation (ADR-0530)
+
+| Decision area | Alternative | Benefit | Cost / risk | Decision |
+| --- | --- | --- | --- | --- |
+| Capability attributes | Treat every catalog attribute as unresolved until a browser selects a resource | Simple evaluator and fail-closed behavior | Blocks capabilities whose context is already known to the service, including quote preparation | Rejected |
+| Capability attributes | Grant every capability to `administrator` | Removes operator friction | Bypasses scope, role, resource, and policy boundaries; unsafe for money and governance actions | Rejected |
+| Capability attributes | Resolve deployment `environment` in the API and leave resource-dependent attributes such as `jurisdiction` indeterminate | Preserves server authority, keeps the snapshot database-free, and allows quote preparation to reach its existing handler-level checks | Requires an explicit distinction between process context and selected resource context | **Selected** |
+| Workspace identity | Invent a tenant name from an email address or domain | Removes the placeholder immediately | Creates an unreviewed tenant identity and can leak or misrepresent organization data | Rejected |
+| Workspace identity | Mutate production tenant data to a hard-coded product name | Fast visual result | Not tenant-owned, not portable, and not auditable as an operator decision | Rejected |
+| Workspace identity | Keep the durable profile incomplete until a tenant administrator names it, but render a clear setup label instead of `Untitled workspace` | Truthful readiness, no fabricated identity, and an explicit recovery path | Requires one administrator action | **Selected** |
+
+Chosen: the API treats `environment` as a resolved process attribute because
+the deployment preflight requires `API_ENV`; `jurisdiction` and other selected
+resource attributes remain indeterminate until the relevant server-owned
+resource context exists. The browser never grants the resulting capability.
+The tenant database keeps its explicit incomplete-profile marker, while the
+SPA presents “Name your workspace” and links the administrator to the audited
+profile mutation instead of exposing an internal placeholder.
+
 ### Hosted Solana network and browser RPC binding (ADR-0524)
 
 | Alternative | Benefit | Cost / risk | Decision |

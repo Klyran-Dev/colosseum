@@ -22,6 +22,16 @@ export interface TenantContext {
   };
 }
 
+export const UNNAMED_TENANT_DISPLAY_NAME = "Untitled workspace";
+
+export function tenantDisplayLabel(displayName: string): string {
+  return displayName === UNNAMED_TENANT_DISPLAY_NAME ? "Name your workspace" : displayName;
+}
+
+export function tenantProfileInputValue(displayName: string): string {
+  return displayName === UNNAMED_TENANT_DISPLAY_NAME ? "" : displayName;
+}
+
 export function setupProgressLabel(status: TenantSetupStepStatus): string {
   if (status === "complete") return "Ready";
   if (status === "blocked") return "Blocked";

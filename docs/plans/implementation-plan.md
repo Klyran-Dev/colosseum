@@ -4201,3 +4201,16 @@ See [ADR-0418](../adr/0418-applicability-context-management-api.md).
   production treatment enablement claim.
 
 See [ADR-0420](../adr/0420-applicability-governance-workspace.md).
+
+## ADR-0530 capability context and tenant identity presentation
+
+- [x] Resolve the API deployment environment as known process context while
+  preserving indeterminate decisions for selected resource attributes.
+- [x] Add regression coverage proving quote capabilities are not blocked by the
+  environment attribute alone.
+- [x] Replace the visible unnamed-workspace marker with an actionable naming
+  label and clear the profile input until the administrator supplies a name.
+- [ ] Retain authenticated Docker/browser evidence after deployment and have a
+  tenant administrator save the tenant-owned workspace name.
+
+See [ADR-0530](../adr/0530-capability-context-and-tenant-identity-presentation.md).

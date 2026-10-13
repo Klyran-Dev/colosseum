@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { setupProgressLabel, tenantSetupSummary, type TenantContext } from "./tenantModel";
+import { setupProgressLabel, tenantDisplayLabel, tenantProfileInputValue, tenantSetupSummary, type TenantContext } from "./tenantModel";
 
 const context = (overrides: Partial<TenantContext> = {}): TenantContext => ({
   schema: "auth-tenant-context/v1",
@@ -20,6 +20,16 @@ const context = (overrides: Partial<TenantContext> = {}): TenantContext => ({
 });
 
 describe("tenant readiness presentation", () => {
+  it("turns the durable unnamed marker into an actionable setup label", () => {
+    expect(tenantDisplayLabel("Untitled workspace")).toBe("Name your workspace");
+    expect(tenantProfileInputValue("Untitled workspace")).toBe("");
+  });
+
+  it("preserves an explicit tenant-owned workspace name", () => {
+    expect(tenantDisplayLabel("Klyran operations")).toBe("Klyran operations");
+    expect(tenantProfileInputValue("Klyran operations")).toBe("Klyran operations");
+  });
+
   it("summarizes server-owned setup progress without inventing readiness", () => {
     expect(tenantSetupSummary(context())).toEqual({ completed: 1, total: 3, state: "in_progress", label: "1 of 3 setup steps complete" });
     expect(setupProgressLabel("complete")).toBe("Ready");

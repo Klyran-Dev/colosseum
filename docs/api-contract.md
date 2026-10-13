@@ -470,7 +470,9 @@ continues to enforce the role on every protected handler.
 The snapshot lifetime is at most 60 seconds and never exceeds the verified
 token expiry. `decision` is one of `allow`, `deny`, or `indeterminate`.
 Missing scopes or roles produce `deny`; resource attributes that cannot be
-known without a selected record produce `indeterminate`. The browser may use
+resolved by the authenticated service (for example a jurisdiction selected
+from a server-owned record) produce `indeterminate`. The deployment
+`environment` is process-owned and is resolved during API startup. The browser may use
 the response for navigation and explanation only. Every protected API and
 settlement operation repeats its exact scope, role, tenant, resource, and
 chain-evidence checks. A missing, expired, malformed, or failed snapshot never

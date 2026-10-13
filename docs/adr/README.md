@@ -530,3 +530,4 @@ ADRs are short, immutable decisions. Superseding a decision creates a new ADR; i
 - [ADR-0527](0527-explicit-tenant-lifecycle-and-readiness.md) — Make tenant lifecycle, readiness, and administrator promotion explicit
 - [ADR-0528](0528-single-browser-session-coordination.md) — Coordinate one active browser session without persisting bearer tokens
 - [ADR-0529](0529-otp-verification-outcome-and-recovery.md) — Make OTP verification outcomes terminal and actionable
+- [ADR-0530](0530-capability-context-and-tenant-identity-presentation.md) — Resolve deployment context and remove unnamed-workspace leakage from the UI
